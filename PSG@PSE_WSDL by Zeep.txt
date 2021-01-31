@@ -1,0 +1,463 @@
+python -mzeep https://mammal-profservices.pathwaystudio.com/services/SputnikServiceSoap?WSDL >PSG@PSE_WSDL.txt
+Prefixes:
+     xsd: http://www.w3.org/2001/XMLSchema
+     ns0: urn:CSputnikService
+
+Global elements:
+     
+     ns0:AddDictValue(DictFolderId: xsd:long, Value: xsd:string)
+     ns0:AddDictValueResponse(return: xsd:long)
+     ns0:AddLink(link: ns0:Link)
+     ns0:AddLinkResponse(return: xsd:long)
+     ns0:AnnotateWithExperiment(ExperimentId: xsd:long, SampleNum: xsd:int, ContainerId: xsd:long, ObjectIds: {long: xsd:long[]})
+     ns0:AnnotateWithExperimentResponse(return: ns0:Result)
+     ns0:AppendFile(FileID: xsd:long, Data: xsd:base64Binary)
+     ns0:AppendFileResponse(return: xsd:long)
+     ns0:AssociatePropertyWithObjectType(PropId: xsd:long, ObjTypeID: xsd:long)
+     ns0:AssociatePropertyWithObjectTypeResponse()
+     ns0:CheckMigratedDocuments(params: ns0:CheckMigratedDocumentsParameters)
+     ns0:CheckMigratedDocumentsResponse(status: ns0:OperationStatus)
+     ns0:CopyObject(ID: xsd:long, URN: xsd:string)
+     ns0:CopyObject2(ID: xsd:long, OwnerID: xsd:long, URN: xsd:string)
+     ns0:CopyObject2Response(NewID: xsd:long)
+     ns0:CopyObjectResponse(NewID: xsd:long)
+     ns0:CreateObject(object: ns0:ObjectRef, Props: {ObjectProperty: ns0:ObjectProperty[]})
+     ns0:CreateObjectEx(object: ns0:ObjectRef, Props: {ObjectProperty: ns0:ObjectProperty[]}, Temp: xsd:boolean)
+     ns0:CreateObjectExResponse(return: xsd:long)
+     ns0:CreateObjectResponse(return: xsd:long)
+     ns0:DeleteObject(object: ns0:ObjectRef)
+     ns0:DeleteObjectResponse()
+     ns0:DeletePropertyDefinition(PropId: xsd:long)
+     ns0:DeletePropertyDefinitionResponse()
+     ns0:FindOrCreateObjectType(objectType: ns0:ObjectType)
+     ns0:FindOrCreateObjectTypeResponse(return: xsd:long)
+     ns0:FindOrCreateProperty(propertyDefinition: ns0:PropertyDefinition)
+     ns0:FindOrCreatePropertyResponse(return: ns0:PropertyDefinition)
+     ns0:FindRelationsEx(Set1: ns0:ResultParam, Set2: ns0:ResultParam)
+     ns0:FindRelationsExResponse(return: ns0:Result)
+     ns0:FolderCopy(FolderID: xsd:long, DstFolderID: xsd:long, NewName: xsd:string)
+     ns0:FolderCopyResponse(NewFolderID: xsd:long)
+     ns0:FolderCreate(ParentFolderID: xsd:long, FolderName: xsd:string)
+     ns0:FolderCreateResponse(return: ns0:Folder)
+     ns0:FolderDelete(FolderID: xsd:long)
+     ns0:FolderDeleteResponse()
+     ns0:FolderGetObjects(FolderID: xsd:long, Param: ns0:ResultParam)
+     ns0:FolderGetObjectsResponse(return: ns0:Result)
+     ns0:FolderGetRawData(FolderID: xsd:long, ObjTypeId: xsd:long, Limit: xsd:int)
+     ns0:FolderGetRawDataResponse(Attachments: {ObjectAttachment: ns0:ObjectAttachment[]})
+     ns0:FolderLinkObject(FolderID: xsd:long, ObjectID: xsd:long)
+     ns0:FolderLinkObjectEx(FolderID: xsd:long, ObjectID: xsd:long, Symbolic: xsd:boolean)
+     ns0:FolderLinkObjectExResponse()
+     ns0:FolderLinkObjectResponse()
+     ns0:FolderMove(FolderID: xsd:long, DstFolderID: xsd:long)
+     ns0:FolderMoveResponse()
+     ns0:FolderRename(FolderID: xsd:long, NewName: xsd:string)
+     ns0:FolderRenameResponse()
+     ns0:FolderUnlinkAll(FolderID: xsd:long)
+     ns0:FolderUnlinkAllResponse()
+     ns0:FolderUnlinkObject(FolderID: xsd:long, ObjectID: xsd:long)
+     ns0:FolderUnlinkObjectEx(FolderID: xsd:long, ObjectID: xsd:long)
+     ns0:FolderUnlinkObjectExResponse(return: xsd:boolean)
+     ns0:FolderUnlinkObjectResponse()
+     ns0:GetADSTree()
+     ns0:GetADSTreeResponse(Folders: {Folder: ns0:Folder[]})
+     ns0:GetAllObjectsOfType(ObjectTypeId: xsd:long, Param: ns0:ResultParam)
+     ns0:GetAllObjectsOfTypeResponse(return: ns0:Result)
+     ns0:GetAllPropAssoc()
+     ns0:GetAllPropAssocResponse(PropAssocs: {PropAssoc: ns0:PropAssoc[]})
+     ns0:GetBatchCommitToolResult(OperationId: xsd:long)
+     ns0:GetBatchCommitToolResultResponse(result: ns0:BatchCommitToolResult)
+     ns0:GetBatchPreprocessorToolResult(OperationId: xsd:long)
+     ns0:GetBatchPreprocessorToolResultResponse(result: ns0:BatchPreprocessorToolResult)
+     ns0:GetBuildNetworkResult(OperationId: xsd:long)
+     ns0:GetBuildNetworkResultResponse(result: ns0:BuildNetworkResult)
+     ns0:GetCheckMigratedDocumentsResult(OperationId: xsd:long)
+     ns0:GetCheckMigratedDocumentsResultResponse(result: ns0:CheckMigratedDocumentsResult)
+     ns0:GetCopyFolderToolResult(OperationId: xsd:long)
+     ns0:GetCopyFolderToolResultResponse(result: ns0:CopyFolderToolResult)
+     ns0:GetCurrentUser()
+     ns0:GetCurrentUserResponse(return: ns0:User)
+     ns0:GetDictFolder(DictFolderID: xsd:long)
+     ns0:GetDictFolderResponse(return: ns0:DictFolder)
+     ns0:GetDictFolders(Start: xsd:int, Count: xsd:int)
+     ns0:GetDictFoldersResponse(DictFolders: {DictFolder: ns0:DictFolder[]})
+     ns0:GetExperiment(ExperimentID: xsd:long)
+     ns0:GetExperimentMappingToolResult(OperationId: xsd:long)
+     ns0:GetExperimentMappingToolResultResponse(result: ns0:ExperimentMappingToolResult)
+     ns0:GetExperimentResponse(return: ns0:Experiment)
+     ns0:GetExperimentRowAttributes(ExperimentID: xsd:long, EntityAttrIDs: {long: xsd:long[]}, RowNum: xsd:int, RowCount: xsd:int)
+     ns0:GetExperimentRowAttributesResponse(Attributes: {ExperimentRowAttributes: ns0:ExperimentRowAttributes[]})
+     ns0:GetExperimentValues(ExperimentID: xsd:long, SampleNum: xsd:int, RowNum: xsd:int, RowCount: xsd:int)
+     ns0:GetExperimentValuesMask(ExperimentID: xsd:long, SampleNum: xsd:int, RowNum: xsd:int, RowCount: xsd:int)
+     ns0:GetExperimentValuesMask2(ExperimentID: xsd:long, SampleNum: xsd:int, SampleCount: xsd:int)
+     ns0:GetExperimentValuesMask2Response(Masks: {base64Binary: xsd:base64Binary[]})
+     ns0:GetExperimentValuesMaskResponse(Masks: {int: xsd:byte[]})
+     ns0:GetExperimentValuesResponse(Values: {SampleValue: ns0:SampleValue[]})
+     ns0:GetFindRelevantNetworksResult(OperationId: xsd:long)
+     ns0:GetFindRelevantNetworksResultResponse(result: ns0:FindRelevantNetworksResult)
+     ns0:GetFolders(FolderIDs: {long: xsd:long[]})
+     ns0:GetFoldersResponse(Folders: {Folder: ns0:Folder[]})
+     ns0:GetFoldersTree(FolderID: xsd:long)
+     ns0:GetFoldersTreeResponse(Folders: {Folder: ns0:Folder[]})
+     ns0:GetGroups()
+     ns0:GetGroupsResponse(Groups: {Group: ns0:Group[]})
+     ns0:GetLink(LinkID: xsd:long)
+     ns0:GetLinkResponse(return: ns0:Link)
+     ns0:GetMappingToolResult(OperationId: xsd:long)
+     ns0:GetMappingToolResultResponse(result: ns0:MappingToolResult)
+     ns0:GetMedscanInfoExtractionResult(OperationId: xsd:long)
+     ns0:GetMedscanInfoExtractionResultResponse(return: xsd:long)
+     ns0:GetMembers(ComplexObjectRef: ns0:ObjectRef, param: ns0:ResultParam)
+     ns0:GetMembersResponse(return: ns0:Result)
+     ns0:GetNetworkImportResult(OperationId: xsd:long)
+     ns0:GetNetworkImportResultResponse()
+     ns0:GetObjectAttachment(ObjectId: xsd:long, Type: xsd:int, RelatedEntityId: xsd:long)
+     ns0:GetObjectAttachmentResponse(return: ns0:ObjectAttachment)
+     ns0:GetObjectEffectivePermissions(ObjectID: xsd:long)
+     ns0:GetObjectEffectivePermissionsResponse(return: ns0:ObjectEffectivePermissions)
+     ns0:GetObjectTypeStat(ObjClassId: xsd:int, onlyPrivate: xsd:boolean)
+     ns0:GetObjectTypeStatResponse(Stat: {ObjectTypeStat: ns0:ObjectTypeStat[]})
+     ns0:GetObjectTypes()
+     ns0:GetObjectTypesResponse(ObjectTypes: {ObjectType: ns0:ObjectType[]})
+     ns0:GetOperationStatus(OperationId: xsd:long)
+     ns0:GetOperationStatusResponse(status: ns0:OperationStatus)
+     ns0:GetPreferences(UserId: xsd:long, Key: xsd:string)
+     ns0:GetPreferencesResponse(return: ns0:Preferences)
+     ns0:GetPropAssoc(ObjTypeId: xsd:long)
+     ns0:GetPropAssocResponse(PropAssocs: {PropAssoc: ns0:PropAssoc[]})
+     ns0:GetPropDictFolders(ObjTypeId: xsd:long)
+     ns0:GetPropDictFoldersResponse(DictFolders: {DictFolder: ns0:DictFolder[]})
+     ns0:GetPropertyDefinitions()
+     ns0:GetPropertyDefinitions2(PropIDs: {long: xsd:long[]})
+     ns0:GetPropertyDefinitions2Response(PropertyDefinitions: {PropertyDefinition: ns0:PropertyDefinition[]})
+     ns0:GetPropertyDefinitionsResponse(PropertyDefinitions: {PropertyDefinition: ns0:PropertyDefinition[]})
+     ns0:GetReferences(ObjectId: xsd:long, RefPos: xsd:int, RefLimit: xsd:int)
+     ns0:GetReferencesResponse(return: ns0:Result)
+     ns0:GetRelatedObjects(object: ns0:ObjectRef, rel_type: xsd:int, param: ns0:ResultParam)
+     ns0:GetRelatedObjectsResponse(return: ns0:Result)
+     ns0:GetServerInfo()
+     ns0:GetServerInfoResponse(return: xsd:string)
+     ns0:GetSessionId()
+     ns0:GetSessionIdResponse(return: xsd:string)
+     ns0:GetUserFolder(UserID: xsd:long)
+     ns0:GetUserFolderResponse(UserFolderID: xsd:long)
+     ns0:GetUsers()
+     ns0:GetUsersResponse(Users: {User: ns0:User[]})
+     ns0:GoodByeWorld()
+     ns0:GoodByeWorldResponse()
+     ns0:HelloWorld(bstrInput: xsd:string)
+     ns0:HelloWorldResponse(return: xsd:string)
+     ns0:IsTempId(ID: xsd:long)
+     ns0:IsTempIdResponse(return: xsd:boolean)
+     ns0:LocateOrCreate(locatorProperties: ns0:LocatorProperties, Mode: xsd:int)
+     ns0:LocateOrCreateRelation(controlProps: ns0:ControlProps, Mode: xsd:int)
+     ns0:LocateOrCreateRelationResponse(return: ns0:LocateOrCreateRelationResult)
+     ns0:LocateOrCreateResponse(return: ns0:LocateOrCreateRelationResult)
+     ns0:MoveObject(ID: xsd:long, FolderID: xsd:long, DstFolderID: xsd:long)
+     ns0:MoveObjectResponse()
+     ns0:NotifyUserVCFImportCompleted(folderId: xsd:long, fileName: xsd:string)
+     ns0:NotifyUserVCFImportCompletedResponse(message: xsd:string, success: xsd:boolean)
+     ns0:OQLSearch(oql_expression: xsd:string, result_param: ns0:ResultParam)
+     ns0:OQLSearchResponse(return: ns0:Result)
+     ns0:ObjectGetFolder(ObjectID: xsd:long)
+     ns0:ObjectGetFolderResponse(return: xsd:long)
+     ns0:PersistTempObject(tempId: xsd:long, folderId: xsd:long)
+     ns0:PersistTempObjectResponse(return: xsd:long)
+     ns0:PublishObjects(ObjIDs: {long: xsd:long[]})
+     ns0:PublishObjectsResponse(Statuses: {ObjStatus: ns0:ObjStatus[]})
+     ns0:PutExperiment(experiment: ns0:Experiment)
+     ns0:PutExperimentResponse(return: xsd:long)
+     ns0:PutExperimentRowAttributes(ExperimentID: xsd:long, RowNum: xsd:int, RowCount: xsd:int, Attributes: {ExperimentRowAttributes: ns0:ExperimentRowAttributes[]})
+     ns0:PutExperimentRowAttributesResponse()
+     ns0:PutExperimentValues(ExperimentID: xsd:long, SampleNum: xsd:int, RowNum: xsd:int, RowCount: xsd:int, Values: {SampleValue: ns0:SampleValue[]})
+     ns0:PutExperimentValuesMask(ExperimentID: xsd:long, SampleNum: xsd:int, RowNum: xsd:int, RowCount: xsd:int, Masks: {int: xsd:byte[]})
+     ns0:PutExperimentValuesMask2(ExperimentID: xsd:long, SampleNum: xsd:int, SampleCount: xsd:int, Masks: {base64Binary: xsd:base64Binary[]})
+     ns0:PutExperimentValuesMask2Response()
+     ns0:PutExperimentValuesMaskResponse()
+     ns0:PutExperimentValuesResponse()
+     ns0:ReleaseOperation(OperationId: xsd:long)
+     ns0:ReleaseOperationAndResult(OperationId: xsd:long)
+     ns0:ReleaseOperationAndResultResponse()
+     ns0:ReleaseOperationResponse()
+     ns0:RemovePreferences(UserId: xsd:long, Key: xsd:string)
+     ns0:RemovePreferencesResponse()
+     ns0:ReplaceMembership(ObjID_old: xsd:long, ObjID_new: xsd:long)
+     ns0:ReplaceMembershipResponse()
+     ns0:ResultGetData(Param: ns0:ResultParam)
+     ns0:ResultGetDataResponse(return: ns0:Result)
+     ns0:ResultGetDescription(ResultId: xsd:long)
+     ns0:ResultGetDescriptionResponse(Description: ns0:ResultDescription)
+     ns0:ResultRelease(ResultRef: xsd:string)
+     ns0:ResultReleaseResponse()
+     ns0:SavePreferences(Pref: ns0:Preferences)
+     ns0:SavePreferencesResponse()
+     ns0:Search(search_param: ns0:SearchParam, result_param: ns0:ResultParam)
+     ns0:SearchResponse(return: ns0:Result)
+     ns0:SetObjectAttachment(Attachment: ns0:ObjectAttachment)
+     ns0:SetObjectAttachmentResponse()
+     ns0:StartAnalyzeGeneList(params: ns0:AnalyzeGeneListParameters)
+     ns0:StartAnalyzeGeneListResponse(status: ns0:OperationStatus)
+     ns0:StartBatchCommitTool(params: ns0:BatchCommitToolParameters)
+     ns0:StartBatchCommitToolResponse(status: ns0:OperationStatus)
+     ns0:StartBatchPreprocessorTool(params: ns0:BatchPreprocessorToolParameters)
+     ns0:StartBatchPreprocessorToolResponse(status: ns0:OperationStatus)
+     ns0:StartBuildNetwork(params: ns0:BuildNetworkParams)
+     ns0:StartBuildNetworkResponse(status: ns0:OperationStatus)
+     ns0:StartCopyFolderTool(params: ns0:CopyFolderParameters)
+     ns0:StartCopyFolderToolResponse(status: ns0:OperationStatus)
+     ns0:StartExperimentMappingTool(params: ns0:ExperimentMappingToolParameters)
+     ns0:StartExperimentMappingToolResponse(status: ns0:OperationStatus)
+     ns0:StartFindRelevantNetworks(params: ns0:FindRelevantNetworksParams)
+     ns0:StartFindRelevantNetworksResponse(status: ns0:OperationStatus)
+     ns0:StartFindSubNetworksTool(params: ns0:FindSubNetworksParameters)
+     ns0:StartFindSubNetworksToolResponse(status: ns0:OperationStatus)
+     ns0:StartGenerateRelevantNetworks(params: ns0:GenRelNetsParameters)
+     ns0:StartGenerateRelevantNetworksResponse(status: ns0:OperationStatus)
+     ns0:StartMappingTool(params: ns0:MappingToolParameters)
+     ns0:StartMappingToolResponse(status: ns0:OperationStatus)
+     ns0:StartMedscanInfoExtraction(params: ns0:MedscanInfoExtractionParams)
+     ns0:StartMedscanInfoExtractionResponse(status: ns0:OperationStatus)
+     ns0:StartNetworkImport(params: ns0:NetworkImportParams)
+     ns0:StartNetworkImportResponse(status: ns0:OperationStatus)
+     ns0:StartSearchTool(params: ns0:SearchToolParameters)
+     ns0:StartSearchToolResponse(status: ns0:OperationStatus)
+     ns0:StartUploadFile()
+     ns0:StartUploadFileResponse(return: xsd:long)
+     ns0:UpdateLink(link: ns0:Link)
+     ns0:UpdateLinkResponse()
+     ns0:UpdateMembers(ObjectID: xsd:long, RemoveIDs: {long: xsd:long[]}, AddIDs: {long: xsd:long[]})
+     ns0:UpdateMembersResponse()
+     ns0:UpdateObject(ObjectID: xsd:long, RemoveProps: {ObjectProperty: ns0:ObjectProperty[]}, NewProps: {ObjectProperty: ns0:ObjectProperty[]}, ChangedProps: {ObjectProperty: ns0:ObjectProperty[]}, AddMembers: {long: xsd:long[]}, RemovedMembers: {long: xsd:long[]})
+     ns0:UpdateObject2(ObjectID: xsd:long, OwnerID: xsd:long, RemoveProps: {ObjectProperty: ns0:ObjectProperty[]}, NewProps: {ObjectProperty: ns0:ObjectProperty[]}, ChangedProps: {ObjectProperty: ns0:ObjectProperty[]}, AddMembers: {long: xsd:long[]}, RemovedMembers: {long: xsd:long[]})
+     ns0:UpdateObject2Response()
+     ns0:UpdateObjectResponse()
+
+Global types:
+     xsd:anyType
+     xsd:ENTITIES
+     xsd:ENTITY
+     xsd:ID
+     xsd:IDREF
+     xsd:IDREFS
+     xsd:NCName
+     xsd:NMTOKEN
+     xsd:NMTOKENS
+     xsd:NOTATION
+     xsd:Name
+     xsd:QName
+     xsd:anySimpleType
+     xsd:anyURI
+     xsd:base64Binary
+     xsd:boolean
+     xsd:byte
+     xsd:date
+     xsd:dateTime
+     xsd:decimal
+     xsd:double
+     xsd:duration
+     xsd:float
+     xsd:gDay
+     xsd:gMonth
+     xsd:gMonthDay
+     xsd:gYear
+     xsd:gYearMonth
+     xsd:hexBinary
+     xsd:int
+     xsd:integer
+     xsd:language
+     xsd:long
+     xsd:negativeInteger
+     xsd:nonNegativeInteger
+     xsd:nonPositiveInteger
+     xsd:normalizedString
+     xsd:positiveInteger
+     xsd:short
+     xsd:string
+     xsd:time
+     xsd:token
+     xsd:unsignedByte
+     xsd:unsignedInt
+     xsd:unsignedLong
+     xsd:unsignedShort
+     ns0:AnalyzeGeneListParameters(Selection: {long: xsd:long[]}, Selection_size: xsd:int, MatchesCutOff: xsd:int, Targets: {string: xsd:string[]}, Targets_size: xsd:int, ExpandContainers: xsd:boolean, FilterGroups: {long: xsd:long[]}, FilterGroups_size: xsd:int, FilterObjectTypes: {long: xsd:long[]}, FilterObjectTypes_size: xsd:int, MinPValue: xsd:double, MinOverlap: xsd:int, IncludeOnlyOverlapInPathways: xsd:boolean)
+     ns0:BPPEntry(ID: xsd:string, Stats: xsd:string, Error: xsd:string)
+     ns0:BatchCommitToolParameters(TransactionID: xsd:long, TrnEntries: {TrnEntry: ns0:TrnEntry[]}, TrnEntries_size: xsd:int)
+     ns0:BatchCommitToolResult(TransactionID: xsd:long, TrnEntries: {TrnEntry: ns0:TrnEntry[]}, TrnEntries_size: xsd:int)
+     ns0:BatchPreprocessorToolParameters(BatchId: xsd:long)
+     ns0:BatchPreprocessorToolResult(TransactionID: xsd:long, BPPEntries: {BPPEntry: ns0:BPPEntry[]}, BPPEntries_size: xsd:int)
+     ns0:BuildNetworkFilter(ObjTypeID: xsd:long, PropID: xsd:long, Operation: xsd:int, Values: {string: xsd:string[]}, Values_size: xsd:int)
+     ns0:BuildNetworkParams(Selection: {long: xsd:long[]}, Selection_size: xsd:int, Algorithm: xsd:int, Steps: xsd:int, EntityFilters: {BuildNetworkFilter: ns0:BuildNetworkFilter[]}, EntityFilters_size: xsd:int, RelationFilters: {BuildNetworkFilter: ns0:BuildNetworkFilter[]}, RelationFilters_size: xsd:int, Direction: {int: xsd:int[]}, Direction_size: xsd:int, TargetScopeContainerID: xsd:long, EntityFilter: xsd:string, RelationFilter: xsd:string)
+     ns0:BuildNetworkResult(AddedEntitiesNumber: xsd:int, AddedRelationsNumber: xsd:int, ResultNetworkId: xsd:long, Trancated: xsd:boolean)
+     ns0:CheckMigratedDocumentsParameters(DocEntries: {ClientDocument: ns0:ClientDocument[]}, DocEntries_size: xsd:int)
+     ns0:CheckMigratedDocumentsResult(IDs: {ID: xsd:string[]}, IDs_size: xsd:int)
+     ns0:ClientDocument(ID: xsd:string, ObjectType: xsd:string, Name: xsd:string, FolderPath: xsd:string)
+     ns0:ControlProps(ObjTypeId: xsd:long, Effect: xsd:string, NodesID: {long: xsd:long[]}, NodesID_Size: xsd:int, NodesDir: {int: xsd:int[]}, NodesDir_Size: xsd:int, NodesEffect: {int: xsd:int[]}, NodesEffect_Size: xsd:int, OwnerId: xsd:long, Mechanism: xsd:string)
+     ns0:CopyFolderParameters(folderId: xsd:long, destinationFolderId: xsd:long, newName: xsd:string)
+     ns0:CopyFolderToolResult(NewFolderId: xsd:long)
+     ns0:DictFolder(Id: xsd:long, Name: xsd:string, Values: {DictValue: ns0:DictValue[]}, Values_size: xsd:int)
+     ns0:DictValue(Id: xsd:long, Value: xsd:string)
+     ns0:Experiment(Id: xsd:long, Name: xsd:string, Description: xsd:string, ExperimentType: xsd:int, Organism: xsd:string, ExperimentTypeName: xsd:string, EntityTypeName: xsd:string, RowsCount: xsd:int, SampleCount: xsd:int, RowsMappedCount: xsd:int, MinValueSignal: xsd:float, MaxValueSignal: xsd:float, MinValueRatio: xsd:float, MaxValueRatio: xsd:float, GeneAttributeNames: {string: xsd:string[]}, GeneAttributeNames_Size: xsd:int, OriginalGeneID_index: xsd:int, SampleDefinitions: {SampleDefinition: ns0:SampleDefinition[]}, SampleDefinitions_Size: xsd:int, SampleAttributeNames: {string: xsd:string[]}, SampleAttributeNames_Size: xsd:int, Owner: xsd:string, DateCreated: xsd:string, ExperimentSubType: xsd:int, ReadOnly: xsd:boolean, MaskUsage: xsd:int)
+     ns0:ExperimentMappingToolParameters(ExperimentID: xsd:long, IsChip: xsd:boolean, ChipID: xsd:long, ChipName: xsd:string, DbType: xsd:string, DbField: xsd:string)
+     ns0:ExperimentMappingToolResult(MappedCount: xsd:int)
+     ns0:ExperimentRowAttributes(EntityURN: xsd:string, EntityAttributes: {string: xsd:string[]}, EntityAttributes_Size: xsd:int, OriginalGeneID: xsd:string, GeneAttributes: {string: xsd:string[]}, GeneAttributes_Size: xsd:int, EntityId: xsd:long)
+     ns0:Filter(FilterType: xsd:int, RefId: xsd:long, RefValue: xsd:string)
+     ns0:FindRelevantNetworksParams(Selection: {long: xsd:long[]}, Selection_size: xsd:int, MatchesCutOff: xsd:int, ObjectTypes: {long: xsd:long[]}, ObjectTypes_size: xsd:int, FindGroups: xsd:boolean)
+     ns0:FindRelevantNetworksResult(ResultRef: xsd:string)
+     ns0:FindSubNetworksParameters(Selection: {long: xsd:long[]}, Selection_size: xsd:int, CutoffNumber: xsd:int, MinPValue: xsd:double, MaxPValue: xsd:double, MinOverlap: xsd:int, IncludeOnlyOverlapInPathways: xsd:boolean, Types: {long: xsd:long[]}, Types_size: xsd:int, ReverseTypes: {long: xsd:long[]}, ReverseTypes_size: xsd:int, ForwardEntityTypes: {long: xsd:long[]}, ForwardEntityTypes_size: xsd:int, ReverseEntityTypes: {long: xsd:long[]}, ReverseEntityTypes_size: xsd:int, Preset: xsd:string, CustomTypes: {long: xsd:long[]}, CustomTypes_size: xsd:int, CustomEntityTypes: {long: xsd:long[]}, CustomEntityTypes_size: xsd:int)
+     ns0:Folder(Id: xsd:long, Name: xsd:string, Description: xsd:string, Parent: xsd:long, Owner: xsd:long, AccessLevel: xsd:int, Size: xsd:int, ContentType: xsd:long, Type: xsd:int, SubFolders: {long: xsd:long[]}, SubFolders_Size: xsd:int, OwnerGroup: xsd:long)
+     ns0:GenRelNetsParameters(ExperimentID: xsd:long, RatioSample: xsd:int, Mode: xsd:int, ForwardTypes: {long: xsd:long[]}, ForwardTypes_size: xsd:int, ReverseTypes: {long: xsd:long[]}, ReverseTypes_size: xsd:int, IsFindGroups: xsd:boolean, CutoffNumber: xsd:int, MinPValue: xsd:double, MaxPValue: xsd:double, IsMetabolomicsMode: xsd:boolean, IsIncludeOnlyMeasuredTargets: xsd:boolean, Folders: {long: xsd:long[]}, Folders_size: xsd:int, Granularity: xsd:double, Targets: {string: xsd:string[]}, Targets_size: xsd:int, Algorithm: xsd:int, Permute: xsd:int, NumberOfPermutations: xsd:int, EnrichmentStatistics: xsd:int, ForwardEntityTypes: {long: xsd:long[]}, ForwardEntityTypes_size: xsd:int, ReverseEntityTypes: {long: xsd:long[]}, ReverseEntityTypes_size: xsd:int, ExpandContainers: xsd:boolean, UseMask: xsd:boolean, AnalyzePValues: xsd:boolean, UseConcordance: xsd:boolean, UnknownEffectBehavior: xsd:int, ActivationScoreUnknownEffectBehavior: xsd:int, ChangeThreshold: xsd:double)
+     ns0:Group(Id: xsd:long, Name: xsd:string, Description: xsd:string, Roles: {string: xsd:string[]}, Roles_size: xsd:int, Members: {long: xsd:long[]}, Members_size: xsd:int)
+     ns0:Link(Id: xsd:long, ObjId: xsd:long, EntityId: xsd:long, RelationId: xsd:long, Dir: xsd:int, Effect: xsd:int)
+     ns0:LocateOrCreateRelationResult(Result: xsd:int, NewLinks: {Link: ns0:Link[]}, NewLinks_size: xsd:int, control: ns0:ObjectRef)
+     ns0:LocatorProperties(ObjTypeId: xsd:long, OwnerId: xsd:long, Links: {Link: ns0:Link[]}, Links_Size: xsd:int, Properties: {PropValue: ns0:PropValue[]}, Properties_Size: xsd:int)
+     ns0:MappedEntityInfo(ID: xsd:long, Literal: xsd:string, Name: xsd:string, URN: xsd:string)
+     ns0:MappingToolParameters(UseResult: xsd:boolean, ResultRef: xsd:string, IsChip: xsd:boolean, ChipID: xsd:long, ChipName: xsd:string, DbType: xsd:string, DbField: xsd:string, Ownership: xsd:int, GetMapped: xsd:boolean, CreateContainer: xsd:boolean, ContainerName: xsd:string, ContainerType: xsd:int, SaveToFolder: xsd:boolean, FolderID: xsd:long, Literals: {string: xsd:string[]}, Literals_size: xsd:int, IDs: {long: xsd:long[]}, IDs_size: xsd:int, ContainerURN: xsd:string, ContainerDescription: xsd:string)
+     ns0:MappingToolResult(ContainerID: xsd:long, MappedEntities: {MappedEntityInfo: ns0:MappedEntityInfo[]}, MappedEntities_size: xsd:int)
+     ns0:MedscanInfoExtractionParams(PathwayName: xsd:string, Organism: xsd:string, Loc: xsd:int, Query: xsd:string, MaxNum: xsd:int, FileID: xsd:long)
+     ns0:NetworkImportParams(FileID: xsd:long, Source: xsd:string, Ownership: xsd:int, FileFormat: xsd:int, CategorizeIntoSubfolders: xsd:boolean, DontUpdateExistingRelations: xsd:boolean, DontUpdateExistingObjectsByURN: xsd:boolean, DontImportExistingPathwaysByName: xsd:boolean, LinkOnlyDocumentLikeObjects: xsd:boolean, FolderID: xsd:long, LinkToFolder: xsd:int, ContainersMerging: xsd:int, PathwayID: xsd:long)
+     ns0:ObjStatus(ObjId: xsd:long, Status: xsd:int)
+     ns0:ObjectAttachment(UserId: xsd:long, ObjId: xsd:long, Type: xsd:int, Attachment: xsd:base64Binary, RelatedEntityId: xsd:long)
+     ns0:ObjectEffectivePermissions(ObjId: xsd:long, UserId: xsd:long, OwnerId: xsd:long, Permissions: {int: xsd:int[]}, Permissions_Size: xsd:int)
+     ns0:ObjectProperty(ObjId: xsd:long, PropId: xsd:long, PropSet: xsd:int, PropValues: {string: xsd:string[]}, PropValues_size: xsd:int)
+     ns0:ObjectRef(Id: xsd:long, ObjClassId: xsd:int, URN: xsd:string, ObjTypeId: xsd:long, OwnerId: xsd:long)
+     ns0:ObjectType(Id: xsd:long, Name: xsd:string, DisplayName: xsd:string, ObjClassId: xsd:int, Synonyms: {string: xsd:string[]}, Synonyms_size: xsd:int)
+     ns0:ObjectTypeStat(Id: xsd:long, Count: xsd:int)
+     ns0:OperationStatus(OperationId: xsd:long, State: xsd:int, Error: xsd:int, Status: xsd:string, ResultId: xsd:long)
+     ns0:Preferences(UserId: xsd:long, Key: xsd:string, Data: xsd:base64Binary)
+     ns0:PropAssoc(Id: xsd:long, ObjTypeId: xsd:long, PropId: xsd:long)
+     ns0:PropValue(PropId: xsd:long, PropValues: {string: xsd:string[]}, PropValues_size: xsd:int)
+     ns0:PropertyDefinition(Id: xsd:long, Name: xsd:string, DisplayName: xsd:string, Type: xsd:int, IsMultiple: xsd:boolean, IsReadOnly: xsd:boolean, IsSearchable: xsd:boolean, DictFolderId: xsd:long, IsHidden: xsd:boolean, IsSortable: xsd:boolean, IsVirtual: xsd:boolean)
+     ns0:PropertyRef(Id: xsd:long)
+     ns0:RelatedObjects(ObjId: xsd:long, RelType: xsd:int, RelatedObjIds: {long: xsd:long[]}, RelatedObjIds_size: xsd:int)
+     ns0:Result(Completed: xsd:boolean, ResultRef: xsd:string, ResultSize: xsd:int, PageSize: xsd:int, ResultPos: xsd:int, Objects: {ObjectRef: ns0:ObjectRef[]}, Objects_size: xsd:int, Properties: {ObjectProperty: ns0:ObjectProperty[]}, Properties_size: xsd:int, Links: {Link: ns0:Link[]}, Links_size: xsd:int, RelatedObjs: {RelatedObjects: ns0:RelatedObjects[]}, RelatedObjs_size: xsd:int, AdditionalColumns: {ResultAdditionalColumn: ns0:ResultAdditionalColumn[]}, AdditionalColumns_size: xsd:int, RefPos: xsd:int, RefCount: xsd:int)
+     ns0:ResultAdditionalColumn(ObjId: xsd:long, Index: xsd:int, Value: xsd:string, Name: xsd:string)
+     ns0:ResultColumnDescription(DataType: xsd:int, Titie: xsd:string, PropID: xsd:long, Index: xsd:int, Sortable: xsd:boolean)
+     ns0:ResultDescription(OperationName: xsd:string, Description: xsd:string, HitCount: xsd:int, ObjClassId: xsd:int, ObjTypeId: xsd:long, AdditionalColumns: {ResultColumnDescription: ns0:ResultColumnDescription[]}, AdditionalColumns_size: xsd:int, ResultRef: xsd:string)
+     ns0:ResultParam(CreateResult: xsd:boolean, ResultRef: xsd:string, Objects: {ObjectRef: ns0:ObjectRef[]}, Objects_size: xsd:int, ResultPos: xsd:int, MaxPageSize: xsd:int, GetObjects: xsd:boolean, GetProperties: xsd:boolean, PropertyList: {PropertyRef: ns0:PropertyRef[]}, PropertyList_Size: xsd:int, GetLinks: xsd:boolean, GetParents: xsd:boolean, GetMembers: xsd:boolean, GetAddlCol: xsd:boolean, RefLimit: xsd:int, SortColumn: xsd:int, SortDescending: xsd:boolean, SortPropId: xsd:long, AddlAttrs: {string: xsd:string[]}, AddlAttrs_Size: xsd:int, ApplySourceFilter: xsd:boolean)
+     ns0:SampleDefinition(Name: xsd:string, Type: xsd:int, Subtype: xsd:int, Calculated: xsd:boolean, Attributes: {string: xsd:string[]}, Attributes_size: xsd:int, hasPValue: xsd:boolean, OriginalIndex: xsd:int)
+     ns0:SampleValue(Value: xsd:float, PValue: xsd:double)
+     ns0:SearchParam(mode: xsd:int, query: xsd:string, useMatchCase: xsd:boolean, filterList: {Filter: ns0:Filter[]}, filterList_size: xsd:int, sortProperty: ns0:PropertyRef, sortDescending: xsd:boolean)
+     ns0:SearchToolParameters(Query: xsd:string, SearchType: xsd:int)
+     ns0:TrnEntry(ID: xsd:string)
+     ns0:User(Id: xsd:long, Name: xsd:string, FullName: xsd:string, Role_Admin: xsd:boolean, Role_Editor: xsd:boolean, Role_Manager: xsd:boolean, Role_User: xsd:boolean, Roles: {string: xsd:string[]}, Roles_size: xsd:int)
+
+Bindings:
+     Soap11Binding: {urn:CSputnikService}SputnikServiceSoapBinding
+
+Service: SputnikService
+     Port: SputnikServiceSoap (Soap11Binding: {urn:CSputnikService}SputnikServiceSoapBinding)
+         Operations:
+            AddDictValue(DictFolderId: xsd:long, Value: xsd:string) -> return: xsd:long
+            AddLink(link: ns0:Link) -> return: xsd:long
+            AnnotateWithExperiment(ExperimentId: xsd:long, SampleNum: xsd:int, ContainerId: xsd:long, ObjectIds: {long: xsd:long[]}) -> return: ns0:Result
+            AppendFile(FileID: xsd:long, Data: xsd:base64Binary) -> return: xsd:long
+            AssociatePropertyWithObjectType(PropId: xsd:long, ObjTypeID: xsd:long) -> 
+            CheckMigratedDocuments(params: ns0:CheckMigratedDocumentsParameters) -> status: ns0:OperationStatus
+            CopyObject(ID: xsd:long, URN: xsd:string) -> NewID: xsd:long
+            CopyObject2(ID: xsd:long, OwnerID: xsd:long, URN: xsd:string) -> NewID: xsd:long
+            CreateObject(object: ns0:ObjectRef, Props: {ObjectProperty: ns0:ObjectProperty[]}) -> return: xsd:long
+            CreateObjectEx(object: ns0:ObjectRef, Props: {ObjectProperty: ns0:ObjectProperty[]}, Temp: xsd:boolean) -> return: xsd:long
+            DeleteObject(object: ns0:ObjectRef) -> 
+            DeletePropertyDefinition(PropId: xsd:long) -> 
+            FindOrCreateObjectType(objectType: ns0:ObjectType) -> return: xsd:long
+            FindOrCreateProperty(propertyDefinition: ns0:PropertyDefinition) -> return: ns0:PropertyDefinition
+            FindRelationsEx(Set1: ns0:ResultParam, Set2: ns0:ResultParam) -> return: ns0:Result
+            FolderCopy(FolderID: xsd:long, DstFolderID: xsd:long, NewName: xsd:string) -> NewFolderID: xsd:long
+            FolderCreate(ParentFolderID: xsd:long, FolderName: xsd:string) -> return: ns0:Folder
+            FolderDelete(FolderID: xsd:long) -> 
+            FolderGetObjects(FolderID: xsd:long, Param: ns0:ResultParam) -> return: ns0:Result
+            FolderGetRawData(FolderID: xsd:long, ObjTypeId: xsd:long, Limit: xsd:int) -> Attachments: {ObjectAttachment: ns0:ObjectAttachment[]}
+            FolderLinkObject(FolderID: xsd:long, ObjectID: xsd:long) -> 
+            FolderLinkObjectEx(FolderID: xsd:long, ObjectID: xsd:long, Symbolic: xsd:boolean) -> 
+            FolderMove(FolderID: xsd:long, DstFolderID: xsd:long) -> 
+            FolderRename(FolderID: xsd:long, NewName: xsd:string) -> 
+            FolderUnlinkAll(FolderID: xsd:long) -> 
+            FolderUnlinkObject(FolderID: xsd:long, ObjectID: xsd:long) -> 
+            FolderUnlinkObjectEx(FolderID: xsd:long, ObjectID: xsd:long) -> return: xsd:boolean
+            GetADSTree() -> Folders: {Folder: ns0:Folder[]}
+            GetAllObjectsOfType(ObjectTypeId: xsd:long, Param: ns0:ResultParam) -> return: ns0:Result
+            GetAllPropAssoc() -> PropAssocs: {PropAssoc: ns0:PropAssoc[]}
+            GetBatchCommitToolResult(OperationId: xsd:long) -> result: ns0:BatchCommitToolResult
+            GetBatchPreprocessorToolResult(OperationId: xsd:long) -> result: ns0:BatchPreprocessorToolResult
+            GetBuildNetworkResult(OperationId: xsd:long) -> result: ns0:BuildNetworkResult
+            GetCheckMigratedDocumentsResult(OperationId: xsd:long) -> result: ns0:CheckMigratedDocumentsResult
+            GetCopyFolderToolResult(OperationId: xsd:long) -> result: ns0:CopyFolderToolResult
+            GetCurrentUser() -> return: ns0:User
+            GetDictFolder(DictFolderID: xsd:long) -> return: ns0:DictFolder
+            GetDictFolders(Start: xsd:int, Count: xsd:int) -> DictFolders: {DictFolder: ns0:DictFolder[]}
+            GetExperiment(ExperimentID: xsd:long) -> return: ns0:Experiment
+            GetExperimentMappingToolResult(OperationId: xsd:long) -> result: ns0:ExperimentMappingToolResult
+            GetExperimentRowAttributes(ExperimentID: xsd:long, EntityAttrIDs: {long: xsd:long[]}, RowNum: xsd:int, RowCount: xsd:int) -> Attributes: {ExperimentRowAttributes: ns0:ExperimentRowAttributes[]}
+            GetExperimentValues(ExperimentID: xsd:long, SampleNum: xsd:int, RowNum: xsd:int, RowCount: xsd:int) -> Values: {SampleValue: ns0:SampleValue[]}
+            GetExperimentValuesMask(ExperimentID: xsd:long, SampleNum: xsd:int, RowNum: xsd:int, RowCount: xsd:int) -> Masks: {int: xsd:byte[]}
+            GetExperimentValuesMask2(ExperimentID: xsd:long, SampleNum: xsd:int, SampleCount: xsd:int) -> Masks: {base64Binary: xsd:base64Binary[]}
+            GetFindRelevantNetworksResult(OperationId: xsd:long) -> result: ns0:FindRelevantNetworksResult
+            GetFolders(FolderIDs: {long: xsd:long[]}) -> Folders: {Folder: ns0:Folder[]}
+            GetFoldersTree(FolderID: xsd:long) -> Folders: {Folder: ns0:Folder[]}
+            GetGroups() -> Groups: {Group: ns0:Group[]}
+            GetLink(LinkID: xsd:long) -> return: ns0:Link
+            GetMappingToolResult(OperationId: xsd:long) -> result: ns0:MappingToolResult
+            GetMedscanInfoExtractionResult(OperationId: xsd:long) -> return: xsd:long
+            GetMembers(ComplexObjectRef: ns0:ObjectRef, param: ns0:ResultParam) -> return: ns0:Result
+            GetNetworkImportResult(OperationId: xsd:long) -> 
+            GetObjectAttachment(ObjectId: xsd:long, Type: xsd:int, RelatedEntityId: xsd:long) -> return: ns0:ObjectAttachment
+            GetObjectEffectivePermissions(ObjectID: xsd:long) -> return: ns0:ObjectEffectivePermissions
+            GetObjectTypeStat(ObjClassId: xsd:int, onlyPrivate: xsd:boolean) -> Stat: {ObjectTypeStat: ns0:ObjectTypeStat[]}
+            GetObjectTypes() -> ObjectTypes: {ObjectType: ns0:ObjectType[]}
+            GetOperationStatus(OperationId: xsd:long) -> status: ns0:OperationStatus
+            GetPreferences(UserId: xsd:long, Key: xsd:string) -> return: ns0:Preferences
+            GetPropAssoc(ObjTypeId: xsd:long) -> PropAssocs: {PropAssoc: ns0:PropAssoc[]}
+            GetPropDictFolders(ObjTypeId: xsd:long) -> DictFolders: {DictFolder: ns0:DictFolder[]}
+            GetPropertyDefinitions() -> PropertyDefinitions: {PropertyDefinition: ns0:PropertyDefinition[]}
+            GetPropertyDefinitions2(PropIDs: {long: xsd:long[]}) -> PropertyDefinitions: {PropertyDefinition: ns0:PropertyDefinition[]}
+            GetReferences(ObjectId: xsd:long, RefPos: xsd:int, RefLimit: xsd:int) -> return: ns0:Result
+            GetRelatedObjects(object: ns0:ObjectRef, rel_type: xsd:int, param: ns0:ResultParam) -> return: ns0:Result
+            GetServerInfo() -> return: xsd:string
+            GetSessionId() -> return: xsd:string
+            GetUserFolder(UserID: xsd:long) -> UserFolderID: xsd:long
+            GetUsers() -> Users: {User: ns0:User[]}
+            GoodByeWorld() -> 
+            HelloWorld(bstrInput: xsd:string) -> return: xsd:string
+            IsTempId(ID: xsd:long) -> return: xsd:boolean
+            LocateOrCreate(locatorProperties: ns0:LocatorProperties, Mode: xsd:int) -> return: ns0:LocateOrCreateRelationResult
+            LocateOrCreateRelation(controlProps: ns0:ControlProps, Mode: xsd:int) -> return: ns0:LocateOrCreateRelationResult
+            MoveObject(ID: xsd:long, FolderID: xsd:long, DstFolderID: xsd:long) -> 
+            NotifyVCFImportCompleted(folderId: xsd:long, fileName: xsd:string) -> message: xsd:string, success: xsd:boolean
+            OQLSearch(oql_expression: xsd:string, result_param: ns0:ResultParam) -> return: ns0:Result
+            ObjectGetFolder(ObjectID: xsd:long) -> return: xsd:long
+            PersistTempObject(tempId: xsd:long, folderId: xsd:long) -> return: xsd:long
+            PublishObjects(ObjIDs: {long: xsd:long[]}) -> Statuses: {ObjStatus: ns0:ObjStatus[]}
+            PutExperiment(experiment: ns0:Experiment) -> return: xsd:long
+            PutExperimentRowAttributes(ExperimentID: xsd:long, RowNum: xsd:int, RowCount: xsd:int, Attributes: {ExperimentRowAttributes: ns0:ExperimentRowAttributes[]}) -> 
+            PutExperimentValues(ExperimentID: xsd:long, SampleNum: xsd:int, RowNum: xsd:int, RowCount: xsd:int, Values: {SampleValue: ns0:SampleValue[]}) -> 
+            PutExperimentValuesMask(ExperimentID: xsd:long, SampleNum: xsd:int, RowNum: xsd:int, RowCount: xsd:int, Masks: {int: xsd:byte[]}) -> 
+            PutExperimentValuesMask2(ExperimentID: xsd:long, SampleNum: xsd:int, SampleCount: xsd:int, Masks: {base64Binary: xsd:base64Binary[]}) -> 
+            ReleaseOperation(OperationId: xsd:long) -> 
+            ReleaseOperationAndResult(OperationId: xsd:long) -> 
+            RemovePreferences(UserId: xsd:long, Key: xsd:string) -> 
+            ReplaceMembership(ObjID_old: xsd:long, ObjID_new: xsd:long) -> 
+            ResultGetData(Param: ns0:ResultParam) -> return: ns0:Result
+            ResultGetDescription(ResultId: xsd:long) -> Description: ns0:ResultDescription
+            ResultRelease(ResultRef: xsd:string) -> 
+            SavePreferences(Pref: ns0:Preferences) -> 
+            Search(search_param: ns0:SearchParam, result_param: ns0:ResultParam) -> return: ns0:Result
+            SetObjectAttachment(Attachment: ns0:ObjectAttachment) -> 
+            StartAnalyzeGeneList(params: ns0:AnalyzeGeneListParameters) -> status: ns0:OperationStatus
+            StartBatchCommitTool(params: ns0:BatchCommitToolParameters) -> status: ns0:OperationStatus
+            StartBatchPreprocessorTool(params: ns0:BatchPreprocessorToolParameters) -> status: ns0:OperationStatus
+            StartBuildNetwork(params: ns0:BuildNetworkParams) -> status: ns0:OperationStatus
+            StartCopyFolderTool(params: ns0:CopyFolderParameters) -> status: ns0:OperationStatus
+            StartExperimentMappingTool(params: ns0:ExperimentMappingToolParameters) -> status: ns0:OperationStatus
+            StartFindRelevantNetworks(params: ns0:FindRelevantNetworksParams) -> status: ns0:OperationStatus
+            StartFindSubNetworksTool(params: ns0:FindSubNetworksParameters) -> status: ns0:OperationStatus
+            StartGenerateRelevantNetworks(params: ns0:GenRelNetsParameters) -> status: ns0:OperationStatus
+            StartMappingTool(params: ns0:MappingToolParameters) -> status: ns0:OperationStatus
+            StartMedscanInfoExtraction(params: ns0:MedscanInfoExtractionParams) -> status: ns0:OperationStatus
+            StartNetworkImport(params: ns0:NetworkImportParams) -> status: ns0:OperationStatus
+            StartSearchTool(params: ns0:SearchToolParameters) -> status: ns0:OperationStatus
+            StartUploadFile() -> return: xsd:long
+            UpdateLink(link: ns0:Link) -> 
+            UpdateMembers(ObjectID: xsd:long, RemoveIDs: {long: xsd:long[]}, AddIDs: {long: xsd:long[]}) -> 
+            UpdateObject(ObjectID: xsd:long, RemoveProps: {ObjectProperty: ns0:ObjectProperty[]}, NewProps: {ObjectProperty: ns0:ObjectProperty[]}, ChangedProps: {ObjectProperty: ns0:ObjectProperty[]}, AddMembers: {long: xsd:long[]}, RemovedMembers: {long: xsd:long[]}) -> 
+            UpdateObject2(ObjectID: xsd:long, OwnerID: xsd:long, RemoveProps: {ObjectProperty: ns0:ObjectProperty[]}, NewProps: {ObjectProperty: ns0:ObjectProperty[]}, ChangedProps: {ObjectProperty: ns0:ObjectProperty[]}, AddMembers: {long: xsd:long[]}, RemovedMembers: {long: xsd:long[]}) -> 
+
