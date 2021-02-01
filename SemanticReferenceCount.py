@@ -9,7 +9,7 @@ from ElsevierAPI import networx as PSnx
 
 LazyIdDict = dict()
 def AddSemanticRefCount(EntityPandas:pd.DataFrame, LinkToEntityName:str,LinkToEntityIDs:list):
-    Entities = list(EntityPandas.index)
+    Entities = set(EntityPandas.index)
     NewColumnName = "RefCount to "+ LinkToEntityName
     EntityPandas.insert(len(EntityPandas.columns), NewColumnName, 0)
     
