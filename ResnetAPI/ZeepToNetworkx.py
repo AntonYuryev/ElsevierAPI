@@ -415,17 +415,10 @@ class PSNetworx(PSAPI.DataModel):
         return articleIDscounter
 
     def SemanticRefCount(self, node1PropValues:list, node1PropTypes:list, node1ObjTypes:list, node2PropValues:list, node2PropTypes:list, node2ObjTypes:list):
-        OQLqueryNode1 = OQL.GetEntitiesByProps(node1PropValues, node1PropTypes, node1ObjTypes)
-        OQLqueryNode2 = OQL.GetEntitiesByProps(node2PropValues, node2PropTypes, node2ObjTypes)
-        OQLqueryNode1childs = OQL.GetChildEntities(node1PropValues, node1PropTypes, node1ObjTypes)
-        OQLqueryNode2childs = OQL.GetChildEntities(node2PropValues, node2PropTypes, node2ObjTypes)
-
-        node1ids = self.__GetObjIdsByOQL(OQLqueryNode1)
-        node1ids.update(self.__GetObjIdsByOQL(OQLqueryNode1childs))
+        node1ids = self.GetObjIdsByProps(node1PropValues,node1PropTypes,node1ObjTypes)
         articleIDscounter = set()
         if len(node1ids) > 0:
-            node2ids = self.__GetObjIdsByOQL(OQLqueryNode2)
-            node2ids.update(self.__GetObjIdsByOQL(OQLqueryNode2childs))
+            node2ids = self.GetObjIdsByProps(node2PropValues,node2PropTypes,node2ObjTypes)
             if len(node2ids) > 0:
                 articleIDscounter = self.SemanticRefCountByIds(node1ids, node2ids)
 
@@ -551,7 +544,7 @@ class PSNetworx(PSAPI.DataModel):
             newPSRelations = self.LoadGraph(ZeepRelations, ZeepObjects)
             return newPSRelations
 
-    def ConnectEntities(self,PropertyValues1:list,SearchByProperties1:list,EntityTypes1:list,PropertyValues2:list,SearchByProperties2:list,EntityTypes2:list, ConnectByRelationTypes=[],REL_PROPS=[], ENTITY_PROPS=[]):
+    def ConnectEntities(self,PropertyValues1:list,SearchByProperties1:list,EntityTypes1:list,PropertyValues2:list,SearchByProperties2:list,EntityTypes2:list, REL_PROPS:list, ConnectByRelationTypes=[],ENTITY_PROPS=[]):
         OQLquery = OQL.ConnectEntities(PropertyValues1,SearchByProperties1,EntityTypes1,PropertyValues2,SearchByProperties2,EntityTypes2, ConnectByRelationTypes)
         ZeepRelations = self.GetData(OQLquery, REL_PROPS)
         if type(ZeepRelations) != type(None):
@@ -678,4 +671,3 @@ class PSNetworx(PSAPI.DataModel):
                     try: prop[newPropertyName] = prop.pop(oldPropertyName)
                     except KeyError: continue
                 continue
-
