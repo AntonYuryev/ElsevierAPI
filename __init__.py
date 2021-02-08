@@ -8,9 +8,9 @@ con_file.close()
 
 DBcaller = PSzeepAPI.DataModel(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
 if type(DBcaller) != type(None):
-    print ('Connected to Pathway Studio server:\n %s' % APIconfig['ResnetURL'])
+    print ('Connected to Resnet API server:\n %s' % APIconfig['ResnetURL'])
 else:
-    print ('Cannot connect to Pathway Studio server:\n %s' % APIconfig['ResnetURL'])
+    print ('Cannot connect to Resnet API server:\n %s' % APIconfig['ResnetURL'])
 
 networx = ZeeptoNX.PSNetworx(DBcaller)
 
