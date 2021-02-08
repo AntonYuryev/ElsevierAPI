@@ -1,0 +1,12 @@
+{
+	"ELSapikey": "obtain@https://dev.elsevier.com",
+	"insttoken": "obtain@https://dev.elsevier.com",
+	"ETMapikey": "obtain@hhttps://demo.elseviertextmining.com",
+	"PSuserName": "obtain@https://www.elsevier.com/solutions/professional-services",
+	"PSpassword": "obtain@https://www.elsevier.com/solutions/professional-services",
+	"ResnetURL":"http://mammal-profservices.pathwaystudio.com/services/SputnikServiceSoap?WSDL",
+	"ReaxysAPIkey":"obtain@https://www.elsevier.com/solutions/reaxys/contact-sales",
+	"ReaxysUsername":"obtain@https://www.elsevier.com/solutions/reaxys/contact-sales",
+	"ReaxysPassowrd":"obtain@https://www.elsevier.com/solutions/reaxys/contact-sales",
+	"ReaxysURL":"https://www.reaxys.com/reaxys/api"
+}
