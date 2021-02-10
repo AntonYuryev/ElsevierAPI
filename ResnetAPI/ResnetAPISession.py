@@ -25,14 +25,14 @@ class APISession(zNX.PSNetworx):
         self.DumpFiles = [] #array of filenames used for dumping the graph data. First element is used for dumping data obtained ProcessOQL
         #other files are used to dump additional data obtained by overridden AddGraph
     
-    def InitAPISession (self):
+    def __InitAPISession (self):
         ZeepRelations,(self.ResultRef, self.ResultSize, self.ResultPos)  = self.InitSession(self.GOQLquery, self.PageSize, self.relProps)
         if type(ZeepRelations) != type(None):
             objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
             ZeepObjects = self.GetObjProperties(objIdlist, self.entProps)
             return self.LoadGraph(ZeepRelations, ZeepObjects)
     
-    def GetNextPage(self):
+    def __GetNextPage(self):
         if self.ResultPos < self.ResultSize:
             ZeepRelations, self.ResultPos  = self.GetNextSessionPage(self.ResultRef, self.ResultPos, self.PageSize, self.ResultSize, self.relProps)
             if type(ZeepRelations) != type(None):
@@ -72,7 +72,7 @@ class APISession(zNX.PSNetworx):
             self.FlashDumpFiles()
 
         OQLGraph = nx.MultiDiGraph()
-        pageGraph = self.InitAPISession()
+        pageGraph = self.__InitAPISession()
         iterCount = math.ceil(self.ResultSize/self.PageSize)
         refCount = 0
         print("GOQL query:\n%s\n returns %d relations.\n It will be processed in %d iterations" % (self.GOQLquery, self.ResultSize, iterCount))
@@ -89,7 +89,7 @@ class APISession(zNX.PSNetworx):
                 
             start_time = time.time()
             OQLGraph = nx.compose(OQLGraph, pageGraph)
-            pageGraph = self.GetNextPage()
+            pageGraph = self.__GetNextPage()
 
         print("%d relations supported by %d references are in file: %s" % (self.ResultSize,refCount,self.DumpFiles[0]))
         self.ResultRef = ''
