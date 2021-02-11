@@ -74,13 +74,11 @@ if __name__ == "__main__":
     if len(args.search_by_properties) > 0:
         SearchByProperty = args.search_by_properties.split(",")
 
-
     SearchPathwaysInFolders = args.pathway_folder.split(",")
     
     start_time = time.time()
     EntityPandas = pd.read_csv(EntityListFile, delimiter='\t', header=0, index_col=0)
     IdToFolderPathwayDict, IdtoMembers = FindPathways(SearchPathwaysInFolders, EntityPandas)
-
 
     HallmarkColumnName = 'Hallmarks'
     PathwayColumnName = 'Pathways'
