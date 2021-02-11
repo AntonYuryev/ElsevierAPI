@@ -1,8 +1,6 @@
 from ElsevierAPI.ResnetAPI import PathwayStudioZeepAPI as PSAPI
 from ElsevierAPI.ResnetAPI import PathwayStudioGOQL as OQL
 import json
-import itertools
-import sys
 import networkx as nx
 
 class PSObject(dict): # {PropId:[values], PropName:[values]}
@@ -579,7 +577,7 @@ class PSNetworx(PSAPI.DataModel):
             splitter = new_splitter
             s += 1
 
-        return PPIskeeper   
+        return PPIskeeper
 
     def GetObjectsFromFolders(self, FolderIds:list, PropertyNames=['Name']):
         IDtoEntity = dict()
@@ -598,7 +596,7 @@ class PSNetworx(PSAPI.DataModel):
 
         if len(OnlyEntities) > 0:
             FilterPropName, FilterValues = OQL.GetSearchStrings(WithProperties,OnlyEntities)
-            GOQLquery = GOQLquery + 'AND ('+ FilterPropName +') = (' + FilterValues + ')'
+            GOQLquery = GOQLquery + ' AND ('+ FilterPropName +') = (' + FilterValues + ')'
         
         ZeepObjects = self.GetData(GOQLquery, RetreiveProperties=['Name'], getLinks=False)
         IDtoEntity = dict()
