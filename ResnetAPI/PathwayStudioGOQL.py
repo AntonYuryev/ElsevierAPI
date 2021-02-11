@@ -14,13 +14,14 @@ def GetSearchStrings(PropertyNameList:list, PropValuesList:list):
     needQuotes = set([' ','-','/','(',')'])
     some_values_have_quotes = False
     Values = str()
-    for v in range (0,len(PropValuesList)):
-        val = str(PropValuesList[v])
+    unique_values_list = set(PropValuesList)
+    for v in unique_values_list:
+        val = str(v)
         val = val.replace('\'', '')
         if 1 in [c in val for c in needQuotes]:
             val = '\'' + val + '\''
             some_values_have_quotes = True
-        Values = Values + val + ',' 
+        Values = Values + val + ','
     Values = Values[:len(Values)-1]
 
     PropertyNames  = str()
