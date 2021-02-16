@@ -8,60 +8,79 @@ from ElsevierAPI import networx as PSnx
 
 
 LazyIdDict = dict()
-def AddSemanticRefCount(EntityPandas:pd.DataFrame, LinkToEntityName:str,LinkToEntityIDs:list):
+def AddSemanticRefCount(EntityPandas:pd.DataFrame,LinkToConceptName:str,LinkToConceptIDs:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[]):
     Entities = set(EntityPandas.index)
-    NewColumnName = "RefCount to "+ LinkToEntityName
-    EntityPandas.insert(len(EntityPandas.columns), NewColumnName, 0)
-    
+    NewColumnName = "RefCount to "+ LinkToConceptName
+    EntityPandas.insert(len(EntityPandas.columns),NewColumnName,0)
+
+    effecStr = ','.join(RelEffect)
+    if len(effecStr) == 0: effecStr = 'all'
+    relTypeStr = ','.join(ConnectByRelTypes)
+    if len(relTypeStr) == 0: relTypeStr = 'all'
+    dirStr = ':'
+    if len(RelDirection) > 0: dirStr = RelDirection
+
     for Entity in Entities:
         if Entity in LazyIdDict.keys():
             protids = LazyIdDict[Entity]
         else:
-           protids = PSnx.GetObjIdsByProps(PropertyValues=[Entity],SearchByProperties=['Name'])
-                        
+            protids = PSnx.GetObjIdsByProps(PropertyValues=[Entity],SearchByProperties=['Name'])
+
         if len(protids) == 0:
-                protids = PSnx.GetObjIdsByProps(PropertyValues=[Entity], SearchByProperties=['Alias'])
+            protids = PSnx.GetObjIdsByProps(PropertyValues=[Entity], SearchByProperties=['Alias'])
                             
         LazyIdDict[Entity] = protids
         if len(protids) == 0:
-            print('No protein with name or alias %s found in the database' % Entity)
+            print('No entity with name or alias %s found in the database' % Entity)
                     
         refCount = set()
-        if len(protids) > 0 : refCount = PSnx.SemanticRefCountByIds(LinkToEntityIDs, protids)
-                        
-        if len(refCount) > 0 : print("pair %s:%s has %d semantic references" % (Entity,LinkToEntityName,len(refCount)))          
-        else : print("No relations found for pair %s:%s" % (Entity,LinkToEntityName))
+        if len(protids) > 0 : refCount = PSnx.SemanticRefCountByIds(LinkToConceptIDs,list(protids),ConnectByRelTypes,RelEffect,RelDirection,REL_PROPS=REL_PROPS)
+
+        if len(refCount) > 0 : print("pair %s:%s has %d semantic references for %s relations with %s effects" % (Entity,LinkToConceptName,len(refCount),relTypeStr,effecStr))          
+        else: print("No relations found for pair %s:%s" % (Entity,LinkToConceptName))
 
         EntityPandas.at[Entity,NewColumnName] = len(refCount)
 
 
 if __name__ == "__main__":
     EntityListFile = str()
-    LinkToEntities = list()
+    LinkToConcepts = pd.DataFrame()
     instructions = '''
     infile - single column file with entity names. 
     If you want to use identifiers other than names enter appropriate Propeprty types into SearchByProperties list.
+    infile_header - specifies if infile has a header.  Defaults to no header. Use "Y" if headeer is present 
 
     targets - comma-separated list of concept that must be semantically linked to entities from infile
     target_type - objectTypeName for targets
+    targets_file - tab-delimted file. Header: SearchPropertyName<>Effect<>RelationType<>Direction
+        SearchPropertyName - Required. concepts that must be semantically linked to entities from infile. Header value defines what properties must be used to retreive concepts. Defaults to 'Name,Alias'
+        Effect - optional.  The effect sign   ebetween entity in infile and concept in targets_file. Defaults to any.
+        RelationType - optional. The type of relation between entity in infile and concept in targets_file. Defaults to any.
+        Direction - optional. The direction of relation between entity in infile and concept in targets_file. Allowed values: '>', '<',''. Defaults to any.
 
     pathways - comma-separated list of pathway names which must be semantically linked to entities from infile.
-    Semantic reference count to a pathway is calculated as sum of reference count of semantic links to every pathay component
+    Semantic reference count to a pathway is calculated as sum of reference count of semantic links to every pathway component
     '''
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,epilog=textwrap.dedent(instructions))
     parser.add_argument('-i', '--infile', type=str, required=True)
-    parser.add_argument('-t', '--targets', type=str, required=True)
-    parser.add_argument('-o', '--target_type', type=str,default="")
-    parser.add_argument('-p', '--pathways', type=str, default="")
+    parser.add_argument('-H', '--infile_header',  default='')
+    parser.add_argument('-t', '--targets', default='')
+    parser.add_argument('-o', '--target_type', type=str,default='')
+    parser.add_argument('-f', '--targets_file', type=str,default='')
+    parser.add_argument('-d', '--dump_references', default='')
+    parser.add_argument('-p', '--pathways', type=str, default='')
     parser.add_argument('--debug', action="store_true")
     args = parser.parse_args()
 
     if len(args.infile) > 0:
         EntityListFile = args.infile #full path to tab-delimted file with drugs in the first column
- 
+
+    if len(args.targets_file) > 0:
+        LinkToConcepts = pd.read_csv(args.targets_file, delimiter='\t', header=0, index_col=0)
+    
     if len(args.targets) > 0:
-        LinkToEntities = args.targets.split(',')
-        
+        LinkToConcepts.append(args.targets.split(','))
+    
     if len(args.target_type) > 0: #Script will work faster if you specify what list of object types in your input Entity list
         QueryObjType = args.target_type
         QueryObjType = QueryObjType.split(',')
@@ -71,11 +90,18 @@ if __name__ == "__main__":
 
     if len(args.pathways) == 0:
         print('No pathways for linking with entities in \"%s\" were specified' % (EntityListFile))
+
+    if args.dump_references in ['True', 'true','yes','y','Y']:
+        REL_PROP = ['Name','Sentence','PubYear','Title', 'PMID', 'DOI']
+    else:
+        REL_PROP = []
     
 
     #If you want to use identifiers other than names enter appropriate Propeprty types into SearchByProperties list
     #consult with "Resnet Entities&Properties.txt" for the list of available identifier for nodes in the knowledge graph
-    EntityPandas = pd.read_csv(EntityListFile, delimiter='\t', header=0, index_col=0)
+    has_header = None
+    if args.infile_header in ['True','true','yes','y','Y']: has_header = 0
+    EntityPandas = pd.read_csv(EntityListFile,delimiter='\t',header=has_header,index_col=0)
 
     if len(args.pathways) > 0:
         LinkToPathways = args.pathways
@@ -95,16 +121,39 @@ if __name__ == "__main__":
         print("Entities in file %s were linked to %s pathway in %s" % (EntityListFile, PathwayName, ElsevierAPI.ExecutionTime(start_time)))
 
 
-    if len(args.targets) > 0:
+    if len(LinkToConcepts) > 0:
         start_time = time.time()
-        for LinkToEntityName in LinkToEntities:
-            EntityIDs = PSnx.GetObjIdsByProps(PropertyValues=[LinkToEntityName],SearchByProperties=['Name','Alias'],OnlyObjectTypes=QueryObjType)
+        if type(LinkToConcepts.index.name) == type(None):
+            SearchConceptBy=['Name','Alias']
+        else:
+            SearchConceptBy=LinkToConcepts.index.name.split(',')
+
+        EntityPandas.index.name = ','.join(SearchConceptBy)
+            
+        for LinkToConcept in LinkToConcepts.index:
+            ConceptIDs = PSnx.GetObjIdsByProps(PropertyValues=[LinkToConcept],SearchByProperties=SearchConceptBy,OnlyObjectTypes=QueryObjType)
  
-            if len(EntityIDs) == 0: print ('No entity for %s found in the database' % LinkToEntityName)
-            else: AddSemanticRefCount(EntityPandas,LinkToEntityName,EntityIDs)
+            if len(ConceptIDs) == 0: print ('No entity %s found in database' % LinkToConcept)
+            else:
+                effect = []
+                reltypes = []
+                dir = ''
+                if 'Effect' in LinkToConcepts.columns:
+                    ef = LinkToConcepts.at[LinkToConcept,'Effect']
+                    if pd.notna(ef): effect = str(ef).split(',')
 
-        print("Entities in file %s were linked to %s in %s" % (EntityListFile, LinkToEntityName, ElsevierAPI.ExecutionTime(start_time) ))
+                if 'RelationType' in LinkToConcepts.columns:
+                    reltypes = str(LinkToConcepts.at[LinkToConcept,'RelationType']).split(',')
 
+                if 'Direction' in LinkToConcepts.columns:
+                    dir = str(LinkToConcepts.at[LinkToConcept,'RelationType'])
+
+                AddSemanticRefCount(EntityPandas,LinkToConcept,list(ConceptIDs),reltypes,effect,dir,REL_PROP)
+
+        print("Entities in file %s were linked to %s in %s" % (EntityListFile, LinkToConcept, ElsevierAPI.ExecutionTime(start_time) ))
 
     foutName = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount.tsv'
     EntityPandas.to_csv(foutName, sep='\t', index=True)
+    if args.dump_references in ['True', 'true','yes','y','Y']:
+        fOut = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv'
+        PSnx.PrintReferenceView(fOut, REL_PROP,entPropNames=[])
