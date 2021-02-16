@@ -403,14 +403,28 @@ class PSNetworx(PSAPI.DataModel):
 
         return articleIDcounter
 
-    def SemanticRefCountByIds(self, node1ids:list, node2ids:list):
-        articleIDscounter =set()
-        OQLConnectquery = OQL.ConnectEntitiesIds(node1ids, node2ids)   
-        FoundRelations = self.LoadGraphFromOQL(OQLConnectquery,REL_PROPS=['Name','RelationNumberOfReferences','DOI','PMID','Source'], ENTITY_PROPS=['Name'])
-        if type(FoundRelations) != type(None):
-            for regulatorID, targetID, rel in FoundRelations.edges.data('relation'):
-                articleIDscounter.update(rel.ReferencesCounter())
+
+    def SemanticRefCountByIds(self,node1ids:list,node2ids:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[],ENTITY_PROPS=[]):
+        relProps = set(REL_PROPS)
+        relProps.update(['Name','RelationNumberOfReferences','DOI','PMID','Source'])
+        entProps = set(ENTITY_PROPS)
+        entProps.update(['Name'])
+
+        articleIDscounter = set()
+        step_size = 1000
+        for n1 in range (0, len(node1ids), step_size):
+            n1end = min(n1+step_size,len(node1ids))
+            n1ids = node1ids[n1:n1end]
+            for n2 in range (0, len(node2ids), step_size):
+                n2end = min(n1+step_size,len(node2ids))
+                n2ids = node2ids[n2:n2end]
+                OQLConnectquery = OQL.ConnectEntitiesIds(n1ids,n2ids,ConnectByRelTypes,RelEffect,RelDirection)   
+                FoundRelations = self.LoadGraphFromOQL(OQLConnectquery,REL_PROPS=list(relProps),ENTITY_PROPS=list(entProps))
+                if type(FoundRelations) != type(None):
+                    for regulatorID, targetID, rel in FoundRelations.edges.data('relation'):
+                        articleIDscounter.update(rel.ReferencesCounter())
         return articleIDscounter
+
 
     def SemanticRefCount(self, node1PropValues:list, node1PropTypes:list, node1ObjTypes:list, node2PropValues:list, node2PropTypes:list, node2ObjTypes:list):
         node1ids = self.GetObjIdsByProps(node1PropValues,node1PropTypes,node1ObjTypes)
@@ -474,13 +488,15 @@ class PSNetworx(PSAPI.DataModel):
                 for rel in relList:#dump by relList
                     f.write(rel.TripleToStr(PropNames))
 
-    def PrintReferenceView(self, fileOut, relPropNames, entPropNames, G:nx.MultiDiGraph=None, access_mode='w', printHeader=True, RefNumPrintLimit=0):
+    def PrintReferenceView(self, fileOut, relPropNames, entPropNames=[], G:nx.MultiDiGraph=None, access_mode='w', printHeader=True, RefNumPrintLimit=0):
+        rel_props = relPropNames
+        rel_props.append('Name') if 'Name' not in rel_props else rel_props
+
         if type(G) == type(None): G = self.Graph
         with open(fileOut, access_mode, encoding='utf-8') as f:
             if printHeader == True:
-                header = '\t'.join(relPropNames)
-                header = header +'\t' + "Regulators Id"
-                header = header +'\t' + "Targets Id"
+                header = '\t'.join(rel_props)
+                header = header +'\t'+"Regulators Id"+'\t' + "Targets Id"
                 targetPropheader = [''] * len(entPropNames)
                 regPropheader = [''] * len(entPropNames) 
 
@@ -488,26 +504,28 @@ class PSNetworx(PSAPI.DataModel):
                     regPropheader[i] = 'Regulator:'+entPropNames[i]
                     targetPropheader[i] = 'Target:'+entPropNames[i]
 
-                header = '\t'.join(regPropheader) + '\t' + header 
-                header = header +'\t' + '\t'.join(targetPropheader)
+                if len(regPropheader) > 0:
+                    header = '\t'.join(regPropheader) + '\t' + header
+                    header = header +'\t' + '\t'.join(targetPropheader)
+                    
                 f.write(header + '\n')
 
             if len(entPropNames) == 0:
                 for regulatorID, targetID, rel in G.edges.data('relation'):
-                    ReferenceViewTriple = rel.TripleToStr(relPropNames)
+                    ReferenceViewTriple = rel.TripleToStr(rel_props)
                     f.write(ReferenceViewTriple)
             else:
                 for regulatorID, targetID, rel in G.edges.data('relation'):
                     reg = self.GetNode(regulatorID, G)
                     targ = self.GetNode(targetID, G)
-                    regProps = reg.DataToStr(entPropNames)
-                    targProps = targ.DataToStr(entPropNames)
-                    relProps = rel.TripleToStr(relPropNames, return_dict=True, RefNumPrintLimit=RefNumPrintLimit)
+                    regPropsStr = reg.DataToStr(entPropNames)
+                    targPropsStr = targ.DataToStr(entPropNames)
+                    relPropsStrList = rel.TripleToStr(rel_props, return_dict=True, RefNumPrintLimit=RefNumPrintLimit)
 
                     ReferenceTableView = str()
-                    for row in relProps.values():
-                        rowStr = '\t'.join(row)
-                        ReferenceTableView = ReferenceTableView+regProps[0:len(regProps)-1]+'\t'+rowStr+'\t'+targProps
+                    for row in relPropsStrList.values():
+                        refStr = '\t'.join(row)
+                        ReferenceTableView = ReferenceTableView+regPropsStr[0:len(regPropsStr)-1]+'\t'+refStr+'\t'+targPropsStr
                     f.write(ReferenceTableView)
 
     
