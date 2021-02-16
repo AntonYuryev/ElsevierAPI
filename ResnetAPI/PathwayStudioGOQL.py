@@ -11,7 +11,7 @@ def joinWithQuotes(separator, NameList:list):
 
 
 def GetSearchStrings(PropertyNameList:list, PropValuesList:list):
-    needQuotes = set([' ','-','/','(',')'])
+    needQuotes = set([' ','-','/','(',')','[',']'])
     some_values_have_quotes = False
     Values = str()
     unique_values_list = set(PropValuesList)
@@ -164,7 +164,8 @@ def ConnectEntities(PropertyValues1:list,SearchByProperties1:list,EntityTypes1:l
     else:
         return "SELECT Relation WHERE NeighborOf ("+Entity1Query+") AND NeighborOf ("+Entity2Query+")"
  
-def ConnectEntitiesIds(idlist1:list, idlist2:list, ConnectByRelationTypes:list=[]):
+
+def ConnectEntitiesIds(idlist1:list,idlist2:list,ConnectByRelTypes=[],RelEffect=[],RelDirection=''):
     stringIdlist1 = [str(integer) for integer in idlist1]
     stringIdlist2 = [str(integer) for integer in idlist2]
     Id1s = ",".join(stringIdlist1)
@@ -173,12 +174,23 @@ def ConnectEntitiesIds(idlist1:list, idlist2:list, ConnectByRelationTypes:list=[
     Entity1Query = EntityQuery.format(idlist=Id1s)
     Entity2Query = EntityQuery.format(idlist=Id2s)
 
-    if len(ConnectByRelationTypes) > 0:
-        relTypeList = joinWithQuotes(',', ConnectByRelationTypes)
-        OQLquery = "SELECT Relation WHERE id = ("+relTypeList+") AND NeighborOf ("+Entity1Query+") AND NeighborOf ("+Entity2Query+")"
-        return OQLquery
-    else:
-        return "SELECT Relation WHERE NeighborOf ("+Entity1Query+") AND NeighborOf ("+Entity2Query+")"
+    OQLquery = "SELECT Relation WHERE NeighborOf {dir1} ("+Entity1Query+") AND NeighborOf {dir2} ("+Entity2Query+")"
+    if len(ConnectByRelTypes) > 0:
+        relTypeList = joinWithQuotes(',', ConnectByRelTypes)
+        OQLquery = OQLquery + ' AND objectType = ('+relTypeList+')'
+        
+    if len(RelEffect) > 0:
+        effectList = joinWithQuotes(',', RelEffect)
+        OQLquery = OQLquery + ' AND Effect = ('+effectList+')'
+
+    if RelDirection == '<':
+        OQLquery = OQLquery.format(dir1='upstream',dir2='downstream')
+    elif RelDirection == '>':
+        OQLquery = OQLquery.format(dir1='downstream',dir2='upstream')
+    else: OQLquery = OQLquery.format(dir1='',dir2='')
+    
+    return OQLquery
+
 
 
 def FindTargets(RegulatorsIDs:list, TargetIDs:list, RelationTypeList:list=[]):
