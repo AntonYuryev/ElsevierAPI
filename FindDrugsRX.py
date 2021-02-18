@@ -9,9 +9,6 @@ import textwrap
 
 
 start_time = time.time()
-#to view allowed Property and ObjectType names for use in OQL queries:
-#ZeepPSAPI.DBcaller.DumpPropNames("D:\\Python\\PS_API\\DBPropertyTypes.txt")
-#ZeepPSAPI.DBcaller.DumpObjNames("D:\\Python\\PS_API\\DBObjectTypes.txt")
 def GOQLtoFindDrugs(TargetIds:list, TargetType = 'Protein', drugEffect=['negative']):
     if TargetType == 'Protein':
         return OQL.GetDrugs(ForTargetsIDlist=TargetIds)
