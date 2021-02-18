@@ -7,9 +7,26 @@ import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI import networx as PSnx
 
 
-LazyIdDict = dict()
-def AddSemanticRefCount(EntityPandas:pd.DataFrame,LinkToConceptName:str,LinkToConceptIDs:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[]):
+def GenerateEntityIDdict(EntityPandas:pd.DataFrame, SearchByProp=['Name','Alias']):
+    PandaEntityToID = dict()
     Entities = set(EntityPandas.index)
+    for Entity in Entities:
+        for p in SearchByProp:
+            protids = PSnx.GetObjIdsByProps(PropertyValues=[Entity],SearchByProperties=[p])
+            if len(protids) > 0: 
+                PandaEntityToID[Entity] = protids
+                break
+        
+        if Entity not in PandaEntityToID.keys():
+            print('Cannot find %s entity in the database' % Entity)
+    
+    print ('Found %d from %d entities in the database', (len(PandaEntityToID), len(Entities)))
+    return PandaEntityToID
+
+
+def AddSemanticRefCount(EntityPandas:pd.DataFrame,PandaEntityToID:dict,LinkToConceptName:str,LinkToConceptIDs:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[], ENT_PROPS=[]):
+    Entities = set(EntityPandas.index)
+    TotalEntotyCount = len(Entities)
     NewColumnName = "RefCount to "+ LinkToConceptName
     EntityPandas.insert(len(EntityPandas.columns),NewColumnName,0)
 
@@ -20,23 +37,15 @@ def AddSemanticRefCount(EntityPandas:pd.DataFrame,LinkToConceptName:str,LinkToCo
     dirStr = ':'
     if len(RelDirection) > 0: dirStr = RelDirection
 
+    entityCounter = 0
     for Entity in Entities:
-        if Entity in LazyIdDict.keys():
-            protids = LazyIdDict[Entity]
-        else:
-            protids = PSnx.GetObjIdsByProps(PropertyValues=[Entity],SearchByProperties=['Name'])
+        entityCounter += 1
+        try: protids = PandaEntityToID[Entity]
+        except KeyError: continue
 
-        if len(protids) == 0:
-            protids = PSnx.GetObjIdsByProps(PropertyValues=[Entity], SearchByProperties=['Alias'])
-                            
-        LazyIdDict[Entity] = protids
-        if len(protids) == 0:
-            print('No entity with name or alias %s found in the database' % Entity)
-                    
-        refCount = set()
-        if len(protids) > 0 : refCount = PSnx.SemanticRefCountByIds(LinkToConceptIDs,list(protids),ConnectByRelTypes,RelEffect,RelDirection,REL_PROPS=REL_PROPS)
-
-        if len(refCount) > 0 : print("pair %s:%s has %d semantic references for %s relations with %s effects" % (Entity,LinkToConceptName,len(refCount),relTypeStr,effecStr))          
+        refCount = PSnx.SemanticRefCountByIds(LinkToConceptIDs,list(protids),ConnectByRelTypes,RelEffect,RelDirection,REL_PROPS=REL_PROPS, ENTITY_PROPS=ENT_PROPS)
+        if len(refCount) > 0 : 
+            print("%d out of %d pair %s:%s has %d semantic references for %s relations with %s effects" % (entityCounter, TotalEntotyCount, Entity,LinkToConceptName,len(refCount),relTypeStr,effecStr))
         else: print("No relations found for pair %s:%s" % (Entity,LinkToConceptName))
 
         EntityPandas.at[Entity,NewColumnName] = len(refCount)
@@ -68,6 +77,7 @@ if __name__ == "__main__":
     parser.add_argument('-o', '--target_type', type=str,default='')
     parser.add_argument('-f', '--targets_file', type=str,default='')
     parser.add_argument('-d', '--dump_references', default='')
+    parser.add_argument('-a', '--resnet_retreive_props', type=str)
     parser.add_argument('-p', '--pathways', type=str, default='')
     parser.add_argument('--debug', action="store_true")
     args = parser.parse_args()
@@ -93,6 +103,7 @@ if __name__ == "__main__":
 
     if args.dump_references in ['True', 'true','yes','y','Y']:
         REL_PROP = ['Name','Sentence','PubYear','Title', 'PMID', 'DOI']
+        ENT_PROPS = args.resnet_retreive_props.split(',')
     else:
         REL_PROP = []
     
@@ -102,6 +113,8 @@ if __name__ == "__main__":
     has_header = None
     if args.infile_header in ['True','true','yes','y','Y']: has_header = 0
     EntityPandas = pd.read_csv(EntityListFile,delimiter='\t',header=has_header,index_col=0)
+    print ('Findings %d entities in %d rows of %s in the database' % (len(set(EntityPandas.index)),len(EntityPandas),EntityListFile))
+    PandaEntityToID = GenerateEntityIDdict(EntityPandas)
 
     if len(args.pathways) > 0:
         LinkToPathways = args.pathways
@@ -129,6 +142,7 @@ if __name__ == "__main__":
             SearchConceptBy=LinkToConcepts.index.name.split(',')
 
         EntityPandas.index.name = ','.join(SearchConceptBy)
+        
             
         for LinkToConcept in LinkToConcepts.index:
             ConceptIDs = PSnx.GetObjIdsByProps(PropertyValues=[LinkToConcept],SearchByProperties=SearchConceptBy,OnlyObjectTypes=QueryObjType)
@@ -148,7 +162,7 @@ if __name__ == "__main__":
                 if 'Direction' in LinkToConcepts.columns:
                     dir = str(LinkToConcepts.at[LinkToConcept,'RelationType'])
 
-                AddSemanticRefCount(EntityPandas,LinkToConcept,list(ConceptIDs),reltypes,effect,dir,REL_PROP)
+                AddSemanticRefCount(EntityPandas,PandaEntityToID, LinkToConcept,list(ConceptIDs),reltypes,effect,dir,REL_PROP,ENT_PROPS)
 
         print("Entities in file %s were linked to %s in %s" % (EntityListFile, LinkToConcept, ElsevierAPI.ExecutionTime(start_time) ))
 
@@ -156,4 +170,4 @@ if __name__ == "__main__":
     EntityPandas.to_csv(foutName, sep='\t', index=True)
     if args.dump_references in ['True', 'true','yes','y','Y']:
         fOut = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv'
-        PSnx.PrintReferenceView(fOut, REL_PROP,entPropNames=[])
+        PSnx.PrintReferenceView(fOut,REL_PROP,entPropNames=REL_PROP)
