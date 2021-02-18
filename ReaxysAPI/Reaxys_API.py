@@ -406,7 +406,7 @@ class Reaxys_API:
             self._start_new_session(APIconfig['ReaxysURL'],APIconfig['ReaxysUsername'],APIconfig['ReaxysPassowrd'],APIconfig['ReaxysAPIkey'])
         
 
-    def GetCompoundProps(self,APIconfig:dict,CompoundIDs:list,CompIdType:str,Fields:list,retrive_options=''):
+    def GetCompoundProps(self,CompoundIDs:list,CompIdType:str,Fields:list,retrive_options=''):
         FieldToValues = dict()
         #move next line to the function that calls this one for speed
         #self.OpenSession()
