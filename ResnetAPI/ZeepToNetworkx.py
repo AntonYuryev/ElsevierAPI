@@ -369,7 +369,7 @@ class PSNetworx(PSAPI.DataModel):
             ChildIDs = self.__GetObjIdsByOQL(QueryOntology)
             TargetIDs.update(ChildIDs)
         return TargetIDs
-        
+
     def __GetPSObjectsByOQL(self, OQLquery:str, RetreiveProperties:list=['Name']):
         if 'Name' not in RetreiveProperties: RetreiveProperties.append('Name')
         ZeepEntities = self.GetData(OQLquery,RetreiveProperties=RetreiveProperties, getLinks=False)
@@ -416,7 +416,7 @@ class PSNetworx(PSAPI.DataModel):
             n1end = min(n1+step_size,len(node1ids))
             n1ids = node1ids[n1:n1end]
             for n2 in range (0, len(node2ids), step_size):
-                n2end = min(n1+step_size,len(node2ids))
+                n2end = min(n2+step_size,len(node2ids))
                 n2ids = node2ids[n2:n2end]
                 OQLConnectquery = OQL.ConnectEntitiesIds(n1ids,n2ids,ConnectByRelTypes,RelEffect,RelDirection)   
                 FoundRelations = self.LoadGraphFromOQL(OQLConnectquery,REL_PROPS=list(relProps),ENTITY_PROPS=list(entProps))
