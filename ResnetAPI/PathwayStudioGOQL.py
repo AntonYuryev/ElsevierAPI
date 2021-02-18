@@ -11,7 +11,7 @@ def joinWithQuotes(separator, NameList:list):
 
 
 def GetSearchStrings(PropertyNameList:list, PropValuesList:list):
-    needQuotes = set([' ','-','/','(',')','[',']'])
+    needQuotes = set([' ','-','/','(',')','[',']','+', '#'])
     some_values_have_quotes = False
     Values = str()
     unique_values_list = set(PropValuesList)
