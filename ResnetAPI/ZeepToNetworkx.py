@@ -7,13 +7,9 @@ class PSObject(dict): # {PropId:[values], PropName:[values]}
     def __init__(self, ZeepObjectRef):
         zeepIter = iter(ZeepObjectRef)
         while True:
-            try:
-                item = next(zeepIter)
-            except StopIteration:
-                break  #Iterator exhausted: stop the loop
-            else:
-                self[item]= [ZeepObjectRef[item]]
-
+            try: item = next(zeepIter)
+            except StopIteration: break  #Iterator exhausted: stop the loop
+            else: self[item]= [ZeepObjectRef[item]]
                 
     def __hash__(self):
         return self['Id'][0]
@@ -229,8 +225,12 @@ class PSRelation(PSObject):
             return RegTargetPairs
         else:
             import itertools
-            objIdList = [x[0] for x in self.Nodes['Regulators']]
-            return itertools.combinations(objIdList, 2)
+            try:
+                objIdList = [x[0] for x in self.Nodes['Regulators']]
+                return itertools.combinations(objIdList, 2)
+            except KeyError: 
+                objIdList = [x[0] for x in self.Nodes['Targets']]
+                return itertools.combinations(objIdList, 2)
 
     def GetEntitiesIDs(self):
         nodeIds = [x[0] for x in self.Nodes['Regulators']] + [x[0] for x in self.Nodes['Targets']]
@@ -687,3 +687,4 @@ class PSNetworx(PSAPI.DataModel):
                     try: prop[newPropertyName] = prop.pop(oldPropertyName)
                     except KeyError: continue
                 continue
+
