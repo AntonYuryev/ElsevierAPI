@@ -13,6 +13,7 @@ class APISession(zNX.PSNetworx):
     IsOn1stpage = True
     relProps = ['Name', 'RelationNumberOfReferences']
     entProps = ['Name']
+    DumpFiles = ['ResnetAPIsessionDump.tsv']
 
     def __init__(self, GOQLquery, net:zNX.PSNetworx):
         self.SOAPclient = net.SOAPclient
@@ -43,7 +44,7 @@ class APISession(zNX.PSNetworx):
             return None
 
     def AddGraph(self, newGraph:nx.MultiDiGraph):
-        return #placeholder to derive child class from APISession (see DiseaseNetwork(APISession))
+        pass #placeholder to derive child class from APISession (see DiseaseNetwork(APISession))
 
     def FlashDumpFiles(self):
         for fname in self.DumpFiles:
@@ -112,6 +113,7 @@ class APISession(zNX.PSNetworx):
         self.TabData(foutName, PPIrelationsGraph)
         print("PPI network with %d relations was retreived in %s ---" % (PPIrelationsGraph.size(), execution_time))
         return PPIrelationsGraph
+
 
 
 class DiseaseNetwork(APISession):
