@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     targets - comma-separated list of concept that must be semantically linked to entities from infile
     target_type - objectTypeName for targets
-    targets_file - tab-delimted file. Header: SearchPropertyName<>Effect<>RelationType<>Direction
+    targets_file - tab-delimted file, alternative input for --targets option. Header: SearchPropertyName<>Effect<>RelationType<>Direction
         SearchPropertyName - Required. concepts that must be semantically linked to entities from infile. Header value defines what properties must be used to retreive concepts. Defaults to 'Name,Alias'
         Effect - optional.  The effect sign   ebetween entity in infile and concept in targets_file. Defaults to any.
         RelationType - optional. The type of relation between entity in infile and concept in targets_file. Defaults to any.
@@ -69,6 +69,11 @@ if __name__ == "__main__":
 
     pathways - comma-separated list of pathway names which must be semantically linked to entities from infile.
     Semantic reference count to a pathway is calculated as sum of reference count of semantic links to every pathway component
+
+    Output: tab-delimted file with rows from infile annotated with semantic reference count between entity (row) and semantic concept (column)  
+
+    dump_references - create additional dump file containing all references supporitng relations found by the script
+    resnet_retreive_props - list of entity properties to include into dump file
     '''
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,epilog=textwrap.dedent(instructions))
     parser.add_argument('-i', '--infile', type=str, required=True)
@@ -170,4 +175,4 @@ if __name__ == "__main__":
     EntityPandas.to_csv(foutName, sep='\t', index=True)
     if args.dump_references in ['True', 'true','yes','y','Y']:
         fOut = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv'
-        PSnx.PrintReferenceView(fOut,REL_PROP,entPropNames=REL_PROP)
+        PSnx.PrintReferenceView(fOut,relPropNames=REL_PROP,entPropNames=ENT_PROPS)
