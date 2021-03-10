@@ -115,9 +115,9 @@ if __name__ == "__main__":
 
     #If you want to use identifiers other than names enter appropriate Propeprty types into SearchByProperties list
     #consult with "Resnet Entities&Properties.txt" for the list of available identifier for nodes in the knowledge graph
-    has_header = None
-    if args.infile_header in ['True','true','yes','y','Y']: has_header = 0
-    EntityPandas = pd.read_csv(EntityListFile,delimiter='\t',header=has_header,index_col=0)
+    header_pos = None
+    if args.infile_header in ['True','true','yes','y','Y']: header_pos = 0
+    EntityPandas = pd.read_csv(EntityListFile,delimiter='\t',header=header_pos,index_col=0)
     print ('Findings %d entities in %d rows of %s in the database' % (len(set(EntityPandas.index)),len(EntityPandas),EntityListFile))
     PandaEntityToID = GenerateEntityIDdict(EntityPandas)
 
