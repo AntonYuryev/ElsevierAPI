@@ -1,0 +1,39 @@
+Name	Effect
+inflammation	negative
+oxidative stress	negative
+melanogenesis	
+skin barrier	
+inflammatory responce	negative
+anti-inflammatory cytokine	positive
+inflammatory status	negative
+inflammatory lesion	negative
+dermatitis	negative
+keratitis	negative
+oxidative stress index	negative
+lipid peroxidation	negative
+fatty acid oxidation	negative
+protein amino acid oxidation	negative
+DNA damage	negative
+DNA fragmentation	negative
+DNA protection	positive
+DNA repair	positive
+genotoxicity	
+phototoxicity	
+skin sensitization	
+skin irritation	
+ocular irritation	
+embryotoxicity	
+hepatotoxicity	
+endocrine toxicity	
+spermatogenesis	negative
+testicular toxicity	positive
+testicular degeneration	positive
+testicular dysfunction	positive
+testicular regression	positive
+reproductive process	negative
+reproductive developmental process	negative
+reproductive sterility	positive
+reproductive toxicitiy	positive
+gonadotoxicity	positive
+female infertility	positive
+male infertility	positive

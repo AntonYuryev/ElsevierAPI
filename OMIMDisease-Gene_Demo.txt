@@ -1,0 +1,18 @@
+﻿Long chain 3-hydroxyacyl-CoA dehydrogenase deficiency	HADHA
+3-methylcrotonyl-CoA carboxylase deficiency	MCCC1
+3-methylcrotonyl-CoA carboxylase deficiency	MCCC2
+3C syndrome	WASHC5
+3C syndrome	CCDC22
+6-pyruvoyl-tetrahydropterin synthase deficiency	PTS
+Abetalipoproteinemia	MTTP
+Achondroplasia	FGFR3
+Blue cone monochromatism	OPN1MW
+Blue cone monochromatism	OPN1LW
+Fatal infantile lactic acidosis with methylmalonic aciduria	SUCLG1
+3-hydroxy-3-methylglutaric aciduria	HMGCL
+Succinic semialdehyde dehydrogenase deficiency	ALDH5A1
+Argininosuccinic aciduria	ASL
+Fumaric aciduria	FH
+Glutaryl-CoA dehydrogenase deficiency	GCDH
+Mevalonic aciduria	MVK
+Hereditary orotic aciduria	UMPS
