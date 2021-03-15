@@ -4,4 +4,4 @@ Resnet is the biggest molecular biology knowledge graph in the world. ResnetAPI 
 To start using ResnetAPI library you need to obtain account on Pathway Studio server from https://www.elsevier.com/solutions/professional-services.<br/>
 To start using Reaxys API please contact https://www.elsevier.com/solutions/reaxys/contact-sales<br/>
 To start using Embase and Pharmapendium API please contact https://dev.elsevier.com.  API swaggers for PharmaPendium and Embase APIs are available from https://dev.elsevier.com/interactive.html.<br/>
-To start using Elsevier text-mining please contact https://demo.elseviertextmining.com<br/>
+To start using Elsevier text-mining API please contact https://demo.elseviertextmining.com<br/>
