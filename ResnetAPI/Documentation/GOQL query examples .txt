@@ -1,0 +1,318 @@
+--select druggable targets:
+SELECT Entity WHERE objectType = Protein AND Connected by (SELECT Relation WHERE objectType= GeneticChange) to (SELECT Entity WHERE objectType = GeneticVariant AND Connected by (SELECT Relation WHERE objectType= FunctionalAssociation) to (SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = 'Hearing loss concepts')))
+
+--select relations between entity in group and ontology
+SELECT Relation WHERE NeighborOf (SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = 'Genes with mapped RS')) AND NeighborOf (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE (Name,Alias)='central nervous system neoplasm') )
+
+--select GVs for all drugs:
+SELECT Relation WHERE NeighborOf (SELECT Entity WHERE objectType = 'Genetic Variant') AND NeighborOf (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name=drugs))
+
+--select proteins wih GVs linked to infection diseases
+SELECT Entity WHERE objectType = Protein AND NeighborOf (SELECT Relation WHERE objectType = 'GeneticChange' AND NeighborOf (SELECT Entity WHERE objectType = 'Genetic Variant' AND Connected by (SELECT Relation WHERE objectType= FunctionalAssociation) to (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='infection'))))
+
+--select GVs linked to disease class
+SELECT Entity WHERE objectType = 'Genetic Variant' AND Connected by (SELECT Relation WHERE objectType= FunctionalAssociation) to (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='kidney disease'))
+
+---select GVs for tumor suppressors
+SELECT Entity WHERE objectType = 'Genetic Variant' AND Connected by (SELECT Relation WHERE objectType= FunctionalAssociation) to (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='neoplasm')) AND Connected by (SELECT Relation WHERE objectType= GeneticChange) to (SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = 'cancerGeneList') AND Connected by (SELECT Relation WHERE objectType= Regulation AND Effect = negative) to (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='neoplasm')))
+
+Find similar pathways:
+SELECT Network WHERE ParentOf ( SELECT Entity where objectType = Protein AND Name = MCL1)  
+
+--select Ontology all brain regions
+SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='Hepatobiliary system neoplasm') 
+
+--finds proteins expressed in epidermis cell
+select Entity Connected by (SELECT Relation WHERE objectType=(CellExpression, MolTransport)) to (Select Entity Where Name='epidermis cell') AND objectType=(Protein, 'Functional Class','Complex')
+
+-- find drugs for two conditions:
+select Entity WHERE objectType = 'Small Molecule' AND Connected by (SELECT Relation WHERE objectType=Regulation AND Effect = negative) to (Select Entity Where Name='hypotension') AND Connected by (SELECT Relation WHERE objectType=Regulation AND Effect = negative) to (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='Hepatobiliary system neoplasm'))
+
+--find relation in pathway by sentence coocurence
+SELECT Relation where MemberOf ( SELECT Network WHERE objectType=Pathway AND Name = 'Drugs for SARS and MERS') AND Sentence LIKE '%chaperon%'
+
+--selects brain regions affected by ACHE
+select Relation WHERE NeighborOf (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='Brain') ) 
+AND NeighborOf (SELECT Entity WHERE objectType='Protein' AND "Name" = 'ACHE')
+
+
+--select relations for proteins involved in insulin resistance 
+select Relation where NeighborOf downstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
+AND NeighborOf upstream ( SELECT Entity WHERE (Name,Alias)='insulin resistance' )
+
+--select proteins involved in insulin resistance in skeletal muscles
+select Relation where NeighborOf downstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
+AND NeighborOf upstream ( SELECT Entity WHERE (Name,Alias)='insulin resistance' )
+AND ("CellType" LIKE 'myo%' OR "Organ" LIKE 'skeletal muscle%' OR "Tissue" LIKE '%muscle%')
+
+--2-step expand usptream from diseases towards proteins
+select Entity WHERE objectType=Protein AND HasNeighbors (
+select Relation NeighborOf upstream (
+select Entity WHERE objectType=Protein AND HasNeighbors (
+Select Relation WHERE NeighborOf upstream (SELECT Entity WHERE (Name,Alias)='phenylketonuria')))))
+
+
+--usptream expand from proteins neigboring disease in all directions
+select Entity WHERE objectType=Protein AND HasNeighbors (
+select Relation NeighborOf upstream (
+select Entity WHERE objectType=Protein AND HasNeighbors (
+Select Relation WHERE  HasNeighbors (SELECT Entity WHERE (Name,Alias)='phenylketonuria')))))
+
+--select FunctionalClassess physically interacting with MDM2
+Select Relation WHERE HasNeighbors((SELECT Entity WHERE objectType=Protein AND Name=MDM2),
+(SELECT Entity WHERE objectType='Functional Class'))
+AND objectType in (Binding,  DirectRegulation)
+
+--select disease biomarkers
+select Entity WHERE objectType=Protein AND HasNeighbors (
+Select Relation WHERE NeighborOf downstream (SELECT Entity WHERE (Name,Alias)='phenylketonuria') AND objectType in (Biomarker, QuantitativeChange))
+
+--select all proteins linked to disease 
+select Entity WHERE objectType in ('Protein', 'Complex', 'Functional Class') 
+AND HasNeighbors (Select Relation WHERE NeighborOf  
+(SELECT Entity WHERE objectType = Disease AND  ("Alias","Name") LIKE '%diabetes%' )
+)
+
+--selects Pharmapendium drugs 
+select Entity WHERE
+objectType='Small Molecule' AND NOT ( "PharmaPendium ID" = null )
+
+
+--find all protein-protein relations
+Select Relation WHERE HasNeighbors((SELECT Entity WHERE objectType=Protein),
+(SELECT Entity WHERE objectType=Protein))
+
+--select Entities linked to Experimental asthma and to Asthma by one reference
+select Entity WHERE HasNeighbors (
+Select Relation WHERE NeighborOf (SELECT Entity WHERE (Name,Alias)='Experimental asthma'))
+AND HasNeighbors (
+Select Relation WHERE NeighborOf (SELECT Entity WHERE (Name,Alias)='Asthma') AND "# of References" <2)
+
+--select Entities and Relations linked to Experimental asthma and to Asthma by one reference
+select Relation where NeighborOf (
+select Entity WHERE HasNeighbors (
+Select Relation WHERE NeighborOf (SELECT Entity WHERE (Name,Alias)='Experimental asthma'))
+AND HasNeighbors (
+Select Relation WHERE NeighborOf (SELECT Entity WHERE (Name,Alias)='Asthma') AND "# of References" <2) )
+and NeighborOf (SELECT Entity WHERE (Name,Alias) in ('Asthma', 'Experimental asthma'))
+
+
+--
+SELECT Relation WHERE HasNeighbors( 
+(SELECT Entity WHERE objectType=Protein AND Name=MDM2), 
+(SELECT Entity WHERE objectType = SmallMol AND !("CAS ID" is null) AND ("XLogP-AA" = '-1.7'))
+)
+
+
+--select MTOR phosphorylation targets
+select Relation where NeighborOf downstream ( 
+SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') AND Name = ('TORC1','TORC2','MTOR'))
+AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
+AND objectType='ProtModification'
+
+
+--select MTOR indirect phosphorylation targets
+select Relation where NeighborOf downstream (
+select Entity WHERE HasNeighbors (
+select Relation where NeighborOf downstream ( 
+SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') AND Name = ('TORC1','TORC2','MTOR'))
+AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
+AND objectType='ProtModification' and Effect = ('positive, null, 'unknown')))
+AND objectType='ProtModification' and Effect = ('positive, null, 'unknown')
+
+
+
+--select MTOR indirect targets with cohesive loops
+select Relation where NeighborOf upstream
+(select Entity WHERE HasNeighbors 
+(
+select Relation where NeighborOf downstream (
+select Entity WHERE HasNeighbors (
+select Relation where NeighborOf downstream ( 
+SELECT Entity WHERE Name = ('TORC1','TORC2','MTOR'))
+AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') 
+--AND MemberOf ( SELECT Entity WHERE objectType=Pathway AND Name = 'kinases targeted by mTOR')
+)
+AND objectType='ProtModification') )
+AND objectType='ProtModification'
+)
+AND HasNeighbors (
+select Relation where NeighborOf downstream (
+SELECT Entity WHERE Name = ('TORC1','TORC2','MTOR'))
+AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
+AND objectType='Regulation' 
+)
+)
+AND NeighborOf downstream
+( (SELECT Entity WHERE Name = ('TORC1','TORC2','MTOR')) and objectType='Regulation')
+OR
+(
+select Entity where NeighborOf upstream 
+(
+select Relation where NeighborOf downstream ( 
+SELECT Entity WHERE Name = ('TORC1','TORC2','MTOR'))
+AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein'))
+AND objectType='ProtModification'
+)
+)
+)
+)
+
+
+
+
+
+select Relation where NeighborOf downstream (SELECT Entity WHERE Name = ('TORC1','TORC2','MTOR'))
+AND NeighborOf upstream
+(select Entity WHERE HasNeighbors 
+(
+select Relation where NeighborOf downstream (
+select Entity WHERE HasNeighbors (
+select Relation where NeighborOf downstream ( 
+SELECT Entity WHERE Name = ('TORC1','TORC2','MTOR'))
+AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') 
+--AND MemberOf ( SELECT Entity WHERE objectType=Pathway AND Name = 'kinases targeted by mTOR')
+)
+AND objectType='ProtModification') )
+AND objectType='ProtModification'
+)
+AND HasNeighbors (
+select Relation where NeighborOf downstream (
+SELECT Entity WHERE Name = ('TORC1','TORC2','MTOR'))
+AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
+AND objectType='Regulation' 
+                 )
+)
+AND objectType='Regulation'
+
+
+--find side-effects of Carvedilol
+Select Relation where NeighborOf downstream (select Entity where Name = 'Carvedilol') 
+AND NeighborOf (select Entity where objectType = 'Disease') 
+AND (Effect = 'positive' OR Effect = null)
+AND objectType = 'Regulation'
+
+--selects inhibitors of protein kinases in pathways
+SELECT Relation WHERE
+NeighborOf downstream ( SELECT Entity WHERE objectType='Small Molecule' AND !("CAS ID" is null)
+AND MemberOf ( SELECT Network WHERE objectType=Pathway ))
+AND NeighborOf upstream ( SELECT Entity WHERE objectType=Protein
+AND AnnotatedBy recursive ( SELECT Group WHERE Name='Protein kinases' ) )
+AND objectType=DirectRegulation
+AND Effect = 'negative'
+
+-- select CNS disorders with at least one relations
+SELECT Entity WHERE objectType=Disease
+AND AnnotatedBy recursive ( SELECT Entity WHERE Name='central nervous system disease' )
+AND "Total Connectivity" > 0
+
+--select disease that have a link to Protein form a group 'List of CNS disorders'
+SELECT Entity WHERE objectType=Disease
+AND NeighborOf  (
+SELECT Relation WHERE NeighborOf  (select Entity WHERE objectType=Protein) 
+	AND NeighborOf  (SELECT Entity WHERE AnnotatedBy recursive ( SELECT Group WHERE Name='List of CNS disorders' )) 
+)
+
+--how many genes - disease modifiers are in PS?
+Select Entity where objectType = Protein and 
+NeighborOf  (SELECT Relation WHERE objectType= Regulation 
+AND NeighborOf  (SELECT Entity where  objectType = Disease)
+AND NeighborOf  (SELECT Entity where  objectType = Protein)
+)
+
+--how many genes - disease genetic modifiers are in PS? = 11,976
+Select Entity where objectType = Protein and 
+NeighborOf  (SELECT Relation WHERE objectType= GeneticChange 
+AND NeighborOf  (SELECT Entity where  objectType = Disease)
+AND NeighborOf  (SELECT Entity where  objectType = Protein)
+)
+
+--how many disease with known genetic modifiers are in PS? = 8,376 Ref>0; 2,717 Ref>10
+Select Entity where objectType = Disease and 
+NeighborOf  (SELECT Relation WHERE objectType= GeneticChange 
+AND NeighborOf  (SELECT Entity where  objectType = Disease)
+AND NeighborOf  (SELECT Entity where  objectType = Protein)
+AND "# of References" > 0
+)
+
+
+
+--finds links between anti-cancer drugs and mutations.  Also try: Sentence LIKE '%mutant%' OR  Sentence LIKE '%genetic variation%' OR  Sentence LIKE '%polymorphism%' OR  Sentence LIKE '%allele%'
+
+select Relation where NeighborOf downstream ( SELECT Entity WHERE objectType=('Small Molecule') )
+AND NeighborOf upstream ( SELECT Entity where  objectType = Disease AND AnnotatedBy recursive ( SELECT Group WHERE Name='Cancers') ) 
+AND (Sentence LIKE '%mutation%')
+AND Effect = 'negative'
+
+
+
+--finds somatic mutations in cancer
+SELECT Relation WHERE objectType= GeneticChange 
+AND NeighborOf  (SELECT Entity where  objectType = Disease AND AnnotatedBy recursive ( SELECT Group WHERE Name='Cancers') )
+AND "Sentence" LIKE '%somatic%'
+
+--finds inherited germline muations in cancer
+SELECT Relation WHERE objectType= GeneticChange 
+AND NeighborOf  (SELECT Entity where  objectType = Disease AND AnnotatedBy recursive ( SELECT Group WHERE Name='Cancers') )
+AND ("Sentence" LIKE '%germ%' OR "Sentence" LIKE '%heredet%' OR "Sentence" LIKE '%herit%')
+
+
+--selects proteins involved in mitochondrial funtion of beta-cells
+select Relation WHERE HasNeighbors (
+(select Entity WHERE  Name = ('type 1 diabetes','beta-cell function', 'insulin-secreting cell'), 
+(select Entity WHERE objectType=('Protein', 'Complex','Functional Class')) 
+AND "Sentence" LIKE '%mitochondria%')
+
+
+SELECT Relation WHERE objectType= GeneticChange 
+AND NeighborOf  (SELECT Entity where  objectType = Disease AND AnnotatedBy recursive ( SELECT Network WHERE Name='Cancers') )
+AND "Sentence" LIKE '%somatic%'
+
+
+---finds secreted proteins
+SELECT Entity where objectType=('Protein', 'Functional Class','Complex') AND Connected by (SELECT Relation WHERE objectType='MolTransport' AND Sentence LIKE '%secret%' ) to (SELECT Entity WHERE  objectType='Protein')
+
+SELECT Entity Connected by (SELECT Relation WHERE objectType=Regulation AND Effect=negative) to (SELECT Entity WHERE MemberOf ( SELECT Group WHERE Name='Tumor wants to Suppress') ) AND MemberOf ( SELECT Network WHERE Name='Melanoma secreted and cell surface molecules')
+
+SELECT Relation WHERE HasNeighbors ((SELECT Entity WHERE objectType=(Disease,Cell) AND AnnotatedBy recursive ( SELECT Network WHERE Name='Melanoma secreted and cell surface molecules')), (SELECT Entity WHERE objectType='Small molecule' AND Class='Endogenous compound')) AND objectType=CellExpression AND Mechanism=surface
+
+
+
+---selects relations from specific pathway observed in brain
+SELECT Relation WHERE MemberOf ( SELECT Network WHERE Name='Friedrich Ataxia proteins')
+AND Organ LIKE '%brain%'
+
+
+select Relation where NeighborOf ( SELECT Entity WHERE objectType='Protein' AND Name = 'CFTR')
+AND NeighborOf ( SELECT Entity WHERE (Name,Alias)='cystic fibrosis' )
+
+select Relation where NeighborOf ( SELECT Entity WHERE objectType='Protein' AND AnnotatedBy recursive ( SELECT Group WHERE Name='Cancers'))
+AND NeighborOf ( SELECT Entity WHERE objectType='Disease' AND AnnotatedBy recursive ( SELECT Group WHERE Name='Cancers'))
+
+---Find shortest path of lenth =2 between (CXCL8, CXCR1, CXCR2) and LIKE '%permeability') through Protein and Regulation
+SELECT Relation where NeighborOf (
+SELECT Entity WHERE objectType IN ('Complex','Functional Class','Protein') AND Connected by (SELECT Relation WHERE objectType = Regulation) to (Select Entity WHERE Name=(CXCL8, CXCR1, CXCR2))
+AND Connected by (SELECT Relation WHERE objectType = Regulation) to (Select Entity WHERE Name LIKE '%permeability') 
+AND Connected by (SELECT Relation WHERE objectType = Regulation) to (Select Entity WHERE Name=(CXCL8, CXCR1, CXCR2))
+)
+AND NeighborOf (Select Entity WHERE (Name=(CXCL8, CXCR1, CXCR2) OR Name LIKE '%permeability')  )  
+
+--selects druggable proteins
+SELECT Entity WHERE AnnotatedBy recursive ( SELECT Group WHERE Name=('Ligands', 'Receptors', 'enzyme', 'transporter'))
+
+
+
+
+
+SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='Brain')
+
+select Entity WHERE NeighborOf upstream (select Relation where "# of Total References" > 2 AND NeighborOf downstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') ) AND NeighborOf upstream (Select Entity WHERE MemberOf (select Group WHERE Name = 'Henkel targets')) )
+
+--selects all Natural product in PS Ontology
+select Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE URN='urn:agi-semconcept:natural%20products%20and%20their%20synthetic%20derivatives') ) 
+
+--selects proteins linked to all types of pulmonary fibrosis
+select Relation WHERE NeighborOf (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='pulmonary fibrosis') ) AND NeighborOf  WHERE (select Entity where objectType=Protein)
+
+--selects mebers of functional classes and subunits of complexes 
+SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship=('is-a', 'part-of') under (SELECT OntologicalNode WHERE Name='PI3K') 
