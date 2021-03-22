@@ -6,6 +6,8 @@ import ElsevierAPI
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI import networx as PSnx
 
+ReferenceViewNewColumn1 = 'Top list entity'
+ReferenceViewNewColumn2 = 'Top list concept'
 
 def GenerateEntityIDdict(EntityPandas:pd.DataFrame, SearchByProp=['Name','Alias']):
     PandaEntityToID = dict()
@@ -20,22 +22,21 @@ def GenerateEntityIDdict(EntityPandas:pd.DataFrame, SearchByProp=['Name','Alias'
         if Entity not in PandaEntityToID.keys():
             print('Cannot find %s entity in the database' % Entity)
     
-    print ('Found %d from %d entities in the database', (len(PandaEntityToID), len(Entities)))
+    print ('Found %d from %d entities in the database' % (len(PandaEntityToID), len(Entities)))
     return PandaEntityToID
 
 
-def AddSemanticRefCount(EntityPandas:pd.DataFrame,PandaEntityToID:dict,LinkToConceptName:str,LinkToConceptIDs:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[], ENT_PROPS=[]):
+def AddSemanticRefCount(tsv_out, EntityPandas:pd.DataFrame,PandaEntityToID:dict,LinkToConceptName:str,LinkToConceptIDs:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[], ENT_PROPS=[], refOut=''):
     Entities = set(EntityPandas.index)
-    TotalEntotyCount = len(Entities)
+    TotalEntityCount = len(Entities)
     NewColumnName = "RefCount to "+ LinkToConceptName
     EntityPandas.insert(len(EntityPandas.columns),NewColumnName,0)
 
     effecStr = ','.join(RelEffect)
     if len(effecStr) == 0: effecStr = 'all'
+
     relTypeStr = ','.join(ConnectByRelTypes)
     if len(relTypeStr) == 0: relTypeStr = 'all'
-    dirStr = ':'
-    if len(RelDirection) > 0: dirStr = RelDirection
 
     entityCounter = 0
     for Entity in Entities:
@@ -43,12 +44,22 @@ def AddSemanticRefCount(EntityPandas:pd.DataFrame,PandaEntityToID:dict,LinkToCon
         try: protids = PandaEntityToID[Entity]
         except KeyError: continue
 
-        refCount = PSnx.SemanticRefCountByIds(LinkToConceptIDs,list(protids),ConnectByRelTypes,RelEffect,RelDirection,REL_PROPS=REL_PROPS, ENTITY_PROPS=ENT_PROPS)
+        refCount, FoundRelations = PSnx.SemanticRefCountByIds(LinkToConceptIDs,list(protids),ConnectByRelTypes,RelEffect,RelDirection,REL_PROPS=REL_PROPS, ENTITY_PROPS=ENT_PROPS)
         if len(refCount) > 0 : 
-            print("%d out of %d pair %s:%s has %d semantic references for %s relations with %s effects" % (entityCounter, TotalEntotyCount, Entity,LinkToConceptName,len(refCount),relTypeStr,effecStr))
+            print("%d out of %d pair %s:%s has %d semantic references for %s relations with %s effects" % 
+            (entityCounter, TotalEntityCount, Entity,LinkToConceptName,len(refCount),relTypeStr,effecStr))
+
+            for regulatorID, targetID, rel in FoundRelations.edges.data('relation'):
+                rel[ReferenceViewNewColumn1] = [Entity]
+                rel[ReferenceViewNewColumn2] = [LinkToConceptName]   
         else: print("No relations found for pair %s:%s" % (Entity,LinkToConceptName))
 
         EntityPandas.at[Entity,NewColumnName] = len(refCount)
+
+    EntityPandas.to_csv(tsv_out, sep='\t', index=True)
+    if len(refOut) > 0:
+        RelPropsToPrint = [ReferenceViewNewColumn1] + REL_PROP + [ReferenceViewNewColumn2]
+        PSnx.PrintReferenceView(refOut,relPropNames=RelPropsToPrint,entPropNames=ENT_PROPS)
 
 
 if __name__ == "__main__":
@@ -141,15 +152,19 @@ if __name__ == "__main__":
 
     if len(LinkToConcepts) > 0:
         start_time = time.time()
-        if type(LinkToConcepts.index.name) == type(None):
-            SearchConceptBy=['Name','Alias']
-        else:
+        SearchConceptBy=['Name','Alias']
+        if type(LinkToConcepts.index.name) != type(None):
             SearchConceptBy=LinkToConcepts.index.name.split(',')
 
         EntityPandas.index.name = ','.join(SearchConceptBy)
-        
-            
-        for LinkToConcept in LinkToConcepts.index:
+        foutName = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount.tsv'
+
+        refOut =''
+        if args.dump_references in ['True', 'true','yes','y','Y']:
+            refOut = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv'
+
+        for conceptIdx in range(0, len(LinkToConcepts.index)):
+            LinkToConcept = LinkToConcepts.index[conceptIdx]
             ConceptIDs = PSnx.GetObjIdsByProps(PropertyValues=[LinkToConcept],SearchByProperties=SearchConceptBy,OnlyObjectTypes=QueryObjType)
  
             if len(ConceptIDs) == 0: print ('No entity %s found in database' % LinkToConcept)
@@ -162,17 +177,13 @@ if __name__ == "__main__":
                     if pd.notna(ef): effect = str(ef).split(',')
 
                 if 'RelationType' in LinkToConcepts.columns:
-                    reltypes = str(LinkToConcepts.at[LinkToConcept,'RelationType']).split(',')
+                    rel_t = LinkToConcepts.at[LinkToConcept,'RelationType']
+                    if pd.notna(rel_t): reltypes = str(rel_t).split(',')
 
                 if 'Direction' in LinkToConcepts.columns:
-                    dir = str(LinkToConcepts.at[LinkToConcept,'RelationType'])
+                    dr = LinkToConcepts.at[LinkToConcept,'Direction']
+                    if pd.notna(dr): dir = str(dr)
 
-                AddSemanticRefCount(EntityPandas,PandaEntityToID, LinkToConcept,list(ConceptIDs),reltypes,effect,dir,REL_PROP,ENT_PROPS)
+                AddSemanticRefCount(foutName,EntityPandas,PandaEntityToID,LinkToConcept,list(ConceptIDs),reltypes,effect,dir,REL_PROP,ENT_PROPS,refOut)
 
-        print("Entities in file %s were linked to %s in %s" % (EntityListFile, LinkToConcept, ElsevierAPI.ExecutionTime(start_time) ))
-
-    foutName = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount.tsv'
-    EntityPandas.to_csv(foutName, sep='\t', index=True)
-    if args.dump_references in ['True', 'true','yes','y','Y']:
-        fOut = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv'
-        PSnx.PrintReferenceView(fOut,relPropNames=REL_PROP,entPropNames=ENT_PROPS)
+        print("Entities in file %s were linked to %d concepts in %s" % (EntityListFile, conceptIdx, ElsevierAPI.ExecutionTime(start_time) ))
