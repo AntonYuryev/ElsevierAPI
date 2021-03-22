@@ -31,7 +31,7 @@ class APISession(zNX.PSNetworx):
         if type(ZeepRelations) != type(None):
             objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
             ZeepObjects = self.GetObjProperties(objIdlist, self.entProps)
-            return self.LoadGraph(ZeepRelations, ZeepObjects)
+            return self.__load_graph(ZeepRelations, ZeepObjects)
     
     def __GetNextPage(self):
         if self.ResultPos < self.ResultSize:
@@ -39,7 +39,7 @@ class APISession(zNX.PSNetworx):
             if type(ZeepRelations) != type(None):
                 objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
                 ZeepObjects = self.GetObjProperties(objIdlist, self.entProps)
-                return self.LoadGraph(ZeepRelations, ZeepObjects)
+                return self.__load_graph(ZeepRelations, ZeepObjects)
         else:
             return None
 
