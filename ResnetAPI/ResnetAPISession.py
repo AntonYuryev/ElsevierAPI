@@ -27,7 +27,7 @@ class APISession(zNX.PSNetworx):
         #other files are used to dump additional data obtained by overridden AddGraph
     
     def __InitAPISession (self):
-        ZeepRelations,(self.ResultRef, self.ResultSize, self.ResultPos)  = self.InitSession(self.GOQLquery, self.PageSize, self.relProps)
+        ZeepRelations,(self.ResultRef, self.ResultSize, self.ResultPos) = self.InitSession(self.GOQLquery, self.PageSize, self.relProps)
         if type(ZeepRelations) != type(None):
             objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
             ZeepObjects = self.GetObjProperties(objIdlist, self.entProps)
@@ -64,6 +64,9 @@ class APISession(zNX.PSNetworx):
         PrintHeader = self.IsOn1stpage
         self.PrintReferenceView( fileOut, self.relProps, self.entProps, G, access_mode, PrintHeader)
     
+    def GetResultSize(self):
+        ZeepRelations,(self.ResultRef, self.ResultSize, self.ResultPos) = self.InitSession(self.GOQLquery,PageSize=1,PropertyNames=[])
+        return self.ResultSize
 
     def ProcessOQL(self, flash_dump=False):
         from datetime import timedelta
