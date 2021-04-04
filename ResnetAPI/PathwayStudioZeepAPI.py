@@ -44,6 +44,22 @@ class DataModel():
             self.IdToPropType[PropTypeDisplayName] = PropertyTypes[i]
             self.IdToPropType[id] = PropertyTypes[i]
 
+    def __objtypes_by_classid(self, classID):
+        objtype_list = list()
+        ObjectTypes = self.SOAPclient.service.GetObjectTypes()
+        for i in range(0, len(ObjectTypes)):
+            ObjTypeName =  ObjectTypes[i]['Name']
+            ObjTyepeClassID = ObjectTypes[i]['ObjClassId']
+            if ObjTyepeClassID == classID:
+                objtype_list.append(ObjTypeName)
+
+        return objtype_list
+
+    def GetRelationTypes(self):
+        return self.__objtypes_by_classid(3)
+
+    def GetEntityTypes(self):
+        return self.__objtypes_by_classid(1)
 
     def LoadFolderTree(self):
         Folders = self.SOAPclient.service.GetFoldersTree(0)
@@ -283,7 +299,7 @@ class DataModel():
         ObjProps = self.OQLresponse(OQLrequest, rp)
         if type(ObjProps.Objects) == type(None):
             #print('Your SOAP response is empty! Check your OQL query and try again\n')
-            return
+            return None, (ObjProps.ResultRef, ObjProps.ResultSize, ObjProps.ResultPos)
 
         for obj in ObjProps.Objects.ObjectRef:
             objTypeID = obj['ObjTypeId']
