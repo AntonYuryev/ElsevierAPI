@@ -1,0 +1,4 @@
+CellType	CellExpression	Protein
+CellType	CellExpression	FunctionalClass
+CellType	CellExpression	Complex
+CellType	Metabolization	SmallMol
