@@ -5,6 +5,7 @@ import time
 import math
 
 class APISession(zNX.PSNetworx):
+    pass
     ResultRef = str()
     ResultPos = int()
     ResultSize = int()
@@ -31,7 +32,7 @@ class APISession(zNX.PSNetworx):
         if type(ZeepRelations) != type(None):
             objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
             ZeepObjects = self.GetObjProperties(objIdlist, self.entProps)
-            return self.__load_graph(ZeepRelations, ZeepObjects)
+            return self._load_graph(ZeepRelations, ZeepObjects)
     
     def __GetNextPage(self):
         if self.ResultPos < self.ResultSize:
@@ -39,7 +40,7 @@ class APISession(zNX.PSNetworx):
             if type(ZeepRelations) != type(None):
                 objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
                 ZeepObjects = self.GetObjProperties(objIdlist, self.entProps)
-                return self.__load_graph(ZeepRelations, ZeepObjects)
+                return self._load_graph(ZeepRelations, ZeepObjects)
         else:
             return None
 
