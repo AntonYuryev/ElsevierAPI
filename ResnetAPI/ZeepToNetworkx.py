@@ -435,7 +435,7 @@ class PSNetworx(PSAPI.DataModel):
         return TargetIDs
 
 
-    def MapPropToEntities(self,PropertyValues:list,propName:str,RetreiveNodeProperties:set,OnlyObjectTypes=[],GetChilds=False):
+    def MapPropToEntities(self,PropertyValues:list,propName:str,RetreiveNodeProperties:set,OnlyObjectTypes=[],GetChilds=False,MinConnectivity=1):
         entProps = set(RetreiveNodeProperties)
         entProps.update([propName,'Name'])
         entProps = list(entProps)
@@ -448,7 +448,7 @@ class PSNetworx(PSAPI.DataModel):
         for i in range (0,len(PropertyValues),step):
             start_time = time.time()
             propval_chunk = PropertyValues[i:i+step]
-            QueryNode = OQL.GetEntitiesByProps(propval_chunk,[propName],OnlyObjectTypes)
+            QueryNode = OQL.GetEntitiesByProps(propval_chunk,[propName],OnlyObjectTypes,MinConnectivity=MinConnectivity)
             ZeepEntities = self.LoadGraphFromOQL(QueryNode,REL_PROPS=[],ENTITY_PROPS=entProps,getLinks=False)
             if type(ZeepEntities) != type(None):
                 IDtoEntitychunk = self.__ZeepToPSObjects(ZeepEntities)
