@@ -448,7 +448,7 @@ class PSNetworx(PSAPI.DataModel):
         for i in range (0,len(PropertyValues),step):
             start_time = time.time()
             propval_chunk = PropertyValues[i:i+step]
-            QueryNode = OQL.GetEntitiesByProps(propval_chunk,[propName],OnlyObjectTypes,MinConnectivity=MinConnectivity)
+            QueryNode = OQL.GetEntitiesByProps(propval_chunk,[propName],OnlyObjectTypes,MinConnectivity)
             ZeepEntities = self.LoadGraphFromOQL(QueryNode,REL_PROPS=[],ENTITY_PROPS=entProps,getLinks=False)
             if type(ZeepEntities) != type(None):
                 IDtoEntitychunk = self.__ZeepToPSObjects(ZeepEntities)
