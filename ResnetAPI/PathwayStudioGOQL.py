@@ -40,7 +40,7 @@ def GetSearchStrings(PropertyNameList:list, PropValuesList:list):
     return PropertyNames, Values
 
 
-def GetEntitiesByProps(PropertyValues:list, SearchByProperties:list, OnlyObjectTypes=[]):
+def GetEntitiesByProps(PropertyValues:list, SearchByProperties:list, OnlyObjectTypes=[], MinConnectivity=1):
     OQLquery = str()
     if SearchByProperties[0] in ('id', 'Id', 'ID'):
         OQLquery = "SELECT Entity WHERE id = " +  '('+','.join([str(int) for int in PropertyValues]) +')'
@@ -50,8 +50,9 @@ def GetEntitiesByProps(PropertyValues:list, SearchByProperties:list, OnlyObjectT
     
     if len(OnlyObjectTypes) > 0:
         objectTypes = joinWithQuotes(',',OnlyObjectTypes)
-        OQLquery = OQLquery + ' AND objectType = ('+objectTypes+')'   
-    return OQLquery
+        OQLquery = OQLquery + ' AND objectType = ('+objectTypes+')'
+
+    return OQLquery + ' AND Connectivity >= '+str(MinConnectivity)
 
 
 def GetChildEntities(PropertyValues:list, SearchByProperties:list, OnlyObjectTypes=[]):
@@ -190,8 +191,6 @@ def ConnectEntitiesIds(idlist1:list,idlist2:list,ConnectByRelTypes=[],RelEffect=
     else: OQLquery = OQLquery.format(dir1='',dir2='')
     
     return OQLquery
-
-
 
 def FindTargets(RegulatorsIDs:list, TargetIDs:list, RelationTypeList:list=[]):
     regstrIDs = [str(integer) for integer in RegulatorsIDs]
