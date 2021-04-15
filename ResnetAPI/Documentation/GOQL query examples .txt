@@ -35,7 +35,6 @@ SELECT Relation where MemberOf ( SELECT Network WHERE objectType=Pathway AND Nam
 select Relation WHERE NeighborOf (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='Brain') ) 
 AND NeighborOf (SELECT Entity WHERE objectType='Protein' AND "Name" = 'ACHE')
 
-
 --select relations for proteins involved in insulin resistance 
 select Relation where NeighborOf downstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
 AND NeighborOf upstream ( SELECT Entity WHERE (Name,Alias)='insulin resistance' )
@@ -50,7 +49,6 @@ select Entity WHERE objectType=Protein AND HasNeighbors (
 select Relation NeighborOf upstream (
 select Entity WHERE objectType=Protein AND HasNeighbors (
 Select Relation WHERE NeighborOf upstream (SELECT Entity WHERE (Name,Alias)='phenylketonuria')))))
-
 
 --usptream expand from proteins neigboring disease in all directions
 select Entity WHERE objectType=Protein AND HasNeighbors (
@@ -77,7 +75,6 @@ AND HasNeighbors (Select Relation WHERE NeighborOf
 select Entity WHERE
 objectType='Small Molecule' AND NOT ( "PharmaPendium ID" = null )
 
-
 --find all protein-protein relations
 Select Relation WHERE HasNeighbors((SELECT Entity WHERE objectType=Protein),
 (SELECT Entity WHERE objectType=Protein))
@@ -96,20 +93,17 @@ AND HasNeighbors (
 Select Relation WHERE NeighborOf (SELECT Entity WHERE (Name,Alias)='Asthma') AND "# of References" <2) )
 and NeighborOf (SELECT Entity WHERE (Name,Alias) in ('Asthma', 'Experimental asthma'))
 
-
 --
 SELECT Relation WHERE HasNeighbors( 
 (SELECT Entity WHERE objectType=Protein AND Name=MDM2), 
 (SELECT Entity WHERE objectType = SmallMol AND !("CAS ID" is null) AND ("XLogP-AA" = '-1.7'))
 )
 
-
 --select MTOR phosphorylation targets
 select Relation where NeighborOf downstream ( 
 SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') AND Name = ('TORC1','TORC2','MTOR'))
 AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
 AND objectType='ProtModification'
-
 
 --select MTOR indirect phosphorylation targets
 select Relation where NeighborOf downstream (
@@ -119,8 +113,6 @@ SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') AND Name
 AND NeighborOf upstream ( SELECT Entity WHERE objectType=('Complex','Functional Class','Protein') )
 AND objectType='ProtModification' and Effect = ('positive, null, 'unknown')))
 AND objectType='ProtModification' and Effect = ('positive, null, 'unknown')
-
-
 
 --select MTOR indirect targets with cohesive loops
 select Relation where NeighborOf upstream
@@ -158,10 +150,6 @@ AND objectType='ProtModification'
 )
 )
 
-
-
-
-
 select Relation where NeighborOf downstream (SELECT Entity WHERE Name = ('TORC1','TORC2','MTOR'))
 AND NeighborOf upstream
 (select Entity WHERE HasNeighbors 
@@ -184,7 +172,6 @@ AND objectType='Regulation'
                  )
 )
 AND objectType='Regulation'
-
 
 --find side-effects of Carvedilol
 Select Relation where NeighborOf downstream (select Entity where Name = 'Carvedilol') 
@@ -235,16 +222,12 @@ AND NeighborOf  (SELECT Entity where  objectType = Protein)
 AND "# of References" > 0
 )
 
-
-
 --finds links between anti-cancer drugs and mutations.  Also try: Sentence LIKE '%mutant%' OR  Sentence LIKE '%genetic variation%' OR  Sentence LIKE '%polymorphism%' OR  Sentence LIKE '%allele%'
 
 select Relation where NeighborOf downstream ( SELECT Entity WHERE objectType=('Small Molecule') )
 AND NeighborOf upstream ( SELECT Entity where  objectType = Disease AND AnnotatedBy recursive ( SELECT Group WHERE Name='Cancers') ) 
 AND (Sentence LIKE '%mutation%')
 AND Effect = 'negative'
-
-
 
 --finds somatic mutations in cancer
 SELECT Relation WHERE objectType= GeneticChange 
@@ -256,18 +239,15 @@ SELECT Relation WHERE objectType= GeneticChange
 AND NeighborOf  (SELECT Entity where  objectType = Disease AND AnnotatedBy recursive ( SELECT Group WHERE Name='Cancers') )
 AND ("Sentence" LIKE '%germ%' OR "Sentence" LIKE '%heredet%' OR "Sentence" LIKE '%herit%')
 
-
 --selects proteins involved in mitochondrial funtion of beta-cells
 select Relation WHERE HasNeighbors (
 (select Entity WHERE  Name = ('type 1 diabetes','beta-cell function', 'insulin-secreting cell'), 
 (select Entity WHERE objectType=('Protein', 'Complex','Functional Class')) 
 AND "Sentence" LIKE '%mitochondria%')
 
-
 SELECT Relation WHERE objectType= GeneticChange 
 AND NeighborOf  (SELECT Entity where  objectType = Disease AND AnnotatedBy recursive ( SELECT Network WHERE Name='Cancers') )
 AND "Sentence" LIKE '%somatic%'
-
 
 ---finds secreted proteins
 SELECT Entity where objectType=('Protein', 'Functional Class','Complex') AND Connected by (SELECT Relation WHERE objectType='MolTransport' AND Sentence LIKE '%secret%' ) to (SELECT Entity WHERE  objectType='Protein')
@@ -276,12 +256,9 @@ SELECT Entity Connected by (SELECT Relation WHERE objectType=Regulation AND Effe
 
 SELECT Relation WHERE HasNeighbors ((SELECT Entity WHERE objectType=(Disease,Cell) AND AnnotatedBy recursive ( SELECT Network WHERE Name='Melanoma secreted and cell surface molecules')), (SELECT Entity WHERE objectType='Small molecule' AND Class='Endogenous compound')) AND objectType=CellExpression AND Mechanism=surface
 
-
-
 ---selects relations from specific pathway observed in brain
 SELECT Relation WHERE MemberOf ( SELECT Network WHERE Name='Friedrich Ataxia proteins')
 AND Organ LIKE '%brain%'
-
 
 select Relation where NeighborOf ( SELECT Entity WHERE objectType='Protein' AND Name = 'CFTR')
 AND NeighborOf ( SELECT Entity WHERE (Name,Alias)='cystic fibrosis' )
@@ -299,10 +276,6 @@ AND NeighborOf (Select Entity WHERE (Name=(CXCL8, CXCR1, CXCR2) OR Name LIKE '%p
 
 --selects druggable proteins
 SELECT Entity WHERE AnnotatedBy recursive ( SELECT Group WHERE Name=('Ligands', 'Receptors', 'enzyme', 'transporter'))
-
-
-
-
 
 SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name='Brain')
 
