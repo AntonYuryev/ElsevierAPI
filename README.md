@@ -6,3 +6,4 @@ To start using Reaxys API please contact https://www.elsevier.com/solutions/reax
 To start using Embase and Pharmapendium API please contact https://dev.elsevier.com.  API swaggers for PharmaPendium and Embase APIs are available from https://dev.elsevier.com/interactive.html.<br/>
 To start using Elsevier text-mining API please contact https://demo.elseviertextmining.com<br/>
 Requires installation of following Python packages: Zeep, Networkx, requests, pandas, numpy
+To import Resnet data retreived via API into local Neo4j instance use **PSnx2Neo4j.py** module
