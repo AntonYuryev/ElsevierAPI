@@ -109,7 +109,7 @@ class APISession(zNX.PSNetworx):
 
     def GetPPIgraph(self, foutName):
         #Build PPI network between proteins
-        NetworkProteins = self.GetGraphEntityIds(ObjTypeNames=['Protein'])
+        NetworkProteins = self.GetGraphEntityIds(OnlyForNodeTypes=['Protein'])
         print('Retreiving PPI network for %d proteins' % (len(NetworkProteins)))
         start_time = time.time()
         PPIrelationsGraph = self.GetPPIs(NetworkProteins,self.relProps, self.entProps)
