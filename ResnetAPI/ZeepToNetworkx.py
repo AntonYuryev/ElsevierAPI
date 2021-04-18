@@ -1,3 +1,4 @@
+from networkx.classes.multidigraph import MultiDiGraph
 import ElsevierAPI
 from ElsevierAPI.ResnetAPI import PathwayStudioZeepAPI as PSAPI
 from ElsevierAPI.ResnetAPI import PathwayStudioGOQL as OQL
@@ -210,6 +211,7 @@ class PSRelation(PSObject):
                 if propId in REF_PROPS: 
                     Ref.AddUniquePropertyList(propId, propValues)
 
+    def GetReferenceCount(self): return len(self.References)
 
     def TripleToStr(self,columnPropNames:list,return_dict = False,col_sep='\t',cell_sep=';',endOfline='\n',RefNumPrintLimit=0):
         #assumes all properties in columnPropNames were fetched from Database otherwise will crash
@@ -522,7 +524,7 @@ class PSNetworx(PSAPI.DataModel):
 
         return sub_graph
 
-    def __count_references(self, inGraph:nx.MultiDiGraph=None):
+    def count_references(self, inGraph:nx.MultiDiGraph=None):
         G = inGraph if type(inGraph) != type(None) else self.Graph
         ReferenceSet = set()
         for regulatorID, targetID, rel in G.edges.data('relation'):
@@ -533,9 +535,8 @@ class PSNetworx(PSAPI.DataModel):
     def CountReferences(self,between_nodeids:list,and_nodeids:list,inGraph:nx.MultiDiGraph=None):
         G = inGraph if type(inGraph) != type(None) else self.Graph
         sub_graph = self.GetSubGraph(between_nodeids,and_nodeids,G)
-        return self.__count_references(sub_graph)
+        return self.count_references(sub_graph)
 
-        
     def SemanticRefCountByIds(self,node1ids:list,node2ids:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[],ENTITY_PROPS=[]):
         relProps = set(REL_PROPS)
         relProps.update(REF_ID_TYPES)#required fields for loading references to count
@@ -607,16 +608,10 @@ class PSNetworx(PSAPI.DataModel):
                     self.Graph[nodeId2][nodeId1][i]['relation'][PropertyName]=PropertyValues
 
 
-    def GetGraphEntityIds(self, OnlyRelationTypes:list, OnlyInRelations=[]):
-        if len(OnlyInRelations) == 0:
-            AllIDs = [x for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] in OnlyRelationTypes]
-            return AllIDs
-        else:
-            LinkedEntitiesIds = set([rel.GetEntitiesIDs() for rel in OnlyInRelations])
-            AllowedIDs = [x for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] in OnlyRelationTypes]
-            FilteredRelationNeighbors = LinkedEntitiesIds.intersection(AllowedIDs)
-            return list(FilteredRelationNeighbors)
-        
+    def GetGraphEntityIds(self, OnlyForNodeTypes:list, inGraph:MultiDiGraph=None):
+        G = inGraph if type(inGraph) != type(None) else self.Graph
+        AllIDs = [x for x,y in G.nodes(data=True) if y['ObjTypeName'][0] in OnlyForNodeTypes]
+        return AllIDs
         
     def GetProperties(self, IDList:set, PropertyName):
             IdToProps = {x:y[PropertyName] for x,y in self.Graph.nodes(data=True) if x in IDList}
@@ -711,12 +706,18 @@ class PSNetworx(PSAPI.DataModel):
             newPSRelations = self._load_graph(ZeepRelations, ZeepObjects)
             return newPSRelations
 
-    def ConnectEntities(self,PropertyValues1:list,SearchByProperties1:list,EntityTypes1:list,PropertyValues2:list,SearchByProperties2:list,EntityTypes2:list, REL_PROPS:list, ConnectByRelationTypes=[],ENTITY_PROPS=[]):
+    def ConnectEntities(self,PropertyValues1:list,SearchByProperties1:list,EntityTypes1:list,PropertyValues2:list,SearchByProperties2:list,EntityTypes2:list, REL_PROPS=['Name','RelationNumberOfReferences'], ConnectByRelationTypes=[],ENTITY_PROPS=['Name']):
+        rel_props = set(REL_PROPS)
+        rel_props.update(['Name','RelationNumberOfReferences'])
+        #rel_props = list(rel_props)
+        ent_props = set(ENTITY_PROPS)
+        ent_props.update(['Name'])
+        #ent_props = list(ent_props)
         OQLquery = OQL.ConnectEntities(PropertyValues1,SearchByProperties1,EntityTypes1,PropertyValues2,SearchByProperties2,EntityTypes2, ConnectByRelationTypes)
-        ZeepRelations = self.GetData(OQLquery, REL_PROPS)
+        ZeepRelations = self.GetData(OQLquery, list(rel_props))
         if type(ZeepRelations) != type(None):
             objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
-            ZeepObjects = self.GetObjProperties(objIdlist, ENTITY_PROPS)
+            ZeepObjects = self.GetObjProperties(objIdlist, list(ent_props))
             newPSRelations = self._load_graph(ZeepRelations, ZeepObjects)
             return newPSRelations
 
