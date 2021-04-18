@@ -1,23 +1,25 @@
-﻿import time
-import networkx as nx
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
-import ElsevierAPI.ResnetAPI.ResnetAPISession as ssn
-from ElsevierAPI import networx as PSnx 
-
-
+import time
 global_start = time.time()
 #SearchEntitiesBy = ['Ileocolitis']
 SearchEntitiesBy = ['Inflammatory Bowel Disease']
+#SearchEntitiesBy = ['Friedreich Ataxia']
 InputDiseaseNames = ','.join(SearchEntitiesBy)
 
 #specify files used in your API.ssn.DiseaseNetwork.AddGraph to dump graph data in tab-delimited format:
-myDir = ''#'D:\\Python\\PS_API'
-foutDiseaseSNPs = myDir+"\\Gene variants linked to "+InputDiseaseNames+'.tsv'
-foutDiseaseProteins = myDir+"\\Genes with SNPs linked to "+InputDiseaseNames+'.tsv'
-foutDrugsForDiseaseProteins = myDir+"\\Druggable targets for "+InputDiseaseNames+'.tsv'
+myDir = ''#'D:\\Python\\PS_API\\'
+foutDiseaseSNPs = myDir+"Gene variants linked to "+InputDiseaseNames+'.tsv'
+foutDiseaseProteins = myDir+"Genes with SNPs linked to "+InputDiseaseNames+'.tsv'
+foutDrugsForDiseaseProteins = myDir+"Druggable targets for "+InputDiseaseNames+'.tsv'
 
-OQLquery = GOQL.ExpandEntity(PropertyValues=SearchEntitiesBy,SearchByProperties=['Name'],ExpandWithRelationTypes=[],ExpandToNeighborTypes=['GeneticVariant'])
+import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
+OQLquery = GOQL.ExpandEntity(PropertyValues=SearchEntitiesBy,SearchByProperties=['Name','Alias'],ExpandWithRelationTypes=[],ExpandToNeighborTypes=['GeneticVariant'])
+from ElsevierAPI import networx as PSnx
+import ElsevierAPI.ResnetAPI.ResnetAPISession as ssn
 sn = ssn.APISession(OQLquery, PSnx)
+
+from ElsevierAPI.ResnetAPI.PSnx2Neo4j import REL_PROPs,ENT_PROP_Neo4j
+sn.relProps.extend(REL_PROPs)
+sn.entProps.extend(ENT_PROP_Neo4j)
 print("Finding GeneticVariants linked to %s" % InputDiseaseNames)
 sn.AddDumpFile(foutDiseaseSNPs,replace_main_dump=True)
 sn.ProcessOQL()
@@ -28,11 +30,11 @@ print("Finding Proteins containing GeneticVariants linked to %s" % InputDiseaseN
 sn.AddDumpFile(foutDiseaseProteins,replace_main_dump=True)
 sn.ProcessOQL(flash_dump=True)
  
-
 foutDiseasePPI = myDir+"\\PPIs between genes linked to "+InputDiseaseNames+'.tsv'
 PPIgraph = sn.GetPPIgraph(foutDiseasePPI)
 
 #calculating centrality
+import networkx as nx
 degree_cent = nx.degree_centrality(PPIgraph)
 sorted_centrality = sorted(degree_cent.items(), key=lambda kv: kv[1], reverse=True)
 PPIids = set([x for x in PPIgraph.nodes()])
@@ -76,8 +78,12 @@ if len(ProteinNoDrugs) > 0:
 else:
     print('All proteins are druggable. No need to find RMC compounds at this iteration')
 
-
 #All relations from all queries are in sn.Graph
 #To dump sn.Graph in other formats please study https://networkx.org/documentation/stable/reference/readwrite
+
+#importing entire disease network into local Neo4j instance:
+from ElsevierAPI.ResnetAPI.PSnx2Neo4j import nx2neo4j
+nx2neo4j.LoadGraphToNeo4j(sn,uriNeo4j='bolt://localhost:11003',userNeo4j='neo4j',pswdNeo4j='')
+
 execution_time = sn.ExecutionTime(global_start)
 print("Entire program ran for %s ---" % execution_time)
