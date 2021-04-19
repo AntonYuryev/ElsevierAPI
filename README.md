@@ -5,5 +5,5 @@ To start using ResnetAPI library you need to obtain account on Pathway Studio se
 To start using Reaxys API please contact https://www.elsevier.com/solutions/reaxys/contact-sales<br/>
 To start using Embase and Pharmapendium API please contact https://dev.elsevier.com.  API swaggers for PharmaPendium and Embase APIs are available from https://dev.elsevier.com/interactive.html.<br/>
 To start using Elsevier text-mining API please contact https://demo.elseviertextmining.com<br/>
-Requires installation of following Python packages: *Zeep, Networkx, requests, pandas, numpy*<br/>
+Requires installation of following Python packages: *zeep, networkx, requests, pandas, numpy*<br/>
 To import Resnet data retreived via API into local Neo4j server instance use **PSnx2Neo4j.py** module
