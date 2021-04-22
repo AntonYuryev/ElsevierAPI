@@ -1,7 +1,5 @@
-
-import requests
 import pandas as pd
-from ElsevierAPI.ResnetAPI import PathwayStudioGOQL as OQL
+import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 
 class DataModel():
 
@@ -10,6 +8,7 @@ class DataModel():
         self.IdtoObjectType = dict()
         self.PropIdToDict = dict()
         self.IdToFolders = dict()
+        self.RNEFnameToPropType = dict()
         from requests.auth import HTTPBasicAuth
         from requests import Session
         from zeep.cache import SqliteCache
@@ -19,9 +18,9 @@ class DataModel():
         transport = Transport(cache=SqliteCache(), session = session)
         from zeep import Client 
         self.SOAPclient = Client(url, transport=transport)
-        self.LoadModel()
+        self.__load_model()
 
-    def LoadModel(self):
+    def __load_model(self):
         ObjectTypes = self.SOAPclient.service.GetObjectTypes()
         PropertyTypes = self.SOAPclient.service.GetPropertyDefinitions()
         #Folders = self.SOAPclient.service.GetFoldersTree(0)
@@ -43,6 +42,8 @@ class DataModel():
             self.IdToPropType[PropTypeName] = PropertyTypes[i]
             self.IdToPropType[PropTypeDisplayName] = PropertyTypes[i]
             self.IdToPropType[id] = PropertyTypes[i]
+            self.RNEFnameToPropType[PropTypeName] = PropertyTypes[i]
+            
 
     def __objtypes_by_classid(self, classID):
         objtype_list = list()
@@ -63,17 +64,16 @@ class DataModel():
 
     def LoadFolderTree(self):
         Folders = self.SOAPclient.service.GetFoldersTree(0)
-        for i in range(0, len(Folders)):
-            Folderid = Folders[i]['Id']
-            FolderName =  Folders[i]['Name']
-            self.IdToFolders[Folderid] = [Folders[i]]
+        for folder in Folders:
+            Folderid = folder['Id']
+            FolderName =  folder['Name']
+            self.IdToFolders[Folderid] = [folder]
             #several folders may have the same name:
             if FolderName in self.IdToFolders.keys():
-                self.IdToFolders[FolderName].append(Folders[i])
+                self.IdToFolders[FolderName].append(folder)
             else:
-                self.IdToFolders[FolderName] = [Folders[i]]
+                self.IdToFolders[FolderName] = [folder]
 
-            
             
     def DumpPropNames (self, fileOut):
         IDPropNamesList = [  (p['Id'], p['DisplayName'], p['Name']) for p in self.IdToPropType.values() ]
@@ -128,8 +128,7 @@ class DataModel():
         return self.PropIdToDict[IdProperty][DictIdValue]
 
     def GetSubfolders(self, FolderIds:list):
-        if len(self.IdToFolders) == 0:
-            self.LoadFolderTree()
+        if len(self.IdToFolders) == 0: self.LoadFolderTree()
         
         SubfoldersIds = set()
         for id in FolderIds:
@@ -254,6 +253,11 @@ class DataModel():
                     prop['PropValues']['string'][i] = newDictValue
 
         return ObjProps
+
+    def get_layout(self, PathwayId):
+        #GetObjectAttachment = self.SOAPclient.get_type('ns0:GetObjectAttachment')
+        result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
+        return str(result['Attachment'].decode('utf-8'))
 
     
     def GetData(self, OQLrequest, RetreiveProperties=['Name', 'RelationNumberOfReferences'], getLinks=True):
