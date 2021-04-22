@@ -1,306 +1,15 @@
-from networkx.classes.multidigraph import MultiDiGraph
 import ElsevierAPI
-from ElsevierAPI.ResnetAPI import PathwayStudioZeepAPI as PSAPI
-from ElsevierAPI.ResnetAPI import PathwayStudioGOQL as OQL
-import json
+from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
+import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,PSRelation,REF_ID_TYPES
 import networkx as nx
 import time
-import math
 
-class PSObject(dict): #{PropId:[values], PropName:[values]}
-    def __init__(self, ZeepObjectRef):
-        zeepIter = iter(ZeepObjectRef)
-        while True:
-            try: item = next(zeepIter)
-            except StopIteration: break  #Iterator exhausted: stop the loop
-            else: self[item]= [ZeepObjectRef[item]]
-                
-    def __hash__(self):
-        return self['Id'][0]
-    
-    def AddSingleProperty(self, PropId, PropValue:str):
-        self[PropId] = [PropValue]
+RNEF_EXCLUDE_NODE_PROPS = ['Id','URN','ObjClassId','ObjTypeId','ObjTypeName','OwnerId','DateCreated','DateModified']
+RNEF_EXCLUDE_REL_PROPS =  RNEF_EXCLUDE_NODE_PROPS+['RelationNumberOfReferences','# of Total References','Name']
 
-    def AddProperty(self, PropId, PropValue:str):
-        try: self[PropId].append(PropValue)
-        except KeyError: self[PropId] = [PropValue]
-
-    def AddUniqueProperty(self, PropId, PropValue:str):
-        try:
-            uniqPropList = set(self[PropId])
-            uniqPropList.update([PropValue])
-            self[PropId] = list(uniqPropList)
-        except KeyError: self[PropId] = [PropValue]
-
-    def AddUniquePropertyList(self, PropId, PropValues:list):
-        try:
-            uniqPropList = set(self[PropId])
-            uniqPropList.update(PropValues)
-            self[PropId] = list(uniqPropList)
-        except KeyError: self[PropId] = list(set(PropValues))
-
-    def PropValuesToStr(self, propID, cell_sep=';'):
-        try: return cell_sep.join(self[propID])
-        except KeyError: return ''
-    
-    def PropValuesToList(self, propID):
-        try: return self[propID]
-        except KeyError: return []
-
-    def DataToStr (self, columnPropNames:list, col_sep='\t', cell_sep=';', endOfline='\n'):
-        #assumes all properties in columnPropNames were fetched from Database otherwise will crash
-        table_row = str()       
-        for propName in columnPropNames:
-            try:
-                values = self[propName]
-                propVal = cell_sep.join(values)
-            except KeyError:
-                propVal = ''
-                
-            table_row = table_row + propVal + col_sep
-
-        return table_row[0:len(table_row)-1] + endOfline
-
-
-REF_ID_TYPES = ['PMID','DOI','PII','PUI','EMBASE']
-REF_PROPS = ['Sentence','PubYear','Authors','Journal','MedlineTA','CellType','CellLineName','Organ','Tissue','Organism']
-
-class Reference(PSObject): #Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_PROPS[i]:value}
-    pass
-    def __init__(self, idType:str, ID:str):
-        self.Identifiers = {idType:ID}
-
-    def __key(self):
-        for i in range(0,len(REF_ID_TYPES)):
-            try: 
-                self_identifier = self.Identifiers[REF_ID_TYPES[i]]
-                return self_identifier
-            except KeyError: continue
-        return NotImplemented
-
-    def __hash__(self):
-        return hash(self.__key())
-
-    def __eq__(self,other):
-        if isinstance(other, Reference):
-            for i in range(0,len(REF_ID_TYPES)):
-                try: 
-                    self_identifier = self.Identifiers[REF_ID_TYPES[i]]
-                    try:
-                        other_identifier = other.Identifiers[REF_ID_TYPES[i]]
-                        return self_identifier == other_identifier
-                    except KeyError: continue
-                except KeyError: continue
-
-
-    def ToString(self,IdType:str, sep='\t'):
-        to_return = self.Identifiers[IdType]
-        for propId, propValues in self.items():
-            to_return = to_return+sep+propId+':'+';'.join(propValues)
-        return to_return
-
-    def MergeReference(self, ref_to_merge):
-        self.Identifiers.update(ref_to_merge.Identifiers)
-
-
-
-class PSRelation(PSObject):
-    pass
-    def __init__(self, ZeepObjectRef):
-        zeepIter = iter(ZeepObjectRef)
-        while True:
-            try:
-                item = next(zeepIter)
-            except StopIteration:
-                break  # Iterator exhausted: stop the loop
-            else:
-                val = ZeepObjectRef[item]
-                self[item]= [val]
-        self.PropSetToProps = dict() #{PropSetID:{PropID:[values]}}
-        self.Nodes = dict() #{"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
-        self.References = dict() #{refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
-       
-    def __hash__(self):
-        return self['Id'][0]
-        
-    def IsDirectional(self, Links):
-        propId = self['Id'][0]
-        if len(Links[propId]) > 1:
-            return True
-        else:
-            return False
-
-
-    def PropValuesToStr(self, propID, cell_sep=';'):
-        for id, values in self.items():
-            if id == propID:
-                return cell_sep.join(map(str,values))
-
-        propSetVals = []
-        for prop in self.PropSetToProps.values():            
-            for id, values in prop.items():
-                if id == propID:
-                    propSetVals.append(cell_sep.join(map(str,values)))
-                    break
-             
-        return cell_sep.join(propSetVals)
-
-
-    def PropValuesToList(self, propID, cell_sep=';'):
-        if propID in self.keys():
-            return self[propID]
-        else:
-            to_return = []
-            for prop in self.PropSetToProps.values():
-                propSetVal = str()
-                for id, values in prop.items():
-                    if id == propID:
-                        propSetVal = cell_sep.join(values)
-                        break
-                to_return.append(propSetVal)
-            return to_return
-
-
-    def load_references(self):
-        for propSet in self.PropSetToProps.values():
-            propset_references = list()
-            for i in range(0,len(REF_ID_TYPES)):
-                ref_id_type = REF_ID_TYPES[i]
-                try:
-                    ref_id = propSet[ref_id_type][0]
-                    propset_references.append((ref_id_type,ref_id))
-                    #propset_article_identifiers.append(ref_id_value)
-                except KeyError: continue
-
-            if len(propset_references) == 0:
-                try: 
-                    propsetTtitle = propSet['Title'][0] #trying id reference by title as a last resort since it does not have valid identifiers 
-                    try:
-                        Ref =  self.References[propsetTtitle]
-                    except KeyError: 
-                        Ref = Reference('Title', propsetTtitle)
-                        self.References[propsetTtitle] = Ref
-                except KeyError: continue
-            else:
-                #case when reference have valid identifiers
-                propset_article_identifiers = {x[1] for x in propset_references}
-                existing_ref = {r for i,r in self.References.items() if i in propset_article_identifiers}
-                if len(existing_ref) == 0:#case when reference is new
-                    id_type = propset_references[0][0]
-                    id_value = propset_references[0][1]
-                    Ref = Reference(id_type,id_value)
-                    self.References[id_value] = Ref
-                    for Id in range (1, len(propset_references)):
-                        id_type = propset_references[Id][0]
-                        id_value = propset_references[Id][1]
-                        Ref.Identifiers[id_type] = id_value
-                        self.References[id_value] = Ref
-                elif len(existing_ref) > 1:#identifiers from one propset point to several references
-                    #will merge all references from the propset with the first one 
-                    conflictRefs = list(existing_ref)
-                    anchorRef = conflictRefs[0]
-                    for i in range(1,len(conflictRefs)):
-                        ref_to_merge = conflictRefs[i]
-                        anchorRef.MergeReference(ref_to_merge)
-                        for id_value in ref_to_merge.Identifiers.values():
-                            self.References[id_value] = anchorRef
-                else:
-                    Ref = next(iter(existing_ref))#when existing_ref == 1: there is nothing to do
-
-            for propId, propValues in propSet.items():#adding all other valid properties to Ref
-                if propId in REF_PROPS: 
-                    Ref.AddUniquePropertyList(propId, propValues)
-
-    def GetReferenceCount(self): return len(self.References)
-
-    def TripleToStr(self,columnPropNames:list,return_dict = False,col_sep='\t',cell_sep=';',endOfline='\n',RefNumPrintLimit=0):
-        #assumes all properties in columnPropNames were fetched from Database otherwise will crash
-        #initializing table
-        colCount = len(columnPropNames)+2
-        RelationNumberOfReferences = int(self['RelationNumberOfReferences'][0])
-
-        rowCount = 1
-        if RelationNumberOfReferences >= RefNumPrintLimit:
-            rowCount = max(1, len(self.PropSetToProps))
-
-        regulatorIDs = str()
-        targetIDs = str()
-        for k,v in self.Nodes.items():
-            if k == 'Regulators':
-                regIDs = [x[0] for x in v]
-                #regulatorIDs = ','.join([str(int) for int in regIDs])
-                regulatorIDs = ','.join(map(str,regIDs))
-            else:
-                trgtIDs = [x[0] for x in v]
-                #targetIDs = ','.join([str(int) for int in trgtIDs])
-                targetIDs = ','.join(map(str,trgtIDs))
-
-
-        first_row = [''] * colCount
-        first_row[colCount-2] = regulatorIDs 
-        first_row[colCount-1] = targetIDs 
-        table = {0: first_row}
-
-        for r in range(1,rowCount):
-            new_row = [''] * colCount
-            new_row[colCount-2] = regulatorIDs 
-            new_row[colCount-1] = targetIDs 
-            table[r] = new_row
-
-        
-        for col in range (len(columnPropNames)):
-            propId = columnPropNames[col]
-            if propId in self.keys():
-                for row in range(0, rowCount):
-                    propValue = self.PropValuesToStr(propId)
-                    table[row][col] = propValue
-            elif RelationNumberOfReferences >= RefNumPrintLimit:
-                row = 0
-                for propList in self.PropSetToProps.values():
-                    if propId in propList.keys():
-                        propValues = propList[propId]
-                        cellValue = cell_sep.join(propValues)
-                        table[row][col] = cellValue
-                        row +=1
-
-        if return_dict == True: return table
-        else:
-            tableStr = str()
-            for row in table.values():
-                tableStr = tableStr + col_sep.join(row) + endOfline
-            return tableStr
-
-    def GetRegulatorTargetPairs(self):
-        #relEntities = self.Links[relId]
-        if len(self.Nodes) > 1:
-            RegTargetPairs = []
-            for regTriple in self.Nodes['Regulators']:
-                for targetTriple in self.Nodes['Targets']:
-                    pairTuple = (regTriple[0],targetTriple[0])
-                    RegTargetPairs.append(pairTuple)
-            return RegTargetPairs
-        else:
-            import itertools
-            try:
-                objIdList = [x[0] for x in self.Nodes['Regulators']]
-                return itertools.combinations(objIdList, 2)
-            except KeyError: 
-                objIdList = [x[0] for x in self.Nodes['Targets']]
-                return itertools.combinations(objIdList, 2)
-
-    def GetEntitiesIDs(self):
-        nodeIds = [x[0] for x in self.Nodes['Regulators']] + [x[0] for x in self.Nodes['Targets']]
-        return list(set(nodeIds))
-
-    def toJSON(self):
-        str1 = '{"Relation Properties": ' + json.dumps(self) + '}'
-        strP = '{"Relation References": ' + json.dumps(self.PropSetToProps) + '}'
-        strR = json.dumps(self.Nodes)
-        return str1 +'\n'+ strP +'\n'+strR +'\n'
-
-
-class PSNetworx(PSAPI.DataModel):
-    def __init__(self, DBModel:PSAPI.DataModel):
+class PSNetworx(DataModel):
+    def __init__(self, DBModel:DataModel):
         self.SOAPclient = DBModel.SOAPclient
         self.IdtoObjectType = DBModel.IdtoObjectType #from DB.ObjectTypes
         self.IdToPropType = DBModel.IdToPropType #from DB.PropTypes 
@@ -308,10 +17,12 @@ class PSNetworx(PSAPI.DataModel):
         self.IDtoRelation = dict() #{relID:PSRelation} needs to be - Resnet relations may not be binary
         self.Graph = nx.MultiDiGraph()
         self.IdToFolders = DBModel.IdToFolders
+        self.RNEFnameToPropType = DBModel.RNEFnameToPropType
         self.mappedBy_propName = 'mapped_by'
         self.child_ids_propName = 'Child Ids'
 
-    def __ZeepToPSObjects(self, ZeepObjects):
+    @staticmethod
+    def __ZeepToPSObjects(ZeepObjects):
         IDtoEntity = dict()
         if type(ZeepObjects) == type(None): return IDtoEntity
         for o in ZeepObjects.Objects.ObjectRef:
@@ -402,13 +113,8 @@ class PSNetworx(PSAPI.DataModel):
         return newGraph
     
     def LoadGraphFromOQL(self,OQLquery:str,REL_PROPS=[],ENTITY_PROPS=[],getLinks=True):
-        relPropsSet = set(REL_PROPS)
-        relPropsSet.update(['Name','RelationNumberOfReferences'])
-        relPropsSet = list(relPropsSet)
-
-        entPropSet = set(ENTITY_PROPS)
-        entPropSet.update(['Name'])
-        entPropSet = list(entPropSet)
+        relPropsSet = list(set(REL_PROPS+['Name','RelationNumberOfReferences']))
+        entPropSet = list(set(ENTITY_PROPS+['Name']))
 
         if getLinks == True:
             ZeepRelations = self.GetData(OQLquery,relPropsSet,getLinks=True)
@@ -442,6 +148,7 @@ class PSNetworx(PSAPI.DataModel):
         entProps.update([propName,'Name'])
         entProps = list(entProps)
 
+        import math
         step = 1000
         iterCount = math.ceil(len(PropertyValues)/step)
         print('Will use %d %s identifiers to find Resnet entities in %d iterations' % (len(PropertyValues),propName,iterCount))
@@ -608,7 +315,7 @@ class PSNetworx(PSAPI.DataModel):
                     self.Graph[nodeId2][nodeId1][i]['relation'][PropertyName]=PropertyValues
 
 
-    def GetGraphEntityIds(self, OnlyForNodeTypes:list, inGraph:MultiDiGraph=None):
+    def GetGraphEntityIds(self, OnlyForNodeTypes:list, inGraph:nx.MultiDiGraph=None):
         G = inGraph if type(inGraph) != type(None) else self.Graph
         AllIDs = [x for x,y in G.nodes(data=True) if y['ObjTypeName'][0] in OnlyForNodeTypes]
         return AllIDs
@@ -630,18 +337,18 @@ class PSNetworx(PSAPI.DataModel):
                 f.write(rel.TripleToStr(relPropNames))
 
 
-    def __get_node(self, nodeId, G:nx.MultiDiGraph=None):
-        if type(G) == type(None): G = self.Graph
+    def __get_node(self, nodeId, inGraph:nx.MultiDiGraph=None):
+        G = inGraph if type(inGraph) != type(None) else self.Graph
         dic = {k:v for k,v in G.nodes[nodeId].items()}
         PSobj = PSObject([])
         PSobj.update(dic)
         return PSobj
 
-    def PrintReferenceView(self, fileOut, relPropNames, entPropNames=[], G:nx.MultiDiGraph=None, access_mode='w', printHeader=True, RefNumPrintLimit=0):
-        rel_props = relPropNames
-        rel_props.append('Name') if 'Name' not in rel_props else rel_props
+    def PrintReferenceView(self, fileOut, relPropNames, entPropNames=[], inGraph:nx.MultiDiGraph=None, access_mode='w', printHeader=True, RefNumPrintLimit=0):
+        rel_props = list(set(relPropNames+['Name']))
+        #rel_props.append('Name') if 'Name' not in rel_props else rel_props
 
-        if type(G) == type(None): G = self.Graph
+        G = inGraph if type(inGraph) != type(None) else self.Graph
         with open(fileOut, access_mode, encoding='utf-8') as f:
             if printHeader == True:
                 header = '\t'.join(rel_props)+'\t'+"Regulators Id"+'\t'+"Targets Id"
@@ -749,16 +456,46 @@ class PSNetworx(PSAPI.DataModel):
 
         return PPIskeeper
 
-    def GetObjectsFromFolders(self, FolderIds:list, PropertyNames=['Name']):
+    def GetObjectsFromFolders(self, FolderIds:list, PropertyNames=['Name'], with_layout=False):
         IDtoEntity = dict()
-        for id in FolderIds:
-            ZeepObjects = self.GetFolderObjectsProps(id, PropertyNames)
+        for f in FolderIds:
+            ZeepObjects = self.GetFolderObjectsProps(f, PropertyNames)
             IDtoEntity.update(self.__ZeepToPSObjects(ZeepObjects))
         
+        if with_layout == True:
+            for i, psObj in IDtoEntity.items():
+                if psObj['ObjTypeName'][0] == 'Pathway':
+                    layout = self.get_layout(i)
+                    psObj['layout'] = str(layout['Attachment'].decode('utf-8'))
+
         return IDtoEntity
 
+    def GetAllPathways(self, PropertyNames=['Name']):
+        start_time = time.time()
+        print('retreiving all pathways from the database')
+
+        if (len(self.IdToFolders)) == 0: self.LoadFolderTree()
+
+        IDtoPathway = dict()
+        URNtoPathway = dict()
+        for folderList in self.IdToFolders.values():
+            for folder in folderList:
+                ZeepObjects = self.GetFolderObjectsProps(folder['Id'],PropertyNames)
+                psObjects = self.__ZeepToPSObjects(ZeepObjects)
+                for Id, psObj in psObjects.items():
+                    if psObj['ObjTypeName'][0] == 'Pathway':
+                        try:
+                            IDtoPathway[Id].AddUniqueProperty('Folders', folder['Name'])
+                        except KeyError:
+                            psObj['Folders'] = [folder['Name']]
+                            IDtoPathway[Id] = psObj
+                            URNtoPathway[psObj['URN'][0]] = psObj
+
+        print('Found %d pathways in the database in %s' % (len(IDtoPathway),ElsevierAPI.ExecutionTime(start_time)))
+        return IDtoPathway, URNtoPathway
+
     def GetPathwayMemberIds(self, PathwayIds:list, SearchPathwaysBy:list=['id'],OnlyEntities:list=[],WithProperties:list=['Name','Alias']):      
-        if SearchPathwaysBy[0] in ('id', 'Id', 'ID'):
+        if SearchPathwaysBy[0] in ['id','Id','ID']:
             GOQLquery = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE id = ('+','.join([str(int) for int in PathwayIds])+'))'
         else:
             PropertyNames, Values = OQL.GetSearchStrings(SearchPathwaysBy,PathwayIds)
@@ -839,3 +576,73 @@ class PSNetworx(PSAPI.DataModel):
             PatwhayRelations = nx.compose(PatwhayRelations,pathwayGraph)
 
         return PatwhayRelations
+    
+    def toRNEF(self, inGraph:nx.MultiDiGraph=None):
+        G = inGraph if type(inGraph) != type(None) else self.Graph
+        import xml.etree.ElementTree as et
+        resnet = et.Element('resnet')
+        xml_nodes = et.SubElement(resnet, 'nodes')
+        graph_nodes = G.nodes(data=True)
+        nodeIDtoLocalID = dict()
+        localIDcounter = 0
+        for nodeId, n in graph_nodes:
+            #localID = 'N'+str(localIDcounter)
+            localID = n['URN'][0]
+            nodeIDtoLocalID[nodeId] = localID
+            xml_node = et.SubElement(xml_nodes, 'node',{'local_id':localID,'urn':n['URN'][0]})
+            et.SubElement(xml_node,'attr',{'name':str('NodeType'),'value':str(n['ObjTypeName'][0])})
+            for prop_name, prop_values in n.items():
+                if prop_name in self.RNEFnameToPropType.keys():
+                    if prop_name not in RNEF_EXCLUDE_NODE_PROPS:
+                        for prop_value in prop_values:
+                            attr = et.SubElement(xml_node,'attr',{'name':str(prop_name),'value':str(prop_value)})
+
+            localIDcounter +=1
+
+        xml_controls = et.SubElement(resnet, 'controls')
+        controlIDcounter = 0
+        graph_relations = set()
+        for regulatorID, targetID, rel in G.edges.data('relation'):
+            graph_relations.add(rel)
+
+        for rel in graph_relations:
+            #control_id = 'C'+str(controlIDcounter)
+            control_id = rel['URN'][0]
+            xml_control = et.SubElement(xml_controls,'control', {'local_id':control_id})
+            et.SubElement(xml_control,'attr',{'name':str('ControlType'),'value':str(rel['ObjTypeName'][0])})
+            #adding links
+            regulators = rel.Nodes['Regulators']
+            try:
+                targets = rel.Nodes['Targets']
+                for r in regulators:
+                    regulator_localID = nodeIDtoLocalID[r[0]]
+                    #link = et.SubElement(xml_control,'link', {'type':'in','ref':regulator_localID})
+                    et.SubElement(xml_control,'link', {'type':'in','ref':regulator_localID})
+
+                for t in targets:
+                    target_localID = nodeIDtoLocalID[t[0]]
+                    link = et.SubElement(xml_control,'link', {'type':'out','ref':target_localID})
+            except KeyError:
+                    for r in regulators:
+                        reguator_localID = nodeIDtoLocalID[r[0]]
+                        link = et.SubElement(xml_control,'link', {'type':'in-out','ref':reguator_localID})
+
+        #adding non-reference properties
+            for prop_name, prop_values in rel.items():
+                if prop_name in self.RNEFnameToPropType.keys():
+                    if prop_name not in RNEF_EXCLUDE_REL_PROPS:
+                        for prop_value in prop_values:
+                            attr = et.SubElement(xml_control,'attr',{'name':str(prop_name),'value':str(prop_value)})
+
+        #adding references
+            references =list(rel.References.values())
+            references = list(set(references))
+            for i in range(0,len(references)):
+                for prop_name, prop_values in references[i].items():
+                    for prop_value in prop_values:
+                        if prop_name in self.RNEFnameToPropType.keys():
+                            attr = et.SubElement(xml_control,'attr',{'name':str(prop_name),'value':str(prop_value), 'index':str(i)})
+
+            controlIDcounter +=1
+
+        return et.tostring(resnet,encoding='utf-8').decode("utf-8")
