@@ -1,9 +1,9 @@
-import ElsevierAPI
-from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,PSRelation,REF_ID_TYPES
-import networkx as nx
 import time
+import networkx as nx
+import ElsevierAPI
+import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,PSRelation,REF_ID_TYPES
 
 RNEF_EXCLUDE_NODE_PROPS = ['Id','URN','ObjClassId','ObjTypeId','ObjTypeName','OwnerId','DateCreated','DateModified']
 RNEF_EXCLUDE_REL_PROPS =  RNEF_EXCLUDE_NODE_PROPS+['RelationNumberOfReferences','# of Total References','Name']
@@ -53,63 +53,64 @@ class PSNetworx(DataModel):
         IDtoEntity = self.__ZeepToPSObjects(ZeepObjects)
         newGraph.add_nodes_from([(k,v.items()) for k,v in IDtoEntity.items()])
        
-        newRelations = dict()
-        for rel in ZeepRelations.Objects.ObjectRef:
-            psRel = PSRelation(rel)
-            relId = rel['Id']
-            newRelations[relId] = psRel
-        
-        #loading relations and their properties
-        for prop in ZeepRelations.Properties.ObjectProperty:
-            relId = prop['ObjId']
-            propId = prop['PropId']
-            PropSetId = prop['PropSet']
-            propName = prop['PropName']
-            propDisplayName = prop['PropDisplayName']
-            vals = prop['PropValues']['string']
+        if type(ZeepRelations) != type(None):
+            newRelations = dict()
+            for rel in ZeepRelations.Objects.ObjectRef:
+                psRel = PSRelation(rel)
+                relId = rel['Id']
+                newRelations[relId] = psRel
+            
+            #loading relations and their properties
+            for prop in ZeepRelations.Properties.ObjectProperty:
+                relId = prop['ObjId']
+                propId = prop['PropId']
+                PropSetId = prop['PropSet']
+                propName = prop['PropName']
+                propDisplayName = prop['PropDisplayName']
+                vals = prop['PropValues']['string']
 
-            if self.IdToPropType[propId]['IsMultiple'] == False:
-                newRelations[relId][propId] = vals
-                newRelations[relId][propName] = vals
-                newRelations[relId][propDisplayName] = vals
-            elif PropSetId in newRelations[relId].PropSetToProps.keys():
-                newRelations[relId].PropSetToProps[PropSetId][propId] = vals
-                newRelations[relId].PropSetToProps[PropSetId][propName]= vals
-                newRelations[relId].PropSetToProps[PropSetId][propDisplayName] = vals
-            else:                  
-                newRelations[relId].PropSetToProps[PropSetId] = {propId:vals}
-                newRelations[relId].PropSetToProps[PropSetId] = {propName:vals}
-                newRelations[relId].PropSetToProps[PropSetId] = {propDisplayName:vals}
-        
-        #loading connected entities from Links
-        for l in ZeepRelations.Links.Link:
-            relId = l['RelationId']
-            Dir = l['Dir']
-            link = (l['EntityId'], Dir, l['Effect'])
+                if self.IdToPropType[propId]['IsMultiple'] == False:
+                    newRelations[relId][propId] = vals
+                    newRelations[relId][propName] = vals
+                    newRelations[relId][propDisplayName] = vals
+                elif PropSetId in newRelations[relId].PropSetToProps.keys():
+                    newRelations[relId].PropSetToProps[PropSetId][propId] = vals
+                    newRelations[relId].PropSetToProps[PropSetId][propName]= vals
+                    newRelations[relId].PropSetToProps[PropSetId][propDisplayName] = vals
+                else:                  
+                    newRelations[relId].PropSetToProps[PropSetId] = {propId:vals}
+                    newRelations[relId].PropSetToProps[PropSetId] = {propName:vals}
+                    newRelations[relId].PropSetToProps[PropSetId] = {propDisplayName:vals}
+            
+            #loading connected entities from Links
+            for l in ZeepRelations.Links.Link:
+                relId = l['RelationId']
+                Dir = l['Dir']
+                link = (l['EntityId'], Dir, l['Effect'])
 
-            if Dir == 1:
-                if len(newRelations[relId].Nodes) < 2:
-                    newRelations[relId].Nodes['Targets'] = [link]
+                if Dir == 1:
+                    if len(newRelations[relId].Nodes) < 2:
+                        newRelations[relId].Nodes['Targets'] = [link]
+                    else:
+                        newRelations[relId].Nodes['Targets'].append(link)
                 else:
-                    newRelations[relId].Nodes['Targets'].append(link)
-            else:
-                if len(newRelations[relId].Nodes) < 1:
-                    newRelations[relId].Nodes['Regulators'] = [link]
-                else:
-                    newRelations[relId].Nodes['Regulators'].append(link)
+                    if len(newRelations[relId].Nodes) < 1:
+                        newRelations[relId].Nodes['Regulators'] = [link]
+                    else:
+                        newRelations[relId].Nodes['Regulators'].append(link)
 
-        
-        for rel in newRelations.values():
-            RegTargPairs = rel.GetRegulatorTargetPairs()
-            for pair in RegTargPairs:
-                refCount = rel['RelationNumberOfReferences'][0]
-                
-                newGraph.add_edge(pair[0], pair[1], relation=rel, weight=float(refCount))
-                #print (newGraph.get_edge_data(pair[0], pair[1]))
-                   
-        self.IDtoRelation.update(newRelations)#must be kept since Resnet relation may not be binary
+            
+            for rel in newRelations.values():
+                RegTargPairs = rel.GetRegulatorTargetPairs()
+                for pair in RegTargPairs:
+                    refCount = rel['RelationNumberOfReferences'][0]
+                    
+                    newGraph.add_edge(pair[0], pair[1], relation=rel, weight=float(refCount))
+                    #print (newGraph.get_edge_data(pair[0], pair[1]))
+                    
+            self.IDtoRelation.update(newRelations)#must be kept since Resnet relation may not be binary
+
         self.Graph = nx.compose(newGraph,self.Graph)
-        
         return newGraph
     
     def LoadGraphFromOQL(self,OQLquery:str,REL_PROPS=[],ENTITY_PROPS=[],getLinks=True):
@@ -123,7 +124,8 @@ class PSNetworx(DataModel):
                 ZeepObjects = self.GetObjProperties(objIdlist, entPropSet)
                 return self._load_graph(ZeepRelations, ZeepObjects)
         else:
-            return self.GetData(OQLquery,entPropSet,getLinks=False)
+            ZeepObjects = self.GetData(OQLquery,entPropSet,getLinks=False)
+            return self._load_graph(None, ZeepObjects)
 
 
     def __objId_byOQL(self, OQLquery:str):
@@ -414,12 +416,8 @@ class PSNetworx(DataModel):
             return newPSRelations
 
     def ConnectEntities(self,PropertyValues1:list,SearchByProperties1:list,EntityTypes1:list,PropertyValues2:list,SearchByProperties2:list,EntityTypes2:list, REL_PROPS=['Name','RelationNumberOfReferences'], ConnectByRelationTypes=[],ENTITY_PROPS=['Name']):
-        rel_props = set(REL_PROPS)
-        rel_props.update(['Name','RelationNumberOfReferences'])
-        #rel_props = list(rel_props)
-        ent_props = set(ENTITY_PROPS)
-        ent_props.update(['Name'])
-        #ent_props = list(ent_props)
+        rel_props = set(REL_PROPS+['Name','RelationNumberOfReferences'])
+        ent_props = set(ENTITY_PROPS+['Name'])
         OQLquery = OQL.ConnectEntities(PropertyValues1,SearchByProperties1,EntityTypes1,PropertyValues2,SearchByProperties2,EntityTypes2, ConnectByRelationTypes)
         ZeepRelations = self.GetData(OQLquery, list(rel_props))
         if type(ZeepRelations) != type(None):
@@ -583,12 +581,11 @@ class PSNetworx(DataModel):
         resnet = et.Element('resnet')
         xml_nodes = et.SubElement(resnet, 'nodes')
         graph_nodes = G.nodes(data=True)
-        nodeIDtoLocalID = dict()
+        #nodeIDtoLocalID = dict()
         localIDcounter = 0
         for nodeId, n in graph_nodes:
-            #localID = 'N'+str(localIDcounter)
             localID = n['URN'][0]
-            nodeIDtoLocalID[nodeId] = localID
+            #nodeIDtoLocalID[nodeId] = localID
             xml_node = et.SubElement(xml_nodes, 'node',{'local_id':localID,'urn':n['URN'][0]})
             et.SubElement(xml_node,'attr',{'name':str('NodeType'),'value':str(n['ObjTypeName'][0])})
             for prop_name, prop_values in n.items():
@@ -600,13 +597,12 @@ class PSNetworx(DataModel):
             localIDcounter +=1
 
         xml_controls = et.SubElement(resnet, 'controls')
-        controlIDcounter = 0
+        
         graph_relations = set()
         for regulatorID, targetID, rel in G.edges.data('relation'):
             graph_relations.add(rel)
 
         for rel in graph_relations:
-            #control_id = 'C'+str(controlIDcounter)
             control_id = rel['URN'][0]
             xml_control = et.SubElement(xml_controls,'control', {'local_id':control_id})
             et.SubElement(xml_control,'attr',{'name':str('ControlType'),'value':str(rel['ObjTypeName'][0])})
@@ -615,34 +611,33 @@ class PSNetworx(DataModel):
             try:
                 targets = rel.Nodes['Targets']
                 for r in regulators:
-                    regulator_localID = nodeIDtoLocalID[r[0]]
-                    #link = et.SubElement(xml_control,'link', {'type':'in','ref':regulator_localID})
+                    #regulator_localID = nodeIDtoLocalID[r[0]]
+                    regulator_localID = G.nodes[r[0]]['URN'][0]
                     et.SubElement(xml_control,'link', {'type':'in','ref':regulator_localID})
 
                 for t in targets:
-                    target_localID = nodeIDtoLocalID[t[0]]
-                    link = et.SubElement(xml_control,'link', {'type':'out','ref':target_localID})
+                    #target_localID = nodeIDtoLocalID[t[0]]
+                    target_localID = G.nodes[t[0]]['URN'][0]
+                    et.SubElement(xml_control,'link', {'type':'out','ref':target_localID})
             except KeyError:
                     for r in regulators:
-                        reguator_localID = nodeIDtoLocalID[r[0]]
-                        link = et.SubElement(xml_control,'link', {'type':'in-out','ref':reguator_localID})
+                        #regulator_localID = nodeIDtoLocalID[r[0]]
+                        regulator_localID = G.nodes[r[0]]['URN'][0]
+                        et.SubElement(xml_control,'link', {'type':'in-out','ref':regulator_localID})
 
         #adding non-reference properties
             for prop_name, prop_values in rel.items():
                 if prop_name in self.RNEFnameToPropType.keys():
                     if prop_name not in RNEF_EXCLUDE_REL_PROPS:
                         for prop_value in prop_values:
-                            attr = et.SubElement(xml_control,'attr',{'name':str(prop_name),'value':str(prop_value)})
+                            et.SubElement(xml_control,'attr',{'name':str(prop_name),'value':str(prop_value)})
 
         #adding references
-            references =list(rel.References.values())
-            references = list(set(references))
+            references = list(set(rel.References.values()))
             for i in range(0,len(references)):
                 for prop_name, prop_values in references[i].items():
                     for prop_value in prop_values:
                         if prop_name in self.RNEFnameToPropType.keys():
-                            attr = et.SubElement(xml_control,'attr',{'name':str(prop_name),'value':str(prop_value), 'index':str(i)})
-
-            controlIDcounter +=1
+                            et.SubElement(xml_control,'attr',{'name':str(prop_name),'value':str(prop_value), 'index':str(i)})
 
         return et.tostring(resnet,encoding='utf-8').decode("utf-8")
