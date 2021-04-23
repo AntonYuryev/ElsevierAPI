@@ -15,9 +15,10 @@ class DataModel():
         from zeep.transports import Transport
         session = Session()
         session.auth = HTTPBasicAuth(username, password)
-        transport = Transport(cache=SqliteCache(), session = session)
-        from zeep import Client 
-        self.SOAPclient = Client(url, transport=transport)
+        transport = Transport(cache=SqliteCache(),session = session)
+        from zeep import Client,Settings
+        settings = Settings(strict=False,xml_huge_tree=True)
+        self.SOAPclient = Client(url,transport=transport,settings=settings)  
         self.__load_model()
 
     def __load_model(self):
