@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classes>
+  <classmap language="activity flow">
+    <!--
+      glyphs:
+        classes:
+          perturbation
+          biological activity
+          phenotype
+          and
+          or
+          not
+          delay
+          existence
+          location
+        entities: // TODO: consider using entity by creating 2 glyphs instead of 1 when converting RNEF node
+          unspecified entity
+          simple chemical
+          macromolecule
+          nucleic acid feature
+          complex
+      arcs:
+        classes:
+          cardinality
+          positive influence
+          negative influence
+          unknown influence
+          equivalence arc
+          necessary stimulation
+          logic arc
+    -->
+    <!-- Entities -->
+    <entity rnef="Cell Object" sbgn="biological activity" />
+    <entity rnef="Cell Process" sbgn="phenotype" />
+    <entity rnef="CellLineName" sbgn="unspecified entity" />
+    <entity rnef="CellType" sbgn="unspecified entity" />
+    <entity rnef="Clinical Parameter" sbgn="phenotype" />
+    <entity rnef="Complex" sbgn="biological activity" />
+    <entity rnef="Disease" sbgn="phenotype" />
+    <entity rnef="Functional Class" sbgn="biological activity" />
+    <entity rnef="Genetic Variant" sbgn="biological activity" />
+    <entity rnef="Mutation" sbgn="phenotype" />
+    <entity rnef="Organ" sbgn="unspecified entity" />
+    <entity rnef="Organism" sbgn="unspecified entity" />
+    <entity rnef="Protein" sbgn="biological activity" />
+    <entity rnef="SemanticConcept" sbgn="unspecified entity" />
+    <entity rnef="Small Molecule" sbgn="biological activity" />
+    <entity rnef="Tissue" sbgn="unspecified entity" />
+    <entity rnef="Treatment" sbgn="unspecified entity" />
+    <entity rnef="Virus" sbgn="biological activity" />
+    <!-- Relations -->
+    <relation rnef="Binding" effect="default" sbgn="unknown influence" />
+    <relation rnef="Paralog" effect="default" sbgn="unknown influence" />
+    <relation rnef="Biomarker" effect="default" sbgn="logic arc" />
+    <relation rnef="CellExpression" effect="default" sbgn="logic arc" />
+    <relation rnef="ChemicalReaction" effect="default" sbgn="unknown influence" />
+    <relation rnef="ChemicalReaction" effect="negative" sbgn="negative influence" />
+    <relation rnef="ChemicalReaction" effect="positive" sbgn="positive influence" />
+    <relation rnef="ClinicalTrial" effect="default" sbgn="unknown influence" />
+    <relation rnef="DirectRegulation" effect="positive" sbgn="positive influence" />
+    <relation rnef="DirectRegulation" effect="negative" sbgn="negative influence" />
+    <relation rnef="DirectRegulation" effect="default" sbgn="unknown influence" />
+    <relation rnef="Expression" effect="positive" sbgn="positive influence" />
+    <relation rnef="Expression" effect="negative" sbgn="negative influence" />
+    <relation rnef="Expression" effect="default" sbgn="unknown influence" />
+    <relation rnef="FunctionalAssociation" effect="default" sbgn="logic arc" />
+    <relation rnef="GeneticChange" effect="default" sbgn="logic arc" />
+    <relation rnef="GeneticChange" effect="positive" sbgn="positive influence" />
+    <relation rnef="GeneticChange" effect="negative" sbgn="negative influence" />
+    <relation rnef="miRNAEffect" effect="default" sbgn="unknown influence" />
+    <relation rnef="miRNAEffect" effect="negative" sbgn="negative influence" />
+    <relation rnef="miRNAEffect" effect="positive" sbgn="positive influence" />
+    <relation rnef="MolSynthesis" effect="positive" sbgn="positive influence" />
+    <relation rnef="MolSynthesis" effect="negative" sbgn="negative influence" />
+    <relation rnef="MolSynthesis" effect="default" sbgn="unknown influence" />
+    <relation rnef="MolTransport" effect="positive" sbgn="positive influence" />
+    <relation rnef="MolTransport" effect="negative" sbgn="negative influence" />
+    <relation rnef="MolTransport" effect="default" sbgn="unknown influence" />
+    <relation rnef="PromoterBinding" effect="positive" sbgn="positive influence" />
+    <relation rnef="PromoterBinding" effect="negative" sbgn="negative influence" />
+    <relation rnef="PromoterBinding" effect="default" sbgn="unknown influence" />
+    <relation rnef="ProtModification" effect="positive" sbgn="positive influence" />
+    <relation rnef="ProtModification" effect="negative" sbgn="negative influence" />
+    <relation rnef="ProtModification" effect="default" sbgn="unknown influence" />
+    <relation rnef="QuantitativeChange" effect="default" sbgn="logic arc" />
+    <relation rnef="QuantitativeChange" effect="negative" sbgn="negative influence" />
+    <relation rnef="QuantitativeChange" effect="positive" sbgn="positive influence" />
+    <relation rnef="Regulation" effect="positive" sbgn="positive influence" />
+    <relation rnef="Regulation" effect="negative" sbgn="negative influence" />
+    <relation rnef="Regulation" effect="default" sbgn="unknown influence" />
+    <relation rnef="StateChange" effect="default" sbgn="unknown influence" />
+    <relation rnef="StateChange" effect="negative" sbgn="negative influence" />
+    <relation rnef="StateChange" effect="positive" sbgn="positive influence" />
+  </classmap>
+  <classmap language="entity relationship">
+    <!--
+      glyphs:
+        classes:
+          perturbing agent
+          phenotype
+          and
+          or
+          not
+          state variable
+          unit of information
+          entity
+          outcome
+          interaction
+          influence agent
+          annotation
+          variable value
+          implicit xor
+          delay
+          existence
+          location
+      arcs:
+        classes:
+          cardinality
+          modulation
+          stimulation
+          inhibition
+          assignment
+          interaction
+          absolute inhibition
+          absolute stimulation
+          necessary stimulation
+          logic arc
+    -->
+    <!-- Entities -->
+    <entity rnef="Cell Object" sbgn="entity" />
+    <entity rnef="Cell Process" sbgn="entity" />
+    <entity rnef="CellLineName" sbgn="entity" />
+    <entity rnef="CellType" sbgn="entity" />
+    <entity rnef="Clinical Parameter" sbgn="entity" />
+    <entity rnef="Complex" sbgn="entity" />
+    <entity rnef="Disease" sbgn="entity" />
+    <entity rnef="Functional Class" sbgn="entity" />
+    <entity rnef="Genetic Variant" sbgn="entity" />
+    <entity rnef="Mutation" sbgn="entity" />
+    <entity rnef="Organ" sbgn="entity" />
+    <entity rnef="Organism" sbgn="entity" />
+    <entity rnef="Protein" sbgn="entity" />
+    <entity rnef="SemanticConcept" sbgn="entity" />
+    <entity rnef="Small Molecule" sbgn="entity" />
+    <entity rnef="Tissue" sbgn="entity" />
+    <entity rnef="Treatment" sbgn="entity" />
+    <entity rnef="Virus" sbgn="entity" />
+    <!-- Relations -->
+    <relation rnef="Binding" effect="" sbgn="" />
+    <relation rnef="Biomarker" effect="" sbgn="" />
+    <relation rnef="CellExpression" effect="" sbgn="" />
+    <relation rnef="ChemicalReaction" effect="" sbgn="" />
+    <relation rnef="ClinicalTrial" effect="" sbgn="" />
+    <relation rnef="DirectRegulation" effect="" sbgn="" />
+    <relation rnef="Expression" effect="" sbgn="" />
+    <relation rnef="FunctionalAssociation" effect="" sbgn="" />
+    <relation rnef="GeneticChange" effect="" sbgn="" />
+    <relation rnef="miRNAEffect" effect="" sbgn="" />
+    <relation rnef="MolSynthesis" effect="" sbgn="" />
+    <relation rnef="MolTransport" effect="" sbgn="" />
+    <relation rnef="PromoterBinding" effect="" sbgn="" />
+    <relation rnef="ProtModification" effect="" sbgn="" />
+    <relation rnef="QuantitativeChange" effect="" sbgn="" />
+    <relation rnef="Regulation" effect="" sbgn="" />
+    <relation rnef="StateChange" effect="" sbgn="" />
+  </classmap>
+  <classmap language="process description">
+    <!--
+      glyphs:
+        classes:
+          unspecified entity
+          simple chemical
+          macromolecule
+          nucleic acid feature
+          simple chemical multimer
+          macromolecule multimer
+          nucleic acid feature multimer
+          complex
+          complex multimer
+          source and sink
+          perturbing agent
+          compartment
+          submap
+          tag
+          terminal
+          process
+          omitted process
+          uncertain process
+          association
+          dissociation
+          phenotype
+          and
+          or
+          not
+          state variable
+          unit of information
+          existence
+          location
+      arcs:
+        classes:
+          cardinality
+          production
+          consumption
+          catalysis
+          modulation
+          stimulation
+          inhibition
+          equivalence arc
+          necessary stimulation
+          logic arc
+    -->
+    <!-- Entities -->
+    <entity rnef="Cell Object" sbgn="compartment" />
+    <entity rnef="Cell Process" sbgn="process" />
+    <entity rnef="CellLineName" sbgn="unspecified entity" />
+    <entity rnef="CellType" sbgn="unspecified entity" />
+    <entity rnef="Clinical Parameter" sbgn="phenotype" />
+    <entity rnef="Complex" sbgn="complex" />
+    <entity rnef="Disease" sbgn="phenotype" />
+    <entity rnef="Functional Class" sbgn="unspecified entity" />
+    <entity rnef="Genetic Variant" sbgn="unspecified entity" />
+    <entity rnef="Mutation" sbgn="unspecified entity" />
+    <entity rnef="Organ" sbgn="unspecified entity" />
+    <entity rnef="Organism" sbgn="unspecified entity" />
+    <entity rnef="Protein" sbgn="macromolecule" />
+    <entity rnef="SemanticConcept" sbgn="unspecified entity" />
+    <entity rnef="Small Molecule" sbgn="simple chemical" />
+    <entity rnef="Tissue" sbgn="unspecified entity" />
+    <entity rnef="Treatment" sbgn="unspecified entity" />
+    <entity rnef="Virus" sbgn="unspecified entity" />
+    <!-- Relations -->
+    <relation rnef="Binding" effect="default" sbgn="modulation" />
+    <relation rnef="Biomarker" effect="default" sbgn="logic arc" />
+    <relation rnef="CellExpression" effect="default" sbgn="logic arc" />
+    <relation rnef="ChemicalReaction" effect="default" sbgn="logic arc" />
+    <relation rnef="ClinicalTrial" effect="default" sbgn="logic arc" />
+    <relation rnef="DirectRegulation" effect="default" sbgn="logic arc" />
+    <relation rnef="Expression" effect="default" sbgn="logic arc" />
+    <relation rnef="FunctionalAssociation" effect="default" sbgn="logic arc" />
+    <relation rnef="GeneticChange" effect="default" sbgn="logic arc" />
+    <relation rnef="miRNAEffect" effect="default" sbgn="logic arc" />
+    <relation rnef="MolSynthesis" effect="default" sbgn="logic arc" />
+    <relation rnef="MolTransport" effect="default" sbgn="logic arc" />
+    <relation rnef="PromoterBinding" effect="default" sbgn="logic arc" />
+    <relation rnef="ProtModification" effect="default" sbgn="logic arc" />
+    <relation rnef="QuantitativeChange" effect="default" sbgn="logic arc" />
+    <relation rnef="Regulation" effect="default" sbgn="logic arc" />
+    <relation rnef="StateChange" effect="default" sbgn="logic arc" />
+  </classmap>
+</classes>
