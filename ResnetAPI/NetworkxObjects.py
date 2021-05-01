@@ -48,7 +48,7 @@ class PSObject(dict): #{PropId:[values], PropName:[values]}
 
 REF_ID_TYPES = ['PMID','DOI','PII','PUI','EMBASE','NCT ID']
 REF_PROPS = ['Sentence','PubYear','Authors','Journal','MedlineTA','CellType','CellLineName','Organ','Tissue','Organism','Source',
-            'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator']
+            'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator','TextRef']
 
 class Reference(PSObject): #Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_PROPS[i]:value}
     pass
@@ -56,8 +56,8 @@ class Reference(PSObject): #Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_PR
         self.Identifiers = {idType:ID}
 
     def __key(self):
-        for i in range(0,len(REF_ID_TYPES)):
-            try: return self.Identifiers[REF_ID_TYPES[i]]
+        for id_type in REF_ID_TYPES:
+            try: return self.Identifiers[id_type]
             except KeyError: continue
         return NotImplemented
 
@@ -66,11 +66,11 @@ class Reference(PSObject): #Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_PR
 
     def __eq__(self,other):
         if isinstance(other, Reference):
-            for i in range(0,len(REF_ID_TYPES)):
+            for id_type in REF_ID_TYPES:
                 try: 
-                    self_identifier = self.Identifiers[REF_ID_TYPES[i]]
+                    self_identifier = self.Identifiers[id_type]
                     try:
-                        other_identifier = other.Identifiers[REF_ID_TYPES[i]]
+                        other_identifier = other.Identifiers[id_type]
                         return self_identifier == other_identifier
                     except KeyError: continue
                 except KeyError: continue
@@ -84,6 +84,13 @@ class Reference(PSObject): #Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_PR
 
     def MergeReference(self, ref_to_merge):
         self.Identifiers.update(ref_to_merge.Identifiers)
+
+    def IsFromAbstract(self):
+        for textref in self['TextRef']:
+            try:
+                return bool(textref.rindex('#abs',len(textref)-8, len(textref)-3))
+            except ValueError: continue
+        return False
 
 
 
@@ -187,7 +194,11 @@ class PSRelation(PSObject):
                 if propId in REF_PROPS: 
                     Ref.AddUniquePropertyList(propId, propValues)
 
-    def GetReferenceCount(self): return len(self.References)
+    def GetReferenceCount(self, count_abstracts=False): 
+        if count_abstracts == True:
+            ref_from_abstract = set([x for x in self.References.values() if x.IsFromAbstract() == True])
+            return len(ref_from_abstract)
+        else: return len(self.References)
 
     def TripleToStr(self,columnPropNames:list,return_dict = False,col_sep='\t',cell_sep=';',endOfline='\n',RefNumPrintLimit=0):
         #assumes all properties in columnPropNames were fetched from Database otherwise will crash
