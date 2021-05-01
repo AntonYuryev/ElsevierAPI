@@ -1,16 +1,13 @@
 #Initializing Pathway Studio data model
-import ElsevierAPI.ResnetAPI.ZeepToNetworkx as Znx
-from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSObject, PSRelation, PSNetworx
-from ElsevierAPI import networx as PSnx
-import networkx as nx
+from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSObject, PSRelation, PSNetworx,REF_ID_TYPES
 import logging
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 
 
-REL_PROP_Neo4j = ['Name','Effect', 'Mechanism', 'Source']
+REL_PROP_Neo4j = ['Name','Effect','Mechanism','Source','TextRef']
 ENT_PROP_Neo4j = ['URN','Name','Description']
-REL_PROPs = Znx.REF_ID_TYPES + REL_PROP_Neo4j
+REL_PROPs = REF_ID_TYPES + REL_PROP_Neo4j
 
 
 class nx2neo4j:
@@ -35,11 +32,10 @@ class nx2neo4j:
         query = (
             'MATCH (n:{type}) WHERE n.URN = \"{urn}\"'
             'RETURN n.Name AS Name, n.URN as urn, labels(n) as ObjTypeName'
-        )
+        )#labels(n) returns list
         query = query.format(type=node['ObjTypeName'][0], urn=node['URN'][0])
         result = tx.run(query)
         return {(record["Name"],record["urn"], record['ObjTypeName'][0]) for record in result}
-
 
     def find_node(self, node:PSObject):
         with self.driver.session() as session:
@@ -55,7 +51,7 @@ class nx2neo4j:
             node_type = n['ObjTypeName'][0]
             query = ('CREATE (n:'+node_type+'{' + self.__get_node_labels(n)+ '})'
                     'RETURN n.Name as Name, n.URN as urn, labels(n) as ObjTypeName'
-                    )
+                    ) #labels(n) returns list
             result = tx.run(query)
             try:
                 return {(record["Name"],record["urn"], record['ObjTypeName'][0]) for record in result}
@@ -78,12 +74,12 @@ class nx2neo4j:
     def __get_rel_labels(rel:PSRelation):
         lbls = ','.join([k.replace(':',' ')+':\"'+v[0]+'\"' for k,v in rel.items() if k in REL_PROP_Neo4j])
         lbls = lbls + ',RefCount:'+str(rel.GetReferenceCount())
+        lbls = lbls + ',AbstractCount:'+str(rel.GetReferenceCount(count_abstracts=True))
         return lbls
 
 
     def __create_rel_query(self,node1:PSObject, node2:PSObject, relation:PSRelation):
         relationType = relation['ObjTypeName'][0]
-        #dir = '-' if relationType in ['Binding', 'CellExpression','FunctionalAssociation'] else '->'
         node1urn = str(node1['URN'][0])
         node2urn = str(node2['URN'][0])
         node1type = node1['ObjTypeName'][0]
@@ -117,13 +113,9 @@ class nx2neo4j:
                     print("Created {r}: {p1} - {p2} relation".format(r=record[1],p1=record[0],p2=record[2]))
 
 
-
-
     def LoadGraphToNeo4j(resnet:PSNetworx,uriNeo4j:str,userNeo4j:str,pswdNeo4j:str):
         print('Importing Resnet data into local Neo4j')
         app = nx2neo4j(uriNeo4j,userNeo4j,pswdNeo4j)
         app.load_nodes(resnet)
         resnet.count_references()
         app.load_relations(resnet)
-
-    
