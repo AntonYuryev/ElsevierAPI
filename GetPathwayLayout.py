@@ -1,7 +1,7 @@
 import time
-import networkx as nx
 import argparse
 import textwrap
+import networkx as nx
 from ElsevierAPI import networx as PSnx,ExecutionTime
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_PROPS,REF_ID_TYPES
 
@@ -57,31 +57,24 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     global_start = time.time()
+
     import csv
     f = open(args.infile,"r")
     PathwayURNs = csv.reader(f, delimiter="\t")
-    urnList = set()
-    for urn in PathwayURNs:
-        urnList.add(urn[0])
+    urnSet = {u[0] for u in PathwayURNs}
 
-    print('Will attempt downloading %s pathways from %s' %(len(urnList),args.infile))
+    print('Will attempt downloading %s pathways from %s' %(len(urnSet),args.infile))
+
     out_dir = str(args.infile)[:str(args.infile).rfind('/')]
-
-    IDtoPathway,URNtoPathway = PSnx.GetAllPathways()
-    get_counter = 0
-    miss_counter = 0
+    IDtoPathway,URNtoPathway = PSnx.GetAllPathways()#works 40 sec - cache result to your application
     missedURNs = list()
-    for urn in urnList:
+    for urn in urnSet:
         start_time = time.time()
         if DownloadPathwayXML(urn,URNtoPathway,get_sbgn=True,out_dir=out_dir) == True:
-            get_counter += 1
             print('%d out of %d pathways downloaded in %s, %d not found' % 
-                (get_counter,len(urnList),ExecutionTime(start_time),miss_counter))
+                (len(urnSet)-len(missedURNs),len(urnSet),ExecutionTime(start_time),len(missedURNs)))
         else:
-            miss_counter +=1
             missedURNs.append(urn)
 
     print('Pathways not found:\n%s' % '\n'.join(missedURNs))
     print("Total execution time: %s" % ExecutionTime(global_start))
-
-
