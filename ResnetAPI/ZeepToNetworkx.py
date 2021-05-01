@@ -269,32 +269,7 @@ class PSNetworx(DataModel):
 
         return AccumulateRelation
     
-    def SemanticRefCountByIdsOLD(self,node1ids:list,node2ids:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[],ENTITY_PROPS=[]):
-        relProps = set(REL_PROPS)
-        relProps.update(['Name','RelationNumberOfReferences','Source'])
-        relProps.update(REF_ID_TYPES)
-
-        entProps = set(ENTITY_PROPS)
-        entProps.update(['Name'])
-
-        step_size = 1000
-        AccumulateRelation = nx.MultiDiGraph()
-        AccumulateReference = set()
-        for n1 in range (0, len(node1ids), step_size):
-            n1end = min(n1+step_size,len(node1ids))
-            n1ids = node1ids[n1:n1end]
-            for n2 in range (0, len(node2ids), step_size):
-                n2end = min(n2+step_size,len(node2ids))
-                n2ids = node2ids[n2:n2end]
-                OQLConnectquery = OQL.ConnectEntitiesIds(n1ids,n2ids,ConnectByRelTypes,RelEffect,RelDirection)   
-                FoundRelations = self.LoadGraphFromOQL(OQLConnectquery,REL_PROPS=list(relProps),ENTITY_PROPS=list(entProps))
-                if type(FoundRelations) != type(None):
-                    newRefs = self.__count_references(FoundRelations)   
-                    AccumulateReference.update(newRefs)
-                    AccumulateRelation = nx.compose(FoundRelations,AccumulateRelation)
-
-        return AccumulateReference, AccumulateRelation
-
+    
     def SemanticRefCount(self, node1PropValues:list, node1PropTypes:list, node1ObjTypes:list, node2PropValues:list, node2PropTypes:list, node2ObjTypes:list):
         node1ids = self.GetObjIdsByProps(node1PropValues,node1PropTypes,node1ObjTypes)
         AccumulateReference = set()
@@ -345,6 +320,16 @@ class PSNetworx(DataModel):
         PSobj = PSObject([])
         PSobj.update(dic)
         return PSobj
+
+
+    def __get_relations(self,inGraph:nx.MultiDiGraph=None):
+        G = inGraph if type(inGraph) != type(None) else self.Graph
+        graph_relations = set()
+        for regulatorID, targetID, rel in G.edges.data('relation'):
+            graph_relations.add(rel)
+
+        return graph_relations
+
 
     def PrintReferenceView(self, fileOut, relPropNames, entPropNames=[], inGraph:nx.MultiDiGraph=None, access_mode='w', printHeader=True, RefNumPrintLimit=0):
         rel_props = list(set(relPropNames+['Name']))
@@ -574,34 +559,29 @@ class PSNetworx(DataModel):
             PatwhayRelations = nx.compose(PatwhayRelations,pathwayGraph)
 
         return PatwhayRelations
-    
+
+
     def toRNEF(self, inGraph:nx.MultiDiGraph=None):
         G = inGraph if type(inGraph) != type(None) else self.Graph
         import xml.etree.ElementTree as et
         resnet = et.Element('resnet')
-        xml_nodes = et.SubElement(resnet, 'nodes')
-        graph_nodes = G.nodes(data=True)
-        #nodeIDtoLocalID = dict()
+        xml_nodes = et.SubElement(resnet,'nodes')
         localIDcounter = 0
-        for nodeId, n in graph_nodes:
+        for nodeId,n in G.nodes(data=True):
             localID = n['URN'][0]
-            #nodeIDtoLocalID[nodeId] = localID
-            xml_node = et.SubElement(xml_nodes, 'node',{'local_id':localID,'urn':n['URN'][0]})
+            xml_node = et.SubElement(xml_nodes,'node',{'local_id':localID,'urn':n['URN'][0]})
             et.SubElement(xml_node,'attr',{'name':str('NodeType'),'value':str(n['ObjTypeName'][0])})
             for prop_name, prop_values in n.items():
                 if prop_name in self.RNEFnameToPropType.keys():
                     if prop_name not in RNEF_EXCLUDE_NODE_PROPS:
                         for prop_value in prop_values:
-                            attr = et.SubElement(xml_node,'attr',{'name':str(prop_name),'value':str(prop_value)})
+                            et.SubElement(xml_node,'attr',{'name':str(prop_name),'value':str(prop_value)})
 
             localIDcounter +=1
 
         xml_controls = et.SubElement(resnet, 'controls')
         
-        graph_relations = set()
-        for regulatorID, targetID, rel in G.edges.data('relation'):
-            graph_relations.add(rel)
-
+        graph_relations = self.__get_relations()
         for rel in graph_relations:
             control_id = rel['URN'][0]
             xml_control = et.SubElement(xml_controls,'control', {'local_id':control_id})
@@ -611,17 +591,14 @@ class PSNetworx(DataModel):
             try:
                 targets = rel.Nodes['Targets']
                 for r in regulators:
-                    #regulator_localID = nodeIDtoLocalID[r[0]]
                     regulator_localID = G.nodes[r[0]]['URN'][0]
                     et.SubElement(xml_control,'link', {'type':'in','ref':regulator_localID})
 
                 for t in targets:
-                    #target_localID = nodeIDtoLocalID[t[0]]
                     target_localID = G.nodes[t[0]]['URN'][0]
                     et.SubElement(xml_control,'link', {'type':'out','ref':target_localID})
             except KeyError:
                     for r in regulators:
-                        #regulator_localID = nodeIDtoLocalID[r[0]]
                         regulator_localID = G.nodes[r[0]]['URN'][0]
                         et.SubElement(xml_control,'link', {'type':'in-out','ref':regulator_localID})
 
