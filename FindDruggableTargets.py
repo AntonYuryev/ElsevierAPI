@@ -25,11 +25,11 @@ sn.AddDumpFile(foutDiseaseSNPs,replace_main_dump=True)
 sn.ProcessOQL()
 
 SNPIds = set(sn.GetGraphEntityIds(['GeneticVariant']))
-sn.GOQLquery = GOQL.ExpandEntity(PropertyValues=SNPIds,SearchByProperties=['id'],ExpandWithRelationTypes=['GeneticChange'],ExpandToNeighborTypes=['Protein'])
+sn.ReplaceGOQL(GOQL.ExpandEntity(PropertyValues=SNPIds,SearchByProperties=['id'],ExpandWithRelationTypes=['GeneticChange'],ExpandToNeighborTypes=['Protein']))
 print("Finding Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 sn.AddDumpFile(foutDiseaseProteins,replace_main_dump=True)
 sn.ProcessOQL(flash_dump=True)
- 
+
 foutDiseasePPI = myDir+"\\PPIs between genes linked to "+InputDiseaseNames+'.tsv'
 PPIgraph = sn.GetPPIgraph(foutDiseasePPI)
 
@@ -50,7 +50,7 @@ print(sorted_centrality_byName)
 
 
 DiseaseProteins = set(sn.GetGraphEntityIds(['Protein']))
-sn.GOQLquery = GOQL.GetDrugs(ForTargetsIDlist=DiseaseProteins)
+sn.ReplaceGOQL(GOQL.GetDrugs(ForTargetsIDlist=DiseaseProteins))
 print("Finding Drugs for Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 sn.AddDumpFile(foutDrugsForDiseaseProteins,replace_main_dump=True)
 start_time = time.time()
@@ -66,7 +66,7 @@ ProteinNoDrugs = DiseaseProteins.difference(FoundTargets)
 if len(ProteinNoDrugs) > 0:
     start_time = time.time()
     print('Searching for RMC compounds binding to %d proteins that do not bind any drugs' % len(ProteinNoDrugs))
-    sn.GOQLquery = GOQL.GetReaxysSubstances(ForTargetsIDlist=ProteinNoDrugs)
+    sn.ReplaceGOQL(GOQL.GetReaxysSubstances(ForTargetsIDlist=ProteinNoDrugs))
     sn.ProcessOQL()
     execution_time = sn.ExecutionTime(start_time)
     DrugCompoundCount = set([x for x,y in sn.Graph.nodes(data=True) if ((sn.Graph.out_degree(x)>0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))])
