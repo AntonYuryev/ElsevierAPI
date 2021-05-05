@@ -38,7 +38,7 @@ class DataModel():
 
         for i in range(0, len(PropertyTypes)):
             id = PropertyTypes[i]['Id']
-            PropTypeName =  PropertyTypes[i]['Name']
+            PropTypeName = PropertyTypes[i]['Name']
             PropTypeDisplayName =  PropertyTypes[i]['DisplayName']
             self.IdToPropType[PropTypeName] = PropertyTypes[i]
             self.IdToPropType[PropTypeDisplayName] = PropertyTypes[i]
@@ -294,11 +294,11 @@ class DataModel():
         return ObjProps
 
 
-    def InitSession(self, OQLrequest, PageSize:int, PropertyNames=['Name']):
+    def InitSession(self, OQLrequest, PageSize:int, PropertyNames=['Name'],getLinks=True):
         rp = self.CreateResultParam(PropertyNames)
         rp.GetObjects = True
         rp.GetProperties = True
-        rp.GetLinks = True
+        rp.GetLinks = getLinks
         rp.CreateResult = True
         rp.MaxPageSize = PageSize
         ObjProps = self.OQLresponse(OQLrequest, rp)
@@ -328,11 +328,11 @@ class DataModel():
         return ObjProps, (ObjProps.ResultRef, ObjProps.ResultSize, ObjProps.ResultPos)
 
 
-    def GetNextSessionPage(self, ResultRef, ResultPos, PageSize, ResultSize, PropertyNames=['Name']):
+    def GetNextSessionPage(self, ResultRef, ResultPos, PageSize, ResultSize, PropertyNames=['Name'],getLinks=True):
         rp = self.CreateResultParam(PropertyNames)
         rp.GetObjects = True
         rp.GetProperties = True
-        rp.GetLinks = True
+        rp.GetLinks = getLinks
 
         rp.ResultSize = ResultSize
         rp.ResultRef = ResultRef
