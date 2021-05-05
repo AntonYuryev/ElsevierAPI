@@ -209,13 +209,11 @@ class PSNetworx(DataModel):
         print('%d out of %d %s identifiers were mapped on entities in the database' % (len(PropToPSobj),len(PropertyValues),propName))
         return PropToPSobj
 
-    def GetNeighbors(self, EntityIDs:set, Graph=None):
-        if type(Graph) == type(None):
-            Graph = self.Graph
- 
+    def GetNeighbors(self, EntityIDs:set, InGraph=None):
+        G = self.Graph if type(InGraph) == type(None) else InGraph
         IdToNeighbors = dict()
         for Id in EntityIDs:
-            Neighbors =  set([x for x in nx.all_neighbors(Graph, Id)])                
+            Neighbors =  set([x for x in nx.all_neighbors(G, Id)])                
             IdToNeighbors[Id] = Neighbors
         return IdToNeighbors
 
@@ -301,17 +299,15 @@ class PSNetworx(DataModel):
             IdToProps = {x:y[PropertyName] for x,y in self.Graph.nodes(data=True) if x in IDList}
             return IdToProps
 
-    def PrintTriples(self, fileOut, relPropNames, relList=[], access_mode='w', printHeader=True):
+    def PrintTriples(self, fileOut, relPropNames, inGraph:nx.MultiDiGraph=None, relList=[], access_mode='w', printHeader=True):
+        G = inGraph if type(inGraph) != type(None) else self.Graph
         with open(fileOut, access_mode, encoding='utf-8') as f:
             if printHeader == True:
                 header = '\t'.join(relPropNames)+'\t'+"Regulators Id"+'\t'+"Targets Id"
                 f.write(header + '\n')
             
-            relToPrint = relList
-            if len(relList) == 0: relToPrint = self.IDtoRelation.values() #dump everything
-                
-            for rel in relToPrint:
-                f.write(rel.TripleToStr(relPropNames))
+        for regulatorID, targetID, rel in G.edges.data('relation'):
+            f.write(rel.TripleToStr(relPropNames))
 
 
     def __get_node(self, nodeId, inGraph:nx.MultiDiGraph=None):
@@ -331,14 +327,12 @@ class PSNetworx(DataModel):
         return graph_relations
 
 
-    def PrintReferenceView(self, fileOut, relPropNames, entPropNames=[], inGraph:nx.MultiDiGraph=None, access_mode='w', printHeader=True, RefNumPrintLimit=0):
+    def PrintReferenceView(self, fileOut, relPropNames, entPropNames=[], inGraph:nx.MultiDiGraph=None, access_mode='w', printHeader=True, RefNumPrintLimit=0,col_sep='\t'):
         rel_props = list(set(relPropNames+['Name']))
-        #rel_props.append('Name') if 'Name' not in rel_props else rel_props
-
         G = inGraph if type(inGraph) != type(None) else self.Graph
         with open(fileOut, access_mode, encoding='utf-8') as f:
             if printHeader == True:
-                header = '\t'.join(rel_props)+'\t'+"Regulators Id"+'\t'+"Targets Id"
+                header = col_sep.join(rel_props)+col_sep+"Regulators Id"+col_sep+"Targets Id"
                 targetPropheader = [''] * len(entPropNames)
                 regPropheader = [''] * len(entPropNames) 
 
@@ -347,26 +341,32 @@ class PSNetworx(DataModel):
                     targetPropheader[i] = 'Target:'+entPropNames[i]
 
                 if len(regPropheader) > 0:
-                    header = '\t'.join(regPropheader)+'\t'+header+'\t'+'\t'.join(targetPropheader)
+                    header = col_sep.join(regPropheader)+col_sep+header+col_sep+col_sep.join(targetPropheader)
                     
                 f.write(header + '\n')
 
-            if len(entPropNames) == 0:
-                for regulatorID, targetID, rel in G.edges.data('relation'):
-                    ReferenceViewTriple = rel.TripleToStr(rel_props)
-                    f.write(ReferenceViewTriple)
-            else:
-                for regulatorID, targetID, rel in G.edges.data('relation'):
-                    reg = self.__get_node(regulatorID, G)
-                    targ = self.__get_node(targetID, G)
-                    regPropsStr = reg.DataToStr(entPropNames)
-                    targPropsStr = targ.DataToStr(entPropNames)
-                    relPropsStrList = rel.TripleToStr(rel_props, return_dict=True, RefNumPrintLimit=RefNumPrintLimit)
+            if G.number_of_edges() > 0:
+                if len(entPropNames) == 0:
+                    for regulatorID, targetID, rel in G.edges.data('relation'):
+                        ReferenceViewTriple = str(rel.TripleToStr(rel_props))
+                        f.write(ReferenceViewTriple)
+                else:
+                    for regulatorID, targetID, rel in G.edges.data('relation'):
+                        reg = self.__get_node(regulatorID, G)
+                        targ = self.__get_node(targetID, G)
+                        regPropsStr = reg.DataToStr(entPropNames,col_sep=col_sep)
+                        targPropsStr = targ.DataToStr(entPropNames,col_sep=col_sep)
+                        relPropsStrList = dict(rel.TripleToStr(rel_props,return_dict=True,RefNumPrintLimit=RefNumPrintLimit,col_sep=col_sep))
 
-                    ReferenceTableView = str()
-                    for row in relPropsStrList.values():
-                        ReferenceTableView = ReferenceTableView+regPropsStr[0:len(regPropsStr)-1]+'\t'+'\t'.join(row)+'\t'+targPropsStr
-                    f.write(ReferenceTableView)
+                        ReferenceTableView = str()
+                        for row in relPropsStrList.values():
+                            ReferenceTableView = ReferenceTableView+regPropsStr[0:len(regPropsStr)-1]+col_sep+col_sep.join(row)+col_sep+targPropsStr
+                        f.write(ReferenceTableView)
+            else:
+                for node_id in G.nodes:
+                    n = self.__get_node(node_id, G)
+                    nodePropStr = n.DataToStr(entPropNames,col_sep=col_sep)
+                    f.write(nodePropStr)
 
     
     def DumpEntities (self, fileOut, PropNames, EntityIDlist=[]):
