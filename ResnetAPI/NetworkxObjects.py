@@ -13,7 +13,7 @@ class PSObject(dict): #{PropId:[values], PropName:[values]}
         self[PropId] = [PropValue]
 
     def AddProperty(self, PropId, PropValue:str):
-        try: self[PropId].append(PropValue)
+        try: list(self[PropId]).append(PropValue)
         except KeyError: self[PropId] = [PropValue]
 
     def AddUniqueProperty(self, PropId, PropValue:str):
