@@ -1,10 +1,10 @@
-from ElsevierAPI.ResnetAPI import ZeepToNetworkx as zNX
-from ElsevierAPI.ResnetAPI import PathwayStudioGOQL as GOQL
+from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
+import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
 import networkx as nx
 import time
 import math
 
-class APISession(zNX.PSNetworx):
+class APISession(PSNetworx):
     pass
     ResultRef = str()
     ResultPos = int()
@@ -16,7 +16,7 @@ class APISession(zNX.PSNetworx):
     entProps = ['Name']
     DumpFiles = ['ResnetAPIsessionDump.tsv']
 
-    def __init__(self, GOQLquery, net:zNX.PSNetworx):
+    def __init__(self, GOQLquery, net:PSNetworx):
         self.SOAPclient = net.SOAPclient
         self.IdtoObjectType = net.IdtoObjectType #from DB.ObjectTypes
         self.IdToPropType = net.IdToPropType #from DB.PropTypes
@@ -24,10 +24,9 @@ class APISession(zNX.PSNetworx):
         self.IDtoRelation = net.IDtoRelation #{relID:PSRelation}
         self.Graph = net.Graph
         self.GOQLquery = GOQLquery
-        self.__getLinks = self.__get_links()
-        self.DumpFiles = [] #array of filenames used for dumping the graph data. First element is used for dumping data obtained ProcessOQL
+        self.__getLinks = self.__set_getLinks()
+        self.DumpFiles = ['ResnetAPIsessionDump.tsv'] #array of filenames used for dumping the graph data. First element is used for dumping data obtained ProcessOQL
         #other files are used to dump additional data obtained by overridden AddGraph
-
     
     def __InitAPISession (self):
         if self.__getLinks == True:
@@ -60,12 +59,12 @@ class APISession(zNX.PSNetworx):
                 else:
                     return None
 
-    def __get_links(self):
+    def __set_getLinks(self):
         return self.GOQLquery[7:15] == 'Relation'
 
     def ReplaceGOQL(self,newGOQL:str):
         self.GOQLquery = newGOQL
-        self.__getLinks = self.__get_links()
+        self.__getLinks = self.__set_getLinks()
 
     def AddRelProps(self, add_props:list):
         self.relProps = list(set(self.relProps+add_props))
@@ -74,7 +73,7 @@ class APISession(zNX.PSNetworx):
         self.entProps = list(set(self.entProps+add_props))
 
     def AddGraph(self, newGraph:nx.MultiDiGraph):
-        pass #placeholder to derive child class from APISession (see DiseaseNetwork(APISession))
+        pass #placeholder to derive child class from APISession (see DiseaseNetwork(APISession) as example)
 
     def FlashDumpFiles(self):
         for fname in self.DumpFiles:
@@ -99,41 +98,40 @@ class APISession(zNX.PSNetworx):
         return self.ResultSize
 
     def ProcessOQL(self, flash_dump=False):
-        from datetime import timedelta
         global_start = time.time()
-        start_time = time.time()
-        if flash_dump == True:
-            self.FlashDumpFiles()
+        if flash_dump == True: self.FlashDumpFiles()
 
         OQLGraph = nx.MultiDiGraph()
-        pageGraph = self.__InitAPISession()
-        iterCount = math.ceil(self.ResultSize/self.PageSize)
         refCount = 0
         return_type = 'relations' if self.__getLinks == True else 'entities'
+        
+        start_time = time.time()
+        pageGraph = self.__InitAPISession()
+        iterCount = math.ceil(self.ResultSize/self.PageSize)
         print("GOQL query:\n%s\n returns %d %s.\n It will be processed in %d iterations" % (self.GOQLquery, self.ResultSize,return_type,iterCount))
+        
         for pos in range(0, self.ResultSize, self.PageSize):    
             execution_time = self.ExecutionTime(start_time)
             iteration = math.ceil(self.ResultPos/self.PageSize)
-            PagerefCount = pageGraph.size(weight='weight')
-            print("Iteration %s out of %d retreived %d relations for %d nodes supported by %d references from Resnet in %s seconds" % (iteration,iterCount,pageGraph.size(),pageGraph.number_of_nodes(),PagerefCount,execution_time))
-            refCount += PagerefCount
+            PageRefCount = pageGraph.size(weight='weight')
+            print("Iteration %s out of %d retreived %d relations for %d nodes supported by %d references from Resnet in %s seconds" % (iteration,iterCount,pageGraph.size(),pageGraph.number_of_nodes(),PageRefCount,execution_time))
+            refCount += PageRefCount
             self.AddGraph(pageGraph)
             if len(self.DumpFiles) > 0:
                 self.to_csv(self.DumpFiles[0],pageGraph,'a')
                 self.__IsOn1stpage = False
                 
             start_time = time.time()
-            OQLGraph = nx.compose(OQLGraph, pageGraph)
+            OQLGraph = nx.compose(pageGraph,OQLGraph)
             pageGraph = self.__GetNextPage()
 
         print("%d relations supported by %d references are in file: %s" % (self.ResultSize,refCount,self.DumpFiles[0]))
         self.ResultRef = ''
         self.ResultPos = 0
         self.ResultSize = 0
-        self.DumpFIles = []
+        self.DumpFiles = ['ResnetAPIsessionDump.tsv']
         self.__IsOn1stpage = True
-        execution_time = self.ExecutionTime(global_start)
-        print("GOQL query was executed in %s in %d iterations" % (execution_time,iterCount))
+        print("GOQL query was executed in %s in %d iterations" % (self.ExecutionTime(global_start),iterCount))
         
         return OQLGraph
 
@@ -143,11 +141,9 @@ class APISession(zNX.PSNetworx):
         print('Retreiving PPI network for %d proteins' % (len(NetworkProteins)))
         start_time = time.time()
         PPIrelationsGraph = self.GetPPIs(NetworkProteins,self.relProps, self.entProps)
-        execution_time = self.ExecutionTime(start_time)
         self.to_csv(foutName, PPIrelationsGraph)
-        print("PPI network with %d relations was retreived in %s ---" % (PPIrelationsGraph.size(), execution_time))
+        print("PPI network with %d relations was retreived in %s ---" % (PPIrelationsGraph.size(), self.ExecutionTime(start_time)))
         return PPIrelationsGraph
-
 
 
 class DiseaseNetwork(APISession):
@@ -212,7 +208,7 @@ class DiseaseNetwork(APISession):
                 CompoundCount = set([x for x in RMCtoTargetsGraph.nodes() if RMCtoTargetsGraph.out_degree(x)>0])
                 TargetCount = set([x for x in RMCtoTargetsGraph.nodes() if RMCtoTargetsGraph.in_degree(x)>0])
                 print("%d lead compounds for %d undruggable proteins linked to %s were retreived in %s ---" % (len(CompoundCount), len(TargetCount), self.InputDiseaseNames, execution_time))
-                self.Graph = nx.compose(self.Graph, RMCtoTargetsGraph)
+                self.Graph = nx.compose(RMCtoTargetsGraph,self.Graph)
                 self.to_csv(self.DumpFiles[2], RMCtoTargetsGraph, 'a')
             else:
                 print('No RMC compounds found on this iteration')
