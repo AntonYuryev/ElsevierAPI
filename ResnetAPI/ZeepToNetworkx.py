@@ -3,7 +3,7 @@ import networkx as nx
 import ElsevierAPI
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,PSRelation,REF_ID_TYPES
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,PSRelation,REF_ID_TYPES,REF_PROPS
 
 RNEF_EXCLUDE_NODE_PROPS = ['Id','URN','ObjClassId','ObjTypeId','ObjTypeName','OwnerId','DateCreated','DateModified']
 RNEF_EXCLUDE_REL_PROPS =  RNEF_EXCLUDE_NODE_PROPS+['RelationNumberOfReferences','# of Total References','Name']
@@ -20,6 +20,8 @@ class PSNetworx(DataModel):
         self.RNEFnameToPropType = DBModel.RNEFnameToPropType
         self.mappedBy_propName = 'mapped_by'
         self.child_ids_propName = 'Child Ids'
+        self.REF_ID_TYPES = REF_ID_TYPES
+        self.REF_PROPS = REF_PROPS
 
     @staticmethod
     def __ZeepToPSObjects(ZeepObjects):
@@ -45,10 +47,8 @@ class PSNetworx(DataModel):
                    
         return IDtoEntity
 
-
     def _load_graph(self, ZeepRelations, ZeepObjects):
         newGraph = nx.MultiDiGraph()
-
         #loading entities and their properties
         IDtoEntity = self.__ZeepToPSObjects(ZeepObjects)
         newGraph.add_nodes_from([(k,v.items()) for k,v in IDtoEntity.items()])
@@ -160,7 +160,7 @@ class PSNetworx(DataModel):
             start_time = time.time()
             propval_chunk = PropertyValues[i:i+step]
             QueryNode = OQL.GetEntitiesByProps(propval_chunk,[propName],OnlyObjectTypes,MinConnectivity)
-            ZeepEntities = self.LoadGraphFromOQL(QueryNode,REL_PROPS=[],ENTITY_PROPS=entProps,getLinks=False)
+            ZeepEntities = self.GetData(QueryNode,entProps,getLinks=False)
             if type(ZeepEntities) != type(None):
                 IDtoEntitychunk = self.__ZeepToPSObjects(ZeepEntities)
                 IDtoEntity.update(IDtoEntitychunk)
@@ -182,7 +182,7 @@ class PSNetworx(DataModel):
                     ChildIDs = LazyChildDict[lazy_key]
                 except KeyError:
                     QueryOntology = OQL.GetChildEntities(psobj_id,['Id'],OnlyObjectTypes)
-                    ZeepEntities = self.LoadGraphFromOQL(QueryOntology,REL_PROPS=[],ENTITY_PROPS=entProps,getLinks=False)
+                    ZeepEntities = self.GetData(QueryOntology,entProps,getLinks=False)
                     if type(ZeepEntities) != type(None):
                         has_childs += 1
                         childIDstoEntities = self.__ZeepToPSObjects(ZeepEntities)
@@ -209,13 +209,31 @@ class PSNetworx(DataModel):
         print('%d out of %d %s identifiers were mapped on entities in the database' % (len(PropToPSobj),len(PropertyValues),propName))
         return PropToPSobj
 
-    def GetNeighbors(self, EntityIDs:set, InGraph=None):
+    def GetNeighbors(self,EntityIDs:set,InGraph=None, FilterByType=[]):
         G = self.Graph if type(InGraph) == type(None) else InGraph
         IdToNeighbors = dict()
         for Id in EntityIDs:
-            Neighbors =  set([x for x in nx.all_neighbors(G, Id)])                
-            IdToNeighbors[Id] = Neighbors
-        return IdToNeighbors
+            if Id in G:
+                NeighborsIds = set([x for x in nx.all_neighbors(G, Id)])                
+                IdToNeighbors[Id] = list(NeighborsIds)
+        if len(FilterByType) > 0:
+            filteredIdtoNeighbors = dict()
+            allowedIDs = self.GetGraphEntityIds(FilterByType,G)
+            for k,v in IdToNeighbors.items():
+                filteredNeigborsIds = [i for i in v if i in allowedIDs]
+                filteredIdtoNeighbors[k] = filteredNeigborsIds
+            return filteredIdtoNeighbors
+        else:
+            return IdToNeighbors
+
+    def GetRegulome(self,StartEntityIDs:set,InGraph=None):
+        G = self.Graph if type(InGraph) == type(None) else InGraph
+        all_succesorIDs = set()
+        for Id in StartEntityIDs:
+            if Id in G:
+                succecorIDs = list(nx.bfs_tree(G,Id))#,depth_limit=7
+                all_succesorIDs.update(succecorIDs)
+        return list(all_succesorIDs)
 
     def GetSubGraph(self,between_nodeids:list,and_nodeids:list,inGraph:nx.MultiDiGraph=None):
         G = inGraph if type(inGraph) != type(None) else self.Graph
@@ -252,7 +270,8 @@ class PSNetworx(DataModel):
         entProps = set(ENTITY_PROPS)
         entProps.update(['Name'])
 
-        step_size = 1000
+        step_size = 500
+        iteration_counter = 0
         AccumulateRelation = nx.MultiDiGraph()
         for n1 in range (0, len(node1ids), step_size):
             n1end = min(n1+step_size,len(node1ids))
@@ -262,7 +281,10 @@ class PSNetworx(DataModel):
                 n2ids = node2ids[n2:n2end]
                 OQLConnectquery = OQL.ConnectEntitiesIds(n1ids,n2ids,ConnectByRelTypes,RelEffect,RelDirection)   
                 FoundRelations = self.LoadGraphFromOQL(OQLConnectquery,REL_PROPS=list(relProps),ENTITY_PROPS=list(entProps))
+                iteration_counter += 1
                 if type(FoundRelations) != type(None): 
+                    print ('Iteration %d found %d semantic relations between %d nodes supported by %d references' 
+                    %(iteration_counter,FoundRelations.number_of_edges(),FoundRelations.number_of_nodes(),FoundRelations.size()))
                     AccumulateRelation = nx.compose(FoundRelations,AccumulateRelation)
 
         return AccumulateRelation
@@ -334,7 +356,7 @@ class PSNetworx(DataModel):
             if printHeader == True:
                 header = col_sep.join(rel_props)+col_sep+"Regulators Id"+col_sep+"Targets Id"
                 targetPropheader = [''] * len(entPropNames)
-                regPropheader = [''] * len(entPropNames) 
+                regPropheader = [''] * len(entPropNames)
 
                 for i in range(0,len(entPropNames)):
                     regPropheader[i] = 'Regulator:'+entPropNames[i]
