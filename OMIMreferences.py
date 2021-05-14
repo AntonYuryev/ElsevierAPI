@@ -4,7 +4,7 @@ from ElsevierAPI import networx as PSnx
 import time
 
 import csv
-OMIMpairsFile = "OMIM/OMIMDisease-Gene_Demo.txt"
+OMIMpairsFile = "DemoInput/OMIMDisease-Gene_Demo.txt"
 tsv_file = open(OMIMpairsFile)
 OMIMpairs = csv.reader(tsv_file, delimiter="\t")
 
