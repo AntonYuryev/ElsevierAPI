@@ -2,72 +2,82 @@ import time
 import pandas as pd
 import argparse
 import textwrap
-from ElsevierAPI import networx as PSnx
+from ElsevierAPI import ps_api
 
-def MapEntityToPathways(IdToFolderPathwayDict:dict(),IDtoPathways:dict(),folderName,FilterBy:list,SearchByProperties=['Name','Alias']):
+
+def map2pathways(entity2folder2pathway: dict, id2pathways: dict, folderName, FilterBy: list,
+                 SearchByProperties=None):
+    SearchByProperties = ['Name', 'Alias'] if SearchByProperties is None else SearchByProperties
     IdtoMembersCollector = dict()
-    for pthwy in IDtoPathways.values():
-        if pthwy['ObjTypeName'][0] == 'Pathway':
-            PathwayName = pthwy['Name'][0]
-            PathwayIds = pthwy['Id']
-            #FolderPathwayTuple = (folderName, PathwayName)
-            IdtoMembersInPathway = PSnx.GetPathwayMemberIds(PathwayIds=PathwayIds, OnlyEntities=FilterBy, WithProperties=SearchByProperties)
-            for EntityId in IdtoMembersInPathway.keys():
+    for pathway in id2pathways.values():
+        if pathway['ObjTypeName'][0] == 'Pathway':
+            PathwayName = pathway['Name'][0]
+            PathwayIds = pathway['Id']
+            IdtoMembersInPathway = ps_api.get_pathway_member_ids(PathwayIds=PathwayIds, only_entities=FilterBy,
+                                                                 with_properties=SearchByProperties)
+            for entity_Id in IdtoMembersInPathway.keys():
                 try:
-                    IdToFolderPathwayDict[EntityId][folderName].append(PathwayName)
+                    entity2folder2pathway[entity_Id][folderName].append(PathwayName)
                 except KeyError:
-                    try: 
-                        IdToFolderPathwayDict[EntityId][folderName] = [PathwayName]
+                    try:
+                        entity2folder2pathway[entity_Id][folderName] = [PathwayName]
                     except KeyError:
-                        IdToFolderPathwayDict[EntityId]= {folderName:[PathwayName]}
+                        entity2folder2pathway[entity_Id] = {folderName: [PathwayName]}
 
             IdtoMembersCollector.update(IdtoMembersInPathway)
 
     return IdtoMembersCollector
 
-def FindPathways(FoldersWithPathways:list, EntityPandas, SearchByProperty=['Name','Alias']):
-    Entities = list(EntityPandas.index)
-    IdtoMembers = dict()
+
+def find_pathways(FoldersWithPathways: list, entity_pandas: pd.DataFrame, search_by_property=None):
+    search_by_property = ['Name', 'Alias'] if search_by_property is None else search_by_property
+
+    Entities = list(entity_pandas.index)
+    id2members = dict()
 
     for PathwayFolder in FoldersWithPathways:
-        subFolders = PSnx.GetSubfolders([PathwayFolder])
+        subFolders = ps_api.get_subfolders([PathwayFolder])
         if len(subFolders) == 0:
-            print ('Input folder has no subfolders. Will use only pathways from %s' % PathwayFolder)
+            print('Input folder has no subfolders. Will use only pathways from %s' % PathwayFolder)
         else:
             print('Found %d subfolders in %s' % (len(subFolders), PathwayFolder))
 
-        IdToFolderPathwayDict = dict()
-        ParentFolder = PSnx.IdToFolders[PathwayFolder][0]
-        IDtoPathways = PSnx.GetObjectsFromFolders([ParentFolder.Id])
-        IdtoMembers.update(MapEntityToPathways(IdToFolderPathwayDict,IDtoPathways,PathwayFolder,Entities,SearchByProperty))
+        id2folder_pathway = dict()
+        ParentFolder = ps_api.IdToFolders[PathwayFolder][0]
+        id2pathways = ps_api.get_objects_from_folders([ParentFolder.Id])
+        id2members.update(
+            map2pathways(id2folder_pathway, id2pathways, PathwayFolder, Entities, search_by_property))
 
         for FolderId in subFolders:
-            subFolder = PSnx.IdToFolders[FolderId][0]
+            subFolder = ps_api.IdToFolders[FolderId][0]
             subFolderName = subFolder['Name']
-            allSubSubFolders = PSnx.GetSubfolderTree(FolderId)
-                
-            IDtoPathways = PSnx.GetObjectsFromFolders(allSubSubFolders)
-            IdtoMembers.update(MapEntityToPathways(IdToFolderPathwayDict,IDtoPathways,subFolderName,Entities,SearchByProperty))
+            allSubSubFolders = ps_api.get_subfolders_tree(FolderId)
 
-    return IdToFolderPathwayDict, IdtoMembers
-    
+            # {PathwayId:psObject} pathway ID to properties dict
+            id2pathways = ps_api.get_objects_from_folders(allSubSubFolders)
+            id2members.update(
+                map2pathways(id2folder_pathway, id2pathways, subFolderName, Entities, search_by_property))
+
+    return id2folder_pathway, id2members
+
 
 if __name__ == "__main__":
-    EntityListFile =str()
+    EntityListFile = str()
     instructions = '''
     infile - single column file with entity names. 
     search_property - property to find entities from infile. Default search property: Name,Alias
     pathway_folder - Comma-separated list of Folders in Pathway Studio server with pathway collection. 
     Pathways in all subfolders will be also used. Default folder: 'Hallmarks of Cancer'
     '''
-    parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,epilog=textwrap.dedent(instructions))
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     epilog=textwrap.dedent(instructions))
     parser.add_argument('-i', '--infile', type=str, required=True)
     parser.add_argument('-p', '--search_by_properties', default='Name,Alias')
     parser.add_argument('-f', '--pathway_folder', default='Hallmarks of Cancer')
     args = parser.parse_args()
 
     if len(args.infile) > 0:
-        EntityListFile = args.infile #full path to single column entity list file
+        EntityListFile = args.infile  # full path to single column entity list file
     else:
         print('No entity list file was specified')
 
@@ -75,10 +85,10 @@ if __name__ == "__main__":
         SearchByProperty = args.search_by_properties.split(",")
 
     SearchPathwaysInFolders = args.pathway_folder.split(",")
-    
+
     start_time = time.time()
     EntityPandas = pd.read_csv(EntityListFile, delimiter='\t', header=0, index_col=0)
-    IdToFolderPathwayDict, IdtoMembers = FindPathways(SearchPathwaysInFolders, EntityPandas)
+    IdToFolderPathwayDict, IdtoMembers = find_pathways(SearchPathwaysInFolders, EntityPandas)
 
     HallmarkColumnName = 'Hallmarks'
     PathwayColumnName = 'Pathways'
@@ -88,16 +98,17 @@ if __name__ == "__main__":
     for EntityId, FolderToPathwayDict in IdToFolderPathwayDict.items():
         TargetName = IdtoMembers[EntityId]['Name'][0]
         if TargetName in EntityPandas.index:
-            for hallmark, patwhays in FolderToPathwayDict.items():
-                EntityPandas.at[TargetName,HallmarkColumnName] = EntityPandas.at[TargetName,HallmarkColumnName]+'\''+ hallmark+'\''+ ';'
-                allPathwaysinHallmark = '\';\''.join(patwhays)
-                EntityPandas.at[TargetName,PathwayColumnName] = EntityPandas.at[TargetName,PathwayColumnName]+'\''+allPathwaysinHallmark+'\';'
+            for hallmark, pathways in FolderToPathwayDict.items():
+                EntityPandas.at[TargetName, HallmarkColumnName] = EntityPandas.at[
+                                                                      TargetName, HallmarkColumnName] + '\'' + hallmark + '\'' + ';'
+                allPathwaysInHallmark = '\';\''.join(pathways)
+                EntityPandas.at[TargetName, PathwayColumnName] = EntityPandas.at[
+                                                                     TargetName, PathwayColumnName] + '\'' + allPathwaysInHallmark + '\';'
 
-
-    foutName = EntityListFile[:len(EntityListFile)-4]+' Pathways from '+','.join(SearchPathwaysInFolders)+'.tsv'
+    foutName = EntityListFile[:len(EntityListFile) - 4] + ' Pathways from ' + ','.join(SearchPathwaysInFolders) + '.tsv'
     EntityPandas.to_csv(foutName, sep='\t', index=True)
 
     PathwayCounter = set([z for z in [x for x in [v.values() for v in IdToFolderPathwayDict.values()]]])
-    print('Found %d pathways in \"%s\" for %d entities from \"%s\"' % (len(PathwayCounter), ','.join(SearchPathwaysInFolders), len(IdToFolderPathwayDict), EntityListFile))
-    print('Results were printed to \"%s\" in %s seconds' % (foutName,time.time() - start_time))
-
+    print('Found %d pathways in \"%s\" for %d entities from \"%s\"' %
+         (len(PathwayCounter), ','.join(SearchPathwaysInFolders), len(IdToFolderPathwayDict), EntityListFile))
+    print('Results were printed to \"%s\" in %s seconds' % (foutName, time.time() - start_time))
