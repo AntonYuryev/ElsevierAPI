@@ -2,26 +2,21 @@ import time
 import argparse
 import textwrap
 import networkx as nx
-from ElsevierAPI import networx as PSnx,ExecutionTime
+from ElsevierAPI import ps_api 
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_PROPS,REF_ID_TYPES
 
 def DownloadPathwayXML(PathwayURN:str,URNtoPathway:dict,get_sbgn=False,out_dir=''):
     try: pathwayId = URNtoPathway[PathwayURN]['Id'][0]
     except KeyError: return False
 
-    layout = PSnx.get_layout(pathwayId)
+    layout = ps_api.get_layout(pathwayId)
     pathwayName = URNtoPathway[PathwayURN]['Name'][0]
-    
-    OQLquery = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE id = {pId})'
-    pathway_nodes = PSnx.LoadGraphFromOQL(OQLquery.format(pId=pathwayId),getLinks=False)
 
-    OQLquery = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE id = {pId})'
-    pathway_relations = PSnx.LoadGraphFromOQL(OQLquery.format(pId=pathwayId), REF_PROPS+REF_ID_TYPES)
-    pathway_graph = nx.compose(pathway_relations, pathway_nodes)
-    PSnx.count_references(pathway_graph)
+    pathway_graph = ps_api.get_pathway_components([pathwayId],'id',retrieve_rel_properties=REF_PROPS + REF_ID_TYPES)
+    ps_api.Graph.count_references(pathway_graph)
 
     import xml.etree.ElementTree as et
-    rnef_xml = et.fromstring(PSnx.toRNEF(pathway_graph))
+    rnef_xml = et.fromstring(ps_api.to_rnef(pathway_graph))
     rnef_xml.set('name', pathwayName)
     rnef_xml.set('urn', PathwayURN)
 
@@ -35,13 +30,13 @@ def DownloadPathwayXML(PathwayURN:str,URNtoPathway:dict,get_sbgn=False,out_dir='
     from xml.dom import minidom
     pathway_rnef = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
     pathway_rnef = minidom.parseString(pathway_rnef).toprettyxml(indent='   ')
-    from  ElsevierAPI.ResnetAPI.rnef2sbgn import makeFileName
-    fout_name = out_dir+'/'+makeFileName(pathwayName)
+    from  ElsevierAPI.ResnetAPI.rnef2sbgn import make_file_name
+    fout_name = out_dir +'/' + make_file_name(pathwayName)
     with open(fout_name+'.rnef', mode='w', encoding='utf-8') as f2: f2.write(pathway_rnef)
     
     if get_sbgn == True:
-        from ElsevierAPI.ResnetAPI.rnef2sbgn import rnef2sbgnStr
-        pathway_sbgn = rnef2sbgnStr(pathway_rnef,'ElsevierAPI/ResnetAPI/rnef2sbgn_map.xml.xml')
+        from ElsevierAPI.ResnetAPI.rnef2sbgn import rnef2sbgn_str
+        pathway_sbgn = rnef2sbgn_str(pathway_rnef, classmapfile='ElsevierAPI/ResnetAPI/rnef2sbgn_map.xml')
         with open(fout_name+'.sbgn.xml', mode='w', encoding='utf-8') as f2: f2.write(pathway_sbgn)
 
     print('\"%s\" pathway downloaded: %d nodes, %d edges supported by %d references' % 
@@ -61,20 +56,27 @@ if __name__ == "__main__":
     import csv
     f = open(args.infile,"r")
     PathwayURNs = csv.reader(f, delimiter="\t")
-    urnSet = {u[0] for u in PathwayURNs}
+    urnSet = [u[0] for u in PathwayURNs]
 
-    print('Will attempt downloading %s pathways from %s' %(len(urnSet),args.infile))
+    print('Attempting to download %s pathways from %s' %(len(urnSet),args.infile))
 
     out_dir = str(args.infile)[:str(args.infile).rfind('/')]
-    IDtoPathway,URNtoPathway = PSnx.GetAllPathways()#works 40 sec - cache result to your application
+    start_time = time.time()
+    IDtoPathway,URNtoPathway = ps_api.get_all_pathways()#works 40 sec - cache result to your application
+    print('List of all pathways identifiers was retrieved in %s' % ps_api.execution_time(start_time))
     missedURNs = list()
+    download_counter = 0
     for urn in urnSet:
         start_time = time.time()
-        if DownloadPathwayXML(urn,URNtoPathway,get_sbgn=True,out_dir=out_dir) == True:
-            print('%d out of %d pathways downloaded in %s, %d not found' % 
-                (len(urnSet)-len(missedURNs),len(urnSet),ExecutionTime(start_time),len(missedURNs)))
+        if DownloadPathwayXML(urn,URNtoPathway,get_sbgn=True,out_dir=out_dir):
+            download_counter += 1
+            exec_time = ps_api.execution_time(start_time)
+            print('%d out of %d pathways downloaded in %s, %d not found' %
+                  (download_counter, len(urnSet), exec_time, len(missedURNs)))
         else:
             missedURNs.append(urn)
 
     print('Pathways not found:\n%s' % '\n'.join(missedURNs))
-    print("Total execution time: %s" % ExecutionTime(global_start))
+    print("Total execution time: %s" % ps_api.execution_time(global_start))
+
+

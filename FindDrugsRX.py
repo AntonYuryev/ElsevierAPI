@@ -1,9 +1,7 @@
 import time
-import ElsevierAPI
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-import ElsevierAPI.ResnetAPI.ResnetAPISession as PsAPIsn
+from ElsevierAPI import ps_api,APIconfig
 import ElsevierAPI.ReaxysAPI.Reaxys_API as RxAPI
-from ElsevierAPI import networx as PSnx
 import argparse
 import textwrap
 
@@ -11,15 +9,15 @@ import textwrap
 start_time = time.time()
 def GOQLtoFindDrugs(TargetIds:list, TargetType = 'Protein', drugEffect=['negative']):
     if TargetType == 'Protein':
-        return OQL.GetDrugs(ForTargetsIDlist=TargetIds)
+        return OQL.get_drugs(for_targets_with_ids=TargetIds)
     elif TargetType == 'Small Molecule':
         REL_TYPES = ['Regulation', 'MolSynthesis']
-        OQLquery = OQL.ExpandEntity(PropertyValues=TargetIds,SearchByProperties=['id'],ExpandWithRelationTypes=REL_TYPES,ExpandToNeighborTypes=['Small Molecule'],direction='upstream')
+        OQLquery = OQL.expand_entity(PropertyValues=TargetIds, SearchByProperties=['id'], expand_by_rel_types=REL_TYPES, expand2neighbors=['Small Molecule'], direction='upstream')
         OQLquery += ' AND Effect = (' + ','.join(drugEffect)+')'
         return OQLquery
     else: 
         REL_TYPES = ['Regulation']
-        OQLquery = OQL.ExpandEntity(PropertyValues=TargetIds,SearchByProperties=['id'],ExpandWithRelationTypes=REL_TYPES,ExpandToNeighborTypes=['Small Molecule'],direction='upstream')
+        OQLquery = OQL.expand_entity(PropertyValues=TargetIds, SearchByProperties=['id'], expand_by_rel_types=REL_TYPES, expand2neighbors=['Small Molecule'], direction='upstream')
         OQLquery += ' AND Effect = (' + ','.join(drugEffect)+')'
         return OQLquery
 
@@ -66,28 +64,30 @@ if __name__ == "__main__":
     with open(EntityListFile) as f:
         EntitiesToExpand = [line.rstrip('\n') for line in f]
 
-    TargetIDs = PSnx.GetObjIdsByProps(PropertyValues=EntitiesToExpand,SearchByProperties=SearchPsProps)
-    OQLquery = GOQLtoFindDrugs(TargetIDs,TargetType=TargetType, drugEffect=drugEffect)
+    TargetIDs = ps_api._get_obj_ids_by_props(PropertyValues=EntitiesToExpand, SearchByProperties=SearchPsProps)
     PSdumpFile = EntityListFile[:len(EntityListFile)-4]+'_psdump.tsv'
-    sn = PsAPIsn.APISession(OQLquery, PSnx)
-    sn.AddDumpFile(PSdumpFile,replace_main_dump=True)
-    sn.entProps = args.resnet_retreive_props.split(',')
-    if 'Reaxys ID' not in sn.entProps: sn.entProps.append('Reaxys ID')
-    sn.relProps = ['Name','Sentence','PMID','DOI','PubYear','RelationNumberOfReferences']#Data dump columns will be ordered according to the order in this list
-    sn.GOQLquery = OQLquery
-    sn.ProcessOQL()
+    ps_api.add_dump_file(PSdumpFile, replace_main_dump=True)
+    ps_api.entProps = args.resnet_retreive_props.split(',')
+    ps_api.add_ent_props('Reaxys ID', 'InChIKey')
+  
+    ps_api.relProps = ['Name','Sentence','PMID','DOI','PubYear','RelationNumberOfReferences']#Data dump columns will be ordered according to the order in this list
+    ps_api.process_oql(GOQLtoFindDrugs(TargetIDs, TargetType=TargetType, drugEffect=drugEffect))
 
     if len(ReaxysFields) > 0:
-        FoundDrugs = [y for x,y in sn.Graph.nodes(data=True) if ((sn.Graph.out_degree(x)>0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))]
+        FoundDrugs = [y for x,y in ps_api.Graph.nodes(data=True) if ((ps_api.Graph.out_degree(x)>0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))]
         print('Found %d drugs in Resnet' % len(FoundDrugs))
         ReaxysAPI = RxAPI.Reaxys_API()
-        ReaxysAPI.OpenSession(ElsevierAPI.APIconfig)
+        ReaxysAPI.OpenSession(APIconfig)
         foundRxProps = 0
         print("Start looking for Reaxys properties")
         for drug in FoundDrugs:
-            try: RXNIds = drug['Reaxys ID']
-            except KeyError: continue
-            ReaxysProps = ReaxysAPI.GetCompoundProps(RXNIds, 'IDE.XRN', ReaxysFields)
+            try: inchikeys = drug['InChIKey']
+            except KeyError:
+                try: RXNIds = drug['Reaxys ID']
+                except KeyError: continue
+            ReaxysProps = ReaxysAPI.GetCompoundProps(inchikeys, 'IDE.INCHI', ReaxysFields)
+            if len(ReaxysProps) == 0:
+                ReaxysProps = ReaxysAPI.GetCompoundProps(RXNIds, 'IDE.XRN', ReaxysFields)
             if len(ReaxysProps)> 0:
                 drug.update(ReaxysProps)
                 foundRxProps +=1
@@ -95,8 +95,8 @@ if __name__ == "__main__":
         print('Found Reaxys properties for %d out of %d Resnet drugs' % (foundRxProps, len(FoundDrugs)))
 
         fileRx = EntityListFile[:len(EntityListFile)-4]+ '+Rx.tsv'
-        EntityProps = sn.entProps+ReaxysFields
-        sn.PrintReferenceView(fileRx, sn.relProps, EntityProps)
+        EntityProps = ps_api.entProps+ReaxysFields
+        ps_api.Graph.print_references(fileRx, ps_api.relProps, EntityProps)
 
-        print("%d relations supported by %d references and annotated by Reaxys fields are in file: %s" % (sn.Graph.number_of_edges(),sn.Graph.size(weight='weight'),fileRx))
-        print("Time to fetch drugs linked to %s found in %s ---" % (EntityListFile,ElsevierAPI.ExecutionTime(start_time)))
+        print("%d relations supported by %d references and annotated by Reaxys fields are in file: %s" % (ps_api.Graph.number_of_edges(),ps_api.Graph.size(weight='weight'),fileRx))
+        print("Time to fetch drugs linked to %s found in %s ---" % (EntityListFile,ps_api.execution_time(start_time)))

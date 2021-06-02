@@ -1,11 +1,10 @@
 import ElsevierAPI
-from ElsevierAPI import networx as PSnx
-import ElsevierAPI.ResnetAPI.ResnetAPISession as ssn
+from ElsevierAPI import ps_api
 import time
 import argparse
 import textwrap
 
-NON_DIRECTIONAL = ['Binding','FunctionalAssociation','CellExpression','Metabolization']
+NON_DIRECTIONAL = ['Binding','FunctionalAssociation','CellExpression','Metabolization','Paralog']
 
 def IsDirectional(relType:str):
     return relType not in NON_DIRECTIONAL
@@ -17,8 +16,8 @@ def CountRelations (EntityIN, EntityOUT, RelType, isDirectional=True):
     else:
         OQLquery = 'SELECT Relation WHERE objectType = '+ RelType +' AND NeighborOf downstream (SELECT Entity WHERE objectType = '+EntityIN+') AND NeighborOf downstream (SELECT Entity WHERE objectType = '+EntityOUT+')'
 
-    sn = ssn.APISession(OQLquery, PSnx)
-    relcnt = sn.GetResultSize()
+    #sn = ssn.APISession(OQLquery, PSnx)
+    relcnt = ps_api.get_result_size()
     return relcnt
 
 
@@ -45,7 +44,7 @@ def GetStats(Triples:list):
             if rel_count > 0:
                 f.write('%s\t%s\t%s\t%d\n' % (EntityIN,EntityOUT,rel_type,rel_count))
 
-    print("Time to retreive database stats: %s" % (ElsevierAPI.ExecutionTime(start_time)))
+    print("Time to retreive database stats: %s" % (ps_api.execution_time(start_time)))
 
 
 if __name__ == "__main__":
@@ -61,8 +60,8 @@ if __name__ == "__main__":
     DBEntities = list()
     Triples = list()
     if len(args.infile) == 0:
-        DBRelTypes = PSnx.GetRelationTypes()
-        DBEntities = PSnx.GetEntityTypes()
+        DBRelTypes = ps_api.get_relation_types()
+        DBEntities = ps_api.get_entity_types()
         for rel_type in DBRelTypes:
             for EntityIN in DBEntities:
                 for EntityOUT in DBEntities:
