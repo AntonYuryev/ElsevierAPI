@@ -1,10 +1,21 @@
 import pandas as pd
+import logging
+import sys
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 
-class DataModel():
 
+def configure_logging(logger):
+    logger.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    return logger
+
+class DataModel:
     def __init__(self, url, username, password):
-        self.IdToPropType = dict() 
+        self.IdToPropType = dict()
         self.IdtoObjectType = dict()
         self.PropIdToDict = dict()
         self.IdToFolders = dict()
@@ -15,321 +26,328 @@ class DataModel():
         from zeep.transports import Transport
         session = Session()
         session.auth = HTTPBasicAuth(username, password)
-        transport = Transport(cache=SqliteCache(),session = session)
-        from zeep import Client,Settings
-        settings = Settings(strict=False,xml_huge_tree=True)
-        self.SOAPclient = Client(url,transport=transport,settings=settings)  
-        self.__load_model()
+        transport = Transport(cache=SqliteCache(), session=session)
+        from zeep import Client, Settings
+        settings = Settings(strict=False, xml_huge_tree=True)
+        self.logger = configure_logging(logging.getLogger(__name__))
+        try:
+            self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
+            self.__load_model()
+            print('Connected to Resnet API server:\n%s' % url)
+        except Exception as error:
+            self.logger.error("Pathway Studio server connection failed: {error}".format(error=error))
+            raise ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
 
     def __load_model(self):
-        ObjectTypes = self.SOAPclient.service.GetObjectTypes()
-        PropertyTypes = self.SOAPclient.service.GetPropertyDefinitions()
-        #Folders = self.SOAPclient.service.GetFoldersTree(0)
+        object_types = self.SOAPclient.service.GetObjectTypes()
+        property_types = self.SOAPclient.service.GetPropertyDefinitions()
+        # Folders = self.SOAPclient.service.GetFoldersTree(0)
 
-        for i in range(0, len(ObjectTypes)):
-            id = ObjectTypes[i]['Id']
-            ObjTypeName =  ObjectTypes[i]['Name']
-            ObjTypeDisplayname =  ObjectTypes[i]['DisplayName']
-            self.IdtoObjectType[ObjTypeName] = ObjectTypes[i]
-            self.IdtoObjectType[ObjTypeDisplayname] = ObjectTypes[i]
-            self.IdtoObjectType[id] = ObjectTypes[i]
-            for s in ObjectTypes[i]['Synonyms']:
-                self.IdtoObjectType[s] = ObjectTypes[i]
+        for i in range(0, len(object_types)):
+            db_id = object_types[i]['Id']
+            obj_type_name = object_types[i]['Name']
+            obj_type_display_name = object_types[i]['DisplayName']
+            self.IdtoObjectType[obj_type_name] = object_types[i]
+            self.IdtoObjectType[obj_type_display_name] = object_types[i]
+            self.IdtoObjectType[db_id] = object_types[i]
+            for s in object_types[i]['Synonyms']:
+                self.IdtoObjectType[s] = object_types[i]
 
-        for i in range(0, len(PropertyTypes)):
-            id = PropertyTypes[i]['Id']
-            PropTypeName = PropertyTypes[i]['Name']
-            PropTypeDisplayName =  PropertyTypes[i]['DisplayName']
-            self.IdToPropType[PropTypeName] = PropertyTypes[i]
-            self.IdToPropType[PropTypeDisplayName] = PropertyTypes[i]
-            self.IdToPropType[id] = PropertyTypes[i]
-            self.RNEFnameToPropType[PropTypeName] = PropertyTypes[i]
-            
+        for i in range(0, len(property_types)):
+            db_id = property_types[i]['Id']
+            prop_type_name = property_types[i]['Name']
+            prop_type_display_name = property_types[i]['DisplayName']
+            self.IdToPropType[prop_type_name] = property_types[i]
+            self.IdToPropType[prop_type_display_name] = property_types[i]
+            self.IdToPropType[db_id] = property_types[i]
+            self.RNEFnameToPropType[prop_type_name] = property_types[i]
 
-    def __objtypes_by_classid(self, classID):
-        objtype_list = list()
-        ObjectTypes = self.SOAPclient.service.GetObjectTypes()
-        for i in range(0, len(ObjectTypes)):
-            ObjTypeName =  ObjectTypes[i]['Name']
-            ObjTyepeClassID = ObjectTypes[i]['ObjClassId']
-            if ObjTyepeClassID == classID:
-                objtype_list.append(ObjTypeName)
+    def __object_types_by_class_id(self, classID):
+        object_types = list()
+        zeep_object_types = self.SOAPclient.service.GetObjectTypes()
+        for i in range(0, len(zeep_object_types)):
+            obj_type_name = zeep_object_types[i]['Name']
+            obj_type_class_id = zeep_object_types[i]['ObjClassId']
+            if obj_type_class_id == classID:
+                object_types.append(obj_type_name)
 
-        return objtype_list
+        return object_types
 
-    def GetRelationTypes(self):
-        return self.__objtypes_by_classid(3)
+    def get_relation_types(self):
+        return self.__object_types_by_class_id(3)
 
-    def GetEntityTypes(self):
-        return self.__objtypes_by_classid(1)
+    def get_entity_types(self):
+        return self.__object_types_by_class_id(1)
 
-    def LoadFolderTree(self):
-        Folders = self.SOAPclient.service.GetFoldersTree(0)
-        for folder in Folders:
-            Folderid = folder['Id']
-            FolderName =  folder['Name']
-            self.IdToFolders[Folderid] = [folder]
-            #several folders may have the same name:
-            if FolderName in self.IdToFolders.keys():
-                self.IdToFolders[FolderName].append(folder)
+    def load_folder_tree(self):
+        folders = self.SOAPclient.service.GetFoldersTree(0)
+        for folder in folders:
+            folder_id = folder['Id']
+            folder_name = folder['Name']
+            self.IdToFolders[folder_id] = [folder]
+            # several folders may have the same name:
+            if folder_name in self.IdToFolders.keys():
+                self.IdToFolders[folder_name].append(folder)
             else:
-                self.IdToFolders[FolderName] = [folder]
+                self.IdToFolders[folder_name] = [folder]
 
-            
-    def DumpPropNames (self, fileOut):
-        IDPropNamesList = [  (p['Id'], p['DisplayName'], p['Name']) for p in self.IdToPropType.values() ]
-        IDPropNamesList = list(set(IDPropNamesList))
+    def dump_prop_names(self, fileOut):
+        id_prop_names_list = list({(p['DisplayName'], p['Name'], p['Id']) for p in self.IdToPropType.values()})
+        id_prop_names_list.sort(key=lambda x: x[0])
         import json
-        propNamesStr = json.dumps(IDPropNamesList)
-        import codecs
-        import sys
-        UTF8Writer = codecs.getwriter('utf8')
-        sys.stdout = UTF8Writer(sys.stdout)
-        file_result=open(fileOut, "w", encoding='utf-8')
-        file_result.write("Format: [PropertyType Id, Name in PS UI , Search string for GOQL] = \n" + propNamesStr)
-        file_result.close()
+        with open(fileOut, 'w', encoding='utf-8') as f:
+            f.write("Format - [\'Name in PS UI\' ,\'Search string for GOQL\',\'PropertyType Id\']: \n")
+            for p in id_prop_names_list:
+                f.write(json.dumps(p) + '\n')
 
-    def DumpObjNames (self, fileOut):
-        IDObjTypeList = [  (p['Id'], p['DisplayName'], p['Name']) for p in self.IdtoObjectType.values() ]
-        IDObjTypeList = list(set(IDObjTypeList))
+    def dump_object_names(self, fileOut):
+        id_obj_type_list = list({(p['DisplayName'], p['Name'], p['Id']) for p in self.IdtoObjectType.values()})
+        id_obj_type_list.sort(key=lambda x: x[0])
         import json
-        ObjTypeListStr = json.dumps(IDObjTypeList)
-        import codecs
-        import sys
-        UTF8Writer = codecs.getwriter('utf8')
-        sys.stdout = UTF8Writer(sys.stdout)
-        file_result=open(fileOut, "w", encoding='utf-8')
-        file_result.write("Format: [ObjectType Id, Name in PS UI , Search string for GOQL] = \n" + ObjTypeListStr)
-        file_result.close()
+        with open(fileOut, 'w', encoding='utf-8') as f:
+            f.write("Format - [\'Name in PS UI\' ,\'Search string for GOQL\',\'ObjectType Id\']: \n")
+            for o in id_obj_type_list:
+                f.write(json.dumps(o) + '\n')
 
-    def MapPropertyNamestoID(self, PropertyNames:list):
+    def map_property_names_to_id(self, PropertyNames: list):
         id_list = [self.IdToPropType[x]['Id'] for x in PropertyNames]
         if 'Name' not in PropertyNames:
             id_list.append(self.IdToPropType['Name']['Id'])
         return id_list
 
-    def GetDictionary(self, idProperty, idDictFolder:int):
+    def get_dictionary(self, idProperty, idDictFolder: int):
         if idProperty not in self.PropIdToDict.keys():
-            dictFolder = self.SOAPclient.service.GetDictFolder(idDictFolder)
-            IdValuesToStr = dict()
-            for idval in dictFolder.Values.DictValue:
-                id = idval['Id']
-                val = idval['Value']
-                IdValuesToStr[id] = val
-            self.PropIdToDict[idProperty] = IdValuesToStr
-            self.PropIdToDict[dictFolder['Name']] = IdValuesToStr 
+            dict_folder = self.SOAPclient.service.GetDictFolder(idDictFolder)
+            id_values_to_str = dict()
+            for val in dict_folder.Values.DictValue:
+                db_id = val['Id']
+                val = val['Value']
+                id_values_to_str[db_id] = val
+            self.PropIdToDict[idProperty] = id_values_to_str
+            self.PropIdToDict[dict_folder['Name']] = id_values_to_str
         return self.PropIdToDict[idProperty]
-        
-    def GetDictValue(self, IdProperty:int, DictIdValue:int):
+
+    def get_dict_value(self, IdProperty: int, DictIdValue: int):
         if IdProperty not in self.PropIdToDict[IdProperty].keys():
-            idDictionary = self.IdToPropType[IdProperty]['DictFolderID']
-            assert idDictionary > 0
-            self.GetDictionary(IdProperty, idDictionary)
-        
+            id_dictionary = self.IdToPropType[IdProperty]['DictFolderID']
+            assert id_dictionary > 0
+            self.get_dictionary(IdProperty, id_dictionary)
+
         return self.PropIdToDict[IdProperty][DictIdValue]
 
-    def GetSubfolders(self, FolderIds:list):
-        if len(self.IdToFolders) == 0: self.LoadFolderTree()
-        
-        SubfoldersIds = set()
-        for id in FolderIds:
-            Folders = self.IdToFolders[id]
-            for folder in Folders:
+    def get_subfolders(self, FolderIds: list):
+        if len(self.IdToFolders) == 0:
+            self.load_folder_tree()
+
+        subfolders_ids = set()
+        for db_id in FolderIds:
+            folders = self.IdToFolders[db_id]
+            for folder in folders:
                 if type(folder['SubFolders']) != type(None):
-                    subIds = folder['SubFolders']['long']
-                    SubfoldersIds.update(subIds)
-        return SubfoldersIds
+                    subfolders_ids = folder['SubFolders']['long']
+                    subfolders_ids.update(subfolders_ids)
+        return subfolders_ids
 
-    def GetSubfolderTree(self, FolderId):
-        AccumulateSubfolders = set([FolderId])
-        Subfolders = set(self.GetSubfolders([FolderId]))
-        while len(Subfolders) > 0:
-            AccumulateSubfolders.update(Subfolders)
+    def get_subfolders_tree(self, FolderId):
+        accumulate_subfolders = {FolderId}
+        subfolders = set(self.get_subfolders([FolderId]))
+        while len(subfolders) > 0:
+            accumulate_subfolders.update(subfolders)
             subs = set()
-            for id in Subfolders:
-                subs.update(self.GetSubfolders([id]))
-            Subfolders = subs
+            for db_id in subfolders:
+                subs.update(self.get_subfolders([db_id]))
+            subfolders = subs
 
-        return AccumulateSubfolders
+        return accumulate_subfolders
 
-    def GetFolderObjects(self, FolderId,result_param):
+    def get_folder_objects(self, FolderId, result_param):
         result = self.SOAPclient.service.FolderGetObjects(FolderId, result_param)
         return result
 
-    def OQLresponse (self, OQLquery, result_param):
+    def oql_response(self, OQLquery, result_param):
         result = self.SOAPclient.service.OQLSearch(OQLquery, result_param)
         return result
-    
-    def ResultGetData (self, result_param):
+
+    def result_get_data(self, result_param):
         result = self.SOAPclient.service.ResultGetData(result_param)
         return result
 
-    def CreateResultParam (self, PropertyNames=['Name']):
-        IdPropertyList = self.MapPropertyNamestoID(PropertyNames)
-        PropRefs = []
-        propRef = self.SOAPclient.get_type('ns0:PropertyRef')
-        for id in IdPropertyList:
-            pL = propRef(Id = id)
-            PropRefs.append(pL)
+    def create_result_param(self, property_names=None):
+        property_names = ['Name'] if property_names is None else property_names
+
+        id_property_list = self.map_property_names_to_id(property_names)
+        prop_refs = list()
+        prop_ref = self.SOAPclient.get_type('ns0:PropertyRef')
+        for db_id in id_property_list:
+            pl = prop_ref(Id=db_id)
+            prop_refs.append(pl)
         result_param = self.SOAPclient.get_type('ns0:ResultParam')
         rp = result_param(
-            CreateResult = False,
-            ResultRef = '?',
-            Objects = [],
-            Objects_size = 0,
-            ResultPos = 0,
-            MaxPageSize= 0,
-            GetObjects = False,
-            GetProperties = False,
-            PropertyList = {'PropertyRef': PropRefs} ,
-            PropertyList_Size = len(PropertyNames),
-            GetLinks = False,
-            GetParents = False,
-            GetMembers = False,
-            GetAddlCol = False,
-            RefLimit = 0,
-            SortColumn = 0,
-            SortDescending = False,
-            SortPropId = 0,
-            AddlAttrs = [],
-            AddlAttrs_Size = 0,
-            ApplySourceFilter = False)
+            CreateResult=False,
+            ResultRef='?',
+            Objects=[],
+            Objects_size=0,
+            ResultPos=0,
+            MaxPageSize=0,
+            GetObjects=False,
+            GetProperties=False,
+            PropertyList={'PropertyRef': prop_refs},
+            PropertyList_Size=len(property_names),
+            GetLinks=False,
+            GetParents=False,
+            GetMembers=False,
+            GetAddlCol=False,
+            RefLimit=0,
+            SortColumn=0,
+            SortDescending=False,
+            SortPropId=0,
+            AddlAttrs=[],
+            AddlAttrs_Size=0,
+            ApplySourceFilter=False)
         return rp
 
+    def get_object_properties(self, obj_ids: list, property_names: list=None):
+        property_names = ['Name'] if property_names is None else property_names
 
-    def GetObjProperties(self, objIDList:list, PropertyNames=['Name']):
-        rp = self.CreateResultParam(PropertyNames)
+        rp = self.create_result_param(property_names)
         rp.GetObjects = True
         rp.GetProperties = True
-        OQLrequest = OQL.GetObjects(objIDList)
-        ObjProps = self.OQLresponse(OQLrequest, rp)
-        #setting objectType name
-        for obj in ObjProps.Objects.ObjectRef:
-            objTypeID = obj['ObjTypeId']
-            objTypeName = self.IdtoObjectType[objTypeID]['Name']
-            obj['ObjTypeName'] = objTypeName
+        oql_request = OQL.get_objects(obj_ids)
+        obj_props = self.oql_response(oql_request, rp)
+        # setting objectType name
+        for obj in obj_props.Objects.ObjectRef:
+            obj_type_id = obj['ObjTypeId']
+            obj_type_name = self.IdtoObjectType[obj_type_id]['Name']
+            obj['ObjTypeName'] = obj_type_name
 
-        #setting dict property values and property names
-        for prop in ObjProps.Properties.ObjectProperty:
-            idProperty = prop['PropId']
-            PropName = self.IdToPropType[idProperty]['Name']
-            PropDisplayName = self.IdToPropType[idProperty]['DisplayName']
-            prop['PropName'] = PropName
-            prop['PropDisplayName'] = PropDisplayName
-            DictFolderId = self.IdToPropType[idProperty]['DictFolderId']
-            if DictFolderId > 0:
-                dictFolder = self.GetDictionary(idProperty, DictFolderId)
+        # setting dict property values and property names
+        for prop in obj_props.Properties.ObjectProperty:
+            id_property = prop['PropId']
+            prop_name = self.IdToPropType[id_property]['Name']
+            prop_display_name = self.IdToPropType[id_property]['DisplayName']
+            prop['PropName'] = prop_name
+            prop['PropDisplayName'] = prop_display_name
+            dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
+            if dict_folder_id > 0:
+                dict_folder = self.get_dictionary(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
-                    idDictPropValue = int(prop['PropValues']['string'][i])
-                    newDictValue = dictFolder[idDictPropValue]
-                    prop['PropValues']['string'][i] = newDictValue
+                    id_dict_prop_value = int(prop['PropValues']['string'][i])
+                    new_dict_value = dict_folder[id_dict_prop_value]
+                    prop['PropValues']['string'][i] = new_dict_value
 
+        return obj_props
 
-        return ObjProps
+    def get_folder_objects_props(self, FolderId, property_names=None):
+        property_names = ['Name'] if property_names is None else property_names
 
-    def GetFolderObjectsProps(self, FolderId, PropertyNames=['Name']):
-        rp = self.CreateResultParam(PropertyNames)
+        rp = self.create_result_param(property_names)
         rp.GetObjects = True
         rp.GetProperties = True
-        ObjProps= self.GetFolderObjects(FolderId,rp)
-        if type(ObjProps.Objects) == type(None):
+        obj_props = self.get_folder_objects(FolderId, rp)
+        if type(obj_props.Objects) == type(None):
             return None
-        #setting objectType name
-        for obj in ObjProps.Objects.ObjectRef:
-            objTypeID = obj['ObjTypeId']
-            objTypeName = self.IdtoObjectType[objTypeID]['Name']
-            obj['ObjTypeName'] = objTypeName
+        # setting objectType name
+        for obj in obj_props.Objects.ObjectRef:
+            obj_type_id = obj['ObjTypeId']
+            obj_type_name = self.IdtoObjectType[obj_type_id]['Name']
+            obj['ObjTypeName'] = obj_type_name
 
-        #setting dict property values and property names
-        for prop in ObjProps.Properties.ObjectProperty:
-            idProperty = prop['PropId']
-            PropName = self.IdToPropType[idProperty]['Name']
-            prop['PropName'] = PropName
-            DictFolderId = self.IdToPropType[idProperty]['DictFolderId']
-            if DictFolderId > 0:
-                dictFolder = self.GetDictionary(idProperty, DictFolderId)
+        # setting dict property values and property names
+        for prop in obj_props.Properties.ObjectProperty:
+            id_property = prop['PropId']
+            prop_name = self.IdToPropType[id_property]['Name']
+            prop['PropName'] = prop_name
+            dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
+            if dict_folder_id > 0:
+                dict_folder = self.get_dictionary(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
-                    idDictPropValue = int(prop['PropValues']['string'][i])
-                    newDictValue = dictFolder[idDictPropValue]
-                    prop['PropValues']['string'][i] = newDictValue
+                    id_dict_prop_value = int(prop['PropValues']['string'][i])
+                    new_dict_value = dict_folder[id_dict_prop_value]
+                    prop['PropValues']['string'][i] = new_dict_value
 
-        return ObjProps
+        return obj_props
 
     def get_layout(self, PathwayId):
-        #GetObjectAttachment = self.SOAPclient.get_type('ns0:GetObjectAttachment')
+        # GetObjectAttachment = self.SOAPclient.get_type('ns0:GetObjectAttachment')
         result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
         return str(result['Attachment'].decode('utf-8'))
 
-    
-    def GetData(self, OQLrequest, RetreiveProperties=['Name', 'RelationNumberOfReferences'], getLinks=True):
-        rp = self.CreateResultParam(RetreiveProperties)
+    def get_data(self, OQLrequest, retrieve_props: list=None, getLinks=True):
+        retrieve_props = ['Name', 'RelationNumberOfReferences'] if retrieve_props is None else retrieve_props
+
+        rp = self.create_result_param(retrieve_props)
         rp.GetObjects = True
         rp.GetProperties = True
         rp.GetLinks = getLinks
-        #setting objectType name
-        ObjProps = self.OQLresponse(OQLrequest, rp)
-        if type(ObjProps.Objects) == type(None):
-            #print('Your SOAP response is empty! Check your OQL query and try again\n')
+        # setting objectType name
+        obj_props = self.oql_response(OQLrequest, rp)
+        if type(obj_props.Objects) == type(None):
+            # print('Your SOAP response is empty! Check your OQL query and try again\n')
             return None
 
-        for obj in ObjProps.Objects.ObjectRef:
-            objTypeID = obj['ObjTypeId']
-            objTypeName = self.IdtoObjectType[objTypeID]['Name']
-            obj['ObjTypeName'] = objTypeName
-        #setting dict property values
-        for prop in ObjProps.Properties.ObjectProperty:
-            idProperty = prop['PropId']
-            PropName = self.IdToPropType[idProperty]['Name']
-            PropDisplayName = self.IdToPropType[idProperty]['DisplayName']
-            prop['PropName'] = PropName
-            prop['PropDisplayName'] = PropDisplayName
-            DictFolderId = self.IdToPropType[idProperty]['DictFolderId']
-            if DictFolderId > 0:
-                dictFolder = self.GetDictionary(idProperty, DictFolderId)
+        if len(obj_props.Objects.ObjectRef) == 0:
+            return None
+
+        for obj in obj_props.Objects.ObjectRef:
+            obj_type_id = obj['ObjTypeId']
+            obj_type_name = self.IdtoObjectType[obj_type_id]['Name']
+            obj['ObjTypeName'] = obj_type_name
+        # setting dict property values
+        for prop in obj_props.Properties.ObjectProperty:
+            id_property = prop['PropId']
+            prop_name = self.IdToPropType[id_property]['Name']
+            prop_display_name = self.IdToPropType[id_property]['DisplayName']
+            prop['PropName'] = prop_name
+            prop['PropDisplayName'] = prop_display_name
+            dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
+            if dict_folder_id > 0:
+                dict_folder = self.get_dictionary(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
-                    idDictPropValue = int(prop['PropValues']['string'][i])
-                    newDictValue = dictFolder[idDictPropValue]
-                    prop['PropValues']['string'][i] = newDictValue
+                    id_dict_prop_value = int(prop['PropValues']['string'][i])
+                    new_dict_value = dict_folder[id_dict_prop_value]
+                    prop['PropValues']['string'][i] = new_dict_value
 
-        return ObjProps
+        return obj_props
 
+    def init_session(self, OQLrequest, PageSize: int, property_names=None, getLinks=True):
+        property_names = ['Name'] if property_names is None else property_names
 
-    def InitSession(self, OQLrequest, PageSize:int, PropertyNames=['Name'],getLinks=True):
-        rp = self.CreateResultParam(PropertyNames)
+        rp = self.create_result_param(property_names)
         rp.GetObjects = True
         rp.GetProperties = True
         rp.GetLinks = getLinks
         rp.CreateResult = True
         rp.MaxPageSize = PageSize
-        ObjProps = self.OQLresponse(OQLrequest, rp)
-        if type(ObjProps.Objects) == type(None):
-            #print('Your SOAP response is empty! Check your OQL query and try again\n')
-            return None, (ObjProps.ResultRef, ObjProps.ResultSize, ObjProps.ResultPos)
+        obj_props = self.oql_response(OQLrequest, rp)
+        if type(obj_props.Objects) == type(None):
+            # print('Your SOAP response is empty! Check your OQL query and try again\n')
+            return None, (obj_props.ResultRef, obj_props.ResultSize, obj_props.ResultPos)
 
-        for obj in ObjProps.Objects.ObjectRef:
-            objTypeID = obj['ObjTypeId']
-            objTypeName = self.IdtoObjectType[objTypeID]['Name']
-            obj['ObjTypeName'] = objTypeName
-        #setting dict property values
-        for prop in ObjProps.Properties.ObjectProperty:
-            idProperty = prop['PropId']
-            PropName = self.IdToPropType[idProperty]['Name']
-            PropDisplayName = self.IdToPropType[idProperty]['DisplayName']
-            prop['PropName'] = PropName
-            prop['PropDisplayName'] = PropDisplayName
-            DictFolderId = self.IdToPropType[idProperty]['DictFolderId']
-            if DictFolderId > 0:
-                dictFolder = self.GetDictionary(idProperty, DictFolderId)
+        for obj in obj_props.Objects.ObjectRef:
+            obj_type_id = obj['ObjTypeId']
+            obj_type_name = self.IdtoObjectType[obj_type_id]['Name']
+            obj['ObjTypeName'] = obj_type_name
+        # setting dict property values
+        for prop in obj_props.Properties.ObjectProperty:
+            id_property = prop['PropId']
+            prop_name = self.IdToPropType[id_property]['Name']
+            prop_display_name = self.IdToPropType[id_property]['DisplayName']
+            prop['PropName'] = prop_name
+            prop['PropDisplayName'] = prop_display_name
+            dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
+            if dict_folder_id > 0:
+                dict_folder = self.get_dictionary(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
-                    idDictPropValue = int(prop['PropValues']['string'][i])
-                    newDictValue = dictFolder[idDictPropValue]
-                    prop['PropValues']['string'][i] = newDictValue
+                    id_dict_prop_value = int(prop['PropValues']['string'][i])
+                    new_dict_value = dict_folder[id_dict_prop_value]
+                    prop['PropValues']['string'][i] = new_dict_value
 
-        return ObjProps, (ObjProps.ResultRef, ObjProps.ResultSize, ObjProps.ResultPos)
+        return obj_props, (obj_props.ResultRef, obj_props.ResultSize, obj_props.ResultPos)
 
+    def get_next_session_page(self, ResultRef, ResultPos, PageSize, ResultSize, property_names=None, getLinks=True):
+        property_names = ['Name'] if property_names is None else property_names
 
-    def GetNextSessionPage(self, ResultRef, ResultPos, PageSize, ResultSize, PropertyNames=['Name'],getLinks=True):
-        rp = self.CreateResultParam(PropertyNames)
+        rp = self.create_result_param(property_names)
         rp.GetObjects = True
         rp.GetProperties = True
         rp.GetLinks = getLinks
@@ -338,142 +356,134 @@ class DataModel():
         rp.ResultRef = ResultRef
         rp.MaxPageSize = PageSize
         rp.ResultPos = ResultPos
-        ObjProps = self.ResultGetData(rp)
+        obj_props = self.result_get_data(rp)
 
-        #setting objectType name
-        if type(ObjProps.Objects) == type(None):
-            #print('Your SOAP response is empty! Check your OQL query and try again\n')
+        # setting objectType name
+        if type(obj_props.Objects) == type(None):
+            # print('Your SOAP response is empty! Check your OQL query and try again\n')
             return
 
-        for obj in ObjProps.Objects.ObjectRef:
-            objTypeID = obj['ObjTypeId']
-            objTypeName = self.IdtoObjectType[objTypeID]['Name']
-            obj['ObjTypeName'] = objTypeName
-        #setting dict property values
-        for prop in ObjProps.Properties.ObjectProperty:
-            idProperty = prop['PropId']
-            PropName = self.IdToPropType[idProperty]['Name']
-            PropDisplayName = self.IdToPropType[idProperty]['DisplayName']
-            prop['PropName'] = PropName
-            prop['PropDisplayName'] = PropDisplayName
-            DictFolderId = self.IdToPropType[idProperty]['DictFolderId']
-            if DictFolderId > 0:
-                dictFolder = self.GetDictionary(idProperty, DictFolderId)
+        for obj in obj_props.Objects.ObjectRef:
+            obj_type_id = obj['ObjTypeId']
+            obj_type_name = self.IdtoObjectType[obj_type_id]['Name']
+            obj['ObjTypeName'] = obj_type_name
+        # setting dict property values
+        for prop in obj_props.Properties.ObjectProperty:
+            id_property = prop['PropId']
+            prop_name = self.IdToPropType[id_property]['Name']
+            prop_display_name = self.IdToPropType[id_property]['DisplayName']
+            prop['PropName'] = prop_name
+            prop['PropDisplayName'] = prop_display_name
+            dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
+            if dict_folder_id > 0:
+                dict_folder = self.get_dictionary(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
-                    idDictPropValue = int(prop['PropValues']['string'][i])
-                    newDictValue = dictFolder[idDictPropValue]
-                    prop['PropValues']['string'][i] = newDictValue
-
+                    id_dict_prop_value = int(prop['PropValues']['string'][i])
+                    new_dict_value = dict_folder[id_dict_prop_value]
+                    prop['PropValues']['string'][i] = new_dict_value
 
         if rp.ResultPos >= rp.ResultSize:
             self.SOAPclient.service.ResultRelease(rp.ResultRef)
 
-        return ObjProps, ObjProps.ResultPos
+        return obj_props, obj_props.ResultPos
 
-    def PutExperiment(self, dataframe:pd, expName, expType, entityType, MapEntitiestBy, hasPvalue=True, descriptn=''):
-        #PSexp = self.SOAPclient.service('ns0:GetExperiment')
-        rowCount = dataframe.shape[0]
-        colCount = dataframe.shape[1]
-        minFoldChange = dataframe['log2FoldChange'].min()
-        maxFoldChange = dataframe['log2FoldChange'].max()
-        sampleCnt = int(colCount -1)
-        if hasPvalue == True:
-            sampleCnt = int(sampleCnt/2)
+    def put_experiment(self, dataframe: pd, expName, expType, entityType, map_entities_by, has_pvalue=True, description=''):
+        # PSexp = self.SOAPclient.service('ns0:GetExperiment')
+        row_count = dataframe.shape[0]
+        col_count = dataframe.shape[1]
+        min_fold_change = dataframe['log2FoldChange'].min()
+        max_fold_change = dataframe['log2FoldChange'].max()
+        sample_cnt = int(col_count - 1)
+        if has_pvalue:
+            sample_cnt = int(sample_cnt / 2)
         header = dataframe.columns
 
-        zExperiment = self.SOAPclient.get_type('ns0:Experiment')
-        zSample = self.SOAPclient.get_type('ns0:SampleDefinition')
-    
-        sample = zSample(
-            Name = header[1],
-            Type = 1,
-            Subtype = 2,
-            hasPValue=hasPvalue,
+        z_experiment = self.SOAPclient.get_type('ns0:Experiment')
+        z_sample = self.SOAPclient.get_type('ns0:SampleDefinition')
+
+        sample = z_sample(
+            Name=header[1],
+            Type=1,
+            Subtype=2,
+            hasPValue=has_pvalue,
             Calculated=False,
-            Attributes = {'string':[header[1]]},
-            Attributes_size = 1 
-            )
-        
-        #ns0:Experiment( Owner: xsd:string, DateCreated: xsd:string, )
-        psExperiment = zExperiment(
-            Id = 0,
-            Name = expName, 
-            Description = descriptn,
-            SampleCount = sampleCnt,
-            RowsMappedCount = 0,
-            ExperimentType = 1, #ratio or logratio
-            ExperimentSubType = 1, #logarithmic
-            Organism = 'Homo sapiens',
-            ExperimentTypeName = expType,
-            EntityTypeName = entityType,
-            RowsCount = rowCount,
-            GeneAttributeNames = {'string':[header[0]]}, #{string: xsd:string[]}
-            GeneAttributeNames_Size = 1,
-            OriginalGeneID_index = 0,
-            SampleDefinitions = {'SampleDefinition':[sample]}, #{SampleDefinition: ns0:SampleDefinition[]}, 
-            SampleDefinitions_Size = 1,
-            SampleAttributeNames = {'string':['phenotype']},
-            SampleAttributeNames_Size = 1,
-            MinValueSignal = minFoldChange,
-            MinValueRatio = minFoldChange,
-            MaxValueSignal = maxFoldChange,
-            MaxValueRatio = maxFoldChange,
-            ReadOnly = True,
-            MaskUsage = False
+            Attributes={'string': [header[1]]},
+            Attributes_size=1
         )
 
-        expID = self.SOAPclient.service.PutExperiment(psExperiment)
-        
-        rowAttrs = [None] * rowCount
-        sampleVals = [None] * rowCount
-        for i in range(0,rowCount):
+        # ns0:Experiment( Owner: xsd:string, DateCreated: xsd:string, )
+        ps_experiment = z_experiment(
+            Id=0,
+            Name=expName,
+            Description=description,
+            SampleCount=sample_cnt,
+            RowsMappedCount=0,
+            ExperimentType=1,  # ratio or logratio
+            ExperimentSubType=1,  # logarithmic
+            Organism='Homo sapiens',
+            ExperimentTypeName=expType,
+            EntityTypeName=entityType,
+            RowsCount=row_count,
+            GeneAttributeNames={'string': [header[0]]},  # {string: xsd:string[]}
+            GeneAttributeNames_Size=1,
+            OriginalGeneID_index=0,
+            SampleDefinitions={'SampleDefinition': [sample]},  # {SampleDefinition: ns0:SampleDefinition[]},
+            SampleDefinitions_Size=1,
+            SampleAttributeNames={'string': ['phenotype']},
+            SampleAttributeNames_Size=1,
+            MinValueSignal=min_fold_change,
+            MinValueRatio=min_fold_change,
+            MaxValueSignal=max_fold_change,
+            MaxValueRatio=max_fold_change,
+            ReadOnly=True,
+            MaskUsage=False
+        )
+
+        experiment_id = self.SOAPclient.service.PutExperiment(ps_experiment)
+
+        row_attrs = list()
+        sample_values = list()
+        for i in range(0, row_count):
             gene_id = dataframe.iat[i, 0]
-            rowAttr = self.SOAPclient.get_type('ns0:ExperimentRowAttributes')
-            rt = rowAttr(
-                EntityURN = '?',
-                EntityAttributes = {'string':[]},
-                EntityAttributes_Size =0,
-                OriginalGeneID = '?',
-                GeneAttributes = {'string':[gene_id]}, #GeneAttributes: {string: xsd:string[]}
-                GeneAttributes_Size = 1,
-                EntityId = 0
+            row_attr = self.SOAPclient.get_type('ns0:ExperimentRowAttributes')
+            rt = row_attr(
+                EntityURN='?',
+                EntityAttributes={'string': []},
+                EntityAttributes_Size=0,
+                OriginalGeneID='?',
+                GeneAttributes={'string': [gene_id]},  # GeneAttributes: {string: xsd:string[]}
+                GeneAttributes_Size=1,
+                EntityId=0
             )
-            rowAttrs[i] = rt
+            row_attrs[i] = rt
 
-            sampleVal = self.SOAPclient.get_type('ns0:SampleValue')
-            sv = sampleVal(
-                Value = dataframe.iat[i, 1],
-                PValue = dataframe.iat[i, 2]
+            sample_val = self.SOAPclient.get_type('ns0:SampleValue')
+            sv = sample_val(
+                Value=dataframe.iat[i, 1],
+                PValue=dataframe.iat[i, 2]
             )
-            sampleVals[i] = sv
+            sample_values[i] = sv
 
+        self.SOAPclient.service.PutExperimentRowAttributes(experiment_id, 0, 0, {'ExperimentRowAttributes': row_attrs})
+        self.SOAPclient.service.PutExperimentValues(experiment_id, 0, 0, 0, {'SampleValue': sample_values})
 
-        self.SOAPclient.service.PutExperimentRowAttributes(expID, 0, 0, {'ExperimentRowAttributes':rowAttrs})
-        self.SOAPclient.service.PutExperimentValues(expID, 0, 0, 0, {'SampleValue':sampleVals}) 
-        
-        
-        zMapParam = self.SOAPclient.get_type('ns0:ExperimentMappingToolParameters')
-        zm = zMapParam(
-            ExperimentID = expID,
-            DbType = entityType,
-            DbField = MapEntitiestBy,
-            IsChip = False,
-            ChipID = 0,
-            ChipName = '?'
+        z_map_param = self.SOAPclient.get_type('ns0:ExperimentMappingToolParameters')
+        zm = z_map_param(
+            ExperimentID=experiment_id,
+            DbType=entityType,
+            DbField=map_entities_by,
+            IsChip=False,
+            ChipID=0,
+            ChipName='?'
         )
 
-        #ns0:OperationStatus(OperationId: xsd:long, State: xsd:int, Error: xsd:int, Status: xsd:string, ResultId: xsd:long)
-        opStatus = self.SOAPclient.service.StartExperimentMappingTool(zm)
-        result =  self.SOAPclient.service.GetMappingToolResult(opStatus.OperationId)
+        # ns0:OperationStatus(OperationId: xsd:long, State: xsd:int, Error: xsd:int, Status: xsd:string, ResultId: xsd:long)
+        op_status = self.SOAPclient.service.StartExperimentMappingTool(zm)
+        result = self.SOAPclient.service.GetMappingToolResult(op_status.OperationId)
         self.SOAPclient.service.ResultRelease(result.ResultRef)
-        return expID, result
+        return experiment_id, result
 
 
-def WriteSOAPresponse(fout, SOAPresponse):
-    import codecs
-    import sys
-    UTF8Writer = codecs.getwriter('utf8')
-    sys.stdout = UTF8Writer(sys.stdout)
-    file_result=open(fout, "w", encoding='utf-8')
-    file_result.write(SOAPresponse)
-    file_result.close()
+def write_soap_response(fout, soap_response):
+    with open(fout, "w", encoding='utf-8') as f:
+        f.write(soap_response)

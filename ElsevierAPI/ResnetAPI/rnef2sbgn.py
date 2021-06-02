@@ -1,5 +1,6 @@
-import xml.etree.ElementTree as et
+from xml.etree.ElementTree import Element, tostring, parse, fromstring
 from xml.dom import minidom
+
 
 def count_occurrences(d, _id, tag):
     ret = 0
@@ -7,6 +8,7 @@ def count_occurrences(d, _id, tag):
         if _id in d[k] and 'endpoint' in d[k][_id] and d[k][_id]['endpoint'] == tag:
             ret += 1
     return ret
+
 
 def get_properties(elements, names):
     ret = {}
@@ -25,10 +27,11 @@ def get_properties(elements, names):
         ret[_id] = {
             k: ret[_id][k].union(_properties[k]) if k in ret[_id] and k in _properties \
                 else ret[_id][k] if k in ret[_id] \
-                    else _properties[k] \
+                else _properties[k] \
             for k in set(ret[_id].keys()).union(set(_properties.keys()))
         }
     return ret
+
 
 def read_scene(rnefStr, plot_scale):
     ret = {
@@ -40,7 +43,7 @@ def read_scene(rnefStr, plot_scale):
         'a_map': {},
         'a_map_rev': {}
     }
-    rnef = et.fromstring(rnefStr)
+    rnef = fromstring(rnefStr)
     nodes = rnef.find('./resnet/nodes')
     controls = rnef.find('./resnet/controls')
     vobjs = rnef.find('./resnet/attachments/layout/scene/vobjs')
@@ -69,8 +72,10 @@ def read_scene(rnefStr, plot_scale):
                 'w': _w,
                 'h': _h,
                 # put properties retrieved earlier using get_properties() function into ret['glyphs'][_id] structure
-                'class': next(iter(nodeprops[_ref]['NodeType'])) if _ref in nodeprops else next(iter(controlprops[_ref]['ControlType'])),
-                'label': next(iter(nodeprops[_ref]['Name'])) if _ref in nodeprops else next(iter(controlprops[_ref]['Effect'])).lower() if 'Effect' in controlprops[_ref] else 'default'
+                'class': next(iter(nodeprops[_ref]['NodeType'])) if _ref in nodeprops else next(
+                    iter(controlprops[_ref]['ControlType'])),
+                'label': next(iter(nodeprops[_ref]['Name'])) if _ref in nodeprops else next(
+                    iter(controlprops[_ref]['Effect'])).lower() if 'Effect' in controlprops[_ref] else 'default'
             }
     for vlink in vlinks:
         _src_ref, _dst_ref = [vlink.attrib[x] for x in ['src_ref', 'dst_ref']]
@@ -102,7 +107,7 @@ def read_scene(rnefStr, plot_scale):
                 ret['arcs'][arc_id] = {}
             ret['arcs'][arc_id][link[0]] = ret['links'][link]
             ret['arcs'][arc_id][link[0]]['endpoint'] = 'source'
-    
+
     extra_arcs = {}
     for _id in ret['arcs']:
         if len(ret['arcs'][_id]) > 2:
@@ -159,7 +164,8 @@ def read_scene(rnefStr, plot_scale):
             # target will be the one with first type in alphabetical order (Small Molecule --> Complex)
             # If both participants have same type, target will be the one with first local id in alphabetical order
             # (completely meaningless biology-wise)
-            participants = [(participant_id, ret['glyphs'][participant_id]['class']) for participant_id in ret['arcs'][_id]]
+            participants = [(participant_id, ret['glyphs'][participant_id]['class']) for participant_id in
+                            ret['arcs'][_id]]
             if participants[0][1] != participants[1][1]:
                 participants.sort(key=lambda x: x[1])
             else:
@@ -184,9 +190,10 @@ def read_scene(rnefStr, plot_scale):
 
     return ret
 
+
 def read_classmap(filename, language):
     ret = {'language': language, 'nodes': {}, 'controls': {}}
-    root = et.parse(filename)
+    root = parse(filename)
     for classmap in root.find('.'):
         if classmap.attrib['language'] != language:
             continue
@@ -202,43 +209,49 @@ def read_classmap(filename, language):
                 ret['controls'][rnef][effect] = sbgn
     return ret
 
+
 def compile_sbgn(scene, classmap):
-    ret = et.Element('sbgn')
+    ret = Element('sbgn')
     ret.attrib['xmlns'] = 'http://sbgn.org/libsbgn/0.3'
-    _map = et.Element('map')
+    _map = Element('map')
     _map.attrib['language'] = classmap['language']
     for _id in scene['glyphs']:
         if scene['glyphs'][_id]['type'] == 'Node':
-            glyph = et.Element('glyph')
+            glyph = Element('glyph')
             glyph.attrib['id'] = scene['g_map'][_id]
-            glyph.attrib['class'] = classmap['nodes'][scene['glyphs'][_id]['class']] if scene['glyphs'][_id]['class'] in classmap['nodes'] else scene['glyphs'][_id]['class']
-            label = et.Element('label')
+            glyph.attrib['class'] = classmap['nodes'][scene['glyphs'][_id]['class']] if scene['glyphs'][_id]['class'] in \
+                                                                                        classmap['nodes'] else \
+                scene['glyphs'][_id]['class']
+            label = Element('label')
             label.attrib['text'] = scene['glyphs'][_id]['label']
             glyph.append(label)
-            bbox = et.Element('bbox')
+            bbox = Element('bbox')
             for k in ['x', 'y', 'w', 'h']:
                 bbox.attrib[k] = str(scene['glyphs'][_id][k])
-                bbox.attrib['y'] = str(-scene['glyphs'][_id]['y']) # Y coordinate in SBGN is supposed to be inverted
+                bbox.attrib['y'] = str(-scene['glyphs'][_id]['y'])  # Y coordinate in SBGN is supposed to be inverted
             glyph.append(bbox)
             _map.append(glyph)
     for _id in scene['arcs']:
         if not scene['arcs'][_id]:
             continue
-        arc = et.Element('arc')
+        arc = Element('arc')
         arc.attrib['id'] = scene['a_map'][_id]
         effect = scene['glyphs'][_id]['label']
         if effect not in ['negative', 'positive']:
             effect = 'default'
         arc.attrib['class'] = classmap['controls'][scene['glyphs'][_id]['class']][effect]
-        participants = [(participant_id, scene['arcs'][_id][participant_id]['endpoint']) for participant_id in scene['arcs'][_id]]
+        participants = [(participant_id, scene['arcs'][_id][participant_id]['endpoint']) for participant_id in
+                        scene['arcs'][_id]]
         participants.sort(key=lambda x: x[1])
         [arc.attrib['source'], arc.attrib['target']] = [scene['g_map'][participant[0]] for participant in participants]
         arc_start_x = str(scene['glyphs'][scene['g_map_rev'][arc.attrib['source']][0]]['x'])
-        arc_start_y = str(-scene['glyphs'][scene['g_map_rev'][arc.attrib['source']][0]]['y']) # Y coordinate in SBGN is supposed to be inverted
+        arc_start_y = str(-scene['glyphs'][scene['g_map_rev'][arc.attrib['source']][0]][
+            'y'])  # Y coordinate in SBGN is supposed to be inverted
         arc_end_x = str(scene['glyphs'][scene['g_map_rev'][arc.attrib['target']][0]]['x'])
-        arc_end_y = str(-scene['glyphs'][scene['g_map_rev'][arc.attrib['target']][0]]['y']) # Y coordinate in SBGN is supposed to be inverted
+        arc_end_y = str(-scene['glyphs'][scene['g_map_rev'][arc.attrib['target']][0]][
+            'y'])  # Y coordinate in SBGN is supposed to be inverted
         arc_points_source, arc_points_target, arc_points = [], [], []
-        
+
         # The following block attempts to transfer the inflections of arcs, but the result looks ugly
         # for participant_id in scene['arcs'][_id]:
         #     participant = scene['arcs'][_id][participant_id]
@@ -247,60 +260,64 @@ def compile_sbgn(scene, classmap):
         #             arc_points_target.append((str(participant['points'][p]), str(-participant['points'][p+1]))) # Y coordinate in SBGN is supposed to be inverted
         #         else:
         #             arc_points_source.append((str(participant['points'][p]), str(-participant['points'][p+1]))) # Y coordinate in SBGN is supposed to be inverted
-        
-        arc_points = arc_points_source + arc_points_target        
-        arc_start = et.Element('start')
+
+        arc_points = arc_points_source + arc_points_target
+        arc_start = Element('start')
         arc_start.attrib['x'], arc_start.attrib['y'] = arc_start_x, arc_start_y
         arc.append(arc_start)
         for point in arc_points:
-            arc_next = et.Element('next')
+            arc_next = Element('next')
             arc_next.attrib['x'], arc_next.attrib['y'] = point[0], point[1]
             arc.append(arc_next)
-        arc_end = et.Element('end')
+        arc_end = Element('end')
         arc_end.attrib['x'], arc_end.attrib['y'] = arc_end_x, arc_end_y
         arc.append(arc_end)
         _map.append(arc)
     ret.append(_map)
     return ret
 
-ToBeReplaced = {'>','<','|'}
-def makeFileName(pathwayName:str):
-    newStr = list(pathwayName)
-    for i in range(0, len(newStr)):
-        if newStr[i] in ToBeReplaced:
-            newStr[i] = '-'
-    return "".join(newStr)
+
+def make_file_name(pathwayName: str):
+    new_str = list(pathwayName)
+    for i in range(0, len(new_str)):
+        if new_str[i] in {'>', '<', '|'}:
+            new_str[i] = '-'
+    return "".join(new_str)
 
 
-def rnef2sbgnStr(rnef:str,classmapfile:str, language='activity flow', plot_scale=30):
+def rnef2sbgn_str(rnef: str, classmapfile: str, language='activity flow', plot_scale=30):
     scene = read_scene(rnef, plot_scale)
     classmap = read_classmap(classmapfile, language)
     sbgn = compile_sbgn(scene, classmap)
-    return minidom.parseString(et.tostring(sbgn)).toprettyxml(indent='   ')
+    return minidom.parseString(tostring(sbgn)).toprettyxml(indent='   ')
 
-def do_the_job(filename_in, dir_out,language,plot_scale,classmap='Classes.xml'):
-    rnef = et.parse(filename_in).getroot()
-    #batch = rnef.find('batch')
+
+def do_the_job(filename_in, dir_out, language, plot_scale, classmap='Classes.xml'):
+    rnef = parse(filename_in).getroot()
+    # batch = rnef.find('batch')
     for resnet in rnef.findall('./resnet'):
-        try: pathwayName = str(resnet.attrib['name'])
-        except KeyError: 
+        try:
+            pathway_name = str(resnet.attrib['name'])
+        except KeyError:
             print('Pathway must have a name')
             continue
-        pathwayName = makeFileName(pathwayName)
-        
-        resnetStr = et.tostring(resnet,encoding='utf-8').decode("utf-8")
-        resnetStr = "<?xml version='1.0' encoding='UTF-8'?><batch>"+resnetStr+'</batch>'
-        rnef_out = dir_out+'\\'+pathwayName+'.rnef'
-        with open(rnef_out, mode='w', encoding='utf8') as f1: f1.write(resnetStr)
+        pathway_name = make_file_name(pathway_name)
 
-        sbgn_str = rnef2sbgnStr(resnetStr,classmap,language,plot_scale)
-        sbgn_out = dir_out+'\\'+pathwayName+'.sbgn.xml'
-        with open(sbgn_out, mode='w', encoding='utf8') as f2: f2.write(sbgn_str)
-        
+        resnet_str = tostring(resnet, encoding='utf-8').decode("utf-8")
+        resnet_str = "<?xml version='1.0' encoding='UTF-8'?><batch>" + resnet_str + '</batch>'
+        rnef_out = dir_out + '\\' + pathway_name + '.rnef'
+        with open(rnef_out, mode='w', encoding='utf8') as f1:
+            f1.write(resnet_str)
+
+        sbgn_str = rnef2sbgn_str(resnet_str, classmap, language, plot_scale)
+        sbgn_out = dir_out + '\\' + pathway_name + '.sbgn.xml'
+        with open(sbgn_out, mode='w', encoding='utf8') as f2:
+            f2.write(sbgn_str)
+
 
 if __name__ == '__main__':
     # Usage:
     # rnef2sbgn.py FILENAME_IN.RNEF FILENAME_OUT SBGN_TYPE PLOT_SCALE
-    [fin,  dir_out, lang, s_plot_scale] = ['COVID19 models backup.rnef', 'COVID19 models', "activity flow", 30] 
+    [fin, dir_out, lang, s_plot_scale] = ['COVID19 models backup.rnef', 'COVID19 models', "activity flow", 30]
     plot_scale = int(s_plot_scale)
-    do_the_job(fin,dir_out, lang, plot_scale)
+    do_the_job(fin, dir_out, lang, plot_scale)

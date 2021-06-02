@@ -1,8 +1,9 @@
-from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
-import networkx as nx
 import time
 import math
+import networkx as nx
+from datetime import timedelta
+from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
+from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 
 class APISession(PSNetworx):
     pass
@@ -11,204 +12,170 @@ class APISession(PSNetworx):
     ResultSize = int()
     PageSize = 100
     GOQLquery = str()
-    __IsOn1stpage = True
+    __IsOn1st_page = True
     relProps = ['Name', 'RelationNumberOfReferences']
     entProps = ['Name']
     DumpFiles = ['ResnetAPIsessionDump.tsv']
+    csv_delimeter = '\t'
 
-    def __init__(self, GOQLquery, net:PSNetworx):
-        self.SOAPclient = net.SOAPclient
-        self.IdtoObjectType = net.IdtoObjectType #from DB.ObjectTypes
-        self.IdToPropType = net.IdToPropType #from DB.PropTypes
-        self.PropIdToDict = net.PropIdToDict #for DB,Dicts
-        self.IDtoRelation = net.IDtoRelation #{relID:PSRelation}
-        self.Graph = net.Graph
-        self.GOQLquery = GOQLquery
-        self.__getLinks = self.__set_getLinks()
-        self.DumpFiles = ['ResnetAPIsessionDump.tsv'] #array of filenames used for dumping the graph data. First element is used for dumping data obtained ProcessOQL
-        #other files are used to dump additional data obtained by overridden AddGraph
-    
-    def __InitAPISession (self):
-        if self.__getLinks == True:
-            ZeepData,(self.ResultRef, self.ResultSize, self.ResultPos) = self.InitSession(self.GOQLquery,self.PageSize,self.relProps,getLinks=True)
-            if type(ZeepData) != type(None):
-                objIdlist = list(set([x['EntityId'] for x in ZeepData.Links.Link]))
-                ZeepObjects = self.GetObjProperties(objIdlist, self.entProps)
-                return self._load_graph(ZeepData, ZeepObjects)
-            else: return None
-        else:
-            ZeepData,(self.ResultRef, self.ResultSize, self.ResultPos) = self.InitSession(self.GOQLquery,self.PageSize,self.entProps,getLinks=False)
-            if type(ZeepData) != type(None):
-                return self._load_graph(None, ZeepData)
-            else: return None
+    def __init__(self,url, username, password):
+        super().__init__(url, username, password)
+        self.DumpFiles = ['ResnetAPIsessionDump.tsv']
+        # array of filenames used for dumping the graph data. First element is used
+        # for dumping data obtained by ProcessOQL
+        # other files are used to dump additional data obtained by overridden AddGraph
 
-    
-    def __GetNextPage(self):
-        if self.ResultPos < self.ResultSize:
-            if self.__getLinks == True:
-                ZeepData, self.ResultPos  = self.GetNextSessionPage(self.ResultRef,self.ResultPos,self.PageSize,self.ResultSize,self.relProps,self.__getLinks)
-                if type(ZeepData) != type(None):
-                    objIdlist = list(set([x['EntityId'] for x in ZeepData.Links.Link]))
-                    ZeepObjects = self.GetObjProperties(objIdlist, self.entProps)
-                    return self._load_graph(ZeepData, ZeepObjects)
-                else: return None
+    def __init_session(self):
+        if self.__getLinks:
+            zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
+                                                                                             self.PageSize,
+                                                                                             self.relProps)
+            if type(zeep_data) != type(None):
+                obj_ids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
+                zeep_objects = self.get_object_properties(obj_ids, self.entProps)
+                return self._load_graph(zeep_data, zeep_objects)
             else:
-                ZeepData, self.ResultPos  = self.GetNextSessionPage(self.ResultRef,self.ResultPos,self.PageSize,self.ResultSize,self.entProps,self.__getLinks)
-                if type(ZeepData) != type(None):
-                    return self._load_graph(None, ZeepData)
+                return None
+        else:
+            zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
+                                                                                             self.PageSize,
+                                                                                             self.entProps,
+                                                                                             getLinks=False)
+            if type(zeep_data) != type(None):
+                return self._load_graph(None, zeep_data)
+            else:
+                return None
+
+    def __get_next_page(self, no_mess=True):
+        if self.ResultPos < self.ResultSize:
+            if not no_mess:
+                print('fetched %d results out of %d' % (self.ResultPos, self.ResultSize))
+            if self.__getLinks:
+                zeep_data, self.ResultPos = self.get_next_session_page(self.ResultRef, self.ResultPos, self.PageSize,
+                                                                       self.ResultSize, self.relProps)
+                if type(zeep_data) != type(None):
+                    obj_ids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
+                    zeep_objects = self.get_object_properties(obj_ids, self.entProps)
+                    return self._load_graph(zeep_data, zeep_objects)
                 else:
                     return None
+            else:
+                zeep_data, self.ResultPos = self.get_next_session_page(self.ResultRef, self.ResultPos, self.PageSize,
+                                                                       self.ResultSize, self.entProps, getLinks=False)
+                if type(zeep_data) != type(None):
+                    return self._load_graph(None, zeep_data)
+                else:
+                    return None
+        else:
+            return None
 
-    def __set_getLinks(self):
+    def __set_get_links(self):
         return self.GOQLquery[7:15] == 'Relation'
 
-    def ReplaceGOQL(self,newGOQL:str):
-        self.GOQLquery = newGOQL
-        self.__getLinks = self.__set_getLinks()
+    def __replace_goql(self, oql_query: str):
+        self.GOQLquery = oql_query
+        self.__getLinks = self.__set_get_links()
 
-    def AddRelProps(self, add_props:list):
-        self.relProps = list(set(self.relProps+add_props))
+    def add_rel_props(self, add_props: list):
+        self.relProps = list(set(self.relProps + add_props))
 
-    def AddEntProps(self, add_props:list):
-        self.entProps = list(set(self.entProps+add_props))
+    def add_ent_props(self, add_props: list):
+        self.entProps = list(set(self.entProps + add_props))
 
-    def AddGraph(self, newGraph:nx.MultiDiGraph):
-        pass #placeholder to derive child class from APISession (see DiseaseNetwork(APISession) as example)
+    def add_graph(self, new_graph: ResnetGraph):
+        pass  # placeholder to derive child class from APISession (see DiseaseNetwork(APISession) as example)
 
-    def FlashDumpFiles(self):
-        for fname in self.DumpFiles:
-            open(fname,'w').close()
-            print('File "%s" was cleared before processing' % fname)
+    def flash_dump_files(self):
+        for f in self.DumpFiles:
+            open(f, 'w').close()
+            print('File "%s" was cleared before processing' % f)
 
-    def AddDumpFile(self, dump_fname, replace_main_dump=False):
-        if replace_main_dump == True:
+    def add_dump_file(self, dump_fname, replace_main_dump=False):
+        if replace_main_dump:
             self.DumpFiles = []
         self.DumpFiles.append(dump_fname)
 
-    def ExecutionTime(self, execution_start):
-        from datetime import timedelta
-        return "{}".format(str(timedelta(seconds=time.time()-execution_start)))
+    @staticmethod
+    def execution_time(execution_start):
+        return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
 
-    def to_csv(self, fileOut, G:nx.MultiDiGraph, access_mode='w',col_sep='\t'):
-        PrintHeader = self.__IsOn1stpage
-        self.PrintReferenceView(fileOut,self.relProps,self.entProps,G,access_mode,PrintHeader,col_sep=col_sep)
-    
-    def GetResultSize(self):
-        ZeepRelations,(self.ResultRef, self.ResultSize, self.ResultPos) = self.InitSession(self.GOQLquery,PageSize=1,PropertyNames=[])
+    def to_csv(self, file_out, graph: ResnetGraph, access_mode='w'):
+        self.Graph.print_references(file_out, self.relProps, self.entProps, graph, access_mode, self.__IsOn1st_page,
+                              col_sep=self.csv_delimeter)
+
+    def get_result_size(self):
+        zeep_relations, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery, PageSize=1,
+                                                                                              property_names=[])
         return self.ResultSize
 
-    def ProcessOQL(self, flash_dump=False):
+    def process_oql(self, oql_query, request_name='', flash_dump=False, debug=False, no_mess=True):
         global_start = time.time()
-        if flash_dump == True: self.FlashDumpFiles()
+        if flash_dump:
+            self.flash_dump_files()
+        self.__replace_goql(oql_query)
 
-        OQLGraph = nx.MultiDiGraph()
-        refCount = 0
-        return_type = 'relations' if self.__getLinks == True else 'entities'
+        entire_graph = ResnetGraph()
+        reference_counter = 0
         
         start_time = time.time()
-        pageGraph = self.__InitAPISession()
-        iterCount = math.ceil(self.ResultSize/self.PageSize)
-        print("GOQL query:\n%s\n returns %d %s.\n It will be processed in %d iterations" % (self.GOQLquery, self.ResultSize,return_type,iterCount))
-        
-        for pos in range(0, self.ResultSize, self.PageSize):    
-            execution_time = self.ExecutionTime(start_time)
-            iteration = math.ceil(self.ResultPos/self.PageSize)
-            PageRefCount = pageGraph.size(weight='weight')
-            print("Iteration %s out of %d retreived %d relations for %d nodes supported by %d references from Resnet in %s seconds" % (iteration,iterCount,pageGraph.size(),pageGraph.number_of_nodes(),PageRefCount,execution_time))
-            refCount += PageRefCount
-            self.AddGraph(pageGraph)
-            if len(self.DumpFiles) > 0:
-                self.to_csv(self.DumpFiles[0],pageGraph,'a')
-                self.__IsOn1stpage = False
-                
-            start_time = time.time()
-            OQLGraph = nx.compose(pageGraph,OQLGraph)
-            pageGraph = self.__GetNextPage()
+        return_type = 'relations' if self.__getLinks else 'entities'
+        page_graph = self.__init_session()
+        number_of_iterations = math.ceil(self.ResultSize / self.PageSize)
+        if number_of_iterations > 1:
+            print('\n\"%s\"\nrequest found %d %s. Begin retrieval in %d iterations' % (request_name,self.ResultSize,return_type, number_of_iterations))
+            if debug:
+                print("Processing GOQL query:\n\"%s\"\n" % (self.GOQLquery, self.ResultSize))
+            if no_mess:
+                print('Progress report is suppressed. Retrieval may take long time - be patient!')
 
-        print("%d relations supported by %d references are in file: %s" % (self.ResultSize,refCount,self.DumpFiles[0]))
+        while isinstance(page_graph, ResnetGraph):
+            page_ref_count = page_graph.size(weight='weight')
+            reference_counter += page_ref_count
+            if not no_mess:
+                exec_time = self.execution_time(start_time)
+                iteration = math.ceil(self.ResultPos / self.PageSize)            
+                edge_count = page_graph.number_of_edges()
+                node_count = page_graph.number_of_nodes()
+                print("Iteration %d in %d retrieved %d relations for %d nodes supported by %d references in %s seconds" %
+                     (iteration, number_of_iterations,edge_count,node_count,page_ref_count,exec_time))
+                start_time = time.time()
+            
+            self.add_graph(page_graph)
+            
+            if len(self.DumpFiles) > 0:
+                self.to_csv(self.DumpFiles[0], page_graph, 'a')
+                self.__IsOn1st_page = False
+                print("%d relations supported by %d references are in file: %s" % 
+                     (self.ResultSize, reference_counter, self.DumpFiles[0]))
+
+            entire_graph = nx.compose(page_graph, entire_graph)
+            page_graph = self.__get_next_page(no_mess)
+
+        if debug:
+            print("GOQL query:\n \"%s\"\n was executed in %s in %d iterations" % 
+                 (self.GOQLquery, self.execution_time(global_start), number_of_iterations))
+
+        if len(request_name) > 0:
+            if number_of_iterations == 1: print('\n') # this is the only message about retreival with one ietartion. 
+            print('\"%s\" was retrieved in %s by %d iterations' % 
+                 (request_name, self.execution_time(global_start), number_of_iterations))
+
         self.ResultRef = ''
         self.ResultPos = 0
         self.ResultSize = 0
-        self.DumpFiles = ['ResnetAPIsessionDump.tsv']
-        self.__IsOn1stpage = True
-        print("GOQL query was executed in %s in %d iterations" % (self.ExecutionTime(global_start),iterCount))
-        
-        return OQLGraph
+        self.__IsOn1st_page = True
+        return entire_graph
 
-    def GetPPIgraph(self, foutName):
-        #Build PPI network between proteins
-        NetworkProteins = self.GetGraphEntityIds(OnlyForNodeTypes=['Protein'])
-        print('Retreiving PPI network for %d proteins' % (len(NetworkProteins)))
+    def get_ppi_graph(self, fout):
+        # Build PPI network between proteins
+        graph_proteins = self.Graph.get_entity_ids(['Protein'])
+        print('Retrieving PPI network for %d proteins' % (len(graph_proteins)))
         start_time = time.time()
-        PPIrelationsGraph = self.GetPPIs(NetworkProteins,self.relProps, self.entProps)
-        self.to_csv(foutName, PPIrelationsGraph)
-        print("PPI network with %d relations was retreived in %s ---" % (PPIrelationsGraph.size(), self.ExecutionTime(start_time)))
-        return PPIrelationsGraph
+        ppi_graph = self.get_ppi(graph_proteins, self.relProps, self.entProps)
+        self.to_csv(fout, ppi_graph)
+        print("PPI network with %d relations was retrieved in %s ---" % (
+            ppi_graph.size(), self.execution_time(start_time)))
+        return ppi_graph
 
-
-class DiseaseNetwork(APISession):
-    pass
-#APISession retreives records from Resnet by iterations equal APISession.PageSize using input GOQL query
-#each iteration creates newGraph object. By default, newGraph is simply added to APISession.Graph at each iteration using nx.compose()
-#you can re-write APISession.AddNewGraph as it is done here function to expand newGraph with additional GOQL queries and to add more data to APISession.Graph
-
-    ProteinsPreviousPage = set()
-    InputDiseaseNames = str()
-    
-#add here names for entity properties you want to fecth from knowledge graph. 
-    entProps = ['Name']# Data dump columns will be ordered according to the order in this list
-#add here names for relation properties you want to fecth from knowledge graph
-    relProps = ['Name','Mechanism','RelationNumberOfReferences', 'Source', 'DOI']#Data dump columns will be ordered according to the order in this list
-
-    def AddGraph(self, newGraph:nx.MultiDiGraph):
-        #self.Graph = nx.compose(self.Graph, newGraph)#obsolete NewGraph is added by PSNetworkx
-
-        #pageCount = int(self.ResultSize/self.ResultPos)
-        start_time = time.time()
-        ProteinsCurrentPage = set(self.GetGraphEntityIds(ObjTypeNames=['Protein']))
-        NewProteins = ProteinsCurrentPage.difference(self.ProteinsPreviousPage)#to avoid duplications from proteins connected to disease with multiple relations
-        self.ProteinsPreviousPage = ProteinsCurrentPage
-        NewProteinsCount = len(NewProteins)
-        execution_time = self.ExecutionTime(start_time)
-        print('This iteration retreived %d proteins' % (NewProteinsCount))
-        if NewProteinsCount == 0:
-            return
-
-    #Find GVs in proteins linked to input diseases
-        start_time = time.time()
-        GOQLquery = GOQL.ExpandEntity(NewProteins, ['id'],['GeneticChange'], ['GeneticVariant'])
-        print('Searching for GeneticVariant linked to %d proteins' % NewProteinsCount)
-        RelGVgenesGraph = self.LoadGraphFromOQL(GOQLquery, self.relProps, self.entProps)
-        execution_time = self.ExecutionTime(start_time)
-        print("%d genetic variants for %d proteins linked to %s were retreived in %s ---" % (RelGVgenesGraph.number_of_edges(),NewProteinsCount, self.InputDiseaseNames, execution_time))
-        self.to_csv(self.DumpFiles[1],RelGVgenesGraph, 'a')
-        self.Graph = nx.compose(self.Graph, RelGVgenesGraph)
-
-    #Find druggable targets
-        start_time = time.time()
-        print('Searching for drugs binding to %d proteins' % NewProteinsCount)
-        drugTOtargetsGraph = self.FindDrugs(NewProteins, self.relProps, self.entProps)
-        execution_time = self.ExecutionTime(start_time)
-        self.to_csv(self.DumpFiles[2], drugTOtargetsGraph, 'a')
-        self.Graph = nx.compose(self.Graph, drugTOtargetsGraph)
-
-        DrugCount = set([x for x in drugTOtargetsGraph.nodes() if drugTOtargetsGraph.out_degree(x)>0])
-        FoundTargets = set([x for x in drugTOtargetsGraph.nodes() if drugTOtargetsGraph.in_degree(x)>0])
-        print("%d drugs for %d proteins linked to %s were retreived in %s ---" % (len(DrugCount),len(FoundTargets), self.InputDiseaseNames, execution_time))
-
-
-    #find RMC compounds for nondruggable targets
-        ProteinNoDrugs = NewProteins.difference(FoundTargets)
-        if len(ProteinNoDrugs) > 0:
-            start_time = time.time()
-            print('Searching for RMC compounds binding to %d proteins' % NewProteinsCount)
-            RMCtoTargetsGraph = self.FindReaxysSubstances(ProteinNoDrugs,self.relProps, self.entProps)
-            if type(RMCtoTargetsGraph) != type(None):
-                execution_time = self.ExecutionTime(start_time)
-                CompoundCount = set([x for x in RMCtoTargetsGraph.nodes() if RMCtoTargetsGraph.out_degree(x)>0])
-                TargetCount = set([x for x in RMCtoTargetsGraph.nodes() if RMCtoTargetsGraph.in_degree(x)>0])
-                print("%d lead compounds for %d undruggable proteins linked to %s were retreived in %s ---" % (len(CompoundCount), len(TargetCount), self.InputDiseaseNames, execution_time))
-                self.Graph = nx.compose(RMCtoTargetsGraph,self.Graph)
-                self.to_csv(self.DumpFiles[2], RMCtoTargetsGraph, 'a')
-            else:
-                print('No RMC compounds found on this iteration')
+    def to_pandas (self, in_graph=None, RefNumPrintLimit=0):
+        return self.Graph.ref2pandas(self.relProps,self.entProps,in_graph,RefNumPrintLimit)

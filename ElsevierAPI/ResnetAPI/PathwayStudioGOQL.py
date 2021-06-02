@@ -1,210 +1,259 @@
-def joinWithQuotes(separator, NameList:list):
+def join_with_quotes(separator, NameList: list):
+    need_quotes = {' ', '-', '/', '(', ')', '[', ']', '+', '#'}
     to_return = str()
-    for i in range(0, len(NameList)):
-        Name = str(NameList[i])
-        if Name.find(' ') > 0 or Name.find('-'):
-            to_return = to_return + '\'' + Name + '\'' + separator
+    for name in NameList:
+        if 1 in [c in name for c in need_quotes]:
+            to_return = to_return + '\'' + name + '\'' + separator
         else:
-            to_return = to_return + Name + separator
-        
-    return to_return[:len(to_return)-1]
+            to_return = to_return + name + separator
+
+    return to_return[:len(to_return) - 1]
 
 
-def GetSearchStrings(PropertyNameList:list, PropValuesList:list):
-    needQuotes = set([' ','-','/','(',')','[',']','+', '#'])
+def get_search_strings(PropertyNameList: list, PropValuesList: list):
+    need_quotes = {' ', '-', '/', '(', ')', '[', ']', '+', '#'}
     some_values_have_quotes = False
-    Values = str()
+    values = str()
     unique_values_list = set(PropValuesList)
     for v in unique_values_list:
         val = str(v)
         val = val.replace('\'', '')
-        if 1 in [c in val for c in needQuotes]:
+        if 1 in [c in val for c in need_quotes]:
             val = '\'' + val + '\''
             some_values_have_quotes = True
-        Values = Values + val + ','
-    Values = Values[:len(Values)-1]
+        values = values + val + ','
+    values = values[:len(values) - 1]
 
-    PropertyNames  = str()
+    property_names = str()
     for n in range(0, len(PropertyNameList)):
-        propName =  PropertyNameList[n]
-        if propName.find(' ') > 0:
-            if some_values_have_quotes == False:
-                propName = '\"'+propName+'\"'
+        prop_name = PropertyNameList[n]
+        if prop_name.find(' ') > 0:
+            if not some_values_have_quotes:
+                prop_name = '\"' + prop_name + '\"'
             else:
-                print ("if you know how to concatenate string variable with double quotes and string variable with single quote in Python please let us know.\n"
-                "Otherwise please remove values with white spaces from either your value list or property name list")
+                print(
+                    "if you know how to concatenate string variable with double quotes and string variable with single quote in Python please let us know.\n"
+                    "Otherwise please remove values with white spaces from either your value list or property name list")
                 return
-        PropertyNames = PropertyNames+propName+','
-    PropertyNames = PropertyNames[:len(PropertyNames)-1]
+        property_names = property_names + prop_name + ','
+    property_names = property_names[:len(property_names) - 1]
 
-    return PropertyNames, Values
+    return property_names, values
 
 
-def GetEntitiesByProps(PropertyValues:list, SearchByProperties:list, OnlyObjectTypes=[], MinConnectivity=1):
-    OQLquery = str()
+def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=None, MinConnectivity=1):
+    only_object_types = [] if only_object_types is None else only_object_types
+
     if SearchByProperties[0] in ('id', 'Id', 'ID'):
-        OQLquery = "SELECT Entity WHERE id = " +  '('+','.join([str(int) for int in PropertyValues]) +')'
+        oql_query = "SELECT Entity WHERE id = " + '(' + ','.join([str(int) for int in PropertyValues]) + ')'
     else:
-        PropNames, Values = GetSearchStrings(SearchByProperties, PropertyValues)
-        OQLquery = "SELECT Entity WHERE " + '('+PropNames+')' + " = " +  '('+Values+')'
-    
-    if len(OnlyObjectTypes) > 0:
-        objectTypes = joinWithQuotes(',',OnlyObjectTypes)
-        OQLquery = OQLquery + ' AND objectType = ('+objectTypes+')'
+        prop_names, values = get_search_strings(SearchByProperties, PropertyValues)
+        oql_query = "SELECT Entity WHERE (" + prop_names + ") = (" + values + ')'
 
-    return OQLquery + ' AND Connectivity >= '+str(MinConnectivity)
+    if len(only_object_types) > 0:
+        object_types = join_with_quotes(',', only_object_types)
+        oql_query = oql_query + ' AND objectType = (' + object_types + ')'
+
+    return oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
 
 
-def GetChildEntities(PropertyValues:list, SearchByProperties:list, OnlyObjectTypes=[]):
-    OntologyQuery = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE {entities})'
-    EntityQuery = str()
+def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=None):
+    only_object_types = [] if only_object_types is None else only_object_types
+
+    ontology_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE {entities})'
     if SearchByProperties[0] in ('id', 'Id', 'ID'):
-        EntityQuery = "id = " +  '('+','.join([str(int) for int in PropertyValues]) +')'
+        entity_query = "id = (" + ','.join([str(i) for i in PropertyValues]) + ')'
     else:
-        PropNames, Values = GetSearchStrings(SearchByProperties, PropertyValues)
-        EntityQuery = '('+PropNames+')' + " = " +  '('+Values+')'
+        prop_names, values = get_search_strings(SearchByProperties, PropertyValues)
+        entity_query = '(' + prop_names + ') = (' + values + ')'
 
-    SearchQuery = OntologyQuery.format(entities=EntityQuery)
-    if len(OnlyObjectTypes) > 0:
-        objectTypes = joinWithQuotes(',',OnlyObjectTypes)
-        SearchQuery = SearchQuery + ' AND objectType = ('+objectTypes+')'
+    search_query = ontology_query.format(entities=entity_query)
+    if len(only_object_types) > 0:
+        object_types = join_with_quotes(',', only_object_types)
+        search_query = search_query + ' AND objectType = (' + object_types + ')'
 
-    return SearchQuery
+    return search_query
 
 
-def ExpandEntityById(IDlist:list, ExpandWithRelationTypes:list=[], ExpandToNeighborTypes:list=[], direction=''):
-    Values =  ','.join([str(int) for int in IDlist])
-    expandALL =  'Select Relation WHERE NeighborOf ' + direction +' (SELECT Entity WHERE id = (' + Values + '))'
-    if direction == 'upstream': oppositeDirection = 'downstream'
-    elif direction == 'downstream': oppositeDirection = 'upstream'
-    else: oppositeDirection = ''
+def expand_entity_by_id(IDlist: list, expand_by_rel_types=None, expand2neighbors=None, direction=''):
+    expand2neighbors = [] if expand2neighbors is None else expand2neighbors
+    expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
+    expand_by_rel_types_str = join_with_quotes(',',expand_by_rel_types)
+    expand2neighbors_str = join_with_quotes(',', expand2neighbors)
 
-    if len(ExpandWithRelationTypes) > 0:
-        if len(ExpandToNeighborTypes) > 0:
-            return expandALL + " AND objectType = (" + joinWithQuotes(',', ExpandWithRelationTypes) + ') AND NeighborOf '+oppositeDirection + ' (SELECT Entity WHERE objectType = (' +  joinWithQuotes(',', ExpandToNeighborTypes) + "))"
-        else:
-            return expandALL + " AND objectType = (" + joinWithQuotes(',', ExpandWithRelationTypes) + ")" 
+    values = ','.join([str(i) for i in IDlist])
+    expand = 'Select Relation WHERE NeighborOf ' + direction + ' (SELECT Entity WHERE id = (' + values + '))'
+    if direction == 'upstream':
+        opposite_direction = 'downstream'
+    elif direction == 'downstream':
+        opposite_direction = 'upstream'
     else:
-        if len(ExpandToNeighborTypes) > 0:
-            return expandALL + ' AND NeighborOf '+oppositeDirection + ' (SELECT Entity WHERE objectType = (' +  joinWithQuotes(',', ExpandToNeighborTypes) + "))"
+        opposite_direction = ''
+
+    if len(expand_by_rel_types) > 0:
+        if len(expand2neighbors) > 0:
+            expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + opposite_direction
+            expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
         else:
-            return expandALL
-
-
-def ExpandEntity (PropertyValues:list, SearchByProperties:list, ExpandWithRelationTypes=[], ExpandToNeighborTypes=[], direction=''):
-    if SearchByProperties[0] in ('id','Id','ID'):
-        return ExpandEntityById(PropertyValues, ExpandWithRelationTypes, ExpandToNeighborTypes, direction)
-
-    PropertyNames,Values = GetSearchStrings(SearchByProperties, PropertyValues)
-    expandALL = 'Select Relation WHERE NeighborOf ' + direction + ' (SELECT Entity WHERE (' + PropertyNames + ') = ('+ Values+ '))'
-    
-    if direction == 'upstream': oppositeDirection = 'downstream'
-    elif direction == 'downstream': oppositeDirection = 'upstream'
-    else: oppositeDirection = ''
-
-    if len(ExpandWithRelationTypes) > 0:
-        if len(ExpandToNeighborTypes) > 0:
-            return expandALL + " AND objectType = (" + joinWithQuotes(',', ExpandWithRelationTypes) + ') AND NeighborOf '+oppositeDirection+' (SELECT Entity WHERE objectType = (' +  joinWithQuotes(',', ExpandToNeighborTypes) + "))"
-        else:
-            return expandALL + " AND objectType = (" + joinWithQuotes(',', ExpandWithRelationTypes) + ")" 
+            expand += " AND objectType = (" + expand_by_rel_types_str + ")"
     else:
-        if len(ExpandToNeighborTypes) > 0:
-            return expandALL + ' AND NeighborOf '+oppositeDirection + ' (SELECT Entity WHERE objectType = (' +  joinWithQuotes(',', ExpandToNeighborTypes) + "))"
-        else:
-            return expandALL
-        
-def GetNeighbors(PropertyValues:list, SearchByProperties:list, ExpandWithRelationTypes:list=[], ExpandToNeighborTypes:list=[]):
-    PropertyNames,Values = GetSearchStrings(SearchByProperties, PropertyValues)
-    connect_to_str = "to (SELECT Entity WHERE (" + PropertyNames + ") = " + Values
-    if len(ExpandWithRelationTypes) > 0:
-        if len(ExpandToNeighborTypes)>0:
-            return "SELECT Entity WHERE objectType = ("+joinWithQuotes(',', ExpandToNeighborTypes)+") AND Connected by (SELECT Relation WHERE objectType= "+ joinWithQuotes(',', ExpandWithRelationTypes)+")" +connect_to_str +")"
-        else:
-            return "SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType= "+ joinWithQuotes(',', ExpandWithRelationTypes)+")" +connect_to_str +")"
+        if len(expand2neighbors) > 0:
+            expand += ' AND NeighborOf ' + opposite_direction
+            expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
+
+    return expand
+
+
+def expand_entity(PropertyValues: list, SearchByProperties: list, expand_by_rel_types=None,
+                  expand2neighbors=None, direction=''):
+    expand2neighbors = [] if expand2neighbors is None else expand2neighbors
+    expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
+    expand2neighbors_str = join_with_quotes(',', expand2neighbors)
+    expand_by_rel_types_str = join_with_quotes(',',expand_by_rel_types)
+
+    if SearchByProperties[0] in ('id', 'Id', 'ID'):
+        return expand_entity_by_id(PropertyValues, expand_by_rel_types, expand2neighbors, direction)
+
+    property_names, values = get_search_strings(SearchByProperties, PropertyValues)
+    expand = 'Select Relation WHERE NeighborOf ' + direction + ' (SELECT Entity WHERE (' + property_names + ') = (' + values + '))'
+
+    if direction == 'upstream':
+        opposite_direction = 'downstream'
+    elif direction == 'downstream':
+        opposite_direction = 'upstream'
     else:
-        if len(ExpandToNeighborTypes)>0:
-            return "SELECT Entity WHERE objectType = ("+joinWithQuotes(',', ExpandToNeighborTypes)+") AND Connected by (SELECT Relation WHERE NOT (URN = NULL))"+ connect_to_str +")"
+        opposite_direction = ''
+
+    if len(expand_by_rel_types) > 0:
+        if len(expand2neighbors) > 0:
+            expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + opposite_direction
+            expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
+        else:
+            expand + " AND objectType = (" + expand_by_rel_types_str + ")"
+    else:
+        if len(expand2neighbors) > 0:
+            expand += ' AND NeighborOf ' + opposite_direction + ' (SELECT Entity WHERE objectType = ('
+            expand += expand2neighbors_str + "))"
+
+    return expand
+
+
+def get_neighbors(PropertyValues: list, SearchByProperties: list, expand_by_rel_types=None,
+                  expand2neighbors=None):
+    expand2neighbors = [] if expand2neighbors is None else expand2neighbors
+    expand2neighbors_str = join_with_quotes(',', expand2neighbors)
+    expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
+    expand_by_rel_types_str = join_with_quotes(',',expand_by_rel_types)
+
+    property_names, values = get_search_strings(SearchByProperties, PropertyValues)
+    connect_to_str = "to (SELECT Entity WHERE (" + property_names + ") = " + values
+    if len(expand_by_rel_types) > 0:
+        if len(expand2neighbors) > 0:
+            return "SELECT Entity WHERE objectType = (" + expand2neighbors_str + ") AND Connected by (SELECT Relation WHERE objectType= " + expand_by_rel_types_str + ")" + connect_to_str + ")"
+        else:
+            return "SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType= " + expand_by_rel_types_str + ")" + connect_to_str + ")"
+    else:
+        if len(expand2neighbors) > 0:
+            return "SELECT Entity WHERE objectType = (" + expand2neighbors_str + ") AND Connected by (SELECT Relation WHERE NOT (URN = NULL))" + connect_to_str + ")"
         else:
             # no ExpandWithRelationTypes specified and no ExpandToNeighborTypes specified -> get ALL neigbors
-            return "SELECT Entity WHERE Connected by (SELECT Relation WHERE NOT (URN = NULL))" + connect_to_str +")"
+            return "SELECT Entity WHERE Connected by (SELECT Relation WHERE NOT (URN = NULL))" + connect_to_str + ")"
 
-def GetObjects(objIDlist:list):
-    strings = [str(integer) for integer in objIDlist]
-    IDlist = ",".join(strings)
-    return "SELECT Entity WHERE id = ("+ IDlist + ")"
 
-def GetDrugs(ForTargetsIDlist:list):
+def get_objects(object_ids: list):
+    strings = [str(integer) for integer in object_ids]
+    db_ids = ",".join(strings)
+    return "SELECT Entity WHERE id = (" + db_ids + ")"
+
+
+def get_drugs(for_targets_with_ids: list):
+    strings = [str(integer) for integer in for_targets_with_ids]
+    db_ids = ",".join(strings)
+    return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = (" + db_ids + ")) AND NeighborOf downstream (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs))"
+
+
+def get_reaxys_substances(ForTargetsIDlist: list):
     strings = [str(integer) for integer in ForTargetsIDlist]
-    IDlist = ",".join(strings)
-    return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = ("+ IDlist + ")) AND NeighborOf downstream (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs))"
-    
-def GetReaxysSubstances(ForTargetsIDlist:list):
-    strings = [str(integer) for integer in ForTargetsIDlist]
-    IDlist = ",".join(strings)
-    return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = ("+ IDlist + ")) AND Source = Reaxys"
+    db_ids = ",".join(strings)
+    return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = (" + db_ids + ")) AND Source = Reaxys"
 
-def ConnectEntities(PropertyValues1:list,SearchByProperties1:list,EntityTypes1:list,PropertyValues2:list,SearchByProperties2:list,EntityTypes2:list,ConnectByRelationTypes:list=[]):
-    PropNames1, PropValues1 = GetSearchStrings(PropertyNameList=SearchByProperties1,PropValuesList=PropertyValues1)
-    PropNames2, PropValues2 = GetSearchStrings(PropertyNameList=SearchByProperties2,PropValuesList=PropertyValues2)
-    objectType1 = joinWithQuotes(',',EntityTypes1)
-    objectType2 = joinWithQuotes(',',EntityTypes2)
 
-    EntityQuery = 'SELECT Entity WHERE {entity}'
+def connect_entities(PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list, PropertyValues2: list,
+                     SearchByProperties2: list, EntityTypes2: list, connect_by_rel_types=None):
 
-    Entity1 = '('+PropNames1+') = ('+PropValues1+') AND objectType = ('+objectType1+')'
-    Entity2 = '('+PropNames2+') = ('+PropValues2+') AND objectType = ('+objectType2+')'
-    #OntologyQuery ="SELECT Entity WHERE ({entity}) OR InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE {entity})"
- 
-    Entity1Query = EntityQuery.format(entity = Entity1)
-    Entity2Query = EntityQuery.format(entity = Entity2)
+    connect_by_rel_types = [] if connect_by_rel_types is None else connect_by_rel_types
+    prop_names1, prop_values1 = get_search_strings(PropertyNameList=SearchByProperties1, PropValuesList=PropertyValues1)
+    prop_names2, prop_values2 = get_search_strings(PropertyNameList=SearchByProperties2, PropValuesList=PropertyValues2)
+    object_type1 = join_with_quotes(',', EntityTypes1)
+    object_type2 = join_with_quotes(',', EntityTypes2)
 
-    if len(ConnectByRelationTypes) > 0:
-        relTypeList = joinWithQuotes(',', ConnectByRelationTypes)
-        OQLquery = "SELECT Relation WHERE objectType = ("+relTypeList+") AND NeighborOf ("+Entity1Query+") AND NeighborOf ("+Entity2Query+")"
-        return OQLquery
-    else:
-        return "SELECT Relation WHERE NeighborOf ("+Entity1Query+") AND NeighborOf ("+Entity2Query+")"
- 
+    entity_query = 'SELECT Entity WHERE {entity}'
 
-def ConnectEntitiesIds(idlist1:list,idlist2:list,ConnectByRelTypes=[],RelEffect=[],RelDirection=''):
-    stringIdlist1 = [str(integer) for integer in idlist1]
-    stringIdlist2 = [str(integer) for integer in idlist2]
-    Id1s = ",".join(stringIdlist1)
-    Id2s = ",".join(stringIdlist2)
-    EntityQuery = 'SELECT Entity WHERE id = ({idlist})'  
-    Entity1Query = EntityQuery.format(idlist=Id1s)
-    Entity2Query = EntityQuery.format(idlist=Id2s)
+    entity1 = '(' + prop_names1 + ') = (' + prop_values1 + ') AND objectType = (' + object_type1 + ')'
+    entity2 = '(' + prop_names2 + ') = (' + prop_values2 + ') AND objectType = (' + object_type2 + ')'
 
-    OQLquery = "SELECT Relation WHERE NeighborOf {dir1} ("+Entity1Query+") AND NeighborOf {dir2} ("+Entity2Query+")"
-    if len(ConnectByRelTypes) > 0:
-        relTypeList = joinWithQuotes(',', ConnectByRelTypes)
-        OQLquery = OQLquery + ' AND objectType = ('+relTypeList+')'
-        
-    if len(RelEffect) > 0:
-        effectList = joinWithQuotes(',', RelEffect)
-        OQLquery = OQLquery + ' AND Effect = ('+effectList+')'
+    entity1_query = entity_query.format(entity=entity1)
+    entity2_query = entity_query.format(entity=entity2)
+
+    oql_query = "SELECT Relation WHERE NeighborOf (" + entity1_query + ") AND NeighborOf (" + entity2_query + ")"
+    if len(connect_by_rel_types) > 0:
+        rel_type_list = join_with_quotes(',', connect_by_rel_types)
+        oql_query += " AND objectType = (" + rel_type_list + ")"
+
+    return oql_query
+
+
+def connect_ids (idlist1: list, idlist2: list, connect_by_rel_types=None, rel_effect=None, RelDirection=''):
+    rel_effect = [] if rel_effect is None else rel_effect
+    connect_by_rel_types = [] if connect_by_rel_types is None else connect_by_rel_types
+
+    string_ids1 = [str(integer) for integer in idlist1]
+    string_ids2 = [str(integer) for integer in idlist2]
+    id1s = ",".join(string_ids1)
+    id2s = ",".join(string_ids2)
+    entity_query = 'SELECT Entity WHERE id = ({idlist})'
+    entity1_query = entity_query.format(idlist=id1s)
+    entity2_query = entity_query.format(idlist=id2s)
+
+    oql_query = "SELECT Relation WHERE NeighborOf {dir1} (" + entity1_query + ") AND NeighborOf {dir2} (" + entity2_query + ")"
+    if len(connect_by_rel_types) > 0:
+        rel_type_list = join_with_quotes(',', connect_by_rel_types)
+        oql_query = oql_query + ' AND objectType = (' + rel_type_list + ')'
+
+    if len(rel_effect) > 0:
+        effect_list = join_with_quotes(',', rel_effect)
+        oql_query = oql_query + ' AND Effect = (' + effect_list + ')'
 
     if RelDirection == '<':
-        OQLquery = OQLquery.format(dir1='upstream',dir2='downstream')
+        oql_query = oql_query.format(dir1='upstream', dir2='downstream')
     elif RelDirection == '>':
-        OQLquery = OQLquery.format(dir1='downstream',dir2='upstream')
-    else: OQLquery = OQLquery.format(dir1='',dir2='')
-    
-    return OQLquery
+        oql_query = oql_query.format(dir1='downstream', dir2='upstream')
+    else:
+        oql_query = oql_query.format(dir1='', dir2='')
 
-def FindTargets(RegulatorsIDs:list, TargetIDs:list, RelationTypeList:list=[]):
-    regstrIDs = [str(integer) for integer in RegulatorsIDs]
-    trgtstrIDs = [str(integer) for integer in TargetIDs]
-    regIDs = ",".join(regstrIDs)
-    trgtIDs = ",".join(trgtstrIDs)
-    relTypeList = joinWithQuotes(',', RelationTypeList)
-    OQLquery = "SELECT Relation WHERE objectType = ("+relTypeList+") AND NeighborOf downstream (SELECT Entity WHERE id = ("+ regIDs + ")) AND NeighborOf upstream (SELECT Entity WHERE id = ("+ trgtIDs + "))"
-    return OQLquery
+    return oql_query
 
-def GetPPIs(uniqObjIdList1:set, uniqObjIdList2:set):
-    regstrIDs =  [str(integer) for integer in uniqObjIdList1]
-    trgtstrIDs = [str(integer) for integer in uniqObjIdList2]
-    regIDs = ",".join(regstrIDs)
-    trgtIDs = ",".join(trgtstrIDs)
-    OQLquery = "SELECT Relation WHERE objectType = (Binding, DirectRegulation, ProtModification) AND NeighborOf (SELECT Entity WHERE id = ("+ regIDs + ")) AND NeighborOf (SELECT Entity WHERE id = ("+ trgtIDs + "))"
-    return OQLquery
+
+def find_targets(RegulatorsIDs: list, TargetIDs: list, relation_types=None):
+    relation_types = [] if relation_types is None else relation_types
+
+    regulators = [str(integer) for integer in RegulatorsIDs]
+    targets = [str(integer) for integer in TargetIDs]
+    reg_ids = ",".join(regulators)
+    target_ids = ",".join(targets)
+    rel_type_list = join_with_quotes(',', relation_types)
+    oql_query = "SELECT Relation WHERE objectType = (" + rel_type_list + ") "
+    oql_query += "AND NeighborOf downstream (SELECT Entity WHERE id = (" + reg_ids + ")) "
+    oql_query += "AND NeighborOf upstream (SELECT Entity WHERE id = (" + target_ids + "))"
+    return oql_query
+
+
+def get_ppi(obj_ids1: set, obj_ids2: set):
+    regulators = [str(integer) for integer in obj_ids1]
+    targets = [str(integer) for integer in obj_ids2]
+    reg_ids = ",".join(regulators)
+    target_ids = ",".join(targets)
+    oql_query = "SELECT Relation WHERE objectType = (Binding, DirectRegulation, ProtModification) "
+    oql_query += "AND NeighborOf (SELECT Entity WHERE id = (" + reg_ids + ")) "
+    oql_query += "AND NeighborOf (SELECT Entity WHERE id = (" + target_ids + "))"
+    return oql_query

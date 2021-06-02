@@ -1,642 +1,358 @@
-import time
 import networkx as nx
-import ElsevierAPI
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,PSRelation,REF_ID_TYPES,REF_PROPS
-
-RNEF_EXCLUDE_NODE_PROPS = ['Id','URN','ObjClassId','ObjTypeId','ObjTypeName','OwnerId','DateCreated','DateModified']
-RNEF_EXCLUDE_REL_PROPS =  RNEF_EXCLUDE_NODE_PROPS+['RelationNumberOfReferences','# of Total References','Name']
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation
+from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 
 class PSNetworx(DataModel):
-    def __init__(self, DBModel:DataModel):
-        self.SOAPclient = DBModel.SOAPclient
-        self.IdtoObjectType = DBModel.IdtoObjectType #from DB.ObjectTypes
-        self.IdToPropType = DBModel.IdToPropType #from DB.PropTypes 
-        self.PropIdToDict = DBModel.PropIdToDict #for dictionary properties from DB.Dicts
-        self.IDtoRelation = dict() #{relID:PSRelation} needs to be - Resnet relations may not be binary
-        self.Graph = nx.MultiDiGraph()
-        self.IdToFolders = DBModel.IdToFolders
-        self.RNEFnameToPropType = DBModel.RNEFnameToPropType
-        self.mappedBy_propName = 'mapped_by'
-        self.child_ids_propName = 'Child Ids'
-        self.REF_ID_TYPES = REF_ID_TYPES
-        self.REF_PROPS = REF_PROPS
+    def __init__(self, url, username, password):
+        super().__init__(url, username, password)
+        self.IDtoRelation = dict()  # {relID:PSRelation} needs to be - Resnet relations may not be binary
+        self.Graph = ResnetGraph()
+
 
     @staticmethod
-    def __ZeepToPSObjects(ZeepObjects):
-        IDtoEntity = dict()
-        if type(ZeepObjects) == type(None): return IDtoEntity
-        for o in ZeepObjects.Objects.ObjectRef:
-            psObj = PSObject(o)
-            objId = o.Id
-            IDtoEntity[objId] = psObj  
+    def _zeep2psobj(zeep_objects):
+        id2entity = dict()
+        if type(zeep_objects) == type(None):
+            return id2entity
+        for o in zeep_objects.Objects.ObjectRef:
+            ps_obj = PSObject.from_zeep(o)
+            obj_id = o.Id
+            id2entity[obj_id] = ps_obj
 
-        for prop in ZeepObjects.Properties.ObjectProperty:
-            objId = prop.ObjId
-            propId = prop.PropId
-            propName = prop.PropName
-            vals = prop.PropValues.string
-            IDtoEntity[objId][propId] = vals
-            IDtoEntity[objId][propName] = vals
+        for prop in zeep_objects.Properties.ObjectProperty:
+            obj_id = prop.ObjId
+            prop_id = prop.PropId
+            prop_name = prop.PropName
+            values = prop.PropValues.string
+            id2entity[obj_id][prop_id] = values
+            id2entity[obj_id][prop_name] = values
 
             try:
-                propDisplayName = prop.PropDisplayName
-                IDtoEntity[objId][propDisplayName] = vals
-            except AttributeError: continue
-                   
-        return IDtoEntity
+                prop_display_name = prop.PropDisplayName
+                id2entity[obj_id][prop_display_name] = values
+            except AttributeError:
+                continue
 
-    def _load_graph(self, ZeepRelations, ZeepObjects):
-        newGraph = nx.MultiDiGraph()
-        #loading entities and their properties
-        IDtoEntity = self.__ZeepToPSObjects(ZeepObjects)
-        newGraph.add_nodes_from([(k,v.items()) for k,v in IDtoEntity.items()])
-       
-        if type(ZeepRelations) != type(None):
-            newRelations = dict()
-            for rel in ZeepRelations.Objects.ObjectRef:
-                psRel = PSRelation(rel)
-                relId = rel['Id']
-                newRelations[relId] = psRel
-            
-            #loading relations and their properties
-            for prop in ZeepRelations.Properties.ObjectProperty:
-                relId = prop['ObjId']
-                propId = prop['PropId']
-                PropSetId = prop['PropSet']
-                propName = prop['PropName']
-                propDisplayName = prop['PropDisplayName']
-                vals = prop['PropValues']['string']
+        return id2entity
 
-                if self.IdToPropType[propId]['IsMultiple'] == False:
-                    newRelations[relId][propId] = vals
-                    newRelations[relId][propName] = vals
-                    newRelations[relId][propDisplayName] = vals
-                elif PropSetId in newRelations[relId].PropSetToProps.keys():
-                    newRelations[relId].PropSetToProps[PropSetId][propId] = vals
-                    newRelations[relId].PropSetToProps[PropSetId][propName]= vals
-                    newRelations[relId].PropSetToProps[PropSetId][propDisplayName] = vals
-                else:                  
-                    newRelations[relId].PropSetToProps[PropSetId] = {propId:vals}
-                    newRelations[relId].PropSetToProps[PropSetId] = {propName:vals}
-                    newRelations[relId].PropSetToProps[PropSetId] = {propDisplayName:vals}
-            
-            #loading connected entities from Links
-            for l in ZeepRelations.Links.Link:
-                relId = l['RelationId']
-                Dir = l['Dir']
-                link = (l['EntityId'], Dir, l['Effect'])
+    def _load_graph(self, zeep_relations, zeep_objects):
+        new_graph = ResnetGraph()
+        # loading entities and their properties
+        id2entity = self._zeep2psobj(zeep_objects)
+        new_graph.add_nodes_from([(k, v.items()) for k, v in id2entity.items()])
 
-                if Dir == 1:
-                    if len(newRelations[relId].Nodes) < 2:
-                        newRelations[relId].Nodes['Targets'] = [link]
-                    else:
-                        newRelations[relId].Nodes['Targets'].append(link)
+        if type(zeep_relations) != type(None):
+            new_relations = dict()
+            for rel in zeep_relations.Objects.ObjectRef:
+                ps_rel = PSRelation.from_zeep(rel)
+                rel_id = rel['Id']
+                new_relations[rel_id] = ps_rel
+
+            # loading relations and their properties
+            for prop in zeep_relations.Properties.ObjectProperty:
+                rel_id = prop['ObjId']
+                prop_id = prop['PropId']
+                prop_set_id = prop['PropSet']
+                prop_name = prop['PropName']
+                prop_display_name = prop['PropDisplayName']
+                values = prop['PropValues']['string']
+
+                if not self.IdToPropType[prop_id]['IsMultiple']:
+                    new_relations[rel_id][prop_id] = values
+                    new_relations[rel_id][prop_name] = values
+                    new_relations[rel_id][prop_display_name] = values
+                elif prop_set_id in new_relations[rel_id].PropSetToProps.keys():
+                    new_relations[rel_id].PropSetToProps[prop_set_id][prop_id] = values
+                    new_relations[rel_id].PropSetToProps[prop_set_id][prop_name] = values
+                    new_relations[rel_id].PropSetToProps[prop_set_id][prop_display_name] = values
                 else:
-                    if len(newRelations[relId].Nodes) < 1:
-                        newRelations[relId].Nodes['Regulators'] = [link]
+                    new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_id: values}
+                    new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_name: values}
+                    new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_display_name: values}
+
+            # loading connected entities from Links
+            for l in zeep_relations.Links.Link:
+                rel_id = l['RelationId']
+                direction = l['Dir']
+                link = (l['EntityId'], direction, l['Effect'])
+
+                if direction == 1:
+                    if len(new_relations[rel_id].Nodes) < 2:
+                        new_relations[rel_id].Nodes['Targets'] = [link]
                     else:
-                        newRelations[relId].Nodes['Regulators'].append(link)
-
-            
-            for rel in newRelations.values():
-                RegTargPairs = rel.GetRegulatorTargetPairs()
-                for pair in RegTargPairs:
-                    refCount = rel['RelationNumberOfReferences'][0]
-                    
-                    newGraph.add_edge(pair[0], pair[1], relation=rel, weight=float(refCount))
-                    #print (newGraph.get_edge_data(pair[0], pair[1]))
-                    
-            self.IDtoRelation.update(newRelations)#must be kept since Resnet relation may not be binary
-
-        self.Graph = nx.compose(newGraph,self.Graph)
-        return newGraph
-    
-    def LoadGraphFromOQL(self,OQLquery:str,REL_PROPS=[],ENTITY_PROPS=[],getLinks=True):
-        relPropsSet = list(set(REL_PROPS+['Name','RelationNumberOfReferences']))
-        entPropSet = list(set(ENTITY_PROPS+['Name']))
-
-        if getLinks == True:
-            ZeepRelations = self.GetData(OQLquery,relPropsSet,getLinks=True)
-            if type(ZeepRelations) != type(None):
-                objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
-                ZeepObjects = self.GetObjProperties(objIdlist, entPropSet)
-                return self._load_graph(ZeepRelations, ZeepObjects)
-        else:
-            ZeepObjects = self.GetData(OQLquery,entPropSet,getLinks=False)
-            return self._load_graph(None, ZeepObjects)
-
-
-    def __objId_byOQL(self, OQLquery:str):
-        ZeepEntities = self.GetData(OQLquery,RetreiveProperties=['Name'],getLinks=False)
-        if type(ZeepEntities) != type(None):
-            objIDs = set([x['Id'] for x in ZeepEntities.Objects.ObjectRef])
-            return objIDs
-        else: return set()
-
-    def GetObjIdsByProps(self, PropertyValues:list,SearchByProperties=['Name','Alias'], GetChilds=True, OnlyObjectTypes=[]):
-        QueryNode = OQL.GetEntitiesByProps(PropertyValues,SearchByProperties,OnlyObjectTypes)
-        TargetIDs = self.__objId_byOQL(QueryNode)
-        if GetChilds == True:
-            QueryOntology = OQL.GetChildEntities(PropertyValues,SearchByProperties,OnlyObjectTypes)
-            ChildIDs = self.__objId_byOQL(QueryOntology)
-            TargetIDs.update(ChildIDs)
-        return TargetIDs
-
-
-    def MapPropToEntities(self,PropertyValues:list,propName:str,RetreiveNodeProperties:set,OnlyObjectTypes=[],GetChilds=False,MinConnectivity=1):
-        entProps = set(RetreiveNodeProperties)
-        entProps.update([propName,'Name'])
-        entProps = list(entProps)
-
-        import math
-        step = 1000
-        iterCount = math.ceil(len(PropertyValues)/step)
-        print('Will use %d %s identifiers to find Resnet entities in %d iterations' % (len(PropertyValues),propName,iterCount))
-
-        IDtoEntity = dict()
-        for i in range (0,len(PropertyValues),step):
-            start_time = time.time()
-            propval_chunk = PropertyValues[i:i+step]
-            QueryNode = OQL.GetEntitiesByProps(propval_chunk,[propName],OnlyObjectTypes,MinConnectivity)
-            ZeepEntities = self.GetData(QueryNode,entProps,getLinks=False)
-            if type(ZeepEntities) != type(None):
-                IDtoEntitychunk = self.__ZeepToPSObjects(ZeepEntities)
-                IDtoEntity.update(IDtoEntitychunk)
-                print("%d from %d iteration: %d entities were found for %d %s identifiers in %s" % (i/step+1, iterCount, len(IDtoEntitychunk), len(propval_chunk), propName, ElsevierAPI.ExecutionTime(start_time) ))
-        
-        LazyChildDict = dict()
-        ChildIDtoPSobj = dict()
-        has_childs = 0
-        PropToPSobj = dict()
-        for psobj in IDtoEntity.values():
-            psobj_id = psobj['Id']
-            prop_vals = [x for x in psobj[propName] if x in PropertyValues]
-            mappedBy_propvalue = propName+':'+','.join(prop_vals)
-            psobj.AddUniqueProperty(self.mappedBy_propName,mappedBy_propvalue)
-            
-            if GetChilds == True:
-                lazy_key = tuple(psobj_id)
-                try: 
-                    ChildIDs = LazyChildDict[lazy_key]
-                except KeyError:
-                    QueryOntology = OQL.GetChildEntities(psobj_id,['Id'],OnlyObjectTypes)
-                    ZeepEntities = self.GetData(QueryOntology,entProps,getLinks=False)
-                    if type(ZeepEntities) != type(None):
-                        has_childs += 1
-                        childIDstoEntities = self.__ZeepToPSObjects(ZeepEntities)
-                        for child in childIDstoEntities.values():
-                            child.AddUniqueProperty(self.mappedBy_propName,mappedBy_propvalue)
-                        ChildIDtoPSobj.update(childIDstoEntities)
-                        ChildIDs = list(childIDstoEntities.keys())
-                    else: ChildIDs = []
-
-                    LazyChildDict[lazy_key] = ChildIDs
-                    psobj.AddUniquePropertyList(self.child_ids_propName,ChildIDs)
-                
-            for prop_val in prop_vals:
-                try:
-                    PropToPSobj[prop_val][psobj['Id'][0]] = psobj
-                except KeyError: 
-                    PropToPSobj[prop_val] = {psobj['Id'][0]:psobj}
-
-        if GetChilds == True:
-            print ('Childs for %d entities were found in database' % has_childs)
-            IDtoEntity.update(ChildIDtoPSobj)
-
-        self.Graph.add_nodes_from([(k,v.items()) for k,v in IDtoEntity.items()])
-        print('%d out of %d %s identifiers were mapped on entities in the database' % (len(PropToPSobj),len(PropertyValues),propName))
-        return PropToPSobj
-
-    def GetNeighbors(self,EntityIDs:set,InGraph=None, FilterByType=[]):
-        G = self.Graph if type(InGraph) == type(None) else InGraph
-        IdToNeighbors = dict()
-        for Id in EntityIDs:
-            if Id in G:
-                NeighborsIds = set([x for x in nx.all_neighbors(G, Id)])                
-                IdToNeighbors[Id] = list(NeighborsIds)
-        if len(FilterByType) > 0:
-            filteredIdtoNeighbors = dict()
-            allowedIDs = self.GetGraphEntityIds(FilterByType,G)
-            for k,v in IdToNeighbors.items():
-                filteredNeigborsIds = [i for i in v if i in allowedIDs]
-                filteredIdtoNeighbors[k] = filteredNeigborsIds
-            return filteredIdtoNeighbors
-        else:
-            return IdToNeighbors
-
-    def GetRegulome(self,StartEntityIDs:set,InGraph=None):
-        G = self.Graph if type(InGraph) == type(None) else InGraph
-        all_succesorIDs = set()
-        for Id in StartEntityIDs:
-            if Id in G:
-                succecorIDs = list(nx.bfs_tree(G,Id))#,depth_limit=7
-                all_succesorIDs.update(succecorIDs)
-        return list(all_succesorIDs)
-
-    def GetSubGraph(self,between_nodeids:list,and_nodeids:list,inGraph:nx.MultiDiGraph=None):
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        sub_graph = nx.MultiDiGraph()
-        for n1 in between_nodeids:
-            for n2 in and_nodeids:
-                if G.has_edge(n1,n2) == True:
-                    for i in range(0,len(G[n1][n2])):
-                        sub_graph.add_edge(n1, n2, relation=G[n1][n2][i]['relation'], weight=G[n1][n2][i]['weight'])
-                if G.has_edge(n2,n1) == True:
-                    for i in range(0,len(G[n2][n1])):
-                        sub_graph.add_edge(n2, n1, relation=G[n2][n1][i]['relation'], weight=G[n2][n1][i]['weight'])
-
-        return sub_graph
-
-    def count_references(self, inGraph:nx.MultiDiGraph=None):
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        ReferenceSet = set()
-        for regulatorID, targetID, rel in G.edges.data('relation'):
-            rel.load_references()
-            ReferenceSet.update(rel.References.values())
-        return ReferenceSet
-
-    def CountReferences(self,between_nodeids:list,and_nodeids:list,inGraph:nx.MultiDiGraph=None):
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        sub_graph = self.GetSubGraph(between_nodeids,and_nodeids,G)
-        return self.count_references(sub_graph)
-
-    def SemanticRefCountByIds(self,node1ids:list,node2ids:list,ConnectByRelTypes=[],RelEffect=[],RelDirection='',REL_PROPS=[],ENTITY_PROPS=[]):
-        relProps = set(REL_PROPS)
-        relProps.update(REF_ID_TYPES)#required fields for loading references to count
-        relProps.update(['Name','RelationNumberOfReferences','Source']) #just in case
-
-        entProps = set(ENTITY_PROPS)
-        entProps.update(['Name'])
-
-        step_size = 500
-        iteration_counter = 0
-        AccumulateRelation = nx.MultiDiGraph()
-        for n1 in range (0, len(node1ids), step_size):
-            n1end = min(n1+step_size,len(node1ids))
-            n1ids = node1ids[n1:n1end]
-            for n2 in range (0, len(node2ids), step_size):
-                n2end = min(n2+step_size,len(node2ids))
-                n2ids = node2ids[n2:n2end]
-                OQLConnectquery = OQL.ConnectEntitiesIds(n1ids,n2ids,ConnectByRelTypes,RelEffect,RelDirection)   
-                FoundRelations = self.LoadGraphFromOQL(OQLConnectquery,REL_PROPS=list(relProps),ENTITY_PROPS=list(entProps))
-                iteration_counter += 1
-                if type(FoundRelations) != type(None): 
-                    print ('Iteration %d found %d semantic relations between %d nodes supported by %d references' 
-                    %(iteration_counter,FoundRelations.number_of_edges(),FoundRelations.number_of_nodes(),FoundRelations.size()))
-                    AccumulateRelation = nx.compose(FoundRelations,AccumulateRelation)
-
-        return AccumulateRelation
-    
-    
-    def SemanticRefCount(self, node1PropValues:list, node1PropTypes:list, node1ObjTypes:list, node2PropValues:list, node2PropTypes:list, node2ObjTypes:list):
-        node1ids = self.GetObjIdsByProps(node1PropValues,node1PropTypes,node1ObjTypes)
-        AccumulateReference = set()
-        AccumulateRelation = nx.MultiDiGraph()
-        if len(node1ids) > 0:
-            node2ids = self.GetObjIdsByProps(node2PropValues,node2PropTypes,node2ObjTypes)
-            if len(node2ids) > 0:
-                AccumulateReference, AccumulateRelation = self.SemanticRefCountByIds(node1ids, node2ids)
-
-        return AccumulateReference, AccumulateRelation
-
-
-    def SetEdgeProperty(self, nodeId1, nodeId2, PropertyName, PropertyValues:list, bothDirs=True):
-        if self.Graph.has_edge(nodeId1,nodeId2) == True:
-            for i in range(0,len(self.Graph[nodeId1][nodeId2])):
-                self.Graph[nodeId1][nodeId2][i]['relation'][PropertyName]=PropertyValues
-        if bothDirs == True:
-            if self.Graph.has_edge(nodeId2,nodeId1) == True:
-                for i in range(0,len(self.Graph[nodeId2][nodeId1])):
-                    self.Graph[nodeId2][nodeId1][i]['relation'][PropertyName]=PropertyValues
-
-
-    def GetGraphEntityIds(self, OnlyForNodeTypes:list, inGraph:nx.MultiDiGraph=None):
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        AllIDs = [x for x,y in G.nodes(data=True) if y['ObjTypeName'][0] in OnlyForNodeTypes]
-        return AllIDs
-        
-    def GetProperties(self, IDList:set, PropertyName):
-            IdToProps = {x:y[PropertyName] for x,y in self.Graph.nodes(data=True) if x in IDList}
-            return IdToProps
-
-    def PrintTriples(self, fileOut, relPropNames, inGraph:nx.MultiDiGraph=None, relList=[], access_mode='w', printHeader=True):
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        with open(fileOut, access_mode, encoding='utf-8') as f:
-            if printHeader == True:
-                header = '\t'.join(relPropNames)+'\t'+"Regulators Id"+'\t'+"Targets Id"
-                f.write(header + '\n')
-            
-        for regulatorID, targetID, rel in G.edges.data('relation'):
-            f.write(rel.TripleToStr(relPropNames))
-
-
-    def __get_node(self, nodeId, inGraph:nx.MultiDiGraph=None):
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        dic = {k:v for k,v in G.nodes[nodeId].items()}
-        PSobj = PSObject([])
-        PSobj.update(dic)
-        return PSobj
-
-
-    def __get_relations(self,inGraph:nx.MultiDiGraph=None):
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        graph_relations = set()
-        for regulatorID, targetID, rel in G.edges.data('relation'):
-            graph_relations.add(rel)
-
-        return graph_relations
-
-
-    def PrintReferenceView(self, fileOut, relPropNames, entPropNames=[], inGraph:nx.MultiDiGraph=None, access_mode='w', printHeader=True, RefNumPrintLimit=0,col_sep='\t'):
-        rel_props = list(set(relPropNames+['Name']))
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        with open(fileOut, access_mode, encoding='utf-8') as f:
-            if printHeader == True:
-                header = col_sep.join(rel_props)+col_sep+"Regulators Id"+col_sep+"Targets Id"
-                targetPropheader = [''] * len(entPropNames)
-                regPropheader = [''] * len(entPropNames)
-
-                for i in range(0,len(entPropNames)):
-                    regPropheader[i] = 'Regulator:'+entPropNames[i]
-                    targetPropheader[i] = 'Target:'+entPropNames[i]
-
-                if len(regPropheader) > 0:
-                    header = col_sep.join(regPropheader)+col_sep+header+col_sep+col_sep.join(targetPropheader)
-                    
-                f.write(header + '\n')
-
-            if G.number_of_edges() > 0:
-                if len(entPropNames) == 0:
-                    for regulatorID, targetID, rel in G.edges.data('relation'):
-                        ReferenceViewTriple = str(rel.TripleToStr(rel_props))
-                        f.write(ReferenceViewTriple)
+                        new_relations[rel_id].Nodes['Targets'].append(link)
                 else:
-                    for regulatorID, targetID, rel in G.edges.data('relation'):
-                        reg = self.__get_node(regulatorID, G)
-                        targ = self.__get_node(targetID, G)
-                        regPropsStr = reg.DataToStr(entPropNames,col_sep=col_sep)
-                        targPropsStr = targ.DataToStr(entPropNames,col_sep=col_sep)
-                        relPropsStrList = dict(rel.TripleToStr(rel_props,return_dict=True,RefNumPrintLimit=RefNumPrintLimit,col_sep=col_sep))
+                    if len(new_relations[rel_id].Nodes) < 1:
+                        new_relations[rel_id].Nodes['Regulators'] = [link]
+                    else:
+                        new_relations[rel_id].Nodes['Regulators'].append(link)
 
-                        ReferenceTableView = str()
-                        for row in relPropsStrList.values():
-                            ReferenceTableView = ReferenceTableView+regPropsStr[0:len(regPropsStr)-1]+col_sep+col_sep.join(row)+col_sep+targPropsStr
-                        f.write(ReferenceTableView)
-            else:
-                for node_id in G.nodes:
-                    n = self.__get_node(node_id, G)
-                    nodePropStr = n.DataToStr(entPropNames,col_sep=col_sep)
-                    f.write(nodePropStr)
+            for rel in new_relations.values():
+                regulator_target = rel.get_regulators_targets()
+                for pair in regulator_target:
+                    ref_count = rel['RelationNumberOfReferences'][0]
+                    new_graph.add_edge(pair[0], pair[1], relation=rel, weight=float(ref_count))
+                    # print (newGraph.get_edge_data(pair[0], pair[1]))
 
-    
-    def DumpEntities (self, fileOut, PropNames, EntityIDlist=[]):
-        header = '\t'.join(PropNames)
-        NodeDict = dict([(i,v) for i,v in self.Graph.nodes(data=True)])
-        with open(fileOut, 'w', encoding='utf-8') as f:
-            f.write(header + '\n')
-            if len(EntityIDlist) == 0:
-                for ent in NodeDict.values():
-                    f.write(ent.DataToStr(PropNames))
-            else:
-                for ent in NodeDict.values():
-                    if ent['Id'] in EntityIDlist:
-                        f.write(ent.DataToStr(PropNames))
-        
-    def FindDrugs(self, ForTargetsIDlist:list,REL_PROPS:list, ENTITY_PROPS:list):
-        OQLquery = OQL.GetDrugs(ForTargetsIDlist)
-        ZeepRelations = self.GetData(OQLquery, REL_PROPS)
-        if type(ZeepRelations) != type(None):
-            objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
-            ZeepObjects = self.GetObjProperties(objIdlist, ENTITY_PROPS)
-            newPSRelations = self._load_graph(ZeepRelations, ZeepObjects)
-            return newPSRelations
+            self.IDtoRelation.update(new_relations)  # must be kept since Resnet relation may not be binary
 
-    def FindReaxysSubstances(self, ForTargetsIDlist:list,REL_PROPS:list, ENTITY_PROPS:list):
-        OQLquery = OQL.GetReaxysSubstances(ForTargetsIDlist)
-        ZeepRelations = self.GetData(OQLquery, REL_PROPS)
-        if type(ZeepRelations) != type(None):
-            objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
-            ZeepObjects = self.GetObjProperties(objIdlist, ENTITY_PROPS)
-            newPSRelations = self._load_graph(ZeepRelations, ZeepObjects)
-            return newPSRelations
+        self.Graph = nx.compose(new_graph, self.Graph)
+        return new_graph
 
-    def ConnectEntities(self,PropertyValues1:list,SearchByProperties1:list,EntityTypes1:list,PropertyValues2:list,SearchByProperties2:list,EntityTypes2:list, REL_PROPS=['Name','RelationNumberOfReferences'], ConnectByRelationTypes=[],ENTITY_PROPS=['Name']):
-        rel_props = set(REL_PROPS+['Name','RelationNumberOfReferences'])
-        ent_props = set(ENTITY_PROPS+['Name'])
-        OQLquery = OQL.ConnectEntities(PropertyValues1,SearchByProperties1,EntityTypes1,PropertyValues2,SearchByProperties2,EntityTypes2, ConnectByRelationTypes)
-        ZeepRelations = self.GetData(OQLquery, list(rel_props))
-        if type(ZeepRelations) != type(None):
-            objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
-            ZeepObjects = self.GetObjProperties(objIdlist, list(ent_props))
-            newPSRelations = self._load_graph(ZeepRelations, ZeepObjects)
-            return newPSRelations
+    def load_graph_from_oql(self, oql_query: str, relation_props: list=None, entity_props: list=None, get_links=True):
 
-    def GetPPIs(self, InteractorIdList:set, REL_PROPS:list, ENTITY_PROPS:list):
-        splitter = []
+        entity_props = set(['Name']+entity_props) if isinstance(entity_props,list) else {'Name'}
+  
+        if get_links:
+            if isinstance(relation_props,list):
+                relation_props = set(relation_props+['Name','RelationNumberOfReferences'])
+            else: relation_props = {'Name','RelationNumberOfReferences'}
+            
+            zeep_relations = self.get_data(oql_query, list(relation_props), getLinks=True)
+            if type(zeep_relations) != type(None):
+                obj_id_list = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
+                zeep_objects = self.get_object_properties(obj_id_list, list(entity_props))
+                return self._load_graph(zeep_relations, zeep_objects)
+        else:
+            zeep_objects = self.get_data(oql_query, list(entity_props), getLinks=False)
+            return self._load_graph(None, zeep_objects)
+
+    def _obj_id_by_oql(self, oql_query: str):
+        zeep_entities = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
+        if type(zeep_entities) != type(None):
+            obj_ids = set([x['Id'] for x in zeep_entities.Objects.ObjectRef])
+            return obj_ids
+        else:
+            return set()
+
+    def _get_obj_ids_by_props(self, propValues: list, search_by_properties=None, get_childs=True,
+                             only_obj_types=None):
+        only_object_types = [] if only_obj_types is None else only_obj_types
+        search_by_properties = ['Name', 'Alias'] if search_by_properties is None else search_by_properties
+
+        query_node = OQL.get_entities_by_props(propValues, search_by_properties, only_object_types)
+        target_ids = self._obj_id_by_oql(query_node)
+        if get_childs:
+            query_ontology = OQL.get_childs(propValues, search_by_properties, only_object_types)
+            child_ids = self._obj_id_by_oql(query_ontology)
+            target_ids.update(child_ids)
+        return target_ids
+
+
+    def find_drugs(self, for_targets_with_ids: list, REL_PROPS: list, ENTITY_PROPS: list):
+        oql_query = OQL.get_drugs(for_targets_with_ids)
+        zeep_relations = self.get_data(oql_query, REL_PROPS)
+        if type(zeep_relations) != type(None):
+            obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
+            zeep_objects = self.get_object_properties(obj_ids, ENTITY_PROPS)
+            new_ps_relations = self._load_graph(zeep_relations, zeep_objects)
+            return new_ps_relations
+
+    def find_reaxys_substances(self, ForTargetsIDlist: list, REL_PROPS: list, ENTITY_PROPS: list):
+        oql_query = OQL.get_reaxys_substances(ForTargetsIDlist)
+        zeep_relations = self.get_data(oql_query, REL_PROPS)
+        if type(zeep_relations) != type(None):
+            obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
+            zeep_objects = self.get_object_properties(obj_ids, ENTITY_PROPS)
+            return self._load_graph(zeep_relations, zeep_objects)
+
+    def connect_entities(self, PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list,
+                         PropertyValues2: list, SearchByProperties2: list, EntityTypes2: list,
+                         REL_PROPS=None, connect_by_rel_types=None, ENTITY_PROPS=None):
+
+        connect_by_rel_types = [] if connect_by_rel_types is None else connect_by_rel_types
+        rel_props = {'Name', 'RelationNumberOfReferences'} 
+        if isinstance(REL_PROPS,list): rel_props.update(REL_PROPS)
+        ent_props = {'Name'}
+        if isinstance(ENTITY_PROPS,list): ent_props.update(ENTITY_PROPS)
+        oql_query = OQL.connect_entities(PropertyValues1, SearchByProperties1, EntityTypes1, PropertyValues2,
+                                         SearchByProperties2, EntityTypes2, connect_by_rel_types)
+        zeep_relations = self.get_data(oql_query, list(rel_props))
+        if type(zeep_relations) != type(None):
+            obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
+            zeep_objects = self.get_object_properties(obj_ids, list(ent_props))
+            return self._load_graph(zeep_relations, zeep_objects)
+
+    def get_ppi(self, InteractorIdList: set, REL_PROPS: list, ENTITY_PROPS: list):
+        splitter = list() #holds lists of ids splits 
         splitter.append(list(InteractorIdList))
         import math
         number_of_splits = int(math.log2(len(InteractorIdList)))
-        PPIskeeper = nx.MultiDiGraph()
-        for s in range (1, number_of_splits):
-            new_splitter = []
-            half = int(len(splitter[0])/2)
+        ppi_keeper = ResnetGraph()
+        for s in range(1, number_of_splits):
+            new_splitter = list()
+            half = int(len(splitter[0]) / 2)
             for split in splitter:
-                uqList1 = split[0:half]
-                uqList2 = split[half:]
-                OQLquery = OQL.GetPPIs(set(uqList1),set(uqList2))
-                ZeepRelations = self.GetData(OQLquery, REL_PROPS)
-                if type(ZeepRelations) != type(None):
-                    objIdlist = list(set([x['EntityId'] for x in ZeepRelations.Links.Link]))
-                    ZeepObjects = self.GetObjProperties(objIdlist, ENTITY_PROPS)
-                    newPSRelations = self._load_graph(ZeepRelations, ZeepObjects)
-                    PPIskeeper = nx.compose(PPIskeeper,newPSRelations)
-                
-                new_splitter.append(uqList1)
-                new_splitter.append(uqList2)
+                uq_list1 = split[0:half]
+                uq_list2 = split[half:]
+                oql_query = OQL.get_ppi(set(uq_list1), set(uq_list2))
+                zeep_relations = self.get_data(oql_query, REL_PROPS)
+                if type(zeep_relations) != type(None):
+                    obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
+                    zeep_objects = self.get_object_properties(obj_ids, ENTITY_PROPS)
+                    new_ps_relations = self._load_graph(zeep_relations, zeep_objects)
+                    ppi_keeper = nx.compose(ppi_keeper, new_ps_relations)
+
+                new_splitter.append(uq_list1)
+                new_splitter.append(uq_list2)
 
             splitter = new_splitter
             s += 1
 
-        return PPIskeeper
+        return ppi_keeper
 
-    def GetObjectsFromFolders(self, FolderIds:list, PropertyNames=['Name'], with_layout=False):
-        IDtoEntity = dict()
+    def get_objects_from_folders(self, FolderIds: list, property_names=None, with_layout=False):
+        if property_names is None:
+            property_names = ['Name']
+        id2entity = dict()
         for f in FolderIds:
-            ZeepObjects = self.GetFolderObjectsProps(f, PropertyNames)
-            IDtoEntity.update(self.__ZeepToPSObjects(ZeepObjects))
-        
-        if with_layout == True:
-            for i, psObj in IDtoEntity.items():
+            zeep_objects = self.get_folder_objects_props(f, property_names)
+            id2entity.update(self._zeep2psobj(zeep_objects))
+
+        if with_layout:
+            for i, psObj in id2entity.items():
                 if psObj['ObjTypeName'][0] == 'Pathway':
                     layout = self.get_layout(i)
                     psObj['layout'] = str(layout['Attachment'].decode('utf-8'))
 
-        return IDtoEntity
+        return id2entity
 
-    def GetAllPathways(self, PropertyNames=['Name']):
-        start_time = time.time()
-        print('retreiving all pathways from the database')
+    def get_all_pathways(self, property_names=None):
+        if property_names is None:
+            property_names = ['Name']
+        print('retrieving identifiers of all pathways from database')
 
-        if (len(self.IdToFolders)) == 0: self.LoadFolderTree()
+        if (len(self.IdToFolders)) == 0: self.load_folder_tree()
 
-        IDtoPathway = dict()
-        URNtoPathway = dict()
+        id2pathway = dict()
+        urn2pathway = dict()
         for folderList in self.IdToFolders.values():
             for folder in folderList:
-                ZeepObjects = self.GetFolderObjectsProps(folder['Id'],PropertyNames)
-                psObjects = self.__ZeepToPSObjects(ZeepObjects)
-                for Id, psObj in psObjects.items():
+                zeep_objects = self.get_folder_objects_props(folder['Id'], property_names)
+                ps_objects = self._zeep2psobj(zeep_objects)
+                for Id, psObj in ps_objects.items():
                     if psObj['ObjTypeName'][0] == 'Pathway':
                         try:
-                            IDtoPathway[Id].AddUniqueProperty('Folders', folder['Name'])
+                            id2pathway[Id].add_unique_property('Folders', folder['Name'])
                         except KeyError:
                             psObj['Folders'] = [folder['Name']]
-                            IDtoPathway[Id] = psObj
-                            URNtoPathway[psObj['URN'][0]] = psObj
+                            id2pathway[Id] = psObj
+                            urn2pathway[psObj['URN'][0]] = psObj
 
-        print('Found %d pathways in the database in %s' % (len(IDtoPathway),ElsevierAPI.ExecutionTime(start_time)))
-        return IDtoPathway, URNtoPathway
+        print('Found %d pathways in the database' % (len(id2pathway)))
+        return id2pathway, urn2pathway
 
-    def GetPathwayMemberIds(self, PathwayIds:list, SearchPathwaysBy:list=['id'],OnlyEntities:list=[],WithProperties:list=['Name','Alias']):      
-        if SearchPathwaysBy[0] in ['id','Id','ID']:
-            GOQLquery = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE id = ('+','.join([str(int) for int in PathwayIds])+'))'
+    def get_pathway_member_ids(self, PathwayIds: list, search_pathways_by=None, only_entities=None,
+                               with_properties=None):
+        if with_properties is None:
+            with_properties = ['Name', 'Alias']
+        if only_entities is None:
+            only_entities = []
+        if search_pathways_by is None:
+            search_pathways_by = ['id']
+
+        if search_pathways_by[0] in ['id', 'Id', 'ID']:
+            oql_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE id = (' + ','.join(
+                [str(i) for i in PathwayIds]) + '))'
         else:
-            PropertyNames, Values = OQL.GetSearchStrings(SearchPathwaysBy,PathwayIds)
-            GOQLquery = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE ('+PropertyNames+') = ('+Values+'))'
+            property_names, values = OQL.get_search_strings(search_pathways_by, PathwayIds)
+            oql_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE (' + property_names + ') = (' + values + '))'
 
-        if len(OnlyEntities) > 0:
-            FilterPropName, FilterValues = OQL.GetSearchStrings(WithProperties,OnlyEntities)
-            GOQLquery = GOQLquery + ' AND ('+ FilterPropName +') = (' + FilterValues + ')'
-        
-        ZeepObjects = self.GetData(GOQLquery, RetreiveProperties=['Name'], getLinks=False)
-        IDtoEntity = dict()
-        IDtoEntity = self.__ZeepToPSObjects(ZeepObjects)
-        return IDtoEntity
+        if len(only_entities) > 0:
+            filter_prop_name, filter_values = OQL.get_search_strings(with_properties, only_entities)
+            oql_query = oql_query + ' AND (' + filter_prop_name + ') = (' + filter_values + ')'
 
-    def FindTargetsInPathways(self, DrugProps:list, DrugSearchPropertyNames:list, PathwayNames:list, RelationTypes=['DirectRegulation'], TargetTypes=['Protein']):
-        REL_PROPS = ['Name','RelationNumberOfReferences','DOI','PMID','Source']
-        REL_TYPES = ','.join(RelationTypes)
-        TARGET_TYPES = ','.join(TargetTypes)
-        DrugPropNames, DrugPropValues = OQL.GetSearchStrings(DrugSearchPropertyNames,DrugProps)
-        DrugQuery = 'Select Entity WHERE ('+DrugPropNames +') = ('+ DrugPropValues +')'
-        PathwayQuery =  'SELECT Network WHERE Name = ('+OQL.joinWithQuotes(',',PathwayNames)+')'
-        OQLquery = 'SELECT Relation WHERE objectType = ({RelTypes}) AND NeighborOf upstream (SELECT Entity WHERE MemberOf ({pathways}) AND objectType = ({Target_Types})) AND NeighborOf downstream ({drug})'
-        
-        DrugsToTargetsDRGraph = self.LoadGraphFromOQL(OQLquery.format(RelTypes=REL_TYPES,pathways=PathwayQuery,Target_Types=TARGET_TYPES,drug=DrugQuery), REL_PROPS = REL_PROPS)
-        OQLquery = 'SELECT Relation WHERE objectType = Binding AND NeighborOf (SELECT Entity WHERE MemberOf ({pathways}) AND objectType = ({Target_Types})) AND NeighborOf ({drug})'
-        DrugsToTargetsBINDGraph = self.LoadGraphFromOQL(OQLquery.format(pathways=PathwayQuery,Target_Types=TARGET_TYPES,drug=DrugQuery),REL_PROPS = REL_PROPS)
+        zeep_objects = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
+        return self._zeep2psobj(zeep_objects)
 
+    def find_targets_in_pathways(self, DrugProps: list, DrugSearchPropertyNames: list, PathwayNames: list,
+                                 relation_types=None, target_types=None):
+        if target_types is None:
+            target_types = ['Protein']
+        if relation_types is None:
+            relation_types = ['DirectRegulation']
 
-        if type(DrugsToTargetsDRGraph) != type(None):
-            if type(DrugsToTargetsBINDGraph) != type(None):
-                return nx.compose(DrugsToTargetsDRGraph, DrugsToTargetsBINDGraph)
+        rel_props = ['Name', 'RelationNumberOfReferences', 'DOI', 'PMID', 'Source']
+        rel_types = ','.join(relation_types)
+        target_types = ','.join(target_types)
+        drug_prop_names, drug_prop_values = OQL.get_search_strings(DrugSearchPropertyNames, DrugProps)
+        drug_query = 'Select Entity WHERE (' + drug_prop_names + ') = (' + drug_prop_values + ')'
+        pathway_query = 'SELECT Network WHERE Name = (' + OQL.join_with_quotes(',', PathwayNames) + ')'
+        oql_query = 'SELECT Relation WHERE objectType = ({RelTypes}) AND NeighborOf upstream (SELECT Entity WHERE MemberOf ({pathways}) AND objectType = ({Target_Types})) AND NeighborOf downstream ({drug})'
+
+        direct_regulations = self.load_graph_from_oql(
+            oql_query.format(RelTypes=rel_types, pathways=pathway_query, Target_Types=target_types, drug=drug_query),
+            relation_props=rel_props)
+        oql_query = 'SELECT Relation WHERE objectType = Binding AND NeighborOf (SELECT Entity WHERE MemberOf ({pathways}) AND objectType = ({Target_Types})) AND NeighborOf ({drug})'
+        bindings = self.load_graph_from_oql(
+            oql_query.format(pathways=pathway_query, Target_Types=target_types, drug=drug_query),
+            relation_props=rel_props)
+
+        if isinstance(direct_regulations, ResnetGraph):
+            if isinstance(bindings, ResnetGraph):
+                return nx.compose(direct_regulations, bindings)
             else:
-                return DrugsToTargetsDRGraph
+                return direct_regulations
         else:
-            if type(DrugsToTargetsBINDGraph) != type(None):
-                return DrugsToTargetsBINDGraph
+            if isinstance(bindings, ResnetGraph):
+                return bindings
+            else:
+                return None
+
+    def find_drug_toxicities(self, DrugIds: list, DrugSearchPropertyNames: list, min_ref_count=0,
+                             relation_properties=None, entity_properties=None):
+        if entity_properties is None:
+            entity_properties = ['Name']
+        if relation_properties is None:
+            relation_properties = ['Name', 'RelationNumberOfReferences']
+
+        drug_prop_names, drug_prop_values = OQL.get_search_strings(DrugSearchPropertyNames, DrugIds)
+        drug_query = 'Select Entity WHERE (' + drug_prop_names + ') = (' + drug_prop_values + ')'
+
+        oql_query = 'SELECT Relation WHERE objectType = Regulation AND Effect = positive AND ' \
+                    'RelationNumberOfReferences >= {minref} AND NeighborOf upstream (SELECT Entity WHERE objectType = ' \
+                    'Disease) AND NeighborOf downstream ({drug})'
+        oql_query = oql_query.format(minref=str(min_ref_count), drug=drug_query)
+        diseases = self.load_graph_from_oql(oql_query, relation_properties, entity_properties)
+
+        clinical_params = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE Name=\'disease-related parameters\')'
+        oql_query = 'SELECT Relation WHERE objectType = Regulation AND Effect = positive AND RelationNumberOfReferences >= {minref} AND NeighborOf upstream ({ClinicalParameters}) AND NeighborOf downstream ({drug})'
+        oql_query = oql_query.format(minref=str(min_ref_count), drug=drug_query, ClinicalParameters=clinical_params)
+        clinical_parameters = self.load_graph_from_oql(oql_query, relation_properties, entity_properties)
+
+        if isinstance(diseases, ResnetGraph):
+            if isinstance(clinical_parameters, ResnetGraph):
+                return nx.compose(diseases, clinical_parameters)
+            else:
+                return diseases
+        else:
+            if isinstance(clinical_parameters, ResnetGraph):
+                return clinical_parameters
             else:
                 return None
 
 
-    def FindDrugToxicities(self, DrugIds:list, DrugSearchPropertyNames:list, MinRefNumber=0, REL_PROPS=['Name','RelationNumberOfReferences'], ENTITY_PROPS=['Name']):
-        DrugPropNames, DrugPropValues = OQL.GetSearchStrings(DrugSearchPropertyNames,DrugIds)
-        DrugQuery = 'Select Entity WHERE ('+DrugPropNames +') = ('+ DrugPropValues +')'
-        OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = positive AND RelationNumberOfReferences >= '+str(MinRefNumber) +' AND NeighborOf upstream (SELECT Entity WHERE objectType = Disease) AND NeighborOf downstream ({drug})'
-        OQLquery = OQLquery.format(drug=DrugQuery)
-        DrugsToDiseaseGraph = self.LoadGraphFromOQL(OQLquery, REL_PROPS, ENTITY_PROPS)
-        ClinParamOntologyBranch = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE Name=\'disease-related parameters\')'
-        OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = positive AND RelationNumberOfReferences >= '+str(MinRefNumber) +' AND NeighborOf upstream ({ClinicalParameters}) AND NeighborOf downstream ({drug})'
-        OQLquery = OQLquery.format(drug=DrugQuery, ClinicalParameters=ClinParamOntologyBranch)
-        DrugsToClinParamGraph = self.LoadGraphFromOQL(OQLquery, REL_PROPS, ENTITY_PROPS)
-
-        if type(DrugsToDiseaseGraph) != type(None):
-            if type(DrugsToClinParamGraph) != type(None):
-                return nx.compose(DrugsToDiseaseGraph, DrugsToClinParamGraph)
-            else:
-                return DrugsToDiseaseGraph
-        else:
-            if type(DrugsToClinParamGraph) != type(None):
-                return DrugsToClinParamGraph
-            else:
-                return None
-
-    def RenameRelationProperty(self, oldPropertyName='MedlineTA', newPropertyName='Journal'):
-        for regulatorID, targetID, rel in self.Graph.edges.data('relation'):
-            try: rel[newPropertyName] = rel.pop(oldPropertyName)
-            except KeyError:
-                for prop in rel.PropSetToProps.values():
-                    try: prop[newPropertyName] = prop.pop(oldPropertyName)
-                    except KeyError: continue
-                continue
-
-    def GetRelationsInPathways (self,PathwayNames:list, REL_PROPS=['Name','RelationNumberOfReferences'], ENTITY_PROPS=['Name']):
-        OQLquery = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE Name = {pathway})'
-        PatwhayRelations = nx.multidigraph()
-        for pthwy in PathwayNames:
-            OQLquery = OQLquery.format(pathway = pthwy)
-            pathwayGraph = self.LoadGraphFromOQL(OQLquery, REL_PROPS, ENTITY_PROPS)
-            PatwhayRelations = nx.compose(PatwhayRelations,pathwayGraph)
-
-        return PatwhayRelations
-
-
-    def toRNEF(self, inGraph:nx.MultiDiGraph=None):
-        G = inGraph if type(inGraph) != type(None) else self.Graph
-        import xml.etree.ElementTree as et
-        resnet = et.Element('resnet')
-        xml_nodes = et.SubElement(resnet,'nodes')
-        localIDcounter = 0
-        for nodeId,n in G.nodes(data=True):
-            localID = n['URN'][0]
-            xml_node = et.SubElement(xml_nodes,'node',{'local_id':localID,'urn':n['URN'][0]})
-            et.SubElement(xml_node,'attr',{'name':str('NodeType'),'value':str(n['ObjTypeName'][0])})
-            for prop_name, prop_values in n.items():
-                if prop_name in self.RNEFnameToPropType.keys():
-                    if prop_name not in RNEF_EXCLUDE_NODE_PROPS:
-                        for prop_value in prop_values:
-                            et.SubElement(xml_node,'attr',{'name':str(prop_name),'value':str(prop_value)})
-
-            localIDcounter +=1
-
-        xml_controls = et.SubElement(resnet, 'controls')
+    def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties=None, retrieve_ent_properties=None):
+        retrieve_ent_properties = ['Name'] if retrieve_ent_properties is None else retrieve_ent_properties
+        retrieve_rel_properties = ['Name', 'RelationNumberOfReferences'] if retrieve_rel_properties is None else retrieve_rel_properties
         
-        graph_relations = self.__get_relations()
-        for rel in graph_relations:
-            control_id = rel['URN'][0]
-            xml_control = et.SubElement(xml_controls,'control', {'local_id':control_id})
-            et.SubElement(xml_control,'attr',{'name':str('ControlType'),'value':str(rel['ObjTypeName'][0])})
-            #adding links
-            regulators = rel.Nodes['Regulators']
-            try:
-                targets = rel.Nodes['Targets']
-                for r in regulators:
-                    regulator_localID = G.nodes[r[0]]['URN'][0]
-                    et.SubElement(xml_control,'link', {'type':'in','ref':regulator_localID})
+        ent_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
+        rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
+        
+        accumulate_pathways = ResnetGraph()
+        for pathway_prop in prop_vals:
+            ent_q = ent_query.format(propName=search_by_property,pathway=pathway_prop)
+            pathway_nodes = self.load_graph_from_oql(ent_q,entity_props=retrieve_ent_properties, get_links=False)
 
-                for t in targets:
-                    target_localID = G.nodes[t[0]]['URN'][0]
-                    et.SubElement(xml_control,'link', {'type':'out','ref':target_localID})
-            except KeyError:
-                    for r in regulators:
-                        regulator_localID = G.nodes[r[0]]['URN'][0]
-                        et.SubElement(xml_control,'link', {'type':'in-out','ref':regulator_localID})
+            rel_q = rel_query.format(propName=search_by_property,pathway=pathway_prop)
+            pathway_relations = self.load_graph_from_oql(rel_q,relation_props=retrieve_rel_properties, get_links=True)
 
-        #adding non-reference properties
-            for prop_name, prop_values in rel.items():
-                if prop_name in self.RNEFnameToPropType.keys():
-                    if prop_name not in RNEF_EXCLUDE_REL_PROPS:
-                        for prop_value in prop_values:
-                            et.SubElement(xml_control,'attr',{'name':str(prop_name),'value':str(prop_value)})
+            pathway_graph = nx.compose(pathway_nodes, pathway_relations)
+            accumulate_pathways = nx.compose(pathway_graph, accumulate_pathways)
 
-        #adding references
-            references = list(set(rel.References.values()))
-            for i in range(0,len(references)):
-                for prop_name, prop_values in references[i].items():
-                    for prop_value in prop_values:
-                        if prop_name in self.RNEFnameToPropType.keys():
-                            et.SubElement(xml_control,'attr',{'name':str(prop_name),'value':str(prop_value), 'index':str(i)})
+        return accumulate_pathways
 
-        return et.tostring(resnet,encoding='utf-8').decode("utf-8")
+    def to_rnef(self, in_graph=None):
+        return self.Graph.to_rnef(list(self.RNEFnameToPropType.keys()),in_graph)
