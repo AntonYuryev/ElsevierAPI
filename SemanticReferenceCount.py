@@ -19,8 +19,6 @@ if __name__ == "__main__":
 
     entity_types - comma-separated objectTypeNames for entities in infile
 
-    targets - comma-separated list of concepts that must be semantically linked to entities from infile
-    target_types - comma-separated objectTypeNames for targets
     targets_file - tab-delimted file, alternative input for --targets option. Header: SearchPropertyName<>Effect<>RelationType<>Direction
         SearchPropertyName - Required. concepts that must be semantically linked to entities from infile. Header value defines what properties must be used to retreive concepts. Defaults to 'Name,Alias'
         Effect - optional.  The effect sign   ebetween entity in infile and concept in targets_file. Defaults to any.
@@ -38,12 +36,10 @@ if __name__ == "__main__":
    
     '''
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,epilog=textwrap.dedent(instructions))
-    parser.add_argument('-i', '--infile', type=str, required=True)
-    parser.add_argument('-H', '--infile_has_header', action='store_true')
+    parser.add_argument('-i', '--infile', type=str,required=True)
+    parser.add_argument('-H', '--infile_has_header',action='store_true')
     parser.add_argument('-E', '--entity_types', type=str,default='')
-    parser.add_argument('-t', '--targets', default='')
-    parser.add_argument('-T', '--target_types', type=str,default='')
-    parser.add_argument('-f', '--targets_file', type=str,default='')
+    parser.add_argument('-f', '--targets_file', type=str,required=True)
     parser.add_argument('-d', '--dump_references', action='store_true')
     parser.add_argument('-a', '--resnet_retreive_props', type=str)
     parser.add_argument('-p', '--pathways', type=str, default='')
@@ -58,18 +54,10 @@ if __name__ == "__main__":
         print('No input file with entities was specified!!!')
 
     concepts_in_file = 0
-    if len(args.targets_file) > 0:
-        link2concepts = pd.read_csv(args.targets_file, delimiter='\t', header=0, index_col=0)
-        concepts_in_file = len(link2concepts)
-    
-    concepts_in_cmd = 0
-    if len(args.targets) > 0:
-        additional_concetps = args.targets.split(',')
-        link2concepts.set_index(additional_concetps,append=True)
-        concepts_in_cmd = len(additional_concetps)
-    
+    link2concepts = pd.read_csv(args.targets_file, delimiter='\t', header=0, index_col=0)
+    concepts_in_file = len(link2concepts)
+   
     #Script will work faster if you specify what list of object types in your input Entity list
-    concept_types = str(args.target_types).split(',') if len(args.target_types) > 0 else []
     entity_types = str(args.entity_types)
     entity_types = entity_types.replace("Small molecule",'SmallMol')
     entity_types = str(entity_types).split(',') if len(args.entity_types) > 0 else [] 
@@ -105,7 +93,7 @@ if __name__ == "__main__":
             if len(pathway_components) == 0:
                 print ('No entity for %s found in the database' % PathwayName)
             else:
-                search.link2concept(PathwayName, pathway_components)
+                search.link2concept(PathwayName, list(pathway_components))
 
         exec_time = search.execution_time(start_time)
         print("Entities in file %s were linked to %s pathway in %s" % (EntityListFile, PathwayName, exec_time))
@@ -114,13 +102,14 @@ if __name__ == "__main__":
 
 
     if len(link2concepts) > 0:
-        search_concept_by = link2concepts.index.name.split(',') if isinstance(link2concepts.index.name,str) else ['Name','Alias']
+        search_concept_by = link2concepts.index.name.split(',')
+        print ('Will search concepts in %s by %s' % (args.targets_file,link2concepts.index.name))
         
-        print("\nBegin linking entities mapped from infile to %d concepts from %s and %d concept from command line" % (concepts_in_file,args.targets_file,concepts_in_cmd))
+        print("\nBegin linking entities mapped from infile to %d concepts from %s" % (concepts_in_file,args.targets_file))
         for concept_idx in range(0, len(link2concepts.index)):
             link2concept = link2concepts.index[concept_idx]
             concept_ids = search._get_obj_ids_by_props(
-                propValues=[link2concept], search_by_properties=search_concept_by, only_obj_types=concept_types)
+                propValues=[link2concept], search_by_properties=search_concept_by)
  
             if len(concept_ids) == 0: print ('No entity %s found in database' % link2concept)
             else:
@@ -147,8 +136,8 @@ if __name__ == "__main__":
                      (concept_idx + 1, len(link2concepts), search.execution_time(global_start_time)))
 
     exec_time = search.execution_time(global_start_time)
-    print("%d entities in file %s were mapped linked to %d concepts from %s and %d concepts on cmd in %s" % 
-         (len(EntityPandas), EntityListFile, concepts_in_file, args.targets_file, concepts_in_cmd, exec_time))
+    print("%d entities in file %s were mapped linked to %d concepts from %s in %s" % 
+         (len(EntityPandas), EntityListFile, concepts_in_file, args.targets_file, exec_time))
 
     countsOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount.tsv'
     refOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv' if args.dump_references else ''
