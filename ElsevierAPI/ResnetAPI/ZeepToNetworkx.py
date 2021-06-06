@@ -10,7 +10,6 @@ class PSNetworx(DataModel):
         self.IDtoRelation = dict()  # {relID:PSRelation} needs to be - Resnet relations may not be binary
         self.Graph = ResnetGraph()
 
-
     @staticmethod
     def _zeep2psobj(zeep_objects):
         id2entity = dict()
@@ -262,7 +261,10 @@ class PSNetworx(DataModel):
 
         if len(only_entities) > 0:
             filter_prop_name, filter_values = OQL.get_search_strings(with_properties, only_entities)
-            oql_query = oql_query + ' AND (' + filter_prop_name + ') = (' + filter_values + ')'
+            if len(with_properties) > 1:
+                oql_query = oql_query + ' AND (' + filter_prop_name + ') = (' + filter_values + ')'
+            else:
+                oql_query = oql_query + ' AND ' + filter_prop_name + ' = (' + filter_values + ')'
 
         zeep_objects = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
         return self._zeep2psobj(zeep_objects)
