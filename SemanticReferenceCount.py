@@ -69,8 +69,10 @@ if __name__ == "__main__":
         concepts_in_cmd = len(additional_concetps)
     
     #Script will work faster if you specify what list of object types in your input Entity list
-    concept_types = str(args.target_types).split(',') if len(args.target_types) > 0 else [] 
-    entity_types = str(args.entity_types).split(',') if len(args.entity_types) > 0 else [] 
+    concept_types = str(args.target_types).split(',') if len(args.target_types) > 0 else []
+    entity_types = str(args.entity_types)
+    entity_types = entity_types.replace("Small molecule",'SmallMol')
+    entity_types = str(entity_types).split(',') if len(args.entity_types) > 0 else [] 
 
     #If you want to use identifiers other than names enter appropriate Propeprty types into SearchByProperties list
     #consult with "Resnet Entities&Properties.txt" for the list of available identifier for nodes in the knowledge graph
@@ -95,7 +97,7 @@ if __name__ == "__main__":
         start_time = time.time()
         for PathwayName in LinkToPathways:
             PathwayMembersId2Entity = search.get_pathway_member_ids(
-                [PathwayName], search_pathways_by=['Name'], FilterBy=['Protein', 'FunctionalClass', 'Complex'], InProperty='objectType')
+                [PathwayName], search_pathways_by=['Name'], only_entities=['Protein', 'FunctionalClass', 'Complex'], with_properties=['objectType'])
             pathway_components = set(PathwayMembersId2Entity.keys())
             QueryOntology = OQL.get_childs(list(pathway_components), ['id'])
             pathway_components.update(search._obj_id_by_oql(QueryOntology))
@@ -151,4 +153,3 @@ if __name__ == "__main__":
     countsOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount.tsv'
     refOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv' if args.dump_references else ''
     search.print_ref_count(countsOutFile,refOutFile)
-
