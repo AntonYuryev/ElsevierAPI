@@ -41,7 +41,7 @@ def get_search_strings(PropertyNameList: list, PropValuesList: list):
     return property_names, values
 
 
-def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=None, MinConnectivity=1):
+def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=None, MinConnectivity=0):
     only_object_types = [] if only_object_types is None else only_object_types
 
     if SearchByProperties[0] in ('id', 'Id', 'ID'):
@@ -54,7 +54,9 @@ def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_o
         object_types = join_with_quotes(',', only_object_types)
         oql_query = oql_query + ' AND objectType = (' + object_types + ')'
 
-    return oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
+    if MinConnectivity == 0: return oql_query
+    else: 
+        return oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
 
 
 def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=None):

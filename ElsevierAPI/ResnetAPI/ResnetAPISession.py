@@ -21,9 +21,6 @@ class APISession(PSNetworx):
     def __init__(self,url, username, password):
         super().__init__(url, username, password)
         self.DumpFiles = ['ResnetAPIsessionDump.tsv']
-        # array of filenames used for dumping the graph data. First element is used
-        # for dumping data obtained by ProcessOQL
-        # other files are used to dump additional data obtained by overridden AddGraph
 
     def __init_session(self):
         if self.__getLinks:
@@ -98,6 +95,11 @@ class APISession(PSNetworx):
     @staticmethod
     def execution_time(execution_start):
         return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
+
+    @staticmethod
+    def reopen(fname):
+        open(fname, "w", encoding='utf-8').close()
+        return open(fname, "a", encoding='utf-8')
 
     def to_csv(self, file_out, graph: ResnetGraph, access_mode='w'):
         self.Graph.print_references(file_out, self.relProps, self.entProps, graph, access_mode, self.__IsOn1st_page,

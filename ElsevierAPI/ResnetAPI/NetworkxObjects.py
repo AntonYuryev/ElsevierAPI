@@ -103,15 +103,15 @@ REF_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE', 'NCT ID']
 REF_PROPS = ['Sentence', 'PubYear', 'Authors', 'Journal', 'MedlineTA', 'CellType', 'CellLineName', 'Organ', 'Tissue',
              'Organism', 'Source',
              'TrialStatus', 'Phase', 'StudyType', 'Start', 'Intervention', 'Condition', 'Company', 'Collaborator',
-             'TextRef']
+             'TextRef', 'Title']
 
 
 class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_PROPS[i]:value}
     pass
 
     def __init__(self, idType: str, ID: str):
-        super().__init__({idType: [ID]})
-        self.Identifiers = dict()
+        super().__init__(dict())
+        self.Identifiers = {idType:ID}
 
     def __key(self):
         for id_type in REF_ID_TYPES:
@@ -132,11 +132,21 @@ class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_
                 except KeyError:
                     continue
 
-    def to_string(self, IdType: str, sep='\t'):
-        to_return = self.Identifiers[IdType]
+    def to_string(self, id_types: list=None, sep='\t'):
+        id_types = id_types if isinstance(id_types,list) else ['PMID']
+        row = str()
+        for t in id_types:
+            try:
+                row = row + t+':'+self.Identifiers[t]+sep
+            except KeyError:
+                row = row + sep
+
+        row = row[:len(row)-1] #remove last separator
         for propId, propValues in self.items():
-            to_return = to_return + sep + propId + ':' + ';'.join(propValues)
-        return to_return
+                row = row + sep + propId + ':' + ';'.join(propValues)
+        
+        return row
+
 
     def merge_reference(self, ref_to_merge):
         self.Identifiers.update(ref_to_merge.Identifiers)
