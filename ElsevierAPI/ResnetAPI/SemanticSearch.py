@@ -229,9 +229,9 @@ class SemanticSearch (APISession):
         return accumulate_reference, accumulate_relation
 
     def link2concept(self,ConceptName,concept_ids:list,no_mess=True):
-        print('Linking input entities to \"%s\" concept with %d ontology childs' % (ConceptName,len(concept_ids)))
+        print('\nLinking input entities to \"%s\" concept with %d ontology children' % (ConceptName,len(concept_ids)))
         if (len(concept_ids) > 500 and len(self.RefCountPandas) > 500):
-            print('%s concept has %d ontology childs! Linking may take a while, be patient' % (ConceptName,len(concept_ids)-1))
+            print('%s concept has %d ontology children! Linking may take a while, be patient' % (ConceptName,len(concept_ids)-1))
         
         new_column = self._col_name_prefix + ConceptName
         self.RefCountPandas.insert(len(self.RefCountPandas.columns),new_column,0)
