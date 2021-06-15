@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def __init__(self, dic: dict):
@@ -105,6 +106,8 @@ REF_PROPS = ['Sentence', 'PubYear', 'Authors', 'Journal', 'MedlineTA', 'CellType
              'TrialStatus', 'Phase', 'StudyType', 'Start', 'Intervention', 'Condition', 'Company', 'Collaborator',
              'TextRef', 'Title']
 
+NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences
+
 
 class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_PROPS[i]:value}
     pass
@@ -142,9 +145,11 @@ class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_
                 row = row + sep
 
         row = row[:len(row)-1] #remove last separator
-        for propId, propValues in self.items():
-                row = row + sep + propId + ':' + ';'.join(propValues)
-        
+        for prop_id, prop_values in self.items():
+            prop_val = ';'.join(prop_values)
+            if prop_id in ['Sentence','Title']:
+                prop_val = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_val)
+            row = row + sep + prop_id + ':' + prop_val
         return row
 
 
