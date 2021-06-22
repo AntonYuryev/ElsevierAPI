@@ -1,10 +1,12 @@
 ﻿import time
 import networkx as nx
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
-from ElsevierAPI import ps_api
+from ElsevierAPI import APIconfig
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import nx2neo4j
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import REL_PROPs, ENT_PROP_Neo4j
+from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 
+ps_api = APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
 
 global_start = time.time()
 # SearchEntitiesBy = ['Ileocolitis']
