@@ -147,15 +147,15 @@ class APISession(PSNetworx):
             if len(self.DumpFiles) > 0:
                 self.to_csv(self.DumpFiles[0], page_graph, 'a')
                 self.__IsOn1st_page = False
-                print("%d relations supported by %d references are in file: %s" % 
-                     (page_graph.number_of_edges(), reference_counter, self.DumpFiles[0]))
+                if number_of_iterations > 1:
+                    print("%d relations out of %s supported by %d references were saved into file: %s" % 
+                        (self.ResultPos, self.ResultSize, reference_counter, self.DumpFiles[0]))
 
             entire_graph = nx.compose(page_graph, entire_graph)
             page_graph = self.__get_next_page(no_mess)
             if debug and number_of_iterations >= iteration_limit: break
 
-        if debug:
-            print("GOQL query:\n \"%s\"\n was executed in %s in %d iterations" % 
+        if debug: print("GOQL query:\n \"%s\"\n was executed in %s in %d iterations" % 
                  (self.GOQLquery, self.execution_time(global_start), number_of_iterations))
             
 

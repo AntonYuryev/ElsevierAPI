@@ -160,6 +160,8 @@ class PSNetworx(DataModel):
             zeep_objects = self.get_object_properties(obj_ids, ENTITY_PROPS)
             new_ps_relations = self._load_graph(zeep_relations, zeep_objects)
             return new_ps_relations
+        else:
+            return ResnetGraph()
 
     def find_reaxys_substances(self, ForTargetsIDlist: list, REL_PROPS: list, ENTITY_PROPS: list):
         oql_query = OQL.get_reaxys_substances(ForTargetsIDlist)
@@ -168,6 +170,8 @@ class PSNetworx(DataModel):
             obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
             zeep_objects = self.get_object_properties(obj_ids, ENTITY_PROPS)
             return self._load_graph(zeep_relations, zeep_objects)
+        else:
+            return ResnetGraph()
 
     def connect_entities(self, PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list,
                          PropertyValues2: list, SearchByProperties2: list, EntityTypes2: list,
@@ -185,6 +189,8 @@ class PSNetworx(DataModel):
             obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
             zeep_objects = self.get_object_properties(obj_ids, list(ent_props))
             return self._load_graph(zeep_relations, zeep_objects)
+        else:
+            return ResnetGraph()
 
     def get_ppi(self, InteractorIdList: set, REL_PROPS: list, ENTITY_PROPS: list):
         splitter = list() #holds lists of ids splits 
@@ -215,8 +221,7 @@ class PSNetworx(DataModel):
         return ppi_keeper
 
     def get_objects_from_folders(self, FolderIds: list, property_names=None, with_layout=False):
-        if property_names is None:
-            property_names = ['Name']
+        if property_names is None: property_names = ['Name']
         id2entity = dict()
         for f in FolderIds:
             zeep_objects = self.get_folder_objects_props(f, property_names)
@@ -231,8 +236,7 @@ class PSNetworx(DataModel):
         return id2entity
 
     def get_all_pathways(self, property_names=None):
-        if property_names is None:
-            property_names = ['Name']
+        if property_names is None: property_names = ['Name']
         print('retrieving identifiers of all pathways from database')
 
         if (len(self.IdToFolders)) == 0: self.load_folder_tree()
@@ -313,7 +317,7 @@ class PSNetworx(DataModel):
             if isinstance(bindings, ResnetGraph):
                 return bindings
             else:
-                return None
+                return ResnetGraph()
 
     def find_drug_toxicities(self, DrugIds: list, DrugSearchPropertyNames: list, min_ref_count=0,
                              relation_properties=None, entity_properties=None):
@@ -345,7 +349,7 @@ class PSNetworx(DataModel):
             if isinstance(clinical_parameters, ResnetGraph):
                 return clinical_parameters
             else:
-                return None
+                return ResnetGraph()
 
 
     def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties=None, retrieve_ent_properties=None):
