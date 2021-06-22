@@ -2,8 +2,11 @@ import time
 import argparse
 import textwrap
 import networkx as nx
-from ElsevierAPI import ps_api 
+from ElsevierAPI import APIconfig 
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_PROPS,REF_ID_TYPES
+from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
+
+ps_api = APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
 
 def DownloadPathwayXML(PathwayURN:str,URNtoPathway:dict,get_sbgn=False,out_dir=''):
     try: pathwayId = URNtoPathway[PathwayURN]['Id'][0]
