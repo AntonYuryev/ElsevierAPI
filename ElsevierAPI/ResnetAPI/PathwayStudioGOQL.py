@@ -191,8 +191,15 @@ def connect_entities(PropertyValues1: list, SearchByProperties1: list, EntityTyp
 
     entity_query = 'SELECT Entity WHERE {entity}'
 
-    entity1 = '(' + prop_names1 + ') = (' + prop_values1 + ') AND objectType = (' + object_type1 + ')'
-    entity2 = '(' + prop_names2 + ') = (' + prop_values2 + ') AND objectType = (' + object_type2 + ')'
+    if len(SearchByProperties1) > 1:
+        entity1 = '(' + prop_names1 + ') = (' + prop_values1 + ') AND objectType = (' + object_type1 + ')'
+    else:
+        entity1 =  prop_names1 + ' = (' + prop_values1 + ') AND objectType = (' + object_type1 + ')'
+    
+    if len(SearchByProperties2) > 1:
+        entity2 = '(' + prop_names2 + ') = (' + prop_values2 + ') AND objectType = (' + object_type2 + ')'
+    else:
+        entity2 = prop_names2 + ' = (' + prop_values2 + ') AND objectType = (' + object_type2 + ')'
 
     entity1_query = entity_query.format(entity=entity1)
     entity2_query = entity_query.format(entity=entity2)

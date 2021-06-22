@@ -110,7 +110,7 @@ class APISession(PSNetworx):
                                                                                               property_names=[])
         return self.ResultSize
 
-    def process_oql(self, oql_query, request_name='', flash_dump=False, debug=False, no_mess=True):
+    def process_oql(self, oql_query, request_name='', flash_dump=False, debug=False, no_mess=True, iteration_limit=1):
         global_start = time.time()
         if flash_dump:
             self.flash_dump_files()
@@ -126,7 +126,7 @@ class APISession(PSNetworx):
         if number_of_iterations > 1:
             print('\n\"%s\"\nrequest found %d %s. Begin retrieval in %d iterations' % (request_name,self.ResultSize,return_type, number_of_iterations))
             if debug:
-                print("Processing GOQL query:\n\"%s\"\n" % (self.GOQLquery, self.ResultSize))
+                print("Processing GOQL query:\n\"%s\"\n" % (self.GOQLquery))
             if no_mess:
                 print('Progress report is suppressed. Retrieval may take long time - be patient!')
 
@@ -148,14 +148,16 @@ class APISession(PSNetworx):
                 self.to_csv(self.DumpFiles[0], page_graph, 'a')
                 self.__IsOn1st_page = False
                 print("%d relations supported by %d references are in file: %s" % 
-                     (self.ResultSize, reference_counter, self.DumpFiles[0]))
+                     (page_graph.number_of_edges(), reference_counter, self.DumpFiles[0]))
 
             entire_graph = nx.compose(page_graph, entire_graph)
             page_graph = self.__get_next_page(no_mess)
+            if debug and number_of_iterations >= iteration_limit: break
 
         if debug:
             print("GOQL query:\n \"%s\"\n was executed in %s in %d iterations" % 
                  (self.GOQLquery, self.execution_time(global_start), number_of_iterations))
+            
 
         if len(request_name) > 0:
             if number_of_iterations == 1: print('\n') # this is the only message about retreival with one ietartion. 

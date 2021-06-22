@@ -43,8 +43,8 @@ class ResnetGraph (nx.MultiDiGraph):
         return graph_relations
 
     def get_properties(self, IDList: set, PropertyName):
-        is2props = {x: y[PropertyName] for x, y in self.nodes(data=True) if x in IDList}
-        return is2props
+        id2props = {x: y[PropertyName] for x, y in self.nodes(data=True) if x in IDList}
+        return id2props
 
     def get_neighbors(self, EntityIDs: set, in_graph=None, only_neighbors_with_ids=None):
         if only_neighbors_with_ids is None:
@@ -102,9 +102,9 @@ class ResnetGraph (nx.MultiDiGraph):
         return subgraph
 
     def count_references(self, in_graph=None):
-        graph = in_graph if isinstance(in_graph, ResnetGraph) else self
+        if not isinstance(in_graph, ResnetGraph): in_graph = self
         references = set()
-        for regulatorID, targetID, rel in graph.edges.data('relation'):
+        for regulatorID, targetID, rel in in_graph.edges.data('relation'):
             rel.load_references()
             references.update(rel.References.values())
         return references
@@ -255,11 +255,11 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
     def to_rnef(self, RNEFnameToPropType: list, in_graph=None):
-        graph = in_graph if isinstance(in_graph, ResnetGraph) else self
+        if not isinstance(in_graph, ResnetGraph): in_graph = self
         resnet = et.Element('resnet')
         xml_nodes = et.SubElement(resnet, 'nodes')
         local_id_counter = 0
-        for nodeId, n in graph.nodes(data=True):
+        for nodeId, n in in_graph.nodes(data=True):
             local_id = n['URN'][0]
             xml_node = et.SubElement(xml_nodes, 'node', {'local_id': local_id, 'urn': n['URN'][0]})
             et.SubElement(xml_node, 'attr', {'name': str('NodeType'), 'value': str(n['ObjTypeName'][0])})
@@ -273,7 +273,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
         xml_controls = et.SubElement(resnet, 'controls')
 
-        graph_relations = self.__get_relations(graph)
+        graph_relations = self.__get_relations(in_graph)
         for rel in graph_relations:
             control_id = rel['URN'][0]
             xml_control = et.SubElement(xml_controls, 'control', {'local_id': control_id})
@@ -283,15 +283,15 @@ class ResnetGraph (nx.MultiDiGraph):
             try:
                 targets = rel.Nodes['Targets']
                 for r in regulators:
-                    regulator_local_id = graph.nodes[r[0]]['URN'][0]
+                    regulator_local_id = in_graph.nodes[r[0]]['URN'][0]
                     et.SubElement(xml_control, 'link', {'type': 'in', 'ref': regulator_local_id})
 
                 for t in targets:
-                    target_local_id = graph.nodes[t[0]]['URN'][0]
+                    target_local_id = in_graph.nodes[t[0]]['URN'][0]
                     et.SubElement(xml_control, 'link', {'type': 'out', 'ref': target_local_id})
             except KeyError:
                 for r in regulators:
-                    regulator_local_id = graph.nodes[r[0]]['URN'][0]
+                    regulator_local_id = in_graph.nodes[r[0]]['URN'][0]
                     et.SubElement(xml_control, 'link', {'type': 'in-out', 'ref': regulator_local_id})
 
             # adding non-reference properties
@@ -313,4 +313,5 @@ class ResnetGraph (nx.MultiDiGraph):
                     et.SubElement(
                         xml_control, 'attr',{'name': str(ref_id_type), 'value': str(ref_id), 'index': str(i)})
 
-        return et.tostring(resnet, encoding='utf-8').decode("utf-8")
+        xml_str = et.tostring(resnet, encoding='utf-8').decode("utf-8")
+        return xml_str

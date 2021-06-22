@@ -173,7 +173,7 @@ class PSNetworx(DataModel):
                          PropertyValues2: list, SearchByProperties2: list, EntityTypes2: list,
                          REL_PROPS=None, connect_by_rel_types=None, ENTITY_PROPS=None):
 
-        connect_by_rel_types = [] if connect_by_rel_types is None else connect_by_rel_types
+        if connect_by_rel_types is None: connect_by_rel_types = []
         rel_props = {'Name', 'RelationNumberOfReferences'} 
         if isinstance(REL_PROPS,list): rel_props.update(REL_PROPS)
         ent_props = {'Name'}

@@ -25,10 +25,12 @@ class DataModel:
         from zeep.cache import SqliteCache
         from zeep.transports import Transport
         session = Session()
+
         session.auth = HTTPBasicAuth(username, password)
         transport = Transport(cache=SqliteCache(), session=session)
         from zeep import Client, Settings
         settings = Settings(strict=False, xml_huge_tree=True)
+        #settings = zeep.Settings(extra_http_headers={'Authorization': 'Bearer ' + token})
         self.logger = configure_logging(logging.getLogger(__name__))
         try:
             self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
@@ -41,7 +43,7 @@ class DataModel:
     def __load_model(self):
         object_types = self.SOAPclient.service.GetObjectTypes()
         property_types = self.SOAPclient.service.GetPropertyDefinitions()
-        # Folders = self.SOAPclient.service.GetFoldersTree(0)
+        # Folders = self.SOAPclient.service.GetFoldersTree(0)  # long operation invoked only by load_folder_tree
 
         for i in range(0, len(object_types)):
             db_id = object_types[i]['Id']
