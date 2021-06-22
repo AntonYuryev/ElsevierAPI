@@ -1,3 +1,4 @@
+from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 import time
 from ElsevierAPI import APIconfig
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
@@ -12,19 +13,18 @@ ps_api.PageSize = 1000
 all_completed_trials = ps_api.process_oql('SELECT Relation WHERE objectType = ClinicalTrial AND TrialStatus = Completed AND NeighborOf (SELECT Entity WHERE objectType = SmallMol)')
 batch_xml = et.Element('batch')
 
-resnet_count = 0
 for drug, indication, ClinicalTrial in all_completed_trials.edges.data('relation'):
     goql_query = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = {drug}) AND objectType = DirectRegulation AND Effect = negative AND NeighborOf (SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType = (Regulation,QuantitativeChange) AND Effect = positive)) to (SELECT Entity WHERE id = {indication}))'
     links_to_targets = ps_api.process_oql(goql_query.format(drug=drug,indication=indication))
     if links_to_targets is None: # relaxing Effect constraints
-        goql_query = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = {drug}) AND objectType = DirectRegulation AND NeighborOf (SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType = (Regulation,QuantitativeChange)) to (SELECT Entity WHERE id = {indication}))'
+        goql_query = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = {drug}) AND objectType = (DirectRegulation,Binding) AND NeighborOf (SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType = (Regulation,QuantitativeChange)) to (SELECT Entity WHERE id = {indication}))'
         links_to_targets = ps_api.process_oql(goql_query.format(drug=drug,indication=indication))
 
     if links_to_targets.size() > 0:
         target_ids = links_to_targets.get_entity_ids(['Protein'])
         if len(target_ids) > 0:
             target_disease_links = ps_api.connect_entities(target_ids,['id'],['Protein'],[indication],['id'],['Disease'],ps_api.relProps)
-            if target_disease_links.size() > 0:
+            if len(target_disease_links) > 0:
                 all_together = nx.compose(target_disease_links,links_to_targets)
                 all_together.add_edge(drug, indication, relation=ClinicalTrial)
                 all_together.count_references()
