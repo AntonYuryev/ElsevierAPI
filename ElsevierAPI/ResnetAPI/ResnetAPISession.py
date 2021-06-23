@@ -102,8 +102,8 @@ class APISession(PSNetworx):
         return open(fname, "a", encoding='utf-8')
 
     def to_csv(self, file_out, graph: ResnetGraph, access_mode='w'):
-        self.Graph.print_references(file_out, self.relProps, self.entProps, graph, access_mode, self.__IsOn1st_page,
-                              col_sep=self.csv_delimeter)
+        self.Graph.print_references(file_out, self.relProps, self.entProps, graph, access_mode, 
+                                    self.__IsOn1st_page, col_sep=self.csv_delimeter)
 
     def get_result_size(self):
         zeep_relations, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery, PageSize=1,
@@ -133,8 +133,8 @@ class APISession(PSNetworx):
         while isinstance(page_graph, ResnetGraph):
             page_ref_count = page_graph.size(weight='weight')
             reference_counter += page_ref_count
+            exec_time = self.execution_time(start_time)
             if not no_mess:
-                exec_time = self.execution_time(start_time)
                 iteration = math.ceil(self.ResultPos / self.PageSize)            
                 edge_count = page_graph.number_of_edges()
                 node_count = page_graph.number_of_nodes()
@@ -148,8 +148,8 @@ class APISession(PSNetworx):
                 self.to_csv(self.DumpFiles[0], page_graph, 'a')
                 self.__IsOn1st_page = False
                 if number_of_iterations > 1:
-                    print("%d relations out of %s supported by %d references were saved into file: %s" % 
-                        (self.ResultPos, self.ResultSize, reference_counter, self.DumpFiles[0]))
+                    print("%d relations out of %s supported by %d references were saved into file %s. Retrieval time: %s" % 
+                        (self.ResultPos, self.ResultSize, reference_counter, self.DumpFiles[0],exec_time))
 
             entire_graph = nx.compose(page_graph, entire_graph)
             page_graph = self.__get_next_page(no_mess)
@@ -183,3 +183,5 @@ class APISession(PSNetworx):
 
     def to_pandas (self, in_graph=None, RefNumPrintLimit=0):
         return self.Graph.ref2pandas(self.relProps,self.entProps,in_graph,RefNumPrintLimit)
+
+    
