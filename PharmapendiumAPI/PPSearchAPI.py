@@ -1,30 +1,16 @@
-
-#C:Windows> py -m pip install entrezpy --user
-
 import urllib.request
 import urllib.parse
 import json
-import codecs
-
-def OpenFile(fname):
-    open(fname, "w", encoding='utf-8').close()
-    return open(fname, "a", encoding='utf-8')
-
+from ElsevierAPI import APIconfig
 
 print('Beginning Pharmapendium response download with urllib...')
-con_file = open("D:\\Python\\config.json")#file with your APIkeys
-config = json.load(con_file)
-con_file.close()
-
-ELSapiKey = config['ELSapikey']#Obtain from https://dev.elsevier.com
-token = config['insttoken'] #Obtain from mailto:integrationsupport@elsevier.com 
+ELSapiKey = APIconfig['ELSapikey']#Obtain from https://dev.elsevier.com
+token = APIconfig['insttoken'] #Obtain from mailto:integrationsupport@elsevier.com 
 
 PP_URL = 'https://api.elsevier.com/pharma/'
 PPmodule ='safety/'
 SearchType = 'lookupFuzzy'
-SearchQuery = 'Exanthema'
 taxonomy = 'Effects'
-#https://api.elsevier.com/pharma/safety/lookupFuzzy?taxonomy=Effects&query=Exanthema
 PageSize = 100 #controls number of records downloaded in one get request
 headers = {'X-ELS-APIKey':ELSapiKey,'X-ELS-Insttoken':token}
 baseURL =  PP_URL+PPmodule+SearchType +'?'
@@ -32,14 +18,14 @@ baseURL =  PP_URL+PPmodule+SearchType +'?'
 def GetTopTaxCategory(taxName):
     params = {'taxonomy': taxonomy, 'query':taxName}
     paramtURL = urllib.parse.urlencode(params)
-        
-    req = urllib.request.Request(url=baseURL, data=data, headers=headers)
+    req = urllib.request.Request(url=baseURL+paramtURL, headers=headers)
     with urllib.request.urlopen(req) as response:
         the_page = response.read()
         result = json.loads(the_page.decode('utf-8'))
         if len(result) > 0:
             return result['children'][0]['data']['name']
-        else: return ''
+        else: 
+            return ''
 
 
 fileIn = 'PBTA_PPtoxicities.txt'
@@ -73,7 +59,7 @@ with open(fileOut, 'w', encoding='utf-8') as f:
                 TopTaxCategory = GetTopTaxCategory(new_taxName)
 
         if len(TopTaxCategory) > 0:
-            f.write(new_taxName+'\t'+ TopTaxCategory+'\t'+new_taxName+'\n')
+            f.write(taxName+'\t'+ TopTaxCategory+'\t'+new_taxName+'\n')
         else:
             f2.write(taxName+'\n')
             print('Cannot find top taxonomy category for %s' % taxName)
