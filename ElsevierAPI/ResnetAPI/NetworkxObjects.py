@@ -279,42 +279,40 @@ class PSRelation(PSObject):
             return len(self.References)
 
     def triple2str(self, columnPropNames: list, return_dict=False, col_sep='\t', cell_sep=';', endOfline='\n',
-                   RefNumPrintLimit=0,quoting=None, quotechar='"'):
+                   RefNumPrintLimit=0,add_entities=False):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
         # initializing table
-        col_count = len(columnPropNames) + 2
+        col_count = len(columnPropNames) +2 if add_entities else len(columnPropNames)
         RelationNumberOfReferences = int(self['RelationNumberOfReferences'][0])
 
         rowCount = 1
         if RelationNumberOfReferences >= RefNumPrintLimit:
             rowCount = max(1, len(self.PropSetToProps))
 
-        regulatorIDs = str()
-        targetIDs = str()
-        for k, v in self.Nodes.items():
-            if k == 'Regulators':
-                regulatorIDs = ','.join(map(str, [x[0] for x in v]))
-            else:
-                targetIDs = ','.join(map(str, [x[0] for x in v]))
+        table = dict()
+        for r in range(0, rowCount):
+            table[r] = [''] * col_count
 
-        first_row = [''] * col_count
-        first_row[col_count - 2] = regulatorIDs
-        first_row[col_count - 1] = targetIDs
-        table = {0: first_row}
+        if add_entities:
+            regulatorIDs = str()
+            targetIDs = str()
+            for k, v in self.Nodes.items():
+                if k == 'Regulators':
+                    regulatorIDs = ','.join(map(str, [x[0] for x in v]))
+                else:
+                    targetIDs = ','.join(map(str, [x[0] for x in v]))
 
-        for r in range(1, rowCount):
-            new_row = [''] * col_count
-            new_row[col_count - 2] = regulatorIDs
-            new_row[col_count - 1] = targetIDs
-            table[r] = new_row
+            for r in range(0, rowCount):
+                table[r][col_count-2] = regulatorIDs
+                table[r][col_count-1] = targetIDs
 
         for col in range(len(columnPropNames)):
             propId = columnPropNames[col]
-            if propId in self.keys():
+            if propId in self.keys(): # filling columns with relation properties
                 for row in range(0, rowCount):
                     propValue = self.prop_values2str(propId)
                     table[row][col] = propValue
-            elif RelationNumberOfReferences >= RefNumPrintLimit:
+            elif RelationNumberOfReferences >= RefNumPrintLimit: #filling columns with reference properties
                 row = 0
                 for propList in self.PropSetToProps.values():
                     if propId in propList.keys():
@@ -323,13 +321,11 @@ class PSRelation(PSObject):
                         table[row][col] = cellValue
                     row += 1
 
-        if return_dict:
-            return table
+        if return_dict: return table
         else:
             tableStr = str()
             for row in table.values():
                 tableStr = tableStr + col_sep.join(row) + endOfline
-
             return tableStr
 
     def to_pandas(self, columnPropNames: list, RefNumPrintLimit=0):

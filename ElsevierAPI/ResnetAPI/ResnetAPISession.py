@@ -101,9 +101,9 @@ class APISession(PSNetworx):
         open(fname, "w", encoding='utf-8').close()
         return open(fname, "a", encoding='utf-8')
 
-    def to_csv(self, file_out, graph: ResnetGraph, access_mode='w'):
-        self.Graph.print_references(file_out, self.relProps, self.entProps, graph, access_mode, 
-                                    self.__IsOn1st_page, col_sep=self.csv_delimeter)
+    def to_csv(self, file_out, in_graph: ResnetGraph, access_mode='w', debug=False):
+        self.Graph.print_references(file_out, self.relProps, self.entProps, in_graph, access_mode, 
+                                    self.__IsOn1st_page, col_sep=self.csv_delimeter,debug=debug)
 
     def get_result_size(self):
         zeep_relations, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery, PageSize=1,
@@ -134,8 +134,8 @@ class APISession(PSNetworx):
             page_ref_count = page_graph.size(weight='weight')
             reference_counter += page_ref_count
             exec_time = self.execution_time(start_time)
-            if not no_mess:
-                iteration = math.ceil(self.ResultPos / self.PageSize)            
+            iteration = math.ceil(self.ResultPos / self.PageSize) 
+            if not no_mess:           
                 edge_count = page_graph.number_of_edges()
                 node_count = page_graph.number_of_nodes()
                 print("Iteration %d in %d retrieved %d relations for %d nodes supported by %d references in %s seconds" %
@@ -145,15 +145,17 @@ class APISession(PSNetworx):
             self.add_graph(page_graph)
             
             if len(self.DumpFiles) > 0:
-                self.to_csv(self.DumpFiles[0], page_graph, 'a')
+                self.to_csv(self.DumpFiles[0], in_graph=page_graph, access_mode='a',debug=True)
                 self.__IsOn1st_page = False
                 if number_of_iterations > 1:
-                    print("%d relations out of %s supported by %d references were saved into file %s. Retrieval time: %s" % 
-                        (self.ResultPos, self.ResultSize, reference_counter, self.DumpFiles[0],exec_time))
+                    print("With %d iterations retrieved %d relations out of %s supported by %d references were saved into file %s. Retrieval time: %s" % 
+                        (iteration,self.ResultPos, self.ResultSize, reference_counter, self.DumpFiles[0],exec_time))
 
             entire_graph = nx.compose(page_graph, entire_graph)
-            page_graph = self.__get_next_page(no_mess)
+
             if debug and number_of_iterations >= iteration_limit: break
+            page_graph = self.__get_next_page(no_mess)
+            
 
         if debug: print("GOQL query:\n \"%s\"\n was executed in %s in %d iterations" % 
                  (self.GOQLquery, self.execution_time(global_start), number_of_iterations))

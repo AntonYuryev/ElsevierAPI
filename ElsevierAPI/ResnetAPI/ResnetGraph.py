@@ -11,7 +11,7 @@ class ResnetGraph (nx.MultiDiGraph):
         super().__init__()
 
     def get_entity_ids(self, SearchValues: list, in_graph=None, search_by_properties: list=None):
-        search_by_properties = ['ObjTypeName'] if search_by_properties is None else search_by_properties
+        if search_by_properties is None: search_by_properties = ['ObjTypeName']
         graph = in_graph if isinstance(in_graph, ResnetGraph) else self
         all_ids = set()
         for i, node in graph.nodes(data=True):
@@ -22,13 +22,13 @@ class ResnetGraph (nx.MultiDiGraph):
         return list(all_ids)
 
     def _get_node(self, nodeId, in_graph=None):
-        graph = in_graph if isinstance(in_graph, ResnetGraph) else self
+        if not isinstance(in_graph, ResnetGraph): in_graph = self
         #dic = {k: v for k, v in graph.nodes[nodeId].items()}
         #ps_obj = PSObject(dic)
-        return PSObject({k: v for k, v in graph.nodes[nodeId].items()})
+        return PSObject({k: v for k, v in in_graph.nodes[nodeId].items()})
 
     def _get_nodes(self, nodeIds: list, in_graph=None):
-        graph = in_graph if isinstance(in_graph, ResnetGraph) else self
+        if not isinstance(in_graph, ResnetGraph): in_graph = self
         node_list = list()
         for n in nodeIds:
             node_list.append(PSObject({k: v for k, v in graph.nodes[n].items()}))
@@ -134,40 +134,43 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
     def print_references(self, fileOut, relPropNames, entity_prop_names=None, in_graph=None,
-                         access_mode='w', printHeader=True, RefNumPrintLimit=0, col_sep: str='\t'):
+                         access_mode='w', printHeader=True, RefNumPrintLimit=0, col_sep: str='\t', debug=False):
 
         entity_prop_names = [] if entity_prop_names is None else entity_prop_names
-        rel_props = relPropNames
-        in_graph = in_graph if isinstance(in_graph, ResnetGraph) else self
+        if not isinstance(in_graph, ResnetGraph): in_graph = self
 
         with open(fileOut, access_mode, encoding='utf-8') as f:
             if printHeader:
-                header = col_sep.join(rel_props) + col_sep + "Regulators Id" + col_sep + "Targets Id"
+                header = col_sep.join(relPropNames)
+                if debug:
+                    header = header + col_sep + "Regulators Id" + col_sep + "Targets Id"
+
                 target_header = [''] * len(entity_prop_names)
                 reg_header = [''] * len(entity_prop_names)
-
                 for i in range(0, len(entity_prop_names)):
                     reg_header[i] = 'Regulator:' + entity_prop_names[i]
                     target_header[i] = 'Target:' + entity_prop_names[i]
 
                 if len(reg_header) > 0:
                     header = col_sep.join(reg_header) + col_sep + header + col_sep + col_sep.join(target_header)
+                
                 f.write(header + '\n')
 
             if in_graph.number_of_edges() > 0:
                 if len(entity_prop_names) == 0:
                     for regulatorID, targetID, rel in in_graph.edges.data('relation'):
-                        reference_view_triple = str(rel.triple2str(rel_props))
+                        reference_view_triple = str(rel.triple2str(relPropNames))
                         f.write(reference_view_triple)
                 else:
+                    # rel = PSRelation()
                     for regulatorID, targetID, rel in in_graph.edges.data('relation'):
                         reg = self._get_node(regulatorID, in_graph)
                         target = self._get_node(targetID, in_graph)
                         reg_props_str = reg.data2str(entity_prop_names, col_sep=col_sep)
                         target_props_str = target.data2str(entity_prop_names, col_sep=col_sep)
                         rel_props_str_list = dict(
-                            rel.triple2str(rel_props, return_dict=True, RefNumPrintLimit=RefNumPrintLimit,
-                                           col_sep=col_sep))
+                            rel.triple2str(relPropNames, return_dict=True, RefNumPrintLimit=RefNumPrintLimit,
+                                           col_sep=col_sep, add_entities=debug))
 
                         reference_table_view = str()
                         for row in rel_props_str_list.values():
