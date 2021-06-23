@@ -9,7 +9,7 @@ ps_api.add_rel_props(REF_PROPS+REF_ID_TYPES)
 #add_rel_props and add_end_props specify what attributes to retreive for relations and nodes (entities) from the database
 
 pcnt = '%'
-my_goql_query = 'select Relation where CellType LIKE '+pcnt+'hepatocyte'+pcnt+')'
+my_goql_query = 'select Relation where CellType LIKE ('+pcnt+'hepatocyte'+pcnt+')'
 my_graph = ps_api.process_oql(my_goql_query)
 #process_oql retreives data by iterations. Iteration size is controled by ps_api.PageSize
 # which defaults to 100 relations per iteration
