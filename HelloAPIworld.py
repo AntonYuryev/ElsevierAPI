@@ -10,7 +10,8 @@ ps_api.add_rel_props(REF_PROPS+REF_ID_TYPES)
 
 pcnt = '%'
 my_goql_query = 'select Relation where CellType LIKE \''+pcnt+'hepatocyte'+pcnt+'\''
-my_graph = ps_api.process_oql(my_goql_query, debug=True)
+request_name = 'Find relations reported in hepatocytes'
+my_graph = ps_api.process_oql(my_goql_query,request_name, debug=True)
 # process_oql retreives data by iterations. Iteration size is controled by ps_api.PageSize
 # ps_api.PageSize defaults to 100 relations per iteration and cannot be bigger than 10,000
 # during retreival ps_api caches data into dump file with default name 'ResnetAPIsessionDump.tsv' using APISession.to_csv()
