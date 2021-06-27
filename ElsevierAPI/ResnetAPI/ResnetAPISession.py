@@ -102,7 +102,7 @@ class APISession(PSNetworx):
         return open(fname, "a", encoding='utf-8')
 
     def to_csv(self, file_out, in_graph: ResnetGraph, access_mode='w', debug=False):
-        self.Graph.print_references(file_out, self.relProps, self.entProps, in_graph, access_mode, 
+        self.Graph.print_references(file_out, self.relProps, self.entProps, access_mode, 
                                     self.__IsOn1st_page, col_sep=self.csv_delimeter,debug=debug)
 
     def get_result_size(self):
@@ -148,8 +148,8 @@ class APISession(PSNetworx):
                 self.to_csv(self.DumpFiles[0], in_graph=page_graph, access_mode='a',debug=True)
                 self.__IsOn1st_page = False
                 if number_of_iterations > 1:
-                    print("With %d iterations retrieved %d relations out of %s supported by %d references were saved into file %s. Retrieval time: %s" % 
-                        (iteration,self.ResultPos, self.ResultSize, reference_counter, self.DumpFiles[0],exec_time))
+                    print("With %d in %d iterations, %d relations in %d with %d references saved into \"%s\" file. Retrieval time: %s" % 
+                        (iteration,number_of_iterations,self.ResultPos,self.ResultSize,reference_counter,self.DumpFiles[0],exec_time))
 
             entire_graph = nx.compose(page_graph, entire_graph)
 
@@ -183,7 +183,38 @@ class APISession(PSNetworx):
             ppi_graph.size(), self.execution_time(start_time)))
         return ppi_graph
 
+
+    def iterate_oql(self, oql_query:str, id_set:set):
+        to_return = ResnetGraph()
+        to_return = self._iterate_oql(oql_query,id_set, self.relProps,self.entProps)
+        return to_return
+
+    def iterate_oql2(self, oql_query:str, id_set1:set, id_set2:set):
+        to_return = ResnetGraph()
+        to_return = self._iterate_oql2(oql_query,id_set1,id_set2,self.relProps,self.entProps)
+        return to_return
+
     def to_pandas (self, in_graph=None, RefNumPrintLimit=0):
         return self.Graph.ref2pandas(self.relProps,self.entProps,in_graph,RefNumPrintLimit)
+
+    def connect_nodes(self,node_ids1:set,node_ids2:set,by_relation_type=None,with_effect=None,in_direction=None):
+        oql_query = r'SELECT Relation WHERE '
+        if isinstance(in_direction,str) and in_direction == '>':
+            oql_query = oql_query + 'NeighborOf downstream (SELECT Entity WHERE id = ({ids1})) AND NeighborOf upstream (SELECT Entity WHERE id = ({ids2}))'
+        elif isinstance(in_direction,str) and in_direction == '<':
+            oql_query = oql_query + 'NeighborOf upstream (SELECT Entity WHERE id = ({ids1})) AND NeighborOf downstream (SELECT Entity WHERE id = ({ids2}))'
+        else:
+            oql_query = oql_query + 'NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+
+        if isinstance(with_effect,list): 
+            oql_query = oql_query + ' AND Effect = ('+','.join(with_effect)+')'
+
+        if isinstance(by_relation_type,list):
+            oql_query = oql_query + ' AND objectType = ('+','.join(by_relation_type)+')'
+
+        return self.iterate_oql2(f'{oql_query}',node_ids1,node_ids2)
+
+
+    
 
     

@@ -116,6 +116,7 @@ class PSNetworx(DataModel):
                 obj_id_list = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
                 zeep_objects = self.get_object_properties(obj_id_list, list(entity_props))
                 return self._load_graph(zeep_relations, zeep_objects)
+            else: return ResnetGraph()
         else:
             zeep_objects = self.get_data(oql_query, list(entity_props), getLinks=False)
             return self._load_graph(None, zeep_objects)
@@ -177,14 +178,16 @@ class PSNetworx(DataModel):
                          PropertyValues2: list, SearchByProperties2: list, EntityTypes2: list,
                          REL_PROPS=None, connect_by_rel_types=None, ENTITY_PROPS=None):
 
-        if connect_by_rel_types is None: connect_by_rel_types = []
+        if not isinstance(connect_by_rel_types,list): connect_by_rel_types = list()
         rel_props = {'Name', 'RelationNumberOfReferences'} 
         if isinstance(REL_PROPS,list): rel_props.update(REL_PROPS)
         ent_props = {'Name'}
         if isinstance(ENTITY_PROPS,list): ent_props.update(ENTITY_PROPS)
+
         oql_query = OQL.connect_entities(PropertyValues1, SearchByProperties1, EntityTypes1, PropertyValues2,
                                          SearchByProperties2, EntityTypes2, connect_by_rel_types)
         zeep_relations = self.get_data(oql_query, list(rel_props))
+        
         if type(zeep_relations) != type(None):
             obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
             zeep_objects = self.get_object_properties(obj_ids, list(ent_props))
@@ -192,7 +195,7 @@ class PSNetworx(DataModel):
         else:
             return ResnetGraph()
 
-    def get_ppi(self, InteractorIdList: set, REL_PROPS: list, ENTITY_PROPS: list):
+    def get_ppi(self, InteractorIdList:set, REL_PROPS:list, ENTITY_PROPS:list):
         splitter = list() #holds lists of ids splits 
         splitter.append(list(InteractorIdList))
         import math
@@ -219,6 +222,33 @@ class PSNetworx(DataModel):
             s += 1
 
         return ppi_keeper
+
+    def _iterate_oql(self, oql_query:str, id_set:set, REL_PROPS:list=None, ENTITY_PROPS:list=None):
+        # oql_query MUST contain string placeholder called {ids} 
+        entire_graph = ResnetGraph()
+        id_list = list(id_set)
+        step = 500
+        for i in range(0,len(id_list), step):
+            ids = id_list[i:i+step]
+            oql_query_with_ids = oql_query.format(ids=','.join(map(str,ids)))
+            iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS)
+            entire_graph = nx.compose(entire_graph,iter_graph)
+        return entire_graph
+
+    def _iterate_oql2(self, oql_query:str, id_set1:set, id_set2:set, REL_PROPS:list=None, ENTITY_PROPS:list=None):
+        # oql_query MUST contain 2 string placeholders called {ids1} and {ids2}
+        entire_graph = ResnetGraph()
+        id_list1 = list(id_set1)
+        id_list2 = list(id_set2)
+        step = 500
+        for i1 in range(0,len(id_list1), step):
+            ids1 = id_list1[i1:i1+step]
+            for i2 in range(0,len(id_list2), step):
+                ids2 = id_list2[i2:i2+step]
+                oql_query_with_ids = oql_query.format(ids1=','.join(map(str,ids1)),ids2=','.join(map(str,ids2)))
+                iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS)
+                entire_graph = nx.compose(entire_graph,iter_graph)
+        return entire_graph
 
     def get_objects_from_folders(self, FolderIds: list, property_names=None, with_layout=False):
         if property_names is None: property_names = ['Name']
@@ -373,4 +403,5 @@ class PSNetworx(DataModel):
         return accumulate_pathways
 
     def to_rnef(self, in_graph=None):
-        return self.Graph.to_rnef(list(self.RNEFnameToPropType.keys()),in_graph)
+        if not isinstance(in_graph,ResnetGraph): in_graph=self.Graph
+        return in_graph.to_rnef(list(self.RNEFnameToPropType.keys()))

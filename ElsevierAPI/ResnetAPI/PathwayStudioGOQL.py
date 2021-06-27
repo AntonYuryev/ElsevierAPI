@@ -181,9 +181,9 @@ def get_reaxys_substances(ForTargetsIDlist: list):
 
 
 def connect_entities(PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list, PropertyValues2: list,
-                     SearchByProperties2: list, EntityTypes2: list, connect_by_rel_types=None):
+                     SearchByProperties2: list, EntityTypes2: list, connect_by_rel_types:list=None):
 
-    connect_by_rel_types = [] if connect_by_rel_types is None else connect_by_rel_types
+    if not isinstance(connect_by_rel_types,list): connect_by_rel_types = list()
     prop_names1, prop_values1 = get_search_strings(PropertyNameList=SearchByProperties1, PropValuesList=PropertyValues1)
     prop_names2, prop_values2 = get_search_strings(PropertyNameList=SearchByProperties2, PropValuesList=PropertyValues2)
     object_type1 = join_with_quotes(',', EntityTypes1)
