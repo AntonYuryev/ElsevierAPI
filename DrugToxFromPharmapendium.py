@@ -2,46 +2,42 @@ import urllib.request
 import urllib.parse
 import json
 import time
-import ElsevierAPI
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-import ElsevierAPI.ResnetAPI.ZeepToNetworkx as znx
-from ElsevierAPI import networx as PSnx
+from ElsevierAPI.ResnetAPI.NetworkxObjects import Reference
+from ElsevierAPI import APIconfig
+from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 import pandas as pd
 
-def OpenFile(fname):
-    open(fname, "w", encoding='utf-8').close()
-    return open(fname, "a", encoding='utf-8')
 
-
-print('Beginning Pharmapendium response download with urllib...')
-con_file = open("ElsevierAPI/config.json")#file with your APIkeys
-config = json.load(con_file)
-con_file.close()
-
-
+ps_api = APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
 fileIn = 'Drugs for Regulators in 4 patients.txt'
-InDir = 'D:\\Python\\PBTA\\PNOC003\\'
+InDir = 'D:\\Python\\PBTA\\PNOC003\\4 patients analysis\\'
 with open(InDir+fileIn) as f:
     drugs = [line.rstrip('\n') for line in f]
 
+print('Finding drugs in %s in Resnet' %(fileIn))
+OQLquery = OQL.get_entities_by_props(drugs, ['Name', 'Alias'], only_object_types=['Small Molecule'])
+ps_api.add_ent_props(['Name','PharmaPendium ID'])
+resnet_drugs = ps_api.process_oql(OQLquery,'Find all drugs')
+print ('Found %d drugs in Resnet' % len(resnet_drugs))
 
-OQLquery = OQL.GetEntitiesByProps(drugs, ['Name','Alias'], OnlyObjectTypes=['Small Molecule'])
-PSdrugs = PSnx.GetPSObjects(OQLquery, RetreiveProperties=['Name','PharmaPendium ID'])
-print ('Found %d drugs in Resnet' % len(PSdrugs))
-#removing duplicates
-PStoPPNames = dict()
-for drug in PSdrugs:
+#removing duplicates wiht no PharmaPendium ID
+resnet2pharmapendium_map = dict()
+for i, drug in resnet_drugs.nodes(data=True):
     try:
-        PStoPPNames[(drug['Name'][0]).lower()] = drug['PharmaPendium ID'][0]
+        resnet2pharmapendium_map[(drug['Name'][0]).lower()] = drug['PharmaPendium ID'][0]
     except KeyError: continue
 
-for drug in PSdrugs:
-    if drug['Name'][0].lower() in PStoPPNames.keys() and 'PharmaPendium ID' not in drug.keys():
-        PSdrugs.remove(drug)
-print ('%d drugs left after deduplication' % len(PSdrugs))
+all_drugs = list(resnet_drugs.nodes(data=True))
+for i, drug in all_drugs:
+    if drug['Name'][0].lower() in resnet2pharmapendium_map.keys() and 'PharmaPendium ID' not in drug.keys():
+        resnet_drugs.remove_node(i)
+print ('%d drugs left after deduplication' % resnet_drugs.number_of_nodes())
 
-ELSapiKey = config['ELSapikey']#Obtain from https://dev.elsevier.com
-token = config['insttoken'] #Obtain from mailto:integrationsupport@elsevier.com 
+
+print('Beginning Pharmapendium response download with urllib...')
+ELSapiKey = APIconfig['ELSapikey']#Obtain from https://dev.elsevier.com
+token = APIconfig['insttoken'] #Obtain from mailto:integrationsupport@elsevier.com 
 
 PP_URL = 'https://api.elsevier.com/pharma/'
 PPmodule ='safety/'
@@ -73,15 +69,13 @@ def GetTopTaxCategory(taxName):
 
 
 fileOut2 = InDir + fileIn[:len(fileIn)-4]+'_unmapped.txt'
-
 col_names = ['Smiles','Resnet name','Tox Category','#Ref','References']
 ToxPandas = pd.DataFrame(columns=col_names)
 ToxPandas.index.name = "PP name\ttoxicity"
 
-PPtoPSName = dict()
 start_time = time.time()
-print ('Will find toxicities for %d drugs found in Resnet' % len(PSdrugs))
-for drug in PSdrugs:
+print ('Will find toxicities for %d drugs found in Resnet' % resnet_drugs.number_of_nodes())
+for i, drug in resnet_drugs.nodes(data=True):
     drugPSname = drug['Name'][0]
     try: drugPPname = drug['PharmaPendium ID'][0]
     except KeyError: drugPPname = drugPSname
@@ -98,7 +92,7 @@ for drug in PSdrugs:
         print('cannot find %s in Pharmapendium' % drugPSname)
         continue
 
-    print('Will parse %d documents for %s with Pharmapendium ID %s' % (docCount,drugPSname, drugPPname))
+    print('Found %d documents for %s with Pharmapendium ID %s' % (docCount,drugPSname, drugPPname))
     DrugToxicities = dict()
 
     for page in range(1,docCount,PageLimit):
@@ -144,12 +138,12 @@ for drug in PSdrugs:
                     refIdentifier = docSource+':'+docName
                     try: PPRef = refIndex[refIdentifier]
                     except KeyError:
-                        PPRef = znx.Reference('Title',refIdentifier)
+                        PPRef = Reference('Title',refIdentifier)
                         refIndex[refIdentifier] = PPRef
 
                     try:PubYear = str(document['year'])
                     except KeyError: PubYear = 'historic'
-                    PPRef.AddSingleProperty('PubYear',PubYear)
+                    PPRef.add_single_property('PubYear', PubYear)
                     
                     try:dose = ref['dose']
                     except KeyError: dose = ''
@@ -161,18 +155,16 @@ for drug in PSdrugs:
                     except KeyError: route=''
                     
                     organism=ref['specie']
-                    PPRef.AddUniqueProperty(route,doseType+' in '+organism+' '+dose)
+                    PPRef.add_unique_property(route, doseType + ' in ' + organism + ' ' + dose)
 
                 addToPandas = set()
                 for ref in refIndex.values():
-                    addToPandas.update([ref.ToString('Title', sep='-')])
+                    addToPandas.update([ref.to_string('Title', sep='-')])
 
                 ToxPandas.at[pandaIndex,col_names[3]] = len(addToPandas)
                 reflist = '|'.join(list(addToPandas))
-                ToxPandas.at[pandaIndex,col_names[4]] = reflist
-                
+                ToxPandas.at[pandaIndex,col_names[4]] = reflist  
             break
         
 ToxPandas.to_csv(InDir+fileIn[:len(fileIn)-4]+'_PPtaxonomy.txt',sep='\t')
-print('Finished finding toxicities in Pharmapendium in %s' % ElsevierAPI.ExecutionTime(start_time))
-
+print('Finished finding toxicities in Pharmapendium in %s' % ps_api.execution_time(start_time))
