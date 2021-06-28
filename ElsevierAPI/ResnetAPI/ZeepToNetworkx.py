@@ -1,7 +1,7 @@
 import networkx as nx
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation, REF_PROPS
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 
 
@@ -404,4 +404,5 @@ class PSNetworx(DataModel):
 
     def to_rnef(self, in_graph=None):
         if not isinstance(in_graph,ResnetGraph): in_graph=self.Graph
-        return in_graph.to_rnef(list(self.RNEFnameToPropType.keys()))
+        all_rnef_props = set(list(self.RNEFnameToPropType.keys())+REF_PROPS)
+        return in_graph.to_rnef(list(all_rnef_props))

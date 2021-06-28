@@ -1,5 +1,4 @@
 import networkx as nx
-from networkx import relabel
 import pandas as pd
 import xml.etree.ElementTree as et
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
@@ -13,8 +12,6 @@ class ResnetGraph (nx.MultiDiGraph):
 
     def add_graph(self, other: "ResnetGraph"):
         self.update(other)
-        #return nx.compose(other,self) 
-        #self = nx.compose(graph2add,self)
       
     def get_entity_ids(self, SearchValues: list, search_by_properties: list=None):
         if search_by_properties is None: search_by_properties = ['ObjTypeName']
@@ -256,7 +253,7 @@ class ResnetGraph (nx.MultiDiGraph):
                 continue
 
 
-    def to_rnef(self, RNEFnameToPropType: list):
+    def to_rnef(self, RNEFprops: list):
         resnet = et.Element('resnet')
         xml_nodes = et.SubElement(resnet, 'nodes')
         local_id_counter = 0
@@ -265,7 +262,7 @@ class ResnetGraph (nx.MultiDiGraph):
             xml_node = et.SubElement(xml_nodes, 'node', {'local_id': local_id, 'urn': n['URN'][0]})
             et.SubElement(xml_node, 'attr', {'name': str('NodeType'), 'value': str(n['ObjTypeName'][0])})
             for prop_name, prop_values in n.items():
-                if prop_name in RNEFnameToPropType:
+                if prop_name in RNEFprops:
                     if prop_name not in NO_RNEF_NODE_PROPS:
                         for prop_value in prop_values:
                             et.SubElement(xml_node, 'attr', {'name': str(prop_name), 'value': str(prop_value)})
@@ -297,7 +294,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
             # adding non-reference properties
             for prop_name, prop_values in rel.items():
-                if prop_name in RNEFnameToPropType:
+                if prop_name in RNEFprops:
                     if prop_name not in NO_RNEF_REL_PROPS:
                         for prop_value in prop_values:
                             et.SubElement(xml_control, 'attr', {'name': str(prop_name), 'value': str(prop_value)})
@@ -307,7 +304,7 @@ class ResnetGraph (nx.MultiDiGraph):
             for i in range(0, len(references)):
                 for prop_name, prop_values in references[i].items():
                     for prop_value in prop_values:
-                        if prop_name in RNEFnameToPropType:
+                        if prop_name in RNEFprops:
                             et.SubElement(
                                 xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(i)})
                 for ref_id_type,ref_id in references[i].Identifiers.items():
