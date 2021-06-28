@@ -8,12 +8,12 @@ import networkx as nx
 import xml.etree.ElementTree as et
 from xml.dom import minidom
 
+working_dir = 'D:/Python/CTs/'
 input_drug_list = 'ListOfDrugs.txt'
 ps_api = APISession(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
 ps_api.DumpFiles.clear()
 ps_api.add_rel_props(REF_PROPS+REF_ID_TYPES+['Effect'])
 ps_api.PageSize = 1000
-working_dir = 'D:/Python/CTs/'
 
 def retreive_clinical_trials(drugs_name_file=None):
     request_name = 'Find all clinical trials'
