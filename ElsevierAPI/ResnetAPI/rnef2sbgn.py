@@ -280,7 +280,7 @@ def compile_sbgn(scene, classmap):
 def make_file_name(pathwayName: str):
     new_str = list(pathwayName)
     for i in range(0, len(new_str)):
-        if new_str[i] in {'>', '<', '|'}:
+        if new_str[i] in {'>', '<', '|','/'}:
             new_str[i] = '-'
     return "".join(new_str)
 
