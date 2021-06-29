@@ -4,19 +4,21 @@ from ElsevierAPI import APIconfig
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_PROPS,REF_ID_TYPES
-import networkx as nx
+from  ElsevierAPI.ResnetAPI.rnef2sbgn import make_file_name
 import xml.etree.ElementTree as et
 from xml.dom import minidom
 
 working_dir = 'D:/Python/CTs/'
 input_drug_list = 'ListOfDrugs.txt'
+my_drug_list = working_dir + input_drug_list
+my_drug_list = None
 ps_api = APISession(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
 ps_api.DumpFiles.clear()
-ps_api.add_rel_props(REF_PROPS+REF_ID_TYPES+['Effect'])
+ps_api.add_rel_props(REF_PROPS+REF_ID_TYPES+['Effect','Mechanism'])
 ps_api.PageSize = 1000
 
 def retreive_clinical_trials(drugs_name_file=None):
-    request_name = 'Find all clinical trials'
+    request_name = 'Find all completed clinical trials'
     oql_query = 'SELECT Relation WHERE objectType = ClinicalTrial AND TrialStatus = Completed AND NeighborOf (SELECT Entity WHERE objectType = SmallMol)'
     if isinstance(drugs_name_file, str):      
         with open(drugs_name_file) as f:
@@ -33,7 +35,6 @@ def retreive_clinical_trials(drugs_name_file=None):
 
 search_antagonists = True
 start = time.time()
-my_drug_list = working_dir + input_drug_list
 completed_trials = retreive_clinical_trials(my_drug_list)
 drug_ids = set(completed_trials.get_entity_ids(['SmallMol']))
 print('Found %d clinical trials with %d drugs' % (completed_trials.number_of_edges(), len(drug_ids)))
@@ -85,7 +86,8 @@ for drug in drug_with_targets:
         (len(TargetCount),drug_name,len(indication_ids),drug_counter, len(drug_with_targets),ps_api.execution_time(start)))   
     pathway_rnef_str = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
     pathway_rnef_str = minidom.parseString(pathway_rnef_str).toprettyxml(indent='   ')
-    with open(out_dir+pathway_name+'.rnef', mode='w', encoding='utf-8') as rnefout:
+    fout_name = make_file_name(pathway_name)
+    with open(out_dir+fout_name+'.rnef', mode='w', encoding='utf-8') as rnefout:
         rnefout.write(pathway_rnef_str)
 
     ps_api.Graph.clear() # need to release memory when performing large dumps
