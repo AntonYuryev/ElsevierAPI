@@ -43,7 +43,7 @@ if __name__ == "__main__":
     REQUEST_NAME = 'Find {drug} clinical trials'.format(drug=dcp.Drug)
     OQLquery = 'SELECT Relation WHERE objectType = ClinicalTrial AND NeighborOf ({select_drug}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease))'
     ClinicalTrialIndictions = dcp.process_oql(OQLquery.format(select_drug=SELECTdrug),REQUEST_NAME)
-    found_diseases= dcp.Graph.get_entity_ids(['Disease'],ClinicalTrialIndictions)
+    found_diseases= ClinicalTrialIndictions.get_entity_ids(['Disease'])
     print('Found %d indications in %s clinical trials' %  (len(found_diseases), dcp.Drug))
 
     drug_id = dcp.Graph.get_entity_ids([dcp.Drug], search_by_properties=['Name', 'Alias'])
@@ -51,7 +51,7 @@ if __name__ == "__main__":
     REQUEST_NAME = 'Find {drug} indications'.format(drug=dcp.Drug)
     OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = negative AND NeighborOf({select_drug}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease,Virus))'
     LiteratureIndications = dcp.process_oql(OQLquery.format(select_drug=SELECTdrug), REQUEST_NAME)
-    found_diseases= dcp.Graph.get_entity_ids(['Disease'],LiteratureIndications)
+    found_diseases= LiteratureIndications.get_entity_ids(['Disease'])
     print('Found %d indications reported in scientific literature for %s' %  (len(found_diseases), dcp.Drug))
 
      
@@ -62,14 +62,14 @@ if __name__ == "__main__":
     select_similar_drugs = select_similar_drugs.format(drugs=similarDrugsStr)
     OQLquery = 'SELECT Relation WHERE objectType = ClinicalTrial AND NeighborOf ({select_drugs}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease))'
     SimilarDrugsClinicalTrials = dcp.process_oql(OQLquery.format(select_drugs=select_similar_drugs), REQUEST_NAME)
-    found_diseases= dcp.Graph.get_entity_ids(['Disease'],SimilarDrugsClinicalTrials)
+    found_diseases= SimilarDrugsClinicalTrials.get_entity_ids(['Disease'])
     print('Found %d indications in clinical trials for drugs similar to %s' %  (len(found_diseases), dcp.Drug))
 
     REQUEST_NAME = 'Find indications for {similars}'.format(similars=similarDrugsStr)
     OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = negative AND NeighborOf ({select_drugs}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease))'
     SimilarDrugsIndictions = dcp.process_oql(OQLquery.format(select_drugs=select_similar_drugs), REQUEST_NAME)
     similar_drug_ids = dcp.Graph.get_entity_ids(similarDrugs, search_by_properties=['Name', 'Alias'])
-    found_diseases = dcp.Graph.get_entity_ids(['Disease'],SimilarDrugsIndictions)
+    found_diseases = SimilarDrugsIndictions.get_entity_ids(['Disease'])
     print('Found %d indications reported in scientific literature or drugs similar to %s' %  (len(found_diseases), dcp.Drug))
 
     dcp.find_target_indications()
