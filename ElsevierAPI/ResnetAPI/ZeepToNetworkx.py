@@ -4,6 +4,7 @@ from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation, REF_PROPS
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 
+REL_PROPS = ['Effect','Mechanism']
 
 class PSNetworx(DataModel):
     def __init__(self, url, username, password):

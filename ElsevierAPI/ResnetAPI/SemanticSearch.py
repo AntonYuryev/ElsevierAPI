@@ -172,7 +172,7 @@ class SemanticSearch (APISession):
              (len(prop2psobj), len(propValues), propName))
         return prop2psobj
 
-    def semantic_refcount_by_ids(self, node1ids: list, node2ids: list, no_mess=True):
+    def semantic_refcount_by_ids(self, node1ids: list, node2ids: list, no_mess=True) -> "ResnetGraph":
         rel_effect = self.__rel_effect__
         connect_by_rel_types = self.__connect_by_rels__
         rel_props = self.relProps
@@ -208,12 +208,6 @@ class SemanticSearch (APISession):
         print('%d nodes were linked by %d relations supported by %d references in %s' %
              (cumulative.number_of_nodes(), cumulative.number_of_edges(), cumulative.size(),self.execution_time(start_time)))
         return cumulative
-
-
-    def count_references_between(self, between_node_ids: list, and_node_ids: list, in_graph=None):
-        graph = in_graph if isinstance(in_graph, ResnetGraph) else self.Graph
-        sub_graph = self.Graph.get_subgraph(between_node_ids, and_node_ids, graph)
-        return self.Graph.count_references(sub_graph)
 
 
     def semantic_refcount(self, node1PropValues: list, node1PropTypes: list, node1ObjTypes: list, node2PropValues: list,
@@ -255,7 +249,7 @@ class SemanticSearch (APISession):
             ref_sum = set()
             for idx in self.RefCountPandas.index:
                 idx_entity_ids = list(self.RefCountPandas.at[idx,self.__temp_id_col__])
-                references = self.count_references_between(idx_entity_ids, concept_ids, in_graph=relations)
+                references = relations.count_references_between(idx_entity_ids, concept_ids)
                 self.RefCountPandas.at[idx,new_column] = len(references)
                 if len(references) > 0:
                     ref_sum.update(references)

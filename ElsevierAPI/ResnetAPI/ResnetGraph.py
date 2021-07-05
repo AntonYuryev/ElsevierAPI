@@ -46,8 +46,9 @@ class ResnetGraph (nx.MultiDiGraph):
     def get_neighbors(self, node_ids: set, only_neighbors_with_ids=None):
         if not isinstance(only_neighbors_with_ids,list): only_neighbors_with_ids = list()
         neighbors = set()
-        for Id in node_ids:
-                neighbors.update(set([x for x in nx.all_neighbors(self, Id)]))
+        for i in [n for n in node_ids if self.has_node(n)]:
+            neighbors.update(set([x for x in nx.all_neighbors(self, i)]))
+                
         if len(only_neighbors_with_ids) > 0:
             return [i for i in list(neighbors) if i in only_neighbors_with_ids]
         else:
@@ -106,6 +107,9 @@ class ResnetGraph (nx.MultiDiGraph):
             references.update(rel.References.values())
         return references
 
+    def count_references_between(self, between_node_ids: list, and_node_ids: list):
+        sub_graph = self.get_subgraph(between_node_ids, and_node_ids)
+        return sub_graph.count_references()
 
     def set_edge_property(self, nodeId1, nodeId2, PropertyName, PropertyValues: list, bothDirs=True):
         if self.has_edge(nodeId1, nodeId2):
