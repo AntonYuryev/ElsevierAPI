@@ -84,7 +84,7 @@ class APISession(PSNetworx):
     def add_graph(self, new_graph: ResnetGraph):
         pass  # placeholder to derive child class from APISession (see DiseaseNetwork(APISession) as example)
 
-    def flash_dump_files(self):
+    def flush_dump_files(self):
         for f in self.DumpFiles:
             open(f, 'w').close()
             print('File "%s" was cleared before processing' % f)
@@ -112,10 +112,10 @@ class APISession(PSNetworx):
                                                                                               property_names=[])
         return self.ResultSize
 
-    def process_oql(self, oql_query, request_name='', flash_dump=False, debug=False, no_mess=True, iteration_limit=1):
+    def process_oql(self, oql_query, request_name='', flush_dump=False, debug=False, no_mess=True, iteration_limit=1):
         global_start = time.time()
-        if flash_dump:
-            self.flash_dump_files()
+        if flush_dump:
+            self.flush_dump_files()
         self.__replace_goql(oql_query)
 
         entire_graph = ResnetGraph()
