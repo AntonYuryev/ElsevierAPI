@@ -1,5 +1,6 @@
 import networkx as nx
 import pandas as pd
+import os
 import xml.etree.ElementTree as et
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
 
@@ -184,50 +185,12 @@ class ResnetGraph (nx.MultiDiGraph):
                     f.write(node_prop_str)
 
 
-    def ref2pandas (self, relPropNames: list, entity_prop_names=None, RefNumPrintLimit=0):
-        entity_prop_names = [] if entity_prop_names is None else entity_prop_names
-        rel_props = relPropNames
-        
-        
-        target_header = [''] * len(entity_prop_names)
-        reg_header = [''] * len(entity_prop_names)
-        for i in range(0, len(entity_prop_names)):
-            reg_header[i] = 'Regulator:' + entity_prop_names[i]
-            target_header[i] = 'Target:' + entity_prop_names[i]
-
-        cols = reg_header + rel_props + target_header + ["Regulators Id","Targets Id"]
-        reference_pandas = pd.DataFrame(columns = cols)
-
-        if self.number_of_edges() > 0:
-            if len(entity_prop_names) == 0:
-                for regulatorID, targetID, rel in self.edges.data('relation'):
-                    relation_pandas = rel.to_pandas(rel_props,RefNumPrintLimit)
-                    reference_pandas = pd.concat([reference_pandas, relation_pandas], axis=0)
-            else:
-                for regulatorID, targetID, rel in self.edges.data('relation'):
-                    reg = self._get_node(regulatorID)
-                    target = self._get_node(targetID)
-                    reg_pandas = reg.to_pandas(entity_prop_names)
-                    reg_pandas = reg_pandas.add_prefix('Regulator:')
-                    target_pandas = target.to_pandas(entity_prop_names)
-                    target_pandas = target_pandas.add_prefix('Target:')
-                    relation_pandas = rel.to_pandas(rel_props,RefNumPrintLimit)
-
-                    for col in reg_pandas.columns:
-                        relation_pandas[col] = reg_pandas.at[0,col]
-                    
-                    for col in target_pandas.columns:
-                        relation_pandas[col] = target_pandas.at[0,col]
-                    
-                    reference_pandas = pd.concat([reference_pandas, relation_pandas], axis=0)
-        else:
-            for node_id in self.nodes:
-                n = self._get_node(node_id)
-                node_pandas = n.to_pandas(entity_prop_names)
-                reference_pandas = pd.concat([reference_pandas, node_pandas], axis=0)
-
-        return reference_pandas
-
+    def ref2pandas (self, relPropNames: list, entity_prop_names=None, RefNumPrintLimit=0) -> 'pd.DataFrame':
+        temp_fname = '__temp__.tsv'
+        self.print_references(temp_fname,relPropNames,entity_prop_names,RefNumPrintLimit=RefNumPrintLimit)
+        to_return = pd.read_csv(temp_fname,sep='\t',header=0,index_col=False, dtype='unicode')
+        os.remove(temp_fname)
+        return to_return
 
     def dump_entities(self, fileOut, PropNames, entity_ids=None):
         entity_ids = [] if entity_ids is None else entity_ids

@@ -285,19 +285,24 @@ class SemanticSearch (APISession):
 
         if self.need_references():
             if len(referencesOut) > 0:
-                refFile = referencesOut
-                mode = 'w'
+                ref_pandas = self.to_pandas()
+                search_enitity_colname = 'Search Entity'
+                ref_pandas.insert(0,search_enitity_colname,'')
+                search_entity_names = list(self.RefCountPandas['Resnet name'])
+                for i in ref_pandas.index:
+                    regulator_name = ref_pandas.at[i,'Regulator:Name']
+                    if regulator_name in search_entity_names:
+                        ref_pandas.at[i,search_enitity_colname] = regulator_name
+                    else:
+                        target_name = ref_pandas.at[i,'Target:Name']
+                        if target_name in search_entity_names:
+                            ref_pandas.at[i,search_enitity_colname] = target_name
+
+                ref_pandas.to_csv(referencesOut,sep='\t',index=False)
             else:
-                refFile = self.__refCache__
-                mode = 'a'
+                self.Graph.print_references(self.__refCache__,relPropNames=self.relProps,entity_prop_names=['Name'],access_mode='a')
                 print('Supporting semantic triples are saved to %s for protection or re-use' % self.__refCache__)
-                
-            print_rel_props = [self.__mapped_by__] + self.relProps + [self.__concept_name__]
-            #reference_pandas = self.Graph.ref2pandas(pandas_rel_props,['Name'])
-            #reference_pandas = reference_pandas.dropna(axis=1,how='all')
-            #kwargs['mode'] = mode
-            #reference_pandas.to_csv(refFile,**kwargs)
-            self.Graph.print_references(refFile,print_rel_props,['Name'],access_mode=mode)
+ 
 
     def read_cache(self):#returns last concept linked in cache
         try:

@@ -1,6 +1,8 @@
 import time
 import math
 import networkx as nx
+from networkx.classes.graph import Graph
+import pandas as pd
 from datetime import timedelta
 from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
@@ -194,8 +196,9 @@ class APISession(PSNetworx):
         to_return = self._iterate_oql2(oql_query,id_set1,id_set2,self.relProps,self.entProps)
         return to_return
 
-    def to_pandas (self, in_graph=None, RefNumPrintLimit=0):
-        return self.Graph.ref2pandas(self.relProps,self.entProps,in_graph,RefNumPrintLimit)
+    def to_pandas (self, in_graph=None, RefNumPrintLimit=0)-> 'pd.DataFrame':
+        if not isinstance(in_graph, ResnetGraph): in_graph = self.Graph
+        return in_graph.ref2pandas(self.relProps,self.entProps,RefNumPrintLimit)
 
     def connect_nodes(self,node_ids1:set,node_ids2:set,by_relation_type=None,with_effect=None,in_direction=None):
         oql_query = r'SELECT Relation WHERE '
