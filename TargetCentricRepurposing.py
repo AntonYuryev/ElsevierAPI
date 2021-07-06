@@ -8,13 +8,6 @@ import time
 
 class RepurposeDrugs(SemanticSearch):
     pass
-    find_target_oql :str
-    TargetAgonistIDs = None
-    PartnerIndicationNetwork = None
-    TargetInhibitorsIDs = None 
-    PathwayComponentsIDs = None
-    GVsInDiseaseNetwork = None
-    __colname_GV__ = None
     
     def __init__(self, APIconfig):
         super().__init__(APIconfig)
@@ -214,14 +207,14 @@ class RepurposeDrugs(SemanticSearch):
         effect = 'positive' if self.repurpose_antagonist else 'negative'
         self.set_how2connect(['Regulation'],[effect],'')
         linked_entities_count = self.link2concept(colname,self.Drug_Target['Id'])
-        print('%d diseases are modulated by %s' % (linked_entities_count,t_n))
+        print('%d diseases are %sly regulated by %s' % (linked_entities_count,effect,t_n))
     
         #references where target expression or activity changes in the disease
         colname = t_n + ' is upregulated'
         effect = 'positive' if self.repurpose_antagonist else 'negative'
         self.set_how2connect(['QuantitativeChange'],[effect],'')
         linked_entities_count= self.link2concept(colname,self.target_ids)
-        print('%d diseases are modulated by %s' % (linked_entities_count,t_n))
+        print('%d diseases %sly regulate %s' % (linked_entities_count,effect,t_n))
 
         #references suggested target as a biomarker for indication
         colname = t_n + ' is Biomarker'
@@ -231,16 +224,21 @@ class RepurposeDrugs(SemanticSearch):
 
         self.score_GVs()
 
-        if isinstance(self.TargetInhibitorsIDs,ResnetGraph):
+        if hasattr(self,'TargetInhibitorsIDs'):
             #references suggesting target antagonists as treatments for indication 
             colname = t_n + ' antagonists'
-            effect = 'negative' if self.repurpose_antagonist else 'positive'
+            if self.repurpose_antagonist:
+                effect = 'negative'
+                drug_class = 'antagonists'
+            else:
+                effect = 'positive'
+                drug_class = 'agonists'
             self.set_how2connect(['Regulation'],[effect],'')
             linked_entities_count = self.link2concept(colname,self.TargetInhibitorsIDs)
-            print('Found %d diseases are indications for %s antagonists' % (linked_entities_count,t_n))
+            print('Found %d diseases are indications for %s %s' % (linked_entities_count,t_n,drug_class))
 
         #references suggesting target partners as targets for indication
-        if isinstance(self.PartnerIndicationNetwork,ResnetGraph):
+        if hasattr(self, 'PartnerIndicationNetwork'):
             p_cl = self.partner_class
             colname = '{target_name} {partnet_class}s'.format(target_name=t_n,partnet_class=p_cl)
             PartnerIds = self.PartnerIndicationNetwork.get_entity_ids(['Protein'])
@@ -250,7 +248,7 @@ class RepurposeDrugs(SemanticSearch):
             print('Found %d diseases indications for %d %s %ss' % (linked_entities_count,len(PartnerIds),t_n,p_cl))
 
         #references reporting that cells producing the target linked to indication
-        if isinstance(self.ProducingCellsIDs,list):
+        if hasattr(self, 'ProducingCellsIDs'):
             colname = '{target_name} producing cells'.format(target_name=t_n)
             effect = 'positive' if self.repurpose_antagonist else 'negative'
             self.set_how2connect([],[effect],'')
@@ -258,19 +256,26 @@ class RepurposeDrugs(SemanticSearch):
             print('Found %d diseases linked %d cells producing %s' % (linked_entities_count,len(self.ProducingCellsIDs),t_n))
         
         #references reporting target agonists exacerbating indication or causing indication as adverse events
-        if isinstance(self.TargetAgonistIDs,ResnetGraph):
+        if hasattr(self, 'TargetAgonistIDs'):
             colname = t_n + ' agonists'
-            effect = 'positive' if self.repurpose_antagonist else 'negative'
+            if self.repurpose_antagonist:
+                effect = 'positive'
+                drug_class = 'agonists'
+            else:
+                effect = 'negative'
+                drug_class = 'antagonists'
+
             self.set_how2connect(['Regulation'],[effect],'')
             linked_entities_count = self.link2concept(colname,self.TargetAgonistIDs)
-            print('Found %d diseases are toxicities for %s agonists' % (linked_entities_count,t_n))
+            print('Found %d diseases are toxicities for %s %s' % (linked_entities_count,t_n,drug_class))
         
-        if isinstance(self.PathwayComponentsIDs,ResnetGraph):
+        if hasattr(self, 'PathwayComponentsIDs'):
             #references linking target pathway to indication
             colname = t_n+' pathway components'
             effect = 'positive' if self.repurpose_antagonist else 'negative'
             self.set_how2connect(['Regulation'],[effect],'')
             linked_entities_count = self.link2concept(colname,self.PathwayComponentsIDs)
+            print('%d indications are linked to %s pathway components' % (linked_entities_count,t_n))
         
 
     def normalize_counts(self):
@@ -313,16 +318,17 @@ if __name__ == "__main__":
 
     rd.find_target_indications()
     rd.get_pathway_componets()
-  #  rd.indications4chem_modulators() # if target is ligand use it only when antibody drugs are available 
-  #  rd.counterindications4chem_antimodulators()
+  ##  rd.indications4chem_modulators() # if target is ligand use it only when antibody drugs are available 
+  ##  rd.counterindications4chem_antimodulators()
     rd.indications4partners()
     rd.indications4cell_secreting_target() #will work only if target is Ligand
 
     rd.init_semantic_search()
     rd.score_semantics()
-    NormalizedCount = rd.normalize_counts()
     t_n = rd.Drug_Target['Name'][0]
     rd.print_ref_count(t_n+" repurposing counts.tsv",t_n+" repurposing references.tsv",sep='\t')
+
+    NormalizedCount = rd.normalize_counts()
     fout = t_n + ' repurposing normalized report.tsv'
     NormalizedCount.to_csv(fout, sep='\t', index=False,float_format='%g')
     print('Repurposing of %s was done in %s' % (t_n, rd.execution_time(start_time)))
