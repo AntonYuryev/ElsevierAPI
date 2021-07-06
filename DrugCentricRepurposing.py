@@ -38,6 +38,7 @@ if __name__ == "__main__":
 
     SELECTdrug = 'SELECT Entity WHERE (Name,Alias) = {drug}'
     SELECTdrug = SELECTdrug.format(drug=dcp.Drug)
+    dcp.flush_dump_files()
 
     # PART I: Finding all possible indications
     REQUEST_NAME = 'Find {drug} clinical trials'.format(drug=dcp.Drug)

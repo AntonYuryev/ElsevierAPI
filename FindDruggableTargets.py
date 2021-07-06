@@ -58,7 +58,7 @@ DiseaseProteins = set(ps_api.Graph.get_entity_ids(['Protein']))
 print("Finding Drugs for Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDrugsForDiseaseProteins, replace_main_dump=True)
 start_time = time.time()
-ps_api.process_oql(GOQL.get_drugs(for_targets_with_ids=list(DiseaseProteins)), flash_dump=True)
+ps_api.process_oql(GOQL.get_drugs(for_targets_with_ids=list(DiseaseProteins)), flush_dump=True)
 DrugCount = set([x for x, y in ps_api.Graph.nodes(data=True) if
                  ((ps_api.Graph.out_degree(x) > 0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))])
 FoundTargets = set(

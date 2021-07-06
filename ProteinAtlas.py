@@ -1,5 +1,6 @@
 import time
-from ElsevierAPI import ps_api
+from ElsevierAPI import APIconfig
+from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_ID_TYPES
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
 
@@ -7,6 +8,7 @@ global_start = time.time()
 
 REL_PROPs = ['Name', 'Effect', 'Mechanism', 'ChangeType']
 ENT_PROPs = ['Name', 'Description', 'Cell Localization'] 
+ps_api = APISession(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
 # add here relation properties to retrieve
 # if properties from NetworkxObjects.REF_ID_TYPES or NetworkxObjects.REF_PROPS are added to REL_PROPs
 # output size may increase dramatically because it will contain one reference per row.
@@ -18,7 +20,7 @@ ps_api.add_ent_props(ENT_PROPs)
 # this dump file will list all proteins in the database with connectivity >0:
 ps_api.add_dump_file('Proteins from database.tsv', replace_main_dump=True)
 print('Fetching all proteins from the database')
-ProteinsOnyGraph = ps_api.process_oql("Select Entity WHERE objectType = Protein AND Connectivity > 0 AND Name LIKE 'A%'", flash_dump=True)
+ProteinsOnyGraph = ps_api.process_oql("Select Entity WHERE objectType = Protein AND Connectivity > 0 AND Name LIKE 'A%'", flush_dump=True)
 
 
 ps_api.add_dump_file("Protein neighbors dump.tsv", replace_main_dump=True)  # dump file accumulates all data in one big file

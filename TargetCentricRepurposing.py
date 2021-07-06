@@ -121,7 +121,7 @@ class RepurposeDrugs(SemanticSearch):
         t_n = ','.join(self.Drug_Target['Name'])
         effect = 'positive' if self.repurpose_antagonist else 'negative'
         REQUEST_NAME = 'Find indications for {targets} {partner}s'.format(targets=t_n,partner=self.partner_class.lower())
-        OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {effect} AND NeighborOf ({select_partners}) AND NeighborOf (SELECT Entity WHERE objectType = Disease)'
+        OQLquery = 'SELECT Relation WHERE objectType = (Regulation,QuantitativeChange) AND Effect = {effect} AND NeighborOf ({select_partners}) AND NeighborOf (SELECT Entity WHERE objectType = Disease)'
         if self.partners != NotImplemented:
             OQLquery = OQLquery.format(effect=effect,select_partners=self.find_partners_oql)
             self.PartnerIndicationNetwork = self.process_oql(OQLquery,REQUEST_NAME)
@@ -129,7 +129,7 @@ class RepurposeDrugs(SemanticSearch):
             print('Found %d indications for %d %s %ss' %  
                  (len(found_diseases), len(self.partners),t_n,self.partner_class.lower()))
 
-    def indications4cell_secreting_target(self):
+    def indications4cells_secreting_target(self):
         t_n = self.Drug_Target['Name'][0]
         if self.target_class == 'Ligand':
             REQUEST_NAME = 'Find indications linked to cells secreting the {target}'.format(target=t_n)
@@ -169,7 +169,6 @@ class RepurposeDrugs(SemanticSearch):
         MergedPathway = self.process_oql(OQLquery,REQUEST_NAME) 
         MergedPathway = MergedPathway.get_regulome(self.Drug_Target['Id'])
         self.PathwayComponentsIDs = list(MergedPathway.nodes)
-        t_n = self.Drug_Target['Name'][0]
         print ('Found %s regulome with %d components' %(t_n,len(self.PathwayComponentsIDs)))
 
     def init_semantic_search(self):
@@ -315,13 +314,19 @@ if __name__ == "__main__":
     #rd.set_targets(['FGFR3'], 'Protein',to_inhibit=True)
     rd.set_targets(['IL15'], 'Protein',to_inhibit=True)
     rd.PageSize = 500
+    rd.flush_dump_files()
 
     rd.find_target_indications()
     rd.get_pathway_componets()
-  ##  rd.indications4chem_modulators() # if target is ligand use it only when antibody drugs are available 
-  ##  rd.counterindications4chem_antimodulators()
+
+    if rd.target_class is not 'Ligand:':
+        rd.indications4chem_modulators()    # if target is Ligand use indications4chem_modulators only 
+                                            #if its antibody drugs have relations in Resnet
+        rd.counterindications4chem_antimodulators()
+
     rd.indications4partners()
-    rd.indications4cell_secreting_target() #will work only if target is Ligand
+    rd.indications4cells_secreting_target() #will work only if target is Ligand
+
 
     rd.init_semantic_search()
     rd.score_semantics()
