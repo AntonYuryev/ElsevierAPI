@@ -20,4 +20,5 @@ my_graph = ps_api.process_oql(my_goql_query,request_name, debug=False, flush_dum
 # set debug=True to retreive all results from your GOQL query. 
 # during retreival ps_api caches data into dump file with default name 'ResnetAPIsessionDump.tsv' using APISession.to_csv()
 # dump file delimeter is defined by APISession.csv_delimeter parameter
-# dump file name is in ps_api.DumpFiles = ['ResnetAPIsessionDump.tsv']
+# all resultes are appended into dump file name is in ps_api.DumpFiles = ['ResnetAPIsessionDump.tsv']
+# flush_dump=True deletes content of the old 'ResnetAPIsessionDump.tsv' before processing new GOQL query
