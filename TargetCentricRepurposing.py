@@ -319,7 +319,7 @@ if __name__ == "__main__":
     rd.find_target_indications()
     rd.get_pathway_componets()
 
-    if rd.target_class is not 'Ligand:':
+    if rd.target_class != 'Ligand:':
         rd.indications4chem_modulators()    # if target is Ligand use indications4chem_modulators only 
                                             #if its antibody drugs have relations in Resnet
         rd.counterindications4chem_antimodulators()
