@@ -103,7 +103,7 @@ class APISession(PSNetworx):
         open(fname, "w", encoding='utf-8').close()
         return open(fname, "a", encoding='utf-8')
 
-    def to_csv(self, file_out, in_graph: ResnetGraph, access_mode='w', debug=False):
+    def to_csv(self, file_out, in_graph: ResnetGraph=None, access_mode='w', debug=False):
         if not isinstance(self.Graph,ResnetGraph): in_graph = self.Graph
         in_graph.print_references(file_out, self.relProps, self.entProps, access_mode, 
                                     self.__IsOn1st_page, col_sep=self.csv_delimeter,debug=debug)
