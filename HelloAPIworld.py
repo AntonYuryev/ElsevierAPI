@@ -17,7 +17,7 @@ my_graph = ps_api.process_oql(my_goql_query,request_name, debug=False, flush_dum
 # process_oql retreives data by iterations. Iteration size is controled by ps_api.PageSize
 # ps_api.PageSize defaults to 100 relations per iteration and cannot be bigger than 10,000
 # debug=False retreives resuts only from the first iteration
-# #set debug=True to retreive all results from your GOQL query. 
+# set debug=True to retreive all results from your GOQL query. 
 # during retreival ps_api caches data into dump file with default name 'ResnetAPIsessionDump.tsv' using APISession.to_csv()
 # dump file delimeter is defined by APISession.csv_delimeter parameter
 # dump file name is in ps_api.DumpFiles = ['ResnetAPIsessionDump.tsv']
