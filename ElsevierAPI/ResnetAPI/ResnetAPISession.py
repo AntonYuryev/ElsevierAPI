@@ -104,7 +104,7 @@ class APISession(PSNetworx):
         return open(fname, "a", encoding='utf-8')
 
     def to_csv(self, file_out, in_graph: ResnetGraph=None, access_mode='w', debug=False):
-        if not isinstance(self.Graph,ResnetGraph): in_graph = self.Graph
+        if not isinstance(in_graph,ResnetGraph): in_graph = self.Graph
         in_graph.print_references(file_out, self.relProps, self.entProps, access_mode, 
                                     self.__IsOn1st_page, col_sep=self.csv_delimeter,debug=debug)
 
@@ -217,8 +217,3 @@ class APISession(PSNetworx):
             oql_query = oql_query + ' AND objectType = ('+','.join(by_relation_type)+')'
 
         return self.iterate_oql2(f'{oql_query}',node_ids1,node_ids2)
-
-
-    
-
-    
