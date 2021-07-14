@@ -276,28 +276,36 @@ class RepurposeDrugs(SemanticSearch):
             linked_entities_count = self.link2concept(colname,self.PathwayComponentsIDs)
             print('%d indications are linked to %s pathway components' % (linked_entities_count,t_n))
         
+    
 
     def normalize_counts(self):
         NormalizedCount = pd.DataFrame()
+        weights = pd.DataFrame()
         refcount_cols = [col for col in self.RefCountPandas.columns if 'RefCount' in col]
-
+        number_of_weights = len(refcount_cols)
+        
         NormalizedCount['Name'] = self.RefCountPandas['Name']
+        weights.at[0,'Name'] = 'WEIGHTS:'
+        weight_index = 0
         for col in refcount_cols:
             col_max = self.RefCountPandas[col].max()
             NormalizedCount[col] = self.RefCountPandas[col]/col_max
-       
-        #calculating cumulative score
-        number_of_weights = len(refcount_cols)
+            column_weight = (number_of_weights-weight_index)/number_of_weights
+            weights.at[0,col] = column_weight
+            weight_index += 1
+     
+        #calculating cumulative score     
         combined_scores = list()
         for i in NormalizedCount.index:
             scores_row = NormalizedCount.loc[[i]]
             weighted_sum = 0.0
-            weight_index = 0
+            #weight_index = 0
             for col in refcount_cols:
-                weighted_sum = weighted_sum + scores_row[col]*(number_of_weights-weight_index)/number_of_weights
-                weight_index += 1
-
+                #weighted_sum = weighted_sum + scores_row[col]*(number_of_weights-weight_index)/number_of_weights
+                weighted_sum = weighted_sum + scores_row[col]*weights.at[0,col]
+                #weight_index += 1
             combined_scores.append(weighted_sum)
+
         NormalizedCount['Combined score'] = np.array(combined_scores)
         NormalizedCount[self.__colnameGV__] = self.RefCountPandas[self.__colnameGV__]
 
@@ -305,18 +313,20 @@ class RepurposeDrugs(SemanticSearch):
         NormalizedCount['Final score'] = NormalizedCount['Combined score']/NormalizedCount['#children']
         NormalizedCount = NormalizedCount.sort_values(by=['Final score'],ascending=False)
         NormalizedCount = NormalizedCount.loc[(NormalizedCount['Final score'] > 0.0) | (NormalizedCount[self.__colnameGV__].notna())] # removes rows with all zeros
-        return NormalizedCount
+        
+        return weights.append(NormalizedCount)
 
 
 if __name__ == "__main__":
     start_time = time.time()
     rd = RepurposeDrugs(APIconfig)
     #rd.set_targets(['FGFR3'], 'Protein',to_inhibit=True)
-    rd.set_targets(['IL15'], 'Protein',to_inhibit=True)
+    rd.set_targets(['F2RL1'], 'Protein',to_inhibit=True)
     rd.PageSize = 500
     rd.flush_dump_files()
 
     rd.find_target_indications()
+    
     rd.get_pathway_componets()
 
     if rd.target_class != 'Ligand':
@@ -326,14 +336,19 @@ if __name__ == "__main__":
 
     rd.indications4partners()
     rd.indications4cells_secreting_target() #will work only if target is Ligand
-
+    
 
     rd.init_semantic_search()
     rd.score_semantics()
     t_n = rd.Drug_Target['Name'][0]
-    rd.print_ref_count(t_n+" repurposing counts.tsv",t_n+" repurposing references.tsv",sep='\t')
+    count_file = t_n+" repurposing counts.tsv"
+    ref_file = t_n+" repurposing references.tsv"
+    rd.print_ref_count(count_file,referencesOut=ref_file,sep='\t')
 
     NormalizedCount = rd.normalize_counts()
     fout = t_n + ' repurposing normalized report.tsv'
     NormalizedCount.to_csv(fout, sep='\t', index=False,float_format='%g')
     print('Repurposing of %s was done in %s' % (t_n, rd.execution_time(start_time)))
+    print ('Ranked indications are in %s' % fout)
+    print ('Semantic counts for each indication are in %s', count_file)
+    print('References supporting semantic counts are in %s' % ref_file)
