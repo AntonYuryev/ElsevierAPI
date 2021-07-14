@@ -193,17 +193,21 @@ class PSRelation(PSObject):
         else:
             return False
 
-    def prop_values2str(self, propID, cell_sep: str =';'):
+    def prop_values2str(self, prop_id, cell_sep: str =';'):
         try:
-            return cell_sep.join(map(str, self[propID]))
+            return cell_sep.join(map(str, self[prop_id]))
         except KeyError:
             prop_set_values = []
             for prop in self.PropSetToProps.values():
                 try:
-                    prop_set_values.append(cell_sep.join(map(str, prop[propID])))
+                    prop_set_values.append(cell_sep.join(map(str, prop[prop_id])))
                 except KeyError:
                     continue
-            return cell_sep.join(prop_set_values)
+            
+            to_return = cell_sep.join(prop_set_values)
+            if prop_id in ['Sentence','Title']:
+                to_return = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', to_return)
+            return to_return
 
     def prop_values2list(self, propID, cell_sep=';'):
         try:

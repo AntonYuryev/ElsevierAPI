@@ -1,7 +1,9 @@
+import os
 import time
 import pandas as pd
 import networkx as nx
 import math
+import re
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_ID_TYPES
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
@@ -285,20 +287,30 @@ class SemanticSearch (APISession):
 
         if self.need_references():
             if len(referencesOut) > 0:
-                ref_pandas = self.to_pandas()
-                search_enitity_colname = 'Search Entity'
-                ref_pandas.insert(0,search_enitity_colname,'')
-                search_entity_names = list(self.RefCountPandas['Resnet name'])
-                for i in ref_pandas.index:
-                    regulator_name = ref_pandas.at[i,'Regulator:Name']
-                    if regulator_name in search_entity_names:
-                        ref_pandas.at[i,search_enitity_colname] = regulator_name
-                    else:
-                        target_name = ref_pandas.at[i,'Target:Name']
-                        if target_name in search_entity_names:
-                            ref_pandas.at[i,search_enitity_colname] = target_name
+                #ref_pandas = self.to_pandas()
+                temp_fname = '__temp__.tsv'
+                sep = '\t'
+                self.Graph.print_references(temp_fname,self.relProps,self.entProps,col_sep=sep)
 
-                ref_pandas.to_csv(referencesOut,sep='\t',index=False)
+                search_entity_names = list(self.RefCountPandas['Resnet name'])
+                f = open(temp_fname,'r',encoding='utf-8')
+                with open(referencesOut, 'w',encoding='utf-8') as fout:
+                    header = f.readline()
+                    col_names = re.split('\t|\n',header)
+                    regulator_column = col_names.index('Regulator:Name')
+                    target_column = col_names.index('Target:Name')
+                    fout.write('Search Entity'+'\t'+header)
+
+                    for line in f.readlines():
+                        columns = re.split('\t|\n',line)
+                        search_entity = '' 
+                        if columns[regulator_column] in search_entity_names:
+                            search_entity = columns[regulator_column]
+                        elif columns[target_column] in search_entity_names:
+                            search_entity = columns[target_column]
+                        fout.write(search_entity+'\t'+line)
+                f.close()
+                os.remove(temp_fname)
             else:
                 self.Graph.print_references(self.__refCache__,relPropNames=self.relProps,entity_prop_names=['Name'],access_mode='a')
                 print('Supporting semantic triples are saved to %s for protection or re-use' % self.__refCache__)

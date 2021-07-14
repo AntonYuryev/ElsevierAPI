@@ -2,6 +2,7 @@ import pandas as pd
 import logging
 import sys
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+import zeep
 
 
 def configure_logging(logger):
@@ -25,7 +26,6 @@ class DataModel:
         from zeep.cache import SqliteCache
         from zeep.transports import Transport
         session = Session()
-
         session.auth = HTTPBasicAuth(username, password)
         transport = Transport(cache=SqliteCache(), session=session)
         from zeep import Client, Settings
@@ -163,12 +163,21 @@ class DataModel:
         return accumulate_subfolders
 
     def get_folder_objects(self, FolderId, result_param):
-        result = self.SOAPclient.service.FolderGetObjects(FolderId, result_param)
-        return result
+        from zeep import exceptions
+        for i in range (0,3):
+            try:
+                result = self.SOAPclient.service.FolderGetObjects(FolderId, result_param)
+                return result
+            except exceptions.Fault: continue
 
     def oql_response(self, OQLquery, result_param):
-        result = self.SOAPclient.service.OQLSearch(OQLquery, result_param)
-        return result
+        from zeep import exceptions
+        for i in range (0,3):
+            try:
+                result = self.SOAPclient.service.OQLSearch(OQLquery, result_param)
+                return result
+            except exceptions.Fault: continue
+
 
     def result_get_data(self, result_param):
         result = self.SOAPclient.service.ResultGetData(result_param)

@@ -1,7 +1,6 @@
 import time
 import math
 import networkx as nx
-from networkx.classes.graph import Graph
 import pandas as pd
 from datetime import timedelta
 from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
@@ -181,7 +180,7 @@ class APISession(PSNetworx):
         print('Retrieving PPI network for %d proteins' % (len(graph_proteins)))
         start_time = time.time()
         ppi_graph = self.get_ppi(graph_proteins, self.relProps, self.entProps)
-        self.to_csv(fout, ppi_graph)
+        self.to_csv(fout, in_graph=ppi_graph)
         print("PPI network with %d relations was retrieved in %s ---" % (
             ppi_graph.size(), self.execution_time(start_time)))
         return ppi_graph
@@ -203,10 +202,12 @@ class APISession(PSNetworx):
 
     def connect_nodes(self,node_ids1:set,node_ids2:set,by_relation_type=None,with_effect=None,in_direction=None):
         oql_query = r'SELECT Relation WHERE '
-        if isinstance(in_direction,str) and in_direction == '>':
-            oql_query = oql_query + 'NeighborOf downstream (SELECT Entity WHERE id = ({ids1})) AND NeighborOf upstream (SELECT Entity WHERE id = ({ids2}))'
-        elif isinstance(in_direction,str) and in_direction == '<':
-            oql_query = oql_query + 'NeighborOf upstream (SELECT Entity WHERE id = ({ids1})) AND NeighborOf downstream (SELECT Entity WHERE id = ({ids2}))'
+        if isinstance(in_direction,str):
+            if in_direction == '>':
+                oql_query = oql_query + 'NeighborOf downstream (SELECT Entity WHERE id = ({ids1})) AND NeighborOf upstream (SELECT Entity WHERE id = ({ids2}))'
+            elif in_direction == '<':
+                oql_query = oql_query + 'NeighborOf upstream (SELECT Entity WHERE id = ({ids1})) AND NeighborOf downstream (SELECT Entity WHERE id = ({ids2}))'
+            else: print('Direction sign is not recorgnized!')
         else:
             oql_query = oql_query + 'NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
 
@@ -217,3 +218,8 @@ class APISession(PSNetworx):
             oql_query = oql_query + ' AND objectType = ('+','.join(by_relation_type)+')'
 
         return self.iterate_oql2(f'{oql_query}',node_ids1,node_ids2)
+
+
+    
+
+    

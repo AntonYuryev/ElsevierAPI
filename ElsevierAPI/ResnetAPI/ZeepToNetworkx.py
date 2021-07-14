@@ -104,9 +104,7 @@ class PSNetworx(DataModel):
         return new_graph
 
     def load_graph_from_oql(self, oql_query: str, relation_props: list=None, entity_props: list=None, get_links=True):
-
         entity_props = set(['Name']+entity_props) if isinstance(entity_props,list) else {'Name'}
-  
         if get_links:
             if isinstance(relation_props,list):
                 relation_props = set(relation_props+['Name','RelationNumberOfReferences'])
