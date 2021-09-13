@@ -355,7 +355,7 @@ class DataModel:
 
         return obj_props, (obj_props.ResultRef, obj_props.ResultSize, obj_props.ResultPos)
 
-    def get_next_session_page(self, ResultRef, ResultPos, PageSize, ResultSize, property_names=None, getLinks=True):
+    def get_session_page(self, ResultRef, ResultPos, PageSize, ResultSize, property_names=None, getLinks=True):
         property_names = ['Name'] if property_names is None else property_names
 
         rp = self.create_result_param(property_names)
@@ -396,7 +396,7 @@ class DataModel:
         if rp.ResultPos >= rp.ResultSize:
             self.SOAPclient.service.ResultRelease(rp.ResultRef)
 
-        return obj_props, obj_props.ResultPos
+        return obj_props,  obj_props.ResultSize, obj_props.ResultPos
 
     def put_experiment(self, dataframe: pd, expName, expType, entityType, map_entities_by, has_pvalue=True, description=''):
         # PSexp = self.SOAPclient.service('ns0:GetExperiment')

@@ -1,8 +1,9 @@
 import networkx as nx
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation, REF_PROPS
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation, REF_PROPS, REF_ID_TYPES
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
+from xml.dom import minidom
 
 REL_PROPS = ['Effect','Mechanism']
 
@@ -104,7 +105,7 @@ class PSNetworx(DataModel):
         return new_graph
 
     def load_graph_from_oql(self, oql_query: str, relation_props: list=None, entity_props: list=None, get_links=True):
-        entity_props = set(['Name']+entity_props) if isinstance(entity_props,list) else {'Name'}
+        entity_props = set(['Name']+list(entity_props)) if isinstance(entity_props,(list, set)) else {'Name'}
         if get_links:
             if isinstance(relation_props,list):
                 relation_props = set(relation_props+['Name','RelationNumberOfReferences'])
@@ -264,29 +265,6 @@ class PSNetworx(DataModel):
 
         return id2entity
 
-    def get_all_pathways(self, property_names=None):
-        if property_names is None: property_names = ['Name']
-        print('retrieving identifiers of all pathways from database')
-
-        if (len(self.IdToFolders)) == 0: self.load_folder_tree()
-
-        id2pathway = dict()
-        urn2pathway = dict()
-        for folderList in self.IdToFolders.values():
-            for folder in folderList:
-                zeep_objects = self.get_folder_objects_props(folder['Id'], property_names)
-                ps_objects = self._zeep2psobj(zeep_objects)
-                for Id, psObj in ps_objects.items():
-                    if psObj['ObjTypeName'][0] == 'Pathway':
-                        try:
-                            id2pathway[Id].add_unique_property('Folders', folder['Name'])
-                        except KeyError:
-                            psObj['Folders'] = [folder['Name']]
-                            id2pathway[Id] = psObj
-                            urn2pathway[psObj['URN'][0]] = psObj
-
-        print('Found %d pathways in the database' % (len(id2pathway)))
-        return id2pathway, urn2pathway
 
     def get_pathway_member_ids(self, PathwayIds: list, search_pathways_by=None, only_entities=None,
                                with_properties=None):
@@ -381,10 +359,10 @@ class PSNetworx(DataModel):
                 return ResnetGraph()
 
 
-    def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties=None, retrieve_ent_properties=None):
-        retrieve_ent_properties = ['Name'] if retrieve_ent_properties is None else retrieve_ent_properties
-        retrieve_rel_properties = ['Name', 'RelationNumberOfReferences'] if retrieve_rel_properties is None else retrieve_rel_properties
-        
+    def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties:list=None, retrieve_ent_properties:list=None):
+        if not isinstance(retrieve_ent_properties,list): retrieve_ent_properties = ['Name'] 
+        if not isinstance(retrieve_rel_properties,list): retrieve_rel_properties = ['Name','RelationNumberOfReferences']
+         
         ent_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
         rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
         
@@ -401,7 +379,110 @@ class PSNetworx(DataModel):
 
         return accumulate_pathways
 
-    def to_rnef(self, in_graph=None):
+    def to_rnef(self, in_graph=None,add_rel_props:dict=None,add_pathway_props:dict=None):
+        # add_rel_props structure {PropName:[PropValues]}
         if not isinstance(in_graph,ResnetGraph): in_graph=self.Graph
         all_rnef_props = set(list(self.RNEFnameToPropType.keys())+REF_PROPS)
-        return in_graph.to_rnef(list(all_rnef_props))
+        return in_graph.to_rnef(list(all_rnef_props),add_rel_props,add_pathway_props)
+
+    def get_all_pathways(self, property_names=None):
+        if property_names is None: property_names = ['Name']
+        print('retrieving identifiers of all pathways from database')
+
+        if (len(self.IdToFolders)) == 0: self.load_folder_tree()
+
+        self.Id2Pathways = dict()
+        urn2pathway = dict()
+        for folderList in self.IdToFolders.values():
+            for folder in folderList:
+                zeep_objects = self.get_folder_objects_props(folder['Id'], property_names)
+                ps_objects = self._zeep2psobj(zeep_objects)
+                for Id, psObj in ps_objects.items():
+                    if psObj['ObjTypeName'][0] == 'Pathway':
+                        try:
+                            self.Id2Pathways[Id].add_unique_property('Folders', folder['Name'])
+                        except KeyError:
+                            psObj['Folders'] = [folder['Name']]
+                            self.Id2Pathways[Id] = psObj
+                            urn2pathway[psObj['URN'][0]] = psObj
+
+        print('Found %d pathways in the database' % (len(self.Id2Pathways)))
+        return urn2pathway
+
+
+    def get_pathway(self, pathwayId,path_urn=None,path_name=None,rel_props:list=None, ent_props:list=None,
+                    xml_format='RNEF',put2folder:str=None, add_rel_props:dict=None, add_pathway_props:dict=None, as_batch=True):
+    # add_rel_props, add_pathway_props structure - {PropName:[PropValues]}
+        if not isinstance(rel_props,list): rel_props = REF_PROPS+REF_ID_TYPES
+
+        if hasattr(self,'Id2Pathways'):
+            if not isinstance(path_urn,str):
+                try:
+                    path_urn = self.Id2Pathways[pathwayId]['URN'][0]
+                    path_name = self.Id2Pathways[pathwayId]['Name'][0]
+                except KeyError:
+                    print('Pathway collection does not have %s pathway with URN %s' % (path_name,path_urn))
+
+        if not isinstance(path_urn,str):
+            print('Pathway has no URN specifed!!!! ')
+            path_urn = 'no_urn'
+        
+        if not isinstance(path_name,str):
+            print('Pathway has no Name specifed!!!! ')
+            path_name = 'no_name'
+
+
+        pathway_graph = self.get_pathway_components([pathwayId],'id',retrieve_rel_properties=rel_props,
+                                                    retrieve_ent_properties=ent_props)
+        pathway_graph.count_references()
+
+        graph_xml = self.to_rnef(pathway_graph,add_rel_props,add_pathway_props)
+        import xml.etree.ElementTree as et
+        rnef_xml = et.fromstring(graph_xml)
+        rnef_xml.set('name', path_name)
+        rnef_xml.set('urn', path_urn)
+
+        lay_out = et.Element('attachments')
+        lay_out.append(et.fromstring(self.get_layout(pathwayId)))
+        rnef_xml.append(lay_out)
+                   
+        if xml_format == ['SBGN']:
+            batch_xml = et.Element('batch')
+            batch_xml.insert(0,rnef_xml)
+            pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+            pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
+            from ElsevierAPI.ResnetAPI.rnef2sbgn import rnef2sbgn_str
+            pathway_xml = rnef2sbgn_str(pathway_xml, classmapfile='ElsevierAPI/ResnetAPI/rnef2sbgn_map.xml')
+        else:
+            if isinstance(put2folder,str):
+                batch_xml = et.Element('batch')
+                batch_xml.insert(0,rnef_xml)
+                resnet = et.Element('resnet')
+                xml_nodes = et.SubElement(resnet, 'nodes')
+                folder_local_id = 'F0'
+                xml_node_folder = et.SubElement(xml_nodes, 'node', {'local_id':folder_local_id, 'urn': 'urn:agi-folder:xxxxx_yyyyy_zzzzz'})
+                et.SubElement(xml_node_folder, 'attr', {'name': 'NodeType', 'value': 'Folder'})
+                et.SubElement(xml_node_folder, 'attr', {'name': 'Name', 'value': put2folder})
+                pathway_local_id = 'P0'
+                xml_node_pathway = et.SubElement(xml_nodes, 'node', {'local_id':pathway_local_id, 'urn': path_urn})
+                et.SubElement(xml_node_pathway, 'attr', {'name': 'NodeType', 'value': 'Pathway'})
+                xml_controls = et.SubElement(resnet, 'controls')
+                xml_control = et.SubElement(xml_controls, 'control', {'local_id':'CFE1'})
+                et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':'MemberOf'})
+                et.SubElement(xml_control, 'link', {'type':'in', 'ref':pathway_local_id})
+                et.SubElement(xml_control, 'link', {'type':'out', 'ref':folder_local_id})
+                batch_xml.append(resnet)
+            
+            if as_batch:
+                pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+                pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
+            else:
+                pathway_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=False).decode("utf-8")
+                
+
+        print('\"%s\" pathway downloaded: %d nodes, %d edges supported by %d references' % 
+            (path_name, pathway_graph.number_of_nodes(),pathway_graph.number_of_edges(),pathway_graph.size()))
+
+        return pathway_graph, str(pathway_xml)
+
+

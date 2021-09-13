@@ -28,9 +28,9 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def add_single_property(self, PropId, PropValue: str):
         self[PropId] = [PropValue]
 
-    def add_property(self, PropId, PropValue: str):
+    def add_property(self, PropId, PropValue):
         try:
-            list(self[PropId]).append(PropValue)
+            self[PropId].append(PropValue)
         except KeyError:
             self[PropId] = [PropValue]
 

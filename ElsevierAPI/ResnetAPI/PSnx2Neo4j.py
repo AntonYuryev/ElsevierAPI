@@ -1,4 +1,3 @@
-# Initializing Pathway Studio data model
 from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSObject, PSRelation, PSNetworx, REF_ID_TYPES
 import logging
 from neo4j import GraphDatabase
@@ -116,5 +115,5 @@ class nx2neo4j:
         print('Importing Resnet data into local Neo4j')
         #app = nx2neo4j(uriNeo4j, userNeo4j, pswdNeo4j)
         self.load_nodes(resnet)
-        resnet.count_references()
+        resnet.Graph.count_references()
         self.load_relations(resnet)

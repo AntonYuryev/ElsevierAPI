@@ -24,14 +24,38 @@ class ResnetGraph (nx.MultiDiGraph):
                     break
         return list(all_ids)
 
+    def get_objects(self, SearchValues: list, search_by_properties: list=None):
+        if search_by_properties is None: search_by_properties = ['ObjTypeName']
+        all_objects = set()
+        for i, node in self.nodes(data=True):
+            for propName in search_by_properties:
+                ps_obj = PSObject(node)
+                if ps_obj.has_str_property(propName, SearchValues):
+                    all_objects.add(ps_obj)
+                    break
+        return list(all_objects)
+
+    def get_prop2obj_dic(self, search_by_property:str):
+        to_return = dict()
+        for i, n in self.nodes(data=True):
+            try:
+                for v in n[search_by_property]:
+                    try:
+                        to_return[v].append(PSObject(n))
+                    except KeyError:
+                        to_return[v] = [PSObject(n)]
+            except KeyError:
+                continue
+        return to_return
+
     def _get_node(self, nodeId):
         return PSObject({k: v for k, v in self.nodes[nodeId].items()})
 
-    def _get_nodes(self, nodeIds: list):
-        node_list = list()
-        for n in nodeIds:
-            node_list.append(PSObject({k: v for k, v in self.nodes[n].items()}))
-        return node_list
+    def _get_nodes(self, node_ids:list=None):
+        if not isinstance(node_ids,list):
+            return [PSObject(ddict) for id,ddict in self.nodes(data=True)]
+        else:
+            return [PSObject(ddict) for id,ddict in self.nodes(data=True) if id in node_ids]
 
     def __relations(self):
         graph_relations = set()
@@ -220,14 +244,21 @@ class ResnetGraph (nx.MultiDiGraph):
                 continue
 
 
-    def to_rnef(self, RNEFprops: list):
+    def to_rnef(self, RNEFprops: list,add_rel_props:dict=None,add_pathway_props:dict=None):
+        # add_rel_props,add_pathway_props structure - {PropName:[PropValues]}
         resnet = et.Element('resnet')
+        if isinstance(add_pathway_props,dict):
+            pathway_props = et.SubElement(resnet, 'properties')
+            for prop_name,prop_val in add_pathway_props.items():
+                    for val in prop_val:
+                        et.SubElement(pathway_props, 'attr', {'name':str(prop_name), 'value':str(val)})
+
         xml_nodes = et.SubElement(resnet, 'nodes')
         local_id_counter = 0
         for nodeId, n in self.nodes(data=True):
             local_id = n['URN'][0]
             xml_node = et.SubElement(xml_nodes, 'node', {'local_id': local_id, 'urn': n['URN'][0]})
-            et.SubElement(xml_node, 'attr', {'name': str('NodeType'), 'value': str(n['ObjTypeName'][0])})
+            et.SubElement(xml_node, 'attr', {'name': 'NodeType', 'value': str(n['ObjTypeName'][0])})
             for prop_name, prop_values in n.items():
                 if prop_name in RNEFprops:
                     if prop_name not in NO_RNEF_NODE_PROPS:
@@ -241,15 +272,16 @@ class ResnetGraph (nx.MultiDiGraph):
         graph_relations = self.__relations()
         for rel in graph_relations:
             control_id = rel['URN'][0]
-            xml_control = et.SubElement(xml_controls, 'control', {'local_id': control_id})
-            et.SubElement(xml_control, 'attr', {'name': str('ControlType'), 'value': str(rel['ObjTypeName'][0])})
+            xml_control = et.SubElement(xml_controls, 'control', {'local_id':control_id})
+            et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':str(rel['ObjTypeName'][0])})
+            
             # adding links
             regulators = rel.Nodes['Regulators']
             try:
                 targets = rel.Nodes['Targets']
                 for r in regulators:
                     regulator_local_id = self.nodes[r[0]]['URN'][0]
-                    et.SubElement(xml_control, 'link', {'type': 'in', 'ref': regulator_local_id})
+                    et.SubElement(xml_control, 'link', {'type':'in', 'ref':regulator_local_id})
 
                 for t in targets:
                     target_local_id = self.nodes[t[0]]['URN'][0]
@@ -264,7 +296,12 @@ class ResnetGraph (nx.MultiDiGraph):
                 if prop_name in RNEFprops:
                     if prop_name not in NO_RNEF_REL_PROPS:
                         for prop_value in prop_values:
-                            et.SubElement(xml_control, 'attr', {'name': str(prop_name), 'value': str(prop_value)})
+                            et.SubElement(xml_control, 'attr', {'name':str(prop_name), 'value':str(prop_value)})
+
+            if isinstance(add_rel_props,dict):
+                for prop_name,prop_val in add_rel_props.items():
+                    for val in prop_val:
+                        et.SubElement(xml_control, 'attr', {'name':str(prop_name), 'value':str(val)})
 
             # adding references
             references = list(set(rel.References.values()))
@@ -280,3 +317,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
         xml_str = et.tostring(resnet, encoding='utf-8').decode("utf-8")
         return xml_str
+
+    @staticmethod
+    def get_att_set(prop_name:str,ps_objects:list):
+        return set([i for sublist in [x[prop_name] for x in ps_objects] for i in sublist])

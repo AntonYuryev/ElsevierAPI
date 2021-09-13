@@ -1,6 +1,6 @@
-from xml.etree.ElementTree import Element, tostring, parse, fromstring
-from xml.dom import minidom
 
+from xml.dom import minidom
+from xml.etree.ElementTree import Element, tostring, parse, fromstring
 
 def count_occurrences(d, _id, tag):
     ret = 0

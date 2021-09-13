@@ -5,12 +5,13 @@ import pandas as pd
 from datetime import timedelta
 from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
+import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 
 class APISession(PSNetworx):
     pass
-    ResultRef = str()
-    ResultPos = int()
-    ResultSize = int()
+    ResultRef = None
+    ResultPos = 0
+    ResultSize = None
     PageSize = 100
     GOQLquery = str()
     __IsOn1st_page = True
@@ -24,48 +25,65 @@ class APISession(PSNetworx):
         self.DumpFiles = ['ResnetAPIsessionDump.tsv']
 
     def __init_session(self):
-        if self.__getLinks:
-            zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
-                                                                                             self.PageSize,
-                                                                                             self.relProps)
-            if type(zeep_data) != type(None):
+        obj_props = self.relProps if self.__getLinks else self.entProps
+        zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
+                                                                                                self.PageSize,
+                                                                                                obj_props,
+                                                                                                getLinks = self.__getLinks)
+        if type(zeep_data) != type(None):
+            if self.__getLinks:
                 obj_ids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
                 zeep_objects = self.get_object_properties(obj_ids, self.entProps)
                 return self._load_graph(zeep_data, zeep_objects)
             else:
-                return None
-        else:
-            zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
-                                                                                             self.PageSize,
-                                                                                             self.entProps,
-                                                                                             getLinks=False)
-            if type(zeep_data) != type(None):
                 return self._load_graph(None, zeep_data)
-            else:
-                return None
+        else:
+            return None
+
 
     def __get_next_page(self, no_mess=True):
         if self.ResultPos < self.ResultSize:
             if not no_mess:
                 print('fetched %d results out of %d' % (self.ResultPos, self.ResultSize))
-            if self.__getLinks:
-                zeep_data, self.ResultPos = self.get_next_session_page(self.ResultRef, self.ResultPos, self.PageSize,
-                                                                       self.ResultSize, self.relProps)
-                if type(zeep_data) != type(None):
+
+            obj_props = self.relProps if self.__getLinks else self.entProps
+            zeep_data, self.ResultSize, self.ResultPos = self.get_session_page(self.ResultRef, self.ResultPos, self.PageSize,
+                                                                       self.ResultSize, obj_props ,getLinks=self.__getLinks)                                                                      
+            if type(zeep_data) != type(None):
+                if self.__getLinks:
                     obj_ids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
                     zeep_objects = self.get_object_properties(obj_ids, self.entProps)
                     return self._load_graph(zeep_data, zeep_objects)
                 else:
-                    return None
-            else:
-                zeep_data, self.ResultPos = self.get_next_session_page(self.ResultRef, self.ResultPos, self.PageSize,
-                                                                       self.ResultSize, self.entProps, getLinks=False)
-                if type(zeep_data) != type(None):
                     return self._load_graph(None, zeep_data)
-                else:
-                    return None
-        else:
-            return None
+            else:
+                return None
+
+
+    def get_saved_results(self, results_names:list, get_links=True):
+        query_names = OQL.join_with_quotes(',',results_names)
+        oql_query = 'SELECT Result WHERE Name = ({names})'
+        oql_query = oql_query.format(names=query_names)
+        result_graph = self.load_graph_from_oql(oql_query,self.relProps,self.entProps,get_links)
+        #result_ids = self._obj_id_by_oql(oql_query)
+        self.ResultPos = 0
+        self.ResultSize  = 1
+        self.PageSize  = 10000
+        entire_graph = ResnetGraph()
+        start = time.time()
+
+        for id, name in result_graph.nodes(data='Name'):
+            self.ResultRef  = 'ID='+str(id)
+            self.__getLinks = get_links
+            while self.ResultPos < self.ResultSize:
+                page_graph = self.__get_next_page()
+                entire_graph = nx.compose(page_graph, entire_graph)
+                iteration = math.ceil(self.ResultPos / self.PageSize)
+                total_iterations = math.ceil(self.ResultSize/self.PageSize)
+                print ('%d out of %d iterations fetching %d objects from %s performed in %s' % 
+                (iteration, total_iterations, self.ResultSize, name, self.execution_time(start)))
+
+        return entire_graph
 
     def __set_get_links(self):
         return self.GOQLquery[7:15] == 'Relation'
@@ -73,6 +91,7 @@ class APISession(PSNetworx):
     def __replace_goql(self, oql_query: str):
         self.GOQLquery = oql_query
         self.__getLinks = self.__set_get_links()
+        self.ResultRef = None
 
     def add_rel_props(self, add_props: list):
         self.relProps = list(set(self.relProps + add_props))
@@ -83,10 +102,11 @@ class APISession(PSNetworx):
     def add_graph(self, new_graph: ResnetGraph):
         pass  # placeholder to derive child class from APISession (see DiseaseNetwork(APISession) as example)
 
-    def flush_dump_files(self):
+    def flush_dump_files(self, no_mess=True):
         for f in self.DumpFiles:
             open(f, 'w').close()
-            print('File "%s" was cleared before processing' % f)
+            if not no_mess:
+                print('File "%s" was cleared before processing' % f)
 
     def add_dump_file(self, dump_fname, replace_main_dump=False):
         if replace_main_dump:
@@ -115,7 +135,7 @@ class APISession(PSNetworx):
     def process_oql(self, oql_query, request_name='', flush_dump=False, debug=False, no_mess=True, iteration_limit=1):
         global_start = time.time()
         if flush_dump:
-            self.flush_dump_files()
+            self.flush_dump_files(no_mess)
         self.__replace_goql(oql_query)
 
         entire_graph = ResnetGraph()
@@ -150,8 +170,8 @@ class APISession(PSNetworx):
                 self.to_csv(self.DumpFiles[0], in_graph=page_graph, access_mode='a',debug=True)
                 self.__IsOn1st_page = False
                 if number_of_iterations > 1:
-                    print("With %d in %d iterations, %d relations in %d with %d references saved into \"%s\" file. Retrieval time: %s" % 
-                        (iteration,number_of_iterations,self.ResultPos,self.ResultSize,reference_counter,self.DumpFiles[0],exec_time))
+                    print("With %d in %d iterations, %d %s in %d with %d references saved into \"%s\" file. Retrieval time: %s" % 
+                        (iteration,number_of_iterations,self.ResultPos,return_type,self.ResultSize,reference_counter,self.DumpFiles[0],exec_time))
 
             entire_graph = nx.compose(page_graph, entire_graph)
 
@@ -219,6 +239,16 @@ class APISession(PSNetworx):
 
         return self.iterate_oql2(f'{oql_query}',node_ids1,node_ids2)
 
+    def get_group_members(self, group_names:list):
+        oql_query = 'SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = ({group}))'
+        groups = OQL.join_with_quotes(',', group_names)
+        req_name = 'Find members of groups: ' + ','.join(group_names)
+        graph2return = self.process_oql(oql_query.format(group=groups), request_name=req_name)
+        if len(graph2return) == 0:
+            print('%s groups are empty or do not exist in databse' % str(group_names))
+        else:
+            print('loaded %d members from %s' % (graph2return.number_of_nodes(),str(group_names)))
+        return graph2return
 
     
 
