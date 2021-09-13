@@ -1,4 +1,4 @@
-from ElsevierAPI import APIconfig
+from ElsevierAPI import load_api_config
 from TargetCentricRepurposing import RepurposeDrugs
 import time
 
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     global_start = time.time()
     #similars = ['osimertinib', 'gefitinib', 'brigatinib', 'zalutumumab', 'nimotuzumab', 'matuzumab'] # for 'erlotinib'/'EGFR
     similars = ['Infliximab', 'Etanercept', 'Golimumab', 'Certolizumab', 'Afelimomab'] # for 'Humira'/TNF
-    dcp = RepurposeDrug(APIconfig)
+    dcp = RepurposeDrug(load_api_config())
     dcp.set_drug('Humira', similars)
     dcp.set_targets(['TNF'],'Protein')
     dcp.add_ent_props(['Alias'])

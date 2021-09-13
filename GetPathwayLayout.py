@@ -1,12 +1,10 @@
 import time
 import argparse
 import textwrap
-import networkx as nx
-from ElsevierAPI import APIconfig 
+from ElsevierAPI import open_api_session 
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_PROPS,REF_ID_TYPES
-from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 
-ps_api = APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
+ps_api = open_api_session()
 
 def DownloadPathwayXML(PathwayURN:str,URNtoPathway:dict,get_sbgn=False,out_dir=''):
     try: pathwayId = URNtoPathway[PathwayURN]['Id'][0]
@@ -65,19 +63,22 @@ if __name__ == "__main__":
 
     out_dir = str(args.infile)[:str(args.infile).rfind('/')]
     start_time = time.time()
-    IDtoPathway,URNtoPathway = ps_api.get_all_pathways()#works 40 sec - cache result to your application
+    urn2pathway = ps_api.get_all_pathways()#works 40 sec - cache result to your application
     print('List of all pathways identifiers was retrieved in %s' % ps_api.execution_time(start_time))
     missedURNs = list()
     download_counter = 0
     for urn in urnSet:
-        start_time = time.time()
-        if DownloadPathwayXML(urn,URNtoPathway,get_sbgn=True,out_dir=out_dir):
+        try: 
+            pathwayId = urn2pathway[urn]['Id'][0]
+            start_time = time.time()
+            pathway_graph, pathway_xml = ps_api.get_pathway(pathwayId,xml_format='RNEF')
             download_counter += 1
             exec_time = ps_api.execution_time(start_time)
             print('%d out of %d pathways downloaded in %s, %d not found' %
-                  (download_counter, len(urnSet), exec_time, len(missedURNs)))
-        else:
+                (download_counter, len(urnSet), exec_time, len(missedURNs)))                
+        except KeyError: 
             missedURNs.append(urn)
+            continue
 
     print('Pathways not found:\n%s' % '\n'.join(missedURNs))
     print("Total execution time: %s" % ps_api.execution_time(global_start))

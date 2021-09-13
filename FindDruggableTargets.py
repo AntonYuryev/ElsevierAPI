@@ -1,12 +1,12 @@
 ﻿import time
 import networkx as nx
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
-from ElsevierAPI import APIconfig
+from ElsevierAPI import open_api_session
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import nx2neo4j
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import REL_PROPs, ENT_PROP_Neo4j
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 
-ps_api = APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
+ps_api = open_api_session()
 
 global_start = time.time()
 # SearchEntitiesBy = ['Ileocolitis']
@@ -14,7 +14,7 @@ SearchEntitiesBy = ['Inflammatory Bowel Disease']
 # SearchEntitiesBy = ['Friedreich Ataxia']
 InputDiseaseNames = ','.join(SearchEntitiesBy)
 
-# specify files used in your API.sps_api.DiseaseNetwork.AddGraph to dump graph data in tab-delimited format:
+# specify files used in ps_api.DiseaseNetwork.AddGraph to dump graph data in tab-delimited format:
 myDir = ''  # 'D:\\Python\\PS_API\\'
 foutDiseaseSNPs = myDir + "Gene variants linked to " + InputDiseaseNames + '.tsv'
 foutDiseaseProteins = myDir + "Genes with SNPs linked to " + InputDiseaseNames + '.tsv'

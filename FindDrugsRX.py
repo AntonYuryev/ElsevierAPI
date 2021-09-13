@@ -1,6 +1,6 @@
 import time
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI import ps_api,APIconfig
+from ElsevierAPI import open_api_session,load_api_config
 import ElsevierAPI.ReaxysAPI.Reaxys_API as RxAPI
 import argparse
 import textwrap
@@ -64,6 +64,7 @@ if __name__ == "__main__":
     with open(EntityListFile) as f:
         EntitiesToExpand = [line.rstrip('\n') for line in f]
 
+    ps_api = open_api_session()
     TargetIDs = ps_api._get_obj_ids_by_props(PropertyValues=EntitiesToExpand, SearchByProperties=SearchPsProps)
     PSdumpFile = EntityListFile[:len(EntityListFile)-4]+'_psdump.tsv'
     ps_api.add_dump_file(PSdumpFile, replace_main_dump=True)
@@ -77,7 +78,7 @@ if __name__ == "__main__":
         FoundDrugs = [y for x,y in ps_api.Graph.nodes(data=True) if ((ps_api.Graph.out_degree(x)>0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))]
         print('Found %d drugs in Resnet' % len(FoundDrugs))
         ReaxysAPI = RxAPI.Reaxys_API()
-        ReaxysAPI.OpenSession(APIconfig)
+        ReaxysAPI.OpenSession(load_api_config())
         foundRxProps = 0
         print("Start looking for Reaxys properties")
         for drug in FoundDrugs:

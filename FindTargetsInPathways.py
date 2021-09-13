@@ -2,8 +2,9 @@ import time
 import pandas as pd
 import argparse
 import textwrap
-from ElsevierAPI import ps_api
+from ElsevierAPI import open_api_session
 
+ps_api = open_api_session()
 
 def map2pathways(entity2folder2pathway: dict, id2pathways: dict, folderName, FilterBy: list,
                  SearchByProperties=None):
@@ -108,7 +109,7 @@ if __name__ == "__main__":
     foutName = EntityListFile[:len(EntityListFile) - 4] + ' Pathways from ' + ','.join(SearchPathwaysInFolders) + '.tsv'
     EntityPandas.to_csv(foutName, sep='\t', index=True)
 
-    PathwayCounter = set([z for z in [x for x in [v.values() for v in IdToFolderPathwayDict.values()]]])
+    PathwayCounter = {z for z in [x for x in [v.values() for v in IdToFolderPathwayDict.values()]]}
     print('Found %d pathways in \"%s\" for %d entities from \"%s\"' %
          (len(PathwayCounter), ','.join(SearchPathwaysInFolders), len(IdToFolderPathwayDict), EntityListFile))
     print('Results were printed to \"%s\" in %s seconds' % (foutName, time.time() - start_time))

@@ -1,5 +1,4 @@
-from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
-from ElsevierAPI import APIconfig
+from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 import pandas as pd
@@ -319,14 +318,15 @@ class RepurposeDrugs(SemanticSearch):
 
 if __name__ == "__main__":
     start_time = time.time()
+    APIconfig = load_api_config()
     rd = RepurposeDrugs(APIconfig)
+    rd.set_targets(['IL15'], 'Protein',to_inhibit=True)
     #rd.set_targets(['FGFR3'], 'Protein',to_inhibit=True)
-    rd.set_targets(['F2RL1'], 'Protein',to_inhibit=True)
+    #rd.set_targets(['F2RL1'], 'Protein',to_inhibit=True)
     rd.PageSize = 500
     rd.flush_dump_files()
 
     rd.find_target_indications()
-    
     rd.get_pathway_componets()
 
     if rd.target_class != 'Ligand':
@@ -337,7 +337,6 @@ if __name__ == "__main__":
     rd.indications4partners()
     rd.indications4cells_secreting_target() #will work only if target is Ligand
     
-
     rd.init_semantic_search()
     rd.score_semantics()
     t_n = rd.Drug_Target['Name'][0]

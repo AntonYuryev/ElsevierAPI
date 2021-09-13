@@ -1,17 +1,15 @@
 import time
-from ElsevierAPI import APIconfig
-from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
+from ElsevierAPI import open_api_session
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_ID_TYPES
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
 
 global_start = time.time()
 
-REL_PROPs = ['Name', 'Effect', 'Mechanism', 'ChangeType']
-ENT_PROPs = ['Name', 'Description', 'Cell Localization'] 
-ps_api = APISession(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
-# add here relation properties to retrieve
-# if properties from NetworkxObjects.REF_ID_TYPES or NetworkxObjects.REF_PROPS are added to REL_PROPs
+REL_PROPs = ['Name', 'Effect', 'Mechanism', 'ChangeType']# add here relation properties to retrieve
+# if properties from NetworkxObjects.REF_ID_TYPES or NetworkxObjects.REF_PROPS are added to REL_PROPs then:
 # output size may increase dramatically because it will contain one reference per row.
+ENT_PROPs = ['Name', 'Description', 'Cell Localization'] 
+ps_api = ps_api = open_api_session()
  
 ps_api.PageSize = 10000
 ps_api.add_rel_props(REL_PROPs+REF_ID_TYPES)

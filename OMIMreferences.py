@@ -1,8 +1,6 @@
-#Initializing Pathway Studio data model
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI import ps_api
+from ElsevierAPI import open_api_session
 
-
+ps_api = open_api_session()
 import csv
 OMIMpairsFile = "OMIM/OMIMDisease-Gene_Demo.txt"
 tsv_file = open(OMIMpairsFile)

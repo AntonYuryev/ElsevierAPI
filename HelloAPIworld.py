@@ -1,12 +1,14 @@
-from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
-from ElsevierAPI import APIconfig
+from ElsevierAPI import open_api_session
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_PROPS,REF_ID_TYPES
 
-ps_api = APISession(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
+ps_api = open_api_session(api_config_file=None)#specify here path to your APIconfig file. 
+#If api_config_file not specified the default APIConfig from __init__.py will be used
 # ps_api retreives data from the database and loads it into APISession.Graph derived from Networkx:MultiDiGraph 
 
 ps_api.add_rel_props(REF_PROPS+REF_ID_TYPES)
-#add_rel_props and add_end_props specify what attributes to retreive for relations and nodes (entities) from the database
+#add_rel_props specifies what attributes to retreive for relations from the database
+ps_api.add_ent_props(['Name','URN'])
+#add_ent_props specifies what attributes to retreive for nodes (entities) from the database
 
 pcnt = '%'
 my_goql_query = 'select Relation where CellType LIKE \''+pcnt+'hepatocyte'+pcnt+'\''

@@ -1,25 +1,24 @@
 import ElsevierAPI
-from ElsevierAPI import ps_api
+from ElsevierAPI import open_api_session
 import time
 import argparse
 import textwrap
 
+
+ps_api = open_api_session()
 NON_DIRECTIONAL = ['Binding','FunctionalAssociation','CellExpression','Metabolization','Paralog']
 
 def IsDirectional(relType:str):
     return relType not in NON_DIRECTIONAL
 
-
 def CountRelations (EntityIN, EntityOUT, RelType, isDirectional=True):
     if isDirectional == True:
-        OQLquery = 'SELECT Relation WHERE objectType = '+ RelType +' AND NeighborOf downstream (SELECT Entity WHERE objectType = '+EntityIN+') AND NeighborOf upstream (SELECT Entity WHERE objectType = '+EntityOUT+')'
+        ps_api.GOQLquery = 'SELECT Relation WHERE objectType = '+ RelType +' AND NeighborOf downstream (SELECT Entity WHERE objectType = '+EntityIN+') AND NeighborOf upstream (SELECT Entity WHERE objectType = '+EntityOUT+')'
     else:
-        OQLquery = 'SELECT Relation WHERE objectType = '+ RelType +' AND NeighborOf downstream (SELECT Entity WHERE objectType = '+EntityIN+') AND NeighborOf downstream (SELECT Entity WHERE objectType = '+EntityOUT+')'
+        ps_api.GOQLquery = 'SELECT Relation WHERE objectType = '+ RelType +' AND NeighborOf downstream (SELECT Entity WHERE objectType = '+EntityIN+') AND NeighborOf downstream (SELECT Entity WHERE objectType = '+EntityOUT+')'
 
-    #sn = ssn.APISession(OQLquery, PSnx)
     relcnt = ps_api.get_result_size()
     return relcnt
-
 
 
 def GetStats(Triples:list):
@@ -58,19 +57,18 @@ if __name__ == "__main__":
 
     DBRelTypes = list()
     DBEntities = list()
-    Triples = list()
+    DBtriples_types = list()
     if len(args.infile) == 0:
         DBRelTypes = ps_api.get_relation_types()
         DBEntities = ps_api.get_entity_types()
         for rel_type in DBRelTypes:
             for EntityIN in DBEntities:
                 for EntityOUT in DBEntities:
-                    Triples.append([EntityIN,rel_type,EntityOUT])
+                    DBtriples_types.append([EntityIN,rel_type,EntityOUT])
     else:
         with open(args.infile, 'r', encoding='utf-8') as f:
             for line in f:
                 triple = line.strip().split('\t')
-                Triples.append(triple)
+                DBtriples_types.append(triple)
 
-        
-    GetStats(Triples)
+    GetStats(DBtriples_types)

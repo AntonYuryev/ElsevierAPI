@@ -1,8 +1,7 @@
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 import time
-from ElsevierAPI import APIconfig
+from ElsevierAPI import open_api_session
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_PROPS,REF_ID_TYPES
 from  ElsevierAPI.ResnetAPI.rnef2sbgn import make_file_name
 import xml.etree.ElementTree as et
@@ -12,7 +11,7 @@ working_dir = 'D:/Python/CTs/'
 input_drug_list = 'ListOfDrugs.txt'
 my_drug_list = working_dir + input_drug_list
 my_drug_list = None
-ps_api = APISession(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
+ps_api = open_api_session()
 ps_api.DumpFiles.clear()
 ps_api.add_rel_props(REF_PROPS+REF_ID_TYPES+['Effect','Mechanism'])
 ps_api.PageSize = 1000
