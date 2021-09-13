@@ -3,7 +3,7 @@ import pandas as pd
 import argparse
 import textwrap
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI import APIconfig
+from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
 
         
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     global_start_time = time.time()
     header_pos = 0 if args.infile_has_header else None
 
-    search = SemanticSearch(APIconfig)
+    search = SemanticSearch(load_api_config())
     AnnotateNodesWith = args.resnet_retreive_props.split(',') if len(args.resnet_retreive_props) > 0 else []
     search.add_ent_props(AnnotateNodesWith)
     if args.dump_references:
@@ -142,3 +142,4 @@ if __name__ == "__main__":
     countsOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount.tsv'
     refOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv' if args.dump_references else ''
     search.print_ref_count(countsOutFile,refOutFile)
+
