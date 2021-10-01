@@ -4,6 +4,7 @@ from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation, REF_PROPS, REF_ID_TYPES
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 from xml.dom import minidom
+import xml.etree.ElementTree as et
 
 REL_PROPS = ['Effect','Mechanism']
 
@@ -250,20 +251,35 @@ class PSNetworx(DataModel):
                 entire_graph = nx.compose(entire_graph,iter_graph)
         return entire_graph
 
+
     def get_objects_from_folders(self, FolderIds: list, property_names=None, with_layout=False):
         if property_names is None: property_names = ['Name']
-        id2entity = dict()
+        if not hasattr(self,'id2folders'): self.id2folders = self.load_folder_tree()
+        if not hasattr(self,'id2pathways'): self.id2pathways = dict()
+        if not hasattr(self,'id2groups'): self.id2groups = dict()
+        id2objects = dict()
         for f in FolderIds:
+            folder_name = self.id2folders[f][0]['Name']
             zeep_objects = self.get_folder_objects_props(f, property_names)
-            id2entity.update(self._zeep2psobj(zeep_objects))
-
-        if with_layout:
-            for i, psObj in id2entity.items():
+            id2objs = self._zeep2psobj(zeep_objects)
+            for Id, psObj in id2objs.items():
                 if psObj['ObjTypeName'][0] == 'Pathway':
-                    layout = self.get_layout(i)
-                    psObj['layout'] = str(layout['Attachment'].decode('utf-8'))
+                    try:
+                        self.id2pathways[Id].add_unique_property('Folders', folder_name)
+                    except KeyError:
+                            psObj['Folders'] = [folder_name]
+                            self.id2pathways[Id] = psObj
+                    if with_layout:
+                        psObj['layout'] = self.get_layout(Id)
+                if psObj['ObjTypeName'][0] == 'Group':
+                    try:
+                        self.id2groups[Id].add_unique_property('Folders', folder_name)
+                    except KeyError:
+                            psObj['Folders'] = [folder_name]
+                            self.id2groups[Id] = psObj
 
-        return id2entity
+            id2objects.update(id2objs)
+        return id2objects
 
 
     def get_pathway_member_ids(self, PathwayIds: list, search_pathways_by=None, only_entities=None,
@@ -360,8 +376,11 @@ class PSNetworx(DataModel):
 
 
     def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties:list=None, retrieve_ent_properties:list=None):
-        if not isinstance(retrieve_ent_properties,list): retrieve_ent_properties = ['Name'] 
+        if not isinstance(retrieve_ent_properties,list): retrieve_ent_properties = ['Name']
+        else: retrieve_ent_properties = list(set(retrieve_ent_properties.append('Name')))
+
         if not isinstance(retrieve_rel_properties,list): retrieve_rel_properties = ['Name','RelationNumberOfReferences']
+        else: retrieve_rel_properties = list(set(retrieve_rel_properties + ['Name','RelationNumberOfReferences']))
          
         ent_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
         rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
@@ -389,24 +408,24 @@ class PSNetworx(DataModel):
         if property_names is None: property_names = ['Name']
         print('retrieving identifiers of all pathways from database')
 
-        if (len(self.IdToFolders)) == 0: self.load_folder_tree()
+        if (len(self.id2folders)) == 0: self.load_folder_tree()
 
-        self.Id2Pathways = dict()
+        self.id2pathways = dict()
         urn2pathway = dict()
-        for folderList in self.IdToFolders.values():
+        for folderList in self.id2folders.values():
             for folder in folderList:
                 zeep_objects = self.get_folder_objects_props(folder['Id'], property_names)
                 ps_objects = self._zeep2psobj(zeep_objects)
                 for Id, psObj in ps_objects.items():
                     if psObj['ObjTypeName'][0] == 'Pathway':
                         try:
-                            self.Id2Pathways[Id].add_unique_property('Folders', folder['Name'])
+                            self.id2pathways[Id].add_unique_property('Folders', folder['Name'])
                         except KeyError:
                             psObj['Folders'] = [folder['Name']]
-                            self.Id2Pathways[Id] = psObj
+                            self.id2pathways[Id] = psObj
                             urn2pathway[psObj['URN'][0]] = psObj
 
-        print('Found %d pathways in the database' % (len(self.Id2Pathways)))
+        print('Found %d pathways in the database' % (len(self.id2pathways)))
         return urn2pathway
 
 
@@ -415,11 +434,11 @@ class PSNetworx(DataModel):
     # add_rel_props, add_pathway_props structure - {PropName:[PropValues]}
         if not isinstance(rel_props,list): rel_props = REF_PROPS+REF_ID_TYPES
 
-        if hasattr(self,'Id2Pathways'):
+        if hasattr(self,'id2pathways'):
             if not isinstance(path_urn,str):
                 try:
-                    path_urn = self.Id2Pathways[pathwayId]['URN'][0]
-                    path_name = self.Id2Pathways[pathwayId]['Name'][0]
+                    path_urn = self.id2pathways[pathwayId]['URN'][0]
+                    path_name = self.id2pathways[pathwayId]['Name'][0]
                 except KeyError:
                     print('Pathway collection does not have %s pathway with URN %s' % (path_name,path_urn))
 
@@ -441,22 +460,22 @@ class PSNetworx(DataModel):
         rnef_xml = et.fromstring(graph_xml)
         rnef_xml.set('name', path_name)
         rnef_xml.set('urn', path_urn)
+        rnef_xml.set('type', 'Pathway')
 
         lay_out = et.Element('attachments')
         lay_out.append(et.fromstring(self.get_layout(pathwayId)))
         rnef_xml.append(lay_out)
+        
+        batch_xml = et.Element('batch')
+        batch_xml.insert(0,rnef_xml)
                    
         if xml_format == ['SBGN']:
-            batch_xml = et.Element('batch')
-            batch_xml.insert(0,rnef_xml)
             pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
             pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
             from ElsevierAPI.ResnetAPI.rnef2sbgn import rnef2sbgn_str
             pathway_xml = rnef2sbgn_str(pathway_xml, classmapfile='ElsevierAPI/ResnetAPI/rnef2sbgn_map.xml')
         else:
             if isinstance(put2folder,str):
-                batch_xml = et.Element('batch')
-                batch_xml.insert(0,rnef_xml)
                 resnet = et.Element('resnet')
                 xml_nodes = et.SubElement(resnet, 'nodes')
                 folder_local_id = 'F0'
@@ -477,12 +496,69 @@ class PSNetworx(DataModel):
                 pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
                 pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
             else:
-                pathway_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=False).decode("utf-8")
-                
+                pathway_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+                pathway_xml = str(minidom.parseString(pathway_xml).toprettyxml(indent='   '))
+                pathway_xml = pathway_xml[pathway_xml.find('\n')+1:]
+                #minidom does not work without xml_declaration
 
         print('\"%s\" pathway downloaded: %d nodes, %d edges supported by %d references' % 
-            (path_name, pathway_graph.number_of_nodes(),pathway_graph.number_of_edges(),pathway_graph.size()))
+            (path_name, pathway_graph.number_of_nodes(),pathway_graph.number_of_edges(),pathway_graph.size(weight="weight")))
 
         return pathway_graph, str(pathway_xml)
 
 
+    def get_group(self, group_id,group_urn=None,group_name=None, ent_props:list=None,put2folder:str=None,as_batch=True):
+        if hasattr(self,'id2groups'):
+            if not isinstance(group_urn,str):
+                try:
+                    group_urn = self.id2groups[group_id]['URN'][0]
+                    group_name = self.id2groups[group_id]['Name'][0]
+                except KeyError:
+                    print('Pathway collection does not have %s pathway with URN %s' % (group_name,group_urn))
+
+        if not isinstance(group_urn,str):
+            print('Pathway has no URN specifed!!!!')
+            group_urn = 'no_urn'
+        
+        if not isinstance(group_name,str):
+            print('Pathway has no Name specifed!!!!')
+            group_name = 'no_name'
+
+        group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = \'{name}\')'.format(name = group_name),entity_props=ent_props,get_links=False)
+       
+        rnef_xml = et.fromstring(self.to_rnef(group_graph))
+        rnef_xml.set('name', group_name)
+        rnef_xml.set('urn', group_urn)
+        rnef_xml.set('type', 'Group')
+        
+        batch_xml = et.Element('batch')
+        batch_xml.insert(0,rnef_xml)
+                   
+        if isinstance(put2folder,str):
+            folder_resnet = et.Element('resnet')
+            xml_nodes = et.SubElement(folder_resnet, 'nodes')
+            folder_local_id = 'F0'
+            xml_node_folder = et.SubElement(xml_nodes, 'node', {'local_id':folder_local_id, 'urn': 'urn:agi-folder:xxxxx_yyyyy_zzzzz'})
+            et.SubElement(xml_node_folder, 'attr', {'name': 'NodeType', 'value': 'Folder'})
+            et.SubElement(xml_node_folder, 'attr', {'name': 'Name', 'value': put2folder})
+            pathway_local_id = 'P0'
+            xml_node_pathway = et.SubElement(xml_nodes, 'node', {'local_id':pathway_local_id, 'urn':group_urn})
+            et.SubElement(xml_node_pathway, 'attr', {'name': 'NodeType', 'value': 'Group'})
+            xml_controls = et.SubElement(folder_resnet, 'controls')
+            xml_control = et.SubElement(xml_controls, 'control', {'local_id':'CFE1'})
+            et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':'MemberOf'})
+            et.SubElement(xml_control, 'link', {'type':'in', 'ref':pathway_local_id})
+            et.SubElement(xml_control, 'link', {'type':'out', 'ref':folder_local_id})
+            batch_xml.append(folder_resnet)
+        
+        if as_batch:
+            group_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+            group_xml = minidom.parseString(group_xml).toprettyxml(indent='   ')
+        else:
+            group_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+            group_xml = str(minidom.parseString(group_xml).toprettyxml(indent='   '))
+            group_xml = group_xml[group_xml.find('\n')+1:]
+            #minidom does not work without xml_declaration
+
+        print('\"%s\" group downloaded: %d nodes' % (group_name, group_graph.number_of_nodes()))
+        return group_graph, str(group_xml)

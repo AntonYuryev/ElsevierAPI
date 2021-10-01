@@ -1,3 +1,4 @@
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
 import pandas as pd
 import logging
 import sys
@@ -19,7 +20,8 @@ class DataModel:
         self.IdToPropType = dict()
         self.IdtoObjectType = dict()
         self.PropIdToDict = dict()
-        self.IdToFolders = dict()
+        #self.id2folders = dict() # {id:folder_zobj, name:folder_zobj} loaded on demand
+        #self.id2pathways = dict() # {id:PSObj} loaded on demand
         self.RNEFnameToPropType = dict()
         from requests.auth import HTTPBasicAuth
         from requests import Session
@@ -43,8 +45,7 @@ class DataModel:
     def __load_model(self):
         object_types = self.SOAPclient.service.GetObjectTypes()
         property_types = self.SOAPclient.service.GetPropertyDefinitions()
-        # Folders = self.SOAPclient.service.GetFoldersTree(0)  # long operation invoked only by load_folder_tree
-
+    
         for i in range(0, len(object_types)):
             db_id = object_types[i]['Id']
             obj_type_name = object_types[i]['Name']
@@ -83,15 +84,18 @@ class DataModel:
 
     def load_folder_tree(self):
         folders = self.SOAPclient.service.GetFoldersTree(0)
+        IdToFolders = dict()
         for folder in folders:
             folder_id = folder['Id']
             folder_name = folder['Name']
-            self.IdToFolders[folder_id] = [folder]
+            IdToFolders[folder_id] = [folder]
             # several folders may have the same name:
-            if folder_name in self.IdToFolders.keys():
-                self.IdToFolders[folder_name].append(folder)
+            if folder_name in IdToFolders.keys():
+                IdToFolders[folder_name].append(folder)
             else:
-                self.IdToFolders[folder_name] = [folder]
+                IdToFolders[folder_name] = [folder]
+        
+        return IdToFolders
 
     def dump_prop_names(self, fileOut):
         id_prop_names_list = list({(p['DisplayName'], p['Name'], p['Id']) for p in self.IdToPropType.values()})
@@ -138,19 +142,18 @@ class DataModel:
         return self.PropIdToDict[IdProperty][DictIdValue]
 
     def get_subfolders(self, FolderIds: list):
-        if len(self.IdToFolders) == 0:
-            self.load_folder_tree()
+        if not hasattr(self, "IdToFolders"): 
+            self.id2folders = self.load_folder_tree()
 
         subfolders_ids = set()
         for db_id in FolderIds:
-            folders = self.IdToFolders[db_id]
+            folders = self.id2folders[db_id]
             for folder in folders:
                 if type(folder['SubFolders']) != type(None):
-                    subfolders_ids = folder['SubFolders']['long']
-                    subfolders_ids.update(subfolders_ids)
+                    subfolders_ids.update(folder['SubFolders']['long'])
         return subfolders_ids
 
-    def get_subfolders_tree(self, FolderId):
+    def get_subfolders_recursively(self, FolderId):
         accumulate_subfolders = {FolderId}
         subfolders = set(self.get_subfolders([FolderId]))
         while len(subfolders) > 0:
@@ -161,6 +164,27 @@ class DataModel:
             subfolders = subs
 
         return accumulate_subfolders
+
+    def get_subfolder_tree(self,folder_name):
+        if not hasattr(self, "id2folders"): 
+            self.id2folders = self.load_folder_tree()
+
+        folder_id = self.id2folders[folder_name][0]['Id']
+        child2parent = {folder_id:folder_id}
+        parent2child = PSObject(dict())
+        subfolder_ids = self.get_subfolders([folder_id])
+        while len(subfolder_ids) > 0:
+            child2parent.update({i:folder_id for i in subfolder_ids})
+            parent2child.add_properties(folder_id,list(subfolder_ids))
+            subs = set()
+            for db_id in subfolder_ids:
+                subs = self.get_subfolders([db_id])
+                if len(subs) > 0:
+                    child2parent.update({i:db_id for i in subs})
+                    parent2child.add_properties(db_id,subs)
+            subfolder_ids = subs
+
+        return child2parent, dict(parent2child)
 
     def get_folder_objects(self, FolderId, result_param):
         from zeep import exceptions
@@ -255,13 +279,21 @@ class DataModel:
         rp.GetObjects = True
         rp.GetProperties = True
         obj_props = self.get_folder_objects(FolderId, rp)
-        if type(obj_props.Objects) == type(None):
-            return None
+        if type(obj_props.Objects) == type(None):return None
+
+        #identifying synlinks 
+        id2symlink = dict()
+        for col in obj_props.AdditionalColumns.ResultAdditionalColumn:
+            obj_id = col['ObjId']
+            id2symlink[obj_id] = True if col['Value'] == '0' else False
+
+
         # setting objectType name
         for obj in obj_props.Objects.ObjectRef:
             obj_type_id = obj['ObjTypeId']
             obj_type_name = self.IdtoObjectType[obj_type_id]['Name']
             obj['ObjTypeName'] = obj_type_name
+            obj['IsSymlink'] = id2symlink[obj['Id']]
 
         # setting dict property values and property names
         for prop in obj_props.Properties.ObjectProperty:
@@ -275,6 +307,9 @@ class DataModel:
                     id_dict_prop_value = int(prop['PropValues']['string'][i])
                     new_dict_value = dict_folder[id_dict_prop_value]
                     prop['PropValues']['string'][i] = new_dict_value
+
+        
+
 
         return obj_props
 
