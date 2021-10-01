@@ -52,7 +52,7 @@ if __name__ == "__main__":
                     else:
                         continue
 
-                    f.write(pathway_xml)
+                    f.write(pathway_xml) #printing pathways 
                     printed_pathway_ids.add(pathway_id)
 
                 pathway_counter += 1
@@ -72,12 +72,13 @@ if __name__ == "__main__":
                 et.SubElement(xml_control, 'link', {'type':'in', 'ref':pathway_local_id})
                 et.SubElement(xml_control, 'link', {'type':'out', 'ref':folder_local_id})
 
-            if len(id2pathways) > 0:
+            if len(id2pathways) > 0: # printing folder with pathways
                 folder_xml = et.tostring(folder_resnet,encoding='utf-8',xml_declaration=False).decode("utf-8")
                 folder_xml = str(minidom.parseString(folder_xml).toprettyxml(indent='   '))
                 f.write(folder_xml)
 
             download_counter += pathway_counter
+            ps_api.Graph.clear() #release memory during big dumps
 
         print('Downloaded %d pathways' % download_counter)
 
