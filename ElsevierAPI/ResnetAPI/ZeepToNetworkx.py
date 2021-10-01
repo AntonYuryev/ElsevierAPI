@@ -506,6 +506,13 @@ class PSNetworx(DataModel):
 
         return pathway_graph, str(pathway_xml)
 
+    @staticmethod
+    def pretty_xml(xml_string:str, no_declaration = False):
+        pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
+        if no_declaration:
+            pretty_xml = pretty_xml[pretty_xml.find('\n')+1:]
+        
+        return pretty_xml
 
     def get_group(self, group_id,group_urn=None,group_name=None, ent_props:list=None,put2folder:str=None,as_batch=True):
         if hasattr(self,'id2groups'):
@@ -556,8 +563,7 @@ class PSNetworx(DataModel):
             group_xml = minidom.parseString(group_xml).toprettyxml(indent='   ')
         else:
             group_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            group_xml = str(minidom.parseString(group_xml).toprettyxml(indent='   '))
-            group_xml = group_xml[group_xml.find('\n')+1:]
+            group_xml = self.pretty_xml(group_xml,no_declaration=True)
             #minidom does not work without xml_declaration
 
         print('\"%s\" group downloaded: %d nodes' % (group_name, group_graph.number_of_nodes()))

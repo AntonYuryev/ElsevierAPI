@@ -127,8 +127,8 @@ class APISession(PSNetworx):
         in_graph.print_references(file_out, self.relProps, self.entProps, access_mode, 
                                     self.__IsOn1st_page, col_sep=self.csv_delimeter,debug=debug)
 
-    def get_result_size(self):
-        zeep_relations, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery, PageSize=1,
+    def get_result_size(self,oql_query):
+        zeep_relations, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(oql_query, PageSize=1,
                                                                                               property_names=[])
         return self.ResultSize
 
@@ -250,6 +250,8 @@ class APISession(PSNetworx):
             print('loaded %d members from %s' % (graph2return.number_of_nodes(),str(group_names)))
         return graph2return
 
+
+    
     
 
     
