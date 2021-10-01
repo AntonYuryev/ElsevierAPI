@@ -24,6 +24,7 @@ if __name__ == "__main__":
     printed_pathway_ids = set()
 
     with open('pathways from '+args.folder+'.rnef', "w", encoding='utf-8') as f:
+        f.write('<?xml version="1.0" ?>\n')
         f.write('<batch>\n')
         #fetching pathways
         download_counter = 0
@@ -72,9 +73,9 @@ if __name__ == "__main__":
                 et.SubElement(xml_control, 'link', {'type':'in', 'ref':pathway_local_id})
                 et.SubElement(xml_control, 'link', {'type':'out', 'ref':folder_local_id})
 
-            if len(id2pathways) > 0: # printing folder with pathways
+            if len(id2pathways) > 0: #printing folder with pathways
                 folder_xml = et.tostring(folder_resnet,encoding='utf-8',xml_declaration=False).decode("utf-8")
-                folder_xml = str(minidom.parseString(folder_xml).toprettyxml(indent='   '))
+                folder_xml = ps_api.pretty_xml(folder_xml,no_declaration=True)
                 f.write(folder_xml)
 
             download_counter += pathway_counter
@@ -105,7 +106,7 @@ if __name__ == "__main__":
 
 
         tree_xml = et.tostring(folder_resnet,encoding='utf-8',xml_declaration=False).decode("utf-8")
-        tree_xml = str(minidom.parseString(tree_xml).toprettyxml(indent='   '))
+        tree_xml = ps_api.pretty_xml(tree_xml,no_declaration=True)
         f.write(tree_xml)
         f.write('</batch>')
     print("Total execution time: %s" % ps_api.execution_time(global_start))
