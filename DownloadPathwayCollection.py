@@ -36,9 +36,9 @@ if __name__ == "__main__":
             folder_nodes = et.SubElement(folder_resnet, 'nodes')
             xml_controls = et.SubElement(folder_resnet, 'controls')
             folder_local_id = 'F0'
-            xml_node_folder = et.SubElement(folder_nodes, 'node', {'local_id':folder_local_id, 'urn': 'urn:agi-folder:'+str(folder_id)})
-            et.SubElement(xml_node_folder, 'attr', {'name': 'NodeType', 'value': 'Folder'})
-            et.SubElement(xml_node_folder, 'attr', {'name': 'Name', 'value': folder_name})
+            xml_node_folder = et.SubElement(folder_nodes, 'node', {'local_id':folder_local_id, 'urn':'urn:agi-folder:'+str(folder_id)})
+            et.SubElement(xml_node_folder, 'attr', {'name':'NodeType', 'value':'Folder'})
+            et.SubElement(xml_node_folder, 'attr', {'name':'Name', 'value':folder_name})
 
             id2pathways = ps_api.get_objects_from_folders([folder_id],with_layout=True)
 
@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
                 if pathway_id not in printed_pathway_ids:
                     if pathway['ObjTypeName'][0] == 'Pathway':
-                        pathway_graph, pathway_xml = ps_api.get_pathway(pathway_id,as_batch=False)
+                        pathway_graph, pathway_xml = ps_api.get_pathway(pathway_id,as_batch=False,rel_props=['TextRef'])
                     elif pathway['ObjTypeName'][0] == 'Group':
                         pathway_graph, pathway_xml = ps_api.get_group(pathway_id,as_batch=False)
                     else:
@@ -64,6 +64,7 @@ if __name__ == "__main__":
                 pathway_local_id = 'P'+str(pathway_counter)
                 xml_node_pathway = et.SubElement(folder_nodes, 'node', {'local_id':pathway_local_id, 'urn':pathway_urn})
                 et.SubElement(xml_node_pathway, 'attr', {'name': 'NodeType', 'value': 'Pathway'})
+                et.SubElement(xml_node_pathway, 'attr', {'name': 'Name', 'value': pathway['Name'][0]})
                 
                 control_local_id = 'L'+str(pathway_counter)
                 xml_control = et.SubElement(xml_controls, 'control', {'local_id':control_local_id})
@@ -95,8 +96,11 @@ if __name__ == "__main__":
             et.SubElement(xml_node_folder, 'attr', {'name':'Name', 'value':folder_name})
             for child_id in child_ids:
                 child_local_id = str(child_id)
+                subfolder_name = ps_api.id2folders[child_id][0]['Name']
                 xml_node_pathway = et.SubElement(folder_nodes, 'node', {'local_id':child_local_id, 'urn':'urn:agi-folder:'+child_local_id})
                 et.SubElement(xml_node_pathway, 'attr', {'name':'NodeType', 'value':'Folder'})
+                et.SubElement(xml_node_pathway, 'attr', {'name':'Name', 'value':subfolder_name})
+                
                 
                 control_local_id = 'L'+str(child_id)
                 xml_control = et.SubElement(xml_controls, 'control', {'local_id':control_local_id})
