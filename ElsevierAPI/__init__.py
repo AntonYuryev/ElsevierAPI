@@ -1,7 +1,8 @@
 import json
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 
-config_dir = 'D:/Python/ENTELLECT_API/ElsevierAPI/'
+#config_dir = 'D:/Python/ENTELLECT_API/ElsevierAPI/'
+config_dir = './ElsevierAPI/'
 apiconfig = 'APIconfig.json'
 default_apiconfig = config_dir + apiconfig
 
