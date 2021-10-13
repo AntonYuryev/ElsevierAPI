@@ -430,9 +430,9 @@ class PSNetworx(DataModel):
 
 
     def get_pathway(self, pathwayId,path_urn=None,path_name=None,rel_props:list=None, ent_props:list=None,
-                    xml_format='RNEF',put2folder:str=None, add_rel_props:dict=None, add_pathway_props:dict=None, as_batch=True):
+                    xml_format='RNEF',put2folder:str=None, add_rel_props:dict=None, add_pathway_props:dict=None, as_batch=True, prettify=True):
     # add_rel_props, add_pathway_props structure - {PropName:[PropValues]}
-        if not isinstance(rel_props,list): rel_props = REF_PROPS+REF_ID_TYPES
+        if not isinstance(rel_props,list): rel_props = REF_PROPS + REF_ID_TYPES + ['Effect']
 
         if hasattr(self,'id2pathways'):
             if not isinstance(path_urn,str):
@@ -494,11 +494,12 @@ class PSNetworx(DataModel):
             
             if as_batch:
                 pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-                pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
+                if prettify: pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
             else:
                 pathway_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-                pathway_xml = str(minidom.parseString(pathway_xml).toprettyxml(indent='   '))
-                pathway_xml = pathway_xml[pathway_xml.find('\n')+1:]
+                if prettify:
+                    pathway_xml = str(minidom.parseString(pathway_xml).toprettyxml(indent='   '))
+                    pathway_xml = pathway_xml[pathway_xml.find('\n')+1:]
                 #minidom does not work without xml_declaration
 
         print('\"%s\" pathway downloaded: %d nodes, %d edges supported by %d references' % 
@@ -514,7 +515,7 @@ class PSNetworx(DataModel):
         
         return pretty_xml
 
-    def get_group(self, group_id,group_urn=None,group_name=None, ent_props:list=None,put2folder:str=None,as_batch=True):
+    def get_group(self, group_id,group_urn=None,group_name=None, ent_props:list=None,put2folder:str=None,as_batch=True, prettify=True):
         if hasattr(self,'id2groups'):
             if not isinstance(group_urn,str):
                 try:
@@ -560,10 +561,10 @@ class PSNetworx(DataModel):
         
         if as_batch:
             group_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            group_xml = minidom.parseString(group_xml).toprettyxml(indent='   ')
+            if prettify: group_xml = minidom.parseString(group_xml).toprettyxml(indent='   ')
         else:
             group_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            group_xml = self.pretty_xml(group_xml,no_declaration=True)
+            if prettify: group_xml = self.pretty_xml(group_xml,no_declaration=True)
             #minidom does not work without xml_declaration
 
         print('\"%s\" group downloaded: %d nodes' % (group_name, group_graph.number_of_nodes()))
