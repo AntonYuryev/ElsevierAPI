@@ -301,16 +301,13 @@ class DataModel:
             prop_name = self.IdToPropType[id_property]['Name']
             prop['PropName'] = prop_name
             dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
-            if dict_folder_id > 0:
+            if prop['PropValues'] and dict_folder_id > 0:
                 dict_folder = self.get_dictionary(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
-                    id_dict_prop_value = int(prop['PropValues']['string'][i])
-                    new_dict_value = dict_folder[id_dict_prop_value]
+                    id_dict_prop_value = prop['PropValues']['string'][i]
+                    new_dict_value = dict_folder[id_dict_prop_value] if id_dict_prop_value in dict_folder else id_dict_prop_value
                     prop['PropValues']['string'][i] = new_dict_value
-
         
-
-
         return obj_props
 
     def get_layout(self, PathwayId):
