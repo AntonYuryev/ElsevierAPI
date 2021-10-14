@@ -52,10 +52,10 @@ def get_folder_subtree(folder_graph, folder_names, folder_ids=None, folder_name=
     if folder_ids is None:
         folder_ids = folder_names_rev[folder_name]
     _folder_graph = {child: {folder_graph[child]} for child in folder_graph}
-    paths_to_root_rev = {}
+    paths_to_root = {}
     for folder_id in folder_ids:
-        paths_to_root_rev.update(expand_rev(_folder_graph, folder_id, None)) 
-    paths_to_root = reverse_tree(paths_to_root_rev)
+        paths_to_root.update(expand_rev(_folder_graph, folder_id, None)) 
+    paths_to_root = {child: next(iter(paths_to_root[child])) for child in paths_to_root}
     subtree = {}
     subtree.update(paths_to_root)
     _folder_graph_rev = reverse_tree(folder_graph)
@@ -74,7 +74,7 @@ def get_content_metadata_and_symlinks(api, folder_subtree, list_props):
     flat_folders = set([key for key in folder_subtree])
     flat_folders = flat_folders.union(set([folder_subtree[key] for key in folder_subtree]))
     metadata = {}
-    symlinks = {} # {item_id: {folder_id}} where item is a symlink
+    placement = {} # {folder_id: {(item_id, IsSymlink)}}
     for folder_id in flat_folders:
         raw_metadata = api.get_folder_objects_props(folder_id, list_props)
         if raw_metadata is None:
@@ -90,10 +90,9 @@ def get_content_metadata_and_symlinks(api, folder_subtree, list_props):
                 'URN': object_ref['URN'],
                 'ObjTypeName': object_ref['ObjTypeName']
             }
-            if object_ref['IsSymlink']:
-                if object_ref['Id'] not in symlinks:
-                    symlinks[object_ref['Id']] = set()
-                symlinks[object_ref['Id']].add(folder_id)
+            if folder_id not in placement:
+                placement[folder_id] = set()
+            placement[folder_id].add((object_ref['Id'], object_ref['IsSymlink']))
         properties = list(raw_metadata['Properties']['ObjectProperty']) if 'Properties' in raw_metadata and 'ObjectProperty' in raw_metadata['Properties'] else []
         for property in properties:
             if 'ObjId' not in property or 'PropName' not in property:
@@ -107,7 +106,7 @@ def get_content_metadata_and_symlinks(api, folder_subtree, list_props):
                 metadata[property['ObjId']][prop_name] = set()
             values = set([property['PropValues'][key] for key in [key for key in property['PropValues']]][0])
             metadata[property['ObjId']][prop_name] = metadata[property['ObjId']][prop_name].union(values)
-    return metadata, symlinks
+    return metadata, placement
 
 def flat_pathways_to_rnef_storage(api, metadata, db_destination):
     """This method downloads content of pathways and groups by looking at IDs in `metadata`,
@@ -147,6 +146,6 @@ def flat_pathways_to_rnef_storage(api, metadata, db_destination):
 PS_API = open_api_session('./ElsevierAPI/.misc/APIconfig.json')
 folder_names, folder_graph = get_folder_tree(PS_API)
 #this_names, this_subtree = get_folder_subtree(folder_graph, folder_names, folder_name='Integrin Receptors')
-#this_metadata, this_symlinks = get_content_metadata_and_symlinks(PS_API, this_subtree, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
-this_metadata, this_symlinks = get_content_metadata_and_symlinks(PS_API, folder_graph, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
+#this_metadata, this_placement = get_content_metadata_and_symlinks(PS_API, this_subtree, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
+this_metadata, this_placement = get_content_metadata_and_symlinks(PS_API, folder_graph, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
 flat_pathways_to_rnef_storage(PS_API, this_metadata, '../pathways-pse/rnef.db')
