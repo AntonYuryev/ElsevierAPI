@@ -118,10 +118,15 @@ def flat_pathways_to_rnef_storage(api, metadata, db_destination):
     cur.execute('create table if not exists content (id number, rnef text);')
     conn.commit()
     for key in metadata:
+        cur.execute('select id from content where id = %d;' % (key))
+        if cur.fetchone() is not None:
+            continue
         if metadata[key]['ObjTypeName'] == 'Pathway':
+            print('Retrieving pathway "%s" (id=%d, urn="%s")' % (next(iter(metadata[key]['Name'])), key, metadata[key]['URN']))
             _, raw_xml = api.get_pathway(pathwayId=key, path_urn=metadata[key]['URN'], path_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
         elif metadata[key]['ObjTypeName'] == 'Group':
-            _, raw_xml = api.get_group(pathwayId=key, path_urn=metadata[key]['URN'], path_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
+            print('Retrieving group "%s" (id=%d, urn="%s")' % (next(iter(metadata[key]['Name'])), key, metadata[key]['URN']))
+            _, raw_xml = api.get_group(group_id=key, group_urn=metadata[key]['URN'], group_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
         x = et.fromstring(raw_xml)
         x.set('type', metadata[key]['ObjTypeName'])
         props = et.Element('properties')
@@ -135,13 +140,13 @@ def flat_pathways_to_rnef_storage(api, metadata, db_destination):
                 props.append(attr)
         x.append(props)
         xml_str = minidom.parseString(et.tostring(x, encoding='utf8').decode('utf8')).toprettyxml(indent='  ')
-        cur.execute('delete from content where id = %d;' % (key))
+        #cur.execute('delete from content where id = %d;' % (key))
         cur.execute('insert into content (id, rnef) select ?, ?;', (key, xml_str))
         conn.commit()
 
 PS_API = open_api_session('./ElsevierAPI/.misc/APIconfig.json')
 folder_names, folder_graph = get_folder_tree(PS_API)
-this_names, this_subtree = get_folder_subtree(folder_graph, folder_names, folder_name='Integrin Receptors')
-this_metadata, this_symlinks = get_content_metadata_and_symlinks(PS_API, this_subtree, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
-#this_metadata, this_symlinks = get_content_metadata_and_symlinks(PS_API, folder_graph, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
-flat_pathways_to_rnef_storage(PS_API, this_metadata, 'rnef.db')
+#this_names, this_subtree = get_folder_subtree(folder_graph, folder_names, folder_name='Integrin Receptors')
+#this_metadata, this_symlinks = get_content_metadata_and_symlinks(PS_API, this_subtree, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
+this_metadata, this_symlinks = get_content_metadata_and_symlinks(PS_API, folder_graph, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
+flat_pathways_to_rnef_storage(PS_API, this_metadata, '../pathways-pse/rnef.db')
