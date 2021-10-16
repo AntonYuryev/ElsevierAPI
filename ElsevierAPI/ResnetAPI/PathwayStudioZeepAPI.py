@@ -313,7 +313,7 @@ class DataModel:
     def get_layout(self, PathwayId):
         # GetObjectAttachment = self.SOAPclient.get_type('ns0:GetObjectAttachment')
         result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
-        return str(result['Attachment'].decode('utf-8'))
+        return str(result['Attachment'].decode('utf-8')) if 'Attachment' in result else ''
 
     def get_data(self, OQLrequest, retrieve_props: list=None, getLinks=True):
         retrieve_props = ['Name', 'RelationNumberOfReferences'] if retrieve_props is None else retrieve_props
