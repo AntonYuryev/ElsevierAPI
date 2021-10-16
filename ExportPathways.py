@@ -108,7 +108,7 @@ def get_content_metadata_and_symlinks(api, folder_subtree, list_props):
             metadata[property['ObjId']][prop_name] = metadata[property['ObjId']][prop_name].union(values)
     return metadata, placement
 
-def flat_pathways_to_rnef_storage(api, metadata, db_destination):
+def flat_pathways_to_rnef_storage(apiconfig_filename, metadata, db_destination):
     """This method downloads content of pathways and groups by looking at IDs in `metadata`,
     conbines downloaded content with properties stored in `metadata`,
     and submits (id, xml) to SQLite database."""
@@ -121,11 +121,16 @@ def flat_pathways_to_rnef_storage(api, metadata, db_destination):
         if cur.fetchone() is not None:
             continue
         if metadata[key]['ObjTypeName'] == 'Pathway':
+            # create new API object each time, otherwise memory leaks somewhere in API degrading performance
+            api = open_api_session(apiconfig_filename)
             print('Retrieving pathway "%s" (id=%d, urn="%s")' % (next(iter(metadata[key]['Name'])), key, metadata[key]['URN']))
             _, raw_xml = api.get_pathway(pathwayId=key, path_urn=metadata[key]['URN'], path_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
+            del api
         elif metadata[key]['ObjTypeName'] == 'Group':
+            api = open_api_session(apiconfig_filename)
             print('Retrieving group "%s" (id=%d, urn="%s")' % (next(iter(metadata[key]['Name'])), key, metadata[key]['URN']))
             _, raw_xml = api.get_group(group_id=key, group_urn=metadata[key]['URN'], group_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
+            del api
         x = et.fromstring(raw_xml)
         x.set('type', metadata[key]['ObjTypeName'])
         props = et.Element('properties')
@@ -148,4 +153,5 @@ folder_names, folder_graph = get_folder_tree(PS_API)
 #this_names, this_subtree = get_folder_subtree(folder_graph, folder_names, folder_name='Integrin Receptors')
 #this_metadata, this_placement = get_content_metadata_and_symlinks(PS_API, this_subtree, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
 this_metadata, this_placement = get_content_metadata_and_symlinks(PS_API, folder_graph, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
-flat_pathways_to_rnef_storage(PS_API, this_metadata, '../pathways-pse/rnef.db')
+del PS_API
+flat_pathways_to_rnef_storage('./ElsevierAPI/.misc/APIconfig.json', this_metadata, '../pathways-pse/rnef.db')
