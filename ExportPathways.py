@@ -144,6 +144,7 @@ def flat_pathways_to_rnef_storage(apiconfig_filename, metadata, db_destination):
                 props.append(attr)
         x.append(props)
         xml_str = minidom.parseString(et.tostring(x, encoding='utf8').decode('utf8')).toprettyxml(indent='  ')
+        xml_str = xml_str[xml_str.find('\n')+1:]
         #cur.execute('delete from content where id = %d;' % (key))
         cur.execute('insert into content (id, rnef) select ?, ?;', (key, xml_str))
         conn.commit()
