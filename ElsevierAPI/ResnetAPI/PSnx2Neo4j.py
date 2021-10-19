@@ -1,11 +1,12 @@
-from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSObject, PSRelation, PSNetworx, REF_ID_TYPES
+from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSObject, PSRelation, PSNetworx
+from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_ID_TYPES
 import logging
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 
 REL_PROP_Neo4j = ['Name', 'Effect', 'Mechanism', 'Source', 'TextRef']
 ENT_PROP_Neo4j = ['URN', 'Name', 'Description']
-REL_PROPs = REF_ID_TYPES + REL_PROP_Neo4j
+REL_PROPs = list(REF_ID_TYPES) + REL_PROP_Neo4j
 
 
 class nx2neo4j:

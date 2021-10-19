@@ -7,6 +7,7 @@ from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 
+
 class APISession(PSNetworx):
     pass
     ResultRef = None
@@ -40,6 +41,11 @@ class APISession(PSNetworx):
         else:
             return None
 
+    def clear(self):
+        self.Graph.clear()
+        self.IDtoRelation.clear()
+        self.ID2Children.clear()
+        
 
     def __get_next_page(self, no_mess=True):
         if self.ResultPos < self.ResultSize:
@@ -205,6 +211,9 @@ class APISession(PSNetworx):
             ppi_graph.size(), self.execution_time(start_time)))
         return ppi_graph
 
+    def get_network_graph(self, InteractorIdList:set, connect_by_rel_types:list=None):
+        return self.get_network(InteractorIdList,connect_by_rel_types, self.relProps,self.entProps)
+
 
     def iterate_oql(self, oql_query:str, id_set:set):
         to_return = ResnetGraph()
@@ -215,6 +224,7 @@ class APISession(PSNetworx):
         to_return = ResnetGraph()
         to_return = self._iterate_oql2(oql_query,id_set1,id_set2,self.relProps,self.entProps)
         return to_return
+        
 
     def to_pandas (self, in_graph=None, RefNumPrintLimit=0)-> 'pd.DataFrame':
         if not isinstance(in_graph, ResnetGraph): in_graph = self.Graph
@@ -251,7 +261,9 @@ class APISession(PSNetworx):
         return graph2return
 
 
-    
-    
+
+
+
+        
 
     

@@ -1,4 +1,3 @@
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
 import pandas as pd
 import logging
 import sys
@@ -20,8 +19,6 @@ class DataModel:
         self.IdToPropType = dict()
         self.IdtoObjectType = dict()
         self.PropIdToDict = dict()
-        #self.id2folders = dict() # {id:folder_zobj, name:folder_zobj} loaded on demand
-        #self.id2pathways = dict() # {id:PSObj} loaded on demand
         self.RNEFnameToPropType = dict()
         from requests.auth import HTTPBasicAuth
         from requests import Session
@@ -84,18 +81,18 @@ class DataModel:
 
     def load_folder_tree(self):
         folders = self.SOAPclient.service.GetFoldersTree(0)
-        IdToFolders = dict()
+        id2folders = dict()
         for folder in folders:
             folder_id = folder['Id']
             folder_name = folder['Name']
-            IdToFolders[folder_id] = [folder]
-            # several folders may have the same name:
-            if folder_name in IdToFolders.keys():
-                IdToFolders[folder_name].append(folder)
+            id2folders[folder_id] = [folder]
+            # different folders may have the same name:
+            if folder_name in id2folders.keys():
+                id2folders[folder_name].append(folder)
             else:
-                IdToFolders[folder_name] = [folder]
+                id2folders[folder_name] = [folder]
         
-        return IdToFolders
+        return id2folders
 
     def dump_prop_names(self, fileOut):
         id_prop_names_list = list({(p['DisplayName'], p['Name'], p['Id']) for p in self.IdToPropType.values()})
@@ -140,51 +137,6 @@ class DataModel:
             self.get_dictionary(IdProperty, id_dictionary)
 
         return self.PropIdToDict[IdProperty][DictIdValue]
-
-    def get_subfolders(self, FolderIds: list):
-        if not hasattr(self, "IdToFolders"): 
-            self.id2folders = self.load_folder_tree()
-
-        subfolders_ids = set()
-        for db_id in FolderIds:
-            folders = self.id2folders[db_id]
-            for folder in folders:
-                if type(folder['SubFolders']) != type(None):
-                    subfolders_ids.update(folder['SubFolders']['long'])
-        return subfolders_ids
-
-    def get_subfolders_recursively(self, FolderId):
-        accumulate_subfolders = {FolderId}
-        subfolders = set(self.get_subfolders([FolderId]))
-        while len(subfolders) > 0:
-            accumulate_subfolders.update(subfolders)
-            subs = set()
-            for db_id in subfolders:
-                subs.update(self.get_subfolders([db_id]))
-            subfolders = subs
-
-        return accumulate_subfolders
-
-    def get_subfolder_tree(self,folder_name):
-        if not hasattr(self, "id2folders"): 
-            self.id2folders = self.load_folder_tree()
-
-        folder_id = self.id2folders[folder_name][0]['Id']
-        child2parent = {folder_id:folder_id}
-        parent2child = PSObject(dict())
-        subfolder_ids = self.get_subfolders([folder_id])
-        while len(subfolder_ids) > 0:
-            child2parent.update({i:folder_id for i in subfolder_ids})
-            parent2child.add_properties(folder_id,list(subfolder_ids))
-            subs = set()
-            for db_id in subfolder_ids:
-                subs = self.get_subfolders([db_id])
-                if len(subs) > 0:
-                    child2parent.update({i:db_id for i in subs})
-                    parent2child.add_properties(db_id,subs)
-            subfolder_ids = subs
-
-        return child2parent, dict(parent2child)
 
     def get_folder_objects(self, FolderId, result_param):
         from zeep import exceptions

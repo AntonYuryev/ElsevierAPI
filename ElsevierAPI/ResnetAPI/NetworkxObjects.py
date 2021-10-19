@@ -100,11 +100,12 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
 
 
-REF_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE', 'NCT ID']
-REF_PROPS = ['Sentence', 'PubYear', 'Authors', 'Journal', 'MedlineTA', 'CellType', 'CellLineName', 'Organ', 'Tissue',
-             'Organism', 'Source',
-             'TrialStatus', 'Phase', 'StudyType', 'Start', 'Intervention', 'Condition', 'Company', 'Collaborator',
-             'TextRef', 'Title']
+REF_ID_TYPES = {'PMID', 'DOI', 'PII', 'PUI', 'EMBASE', 'NCT ID'}
+REF_PROPS = {'PubYear', 'Authors', 'Journal', 'MedlineTA', 'Organism', 'Source','TrialStatus', 'Phase', 'StudyType', 
+             'Start', 'Intervention', 'Condition', 'Company', 'Collaborator','Title','Percent'}
+
+SENTENCE_PROPS = {'CellType', 'CellLineName', 'Organ', 'Tissue','Sentence'}#TextRef is used as key in Reference
+RELATION_PROPS = {'Effect','Mechanism','Source','ChangeType','BiomarkerType','QuantitativeType'}
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences
 
@@ -115,14 +116,15 @@ class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_
     def __init__(self, idType: str, ID: str):
         super().__init__(dict())
         self.Identifiers = {idType:ID}
+        self.Sentences = dict() # {TextRef:{PropID:Value}} from SENTENCE_PROPS
 
     def __key(self):
         for id_type in REF_ID_TYPES:
-            try:
-                return self.Identifiers[id_type]
-            except KeyError:
-                continue
-        return NotImplemented
+            try: return self.Identifiers[id_type]
+            except KeyError: continue
+        
+        try: return self.Identifiers['TextRef']
+        except KeyError: return NotImplemented
 
     def __hash__(self):
         return hash(self.__key())
@@ -153,17 +155,68 @@ class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_
         return row
 
 
-    def merge_reference(self, ref_to_merge):
-        self.Identifiers.update(ref_to_merge.Identifiers)
+    def merge_reference(self, other):
+        if isinstance(other, Reference):
+            self.Identifiers.update(other.Identifiers)
+            self.Sentences.update(other.Sentences)
 
     def is_from_abstract(self):
-        for textref in self['TextRef']:
+        for textref in self.Sentences.keys():
             try:
                 return bool(textref.rindex('#abs', len(textref) - 8, len(textref) - 3))
             except ValueError:
                 continue
         return False
 
+    def make_textref(self):
+        try:
+            return 'info:pmid/'+ self.Identifiers['PMID']
+        except KeyError:
+            try:
+                return 'info:doi/'+ self.Identifiers['DOI']
+            except KeyError:
+                try:
+                    return 'info:pii/'+ self.Identifiers['PII']
+                except KeyError:
+                    try:
+                        return 'info:pui/'+ self.Identifiers['PUI']
+                    except KeyError:
+                        try:
+                            return 'info:embase/'+ self.Identifiers['EMBASE']
+                        except KeyError:
+                            try:
+                                return 'info:nctid/'+ self.Identifiers['NCT ID']
+                            except KeyError:
+                                try:
+                                    return self.Identifiers['TextRef']
+                                except KeyError:
+                                    return NotImplemented
+
+    @staticmethod
+    def parse_textref(textref:str):
+        #'info:doi/10.1016/j.gendis.2015.05.001#body:49"'
+        prefix = textref[:textref.find(':')]
+        if prefix == 'info':
+            tr = textref[5:]
+            slash_pos = tr.find('/')
+            if slash_pos > 0:
+                id_type = tr[:slash_pos]
+                identifier_start = slash_pos+1
+                end = tr.rfind('#',identifier_start)
+                if end < 0: end = len(tr)
+                identifier = tr[identifier_start:end]
+                return id_type.upper(),identifier
+            else:
+                return 'TextRef', textref
+        else:
+            return 'TextRef', textref
+
+
+    @classmethod
+    def from_textref(cls, textref:str):
+        id_type, identifier = cls.parse_textref(textref)
+        return cls(id_type,identifier)
+        
 
 class PSRelation(PSObject):
     pass
@@ -223,8 +276,10 @@ class PSRelation(PSObject):
                 to_return.append(prop_set_val)
             return to_return
 
+
     def load_references(self):
-        if len(self.References): return
+        if self.References: return
+        propset_idx = 1
         for propSet in self.PropSetToProps.values():
             propset_references = list()
             for ref_id_type in REF_ID_TYPES:
@@ -234,18 +289,7 @@ class PSRelation(PSObject):
                 except KeyError:
                     continue
 
-            if len(propset_references) == 0:
-                try:
-                    # trying id reference by title as a last resort since it does not have valid identifiers
-                    propset_title = propSet['Title'][0]
-                    try:
-                        ref = self.References[propset_title]
-                    except KeyError:
-                        ref = Reference('Title', propset_title)
-                        self.References[propset_title] = ref
-                except KeyError:
-                    continue
-            else:
+            if propset_references: # propSet is valid reference - resolving duplicates 
                 # case when reference have valid identifiers
                 propset_article_identifiers = {x[1] for x in propset_references}
                 existing_ref = {r for i, r in self.References.items() if i in propset_article_identifiers}
@@ -269,18 +313,63 @@ class PSRelation(PSObject):
                             self.References[id_value] = anchor_ref
                         ref = anchor_ref
                 else:
-                    ref = next(iter(existing_ref))  # if len(existing_ref) == 1: there is nothing to do
+                    ref = next(iter(existing_ref))  # if len(existing_ref) == 1: there is nothing to do but take it and add sentences
 
+            else: #propSet is not valid reference - try to create one using Title or TexRef
+                try:
+                    # trying id reference by title as a last resort since it does not have valid identifiers
+                    propset_title = propSet['Title'][0]
+                    try:
+                        ref = self.References[propset_title]
+                    except KeyError:
+                        ref = Reference('Title', propset_title)
+                        self.References[propset_title] = ref
+                except KeyError:
+                    try:
+                        txtref = propSet['TextRef'][0]
+                        if txtref != 'Admin imported':
+                            ref = Reference.from_textref(txtref)
+                            for ref_id_type, ref_id in ref.Identifiers.items():
+                                self.References[ref_id] = ref
+                        else: continue #'Admin imported' references have no identifiers and ignored 
+                    except KeyError: continue
+
+            textref = None 
+            sentence_props = dict()
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
                 if propId in REF_PROPS:
                     ref.add_properties(propId, propValues)
+                elif propId in SENTENCE_PROPS:
+                    sentence_props[propId] = propValues
+                else:
+                    if propId == 'TextRef': textref = propValues[0]
+
+            if not isinstance(textref,str): 
+                textref = ref.make_textref()
+            if textref[:10] == 'urn:hash::':
+                textref = ref.make_textref()
+            elif textref == 'Admin imported': 
+                continue
+            
+
+            if sentence_props: ref.Sentences[textref] = sentence_props
+            else: 
+                ref.Sentences[textref] = {'Sentence':[]}
+
+            propset_idx +=1
+
 
     def get_reference_count(self, count_abstracts=False):
         if count_abstracts:
             ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
             return len(ref_from_abstract)
         else:
-            return len(self.References)
+            if self.References:
+                return len(self.References)
+            else:
+                return self['RelationNumberOfReferences'][0]
+
+
 
     def triple2str(self, columnPropNames: list, return_dict=False, col_sep='\t', cell_sep=';', endOfline='\n',
                    RefNumPrintLimit=0,add_entities=False):
