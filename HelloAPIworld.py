@@ -5,7 +5,7 @@ ps_api = open_api_session(api_config_file=None)#specify here path to your APIcon
 #If api_config_file not specified the default APIConfig from __init__.py will be used
 # ps_api retreives data from the database and loads it into APISession.Graph derived from Networkx:MultiDiGraph 
 
-ps_api.add_rel_props(REF_PROPS+REF_ID_TYPES)
+ps_api.add_rel_props(list(REF_PROPS|REF_ID_TYPES))
 #add_rel_props specifies what attributes to retreive for relations from the database
 ps_api.add_ent_props(['Name','URN'])
 #add_ent_props specifies what attributes to retreive for nodes (entities) from the database
