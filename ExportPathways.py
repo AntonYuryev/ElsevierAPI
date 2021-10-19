@@ -84,12 +84,11 @@ def get_content_metadata_and_symlinks(api, folder_subtree, list_props):
         for object_ref in object_refs:
             if object_ref['ObjTypeName'] not in ['Pathway', 'Group']:
                 continue
-            if object_ref['Id'] in metadata:
-                continue
-            metadata[object_ref['Id']] = {
-                'URN': object_ref['URN'],
-                'ObjTypeName': object_ref['ObjTypeName']
-            }
+            if object_ref['Id'] not in metadata:
+                metadata[object_ref['Id']] = {
+                    'URN': object_ref['URN'],
+                    'ObjTypeName': object_ref['ObjTypeName']
+                }
             if folder_id not in placement:
                 placement[folder_id] = set()
             placement[folder_id].add((object_ref['Id'], object_ref['IsSymlink']))
