@@ -20,7 +20,8 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--resume_from', type=str, default='')
     args = parser.parse_args()
 
-    ps_api = FolderContent(load_api_config())
+    api_cofig_file = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTeva.json'
+    ps_api = FolderContent(load_api_config(api_cofig_file))
 
     if args.infile:
         urnList = [u[0] for u in csv.reader(open(args.infile,"r"), delimiter="\t")]
