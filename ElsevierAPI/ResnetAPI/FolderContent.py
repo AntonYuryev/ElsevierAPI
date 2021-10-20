@@ -7,11 +7,13 @@ import time
 
 class FolderContent (APISession): 
 
-    def __init__(self, APIconfig):
+    def __init__(self, APIconfig, preload_folder_tree=True):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
         self.PageSize = 1000
         self.DumpFiles = []
-        self.id2folders = self.load_folder_tree() # {folder_id:folder_zobj, folder_name:folder_zobj}
+        self.id2folders = {}
+        if preload_folder_tree:
+            self.id2folders = self.load_folder_tree() # {folder_id:folder_zobj, folder_name:folder_zobj}
         self.reference_cache_size = 1000000
         #self.id2pathways = dict() # {id:PSObj} loaded on demand
         #self.id2groups = dict() # {id:PSObj} loaded on demand
@@ -115,8 +117,8 @@ class FolderContent (APISession):
         
         return pretty_xml
 
-    def get_pathway(self, pathwayId,path_urn:str=None,path_name:str=None,rel_props:set={}, ent_props:set=None,
-                    xml_format='RNEF',put2folder:str=None, add_props2rel:dict=None, add_props2pathway:dict=None, as_batch=True):
+    def get_pathway(self, pathwayId,path_urn:str=None,path_name:str=None,rel_props:set=set(), ent_props:set=set(),
+                    xml_format='RNEF',put2folder:str=None, add_props2rel:dict=None, add_props2pathway:dict=None, as_batch=True, prettify=True):
     # add_rel_props, add_pathway_props structure - {PropName:[PropValues]}
 
         get_rel_props = REF_ID_TYPES | rel_props | {'TextRef'} | RELATION_PROPS
@@ -155,7 +157,9 @@ class FolderContent (APISession):
         rnef_xml.set('type', 'Pathway')
 
         lay_out = et.Element('attachments')
-        lay_out.append(et.fromstring(self.get_layout(pathwayId)))
+        attachments = self.get_layout(pathwayId)
+        if attachments:
+            lay_out.append(et.fromstring(attachments))
         rnef_xml.append(lay_out)
         
         batch_xml = et.Element('batch')
@@ -185,11 +189,12 @@ class FolderContent (APISession):
             
             if as_batch:
                 pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-                pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
+                if prettify: pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
             else:
                 pathway_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-                pathway_xml = str(minidom.parseString(pathway_xml).toprettyxml(indent='   '))
-                pathway_xml = pathway_xml[pathway_xml.find('\n')+1:]
+                if prettify:
+                    pathway_xml = str(minidom.parseString(pathway_xml).toprettyxml(indent='   '))
+                    pathway_xml = pathway_xml[pathway_xml.find('\n')+1:]
                 #minidom does not work without xml_declaration
 
         print('\"%s\" pathway downloaded: %d nodes, %d edges supported by %d references' % 
@@ -198,7 +203,7 @@ class FolderContent (APISession):
         return pathway_graph, str(pathway_xml)
 
 
-    def get_group(self, group_id,group_urn:str=None,group_name:str=None, ent_props:set=None,put2folder:str=None,as_batch=True):
+    def get_group(self, group_id,group_urn:str=None,group_name:str=None, ent_props:set=None,put2folder:str=None,as_batch=True, prettify=True):
         if hasattr(self,'id2groups'):
             if not isinstance(group_urn,str):
                 try:
@@ -215,9 +220,7 @@ class FolderContent (APISession):
             print('Pathway has no Name specified!!!!')
             group_name = 'no_name'
 
-        group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE id = {Id})'.format(Id = group_id),
-                                                entity_props=ent_props,get_links=False)
-       
+        group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE Id = {objectId})'.format(objectId = group_id),entity_props=ent_props,get_links=False)
         rnef_xml = et.fromstring(self.to_rnef(group_graph))
         rnef_xml.set('name', group_name)
         rnef_xml.set('urn', group_urn)
@@ -245,10 +248,10 @@ class FolderContent (APISession):
         
         if as_batch:
             group_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            group_xml = minidom.parseString(group_xml).toprettyxml(indent='   ')
+            if prettify: group_xml = minidom.parseString(group_xml).toprettyxml(indent='   ')
         else:
             group_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            group_xml = self.pretty_xml(group_xml,no_declaration=True)
+            if prettify: group_xml = self.pretty_xml(group_xml,no_declaration=True)
             #minidom does not work without xml_declaration
 
         print('\"%s\" group downloaded: %d nodes' % (group_name, group_graph.number_of_nodes()))

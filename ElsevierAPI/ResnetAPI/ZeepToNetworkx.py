@@ -401,7 +401,7 @@ class PSNetworx(DataModel):
                 return ResnetGraph()
 
 
-    def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties:set={}, retrieve_ent_properties:set={}):
+    def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties:set=set(), retrieve_ent_properties:set=set()):
 
         ent_props = retrieve_ent_properties
         ent_props.add('Name')
