@@ -253,11 +253,11 @@ class DataModel:
             prop_name = self.IdToPropType[id_property]['Name']
             prop['PropName'] = prop_name
             dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
-            if dict_folder_id > 0:
+            if prop['PropValues'] and dict_folder_id > 0:
                 dict_folder = self.get_dictionary(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
-                    id_dict_prop_value = int(prop['PropValues']['string'][i])
-                    new_dict_value = dict_folder[id_dict_prop_value]
+                    id_dict_prop_value = prop['PropValues']['string'][i]
+                    new_dict_value = dict_folder[id_dict_prop_value] if id_dict_prop_value in dict_folder else id_dict_prop_value
                     prop['PropValues']['string'][i] = new_dict_value
 
         
@@ -268,7 +268,7 @@ class DataModel:
     def get_layout(self, PathwayId):
         # GetObjectAttachment = self.SOAPclient.get_type('ns0:GetObjectAttachment')
         result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
-        return str(result['Attachment'].decode('utf-8'))
+        return str(result['Attachment'].decode('utf-8')) if 'Attachment' in result and result['Attachment'] is not None else '
 
     def get_data(self, OQLrequest, retrieve_props: list=None, getLinks=True):
         retrieve_props = ['Name', 'RelationNumberOfReferences'] if retrieve_props is None else retrieve_props
