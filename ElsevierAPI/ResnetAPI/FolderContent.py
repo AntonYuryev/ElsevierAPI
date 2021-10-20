@@ -217,9 +217,7 @@ class FolderContent (APISession):
             print('Pathway has no Name specified!!!!')
             group_name = 'no_name'
 
-        group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE id = {Id})'.format(Id = group_id),
-                                                entity_props=ent_props,get_links=False)
-       
+        group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE Id = {objectId})'.format(objectId = group_id),entity_props=ent_props,get_links=False)
         rnef_xml = et.fromstring(self.to_rnef(group_graph))
         rnef_xml.set('name', group_name)
         rnef_xml.set('urn', group_urn)
