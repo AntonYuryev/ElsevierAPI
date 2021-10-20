@@ -1,8 +1,15 @@
 import argparse
 import sqlite3
 import xml.etree.ElementTree as et
-from ElsevierAPI import open_api_session
+import ElsevierAPI.ResnetAPI.FolderContent
+from ElsevierAPI import load_api_config
 from xml.dom import minidom
+
+def open_api_session(api_config_filename):
+    """This function points at API object."""
+    config = load_api_config(api_config_filename)
+    api = ElsevierAPI.ResnetAPI.FolderContent.FolderContent(config, False)
+    return api
 
 def reverse_tree(tree):
     """This function reverses the tree (dict): {child: parent} => {parent: {child}}; {parent: {child}} => {child: parent}."""
@@ -305,7 +312,7 @@ def write_rnef(rnef_storage, placement_table_name, output_filepath, bypass=False
                 o.write('</batch>\n')
 
 def do_the_job(api_config_json, export_pathways_content=True, export_folder_structure=True, write_rnef_file=True, top_folder_name=None, placement_table_name='placement', output_filepath='out.rnef', rnef_storage='rnef.db'):
-    PS_API = open_api_session(api_config_json)    
+    PS_API = open_api_session(api_config_json)
     _names, _graph = get_folder_tree(PS_API)
     folder_names, subtree = _names, _graph
     if top_folder_name:
@@ -339,4 +346,4 @@ if __name__ == '__main__':
     ap.add_argument('--skip-write-rnef', type=bool, nargs='?', const=True, default=False, help='Do not write RNEF file at the end')
     args = ap.parse_args()
     api_config_json, export_pathways_content, export_folder_structure, write_rnef_file, top_folder_name, placement_table_name, output_filepath, rnef_storage = args.config, not args.skip_pathways, not args.skip_folders, not args.skip_write_rnef, args.folder_name, args.placement_table_name, args.output, args.storage
-    do_the_job(api_config_json=api_config_json, export_pathways_content=export_pathways_content, export_folder_structure=export_folder_structure, write_rnef_file=write_rnef_file, top_folder_name=top_folder_name, placement_table_name=args.placement_table_name, output_filepath=output_filepath, rnef_storage=rnef_storage)
+    do_the_job(api_config_json=api_config_json, export_pathways_content=export_pathways_content, export_folder_structure=export_folder_structure, write_rnef_file=write_rnef_file, top_folder_name=top_folder_name, placement_table_name=placement_table_name, output_filepath=output_filepath, rnef_storage=rnef_storage)
