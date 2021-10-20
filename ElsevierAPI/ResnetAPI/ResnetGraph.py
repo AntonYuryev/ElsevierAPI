@@ -24,6 +24,31 @@ class ResnetGraph (nx.MultiDiGraph):
                     break
         return list(all_ids)
 
+    def weight(self):
+        return self.size(weight="weight")
+
+    def subtract(self, other: "ResnetGraph"):
+        #only self graph is analyzed 
+        # works faster if other graph is bigger than self
+        unique2self = ResnetGraph()
+        edges_from_other = other._relations_ids()
+        for n1,n2,e in self.edges(data=True):
+            if e['relation']['Id'][0] not in edges_from_other:
+                unique2self.add_edge(n1, n2, relation=e['relation'],weight=e['weight'])
+                unique2self.add_nodes_from([(n1, self.nodes[n1]),(n2, self.nodes[n2])])
+        return unique2self
+
+    def intersect (self, other: "ResnetGraph"):
+        #only self graph is analyzed 
+        # works faster if other graph is bigger than self
+        intersection = ResnetGraph()
+        edges_from_other = other._relations_ids()
+        for n1,n2,e in self.edges(data=True):
+            if e['relation']['Id'][0] in edges_from_other:
+                intersection.add_edge(n1, n2, relation=e['relation'],weight=e['weight'])
+                intersection.add_nodes_from([(n1, self.nodes[n1]),(n2, self.nodes[n2])])
+        return intersection
+
     def get_objects(self, SearchValues: list, search_by_properties: list=None):
         if search_by_properties is None: search_by_properties = ['ObjTypeName']
         all_objects = set()
@@ -58,11 +83,10 @@ class ResnetGraph (nx.MultiDiGraph):
             return [PSObject(ddict) for id,ddict in self.nodes(data=True) if id in node_ids]
 
     def __relations(self):
-        graph_relations = set()
-        for regulatorID, targetID, rel in self.edges.data('relation'):
-            graph_relations.add(rel)
+        return {rel for regulatorID, targetID, rel in self.edges.data('relation') }
 
-        return graph_relations
+    def _relations_ids(self):
+        return {rel['Id'][0] for regulatorID, targetID, rel in self.edges.data('relation')}
 
     def get_properties(self, IDList: set, PropertyName):
         id2props = {x: y[PropertyName] for x, y in self.nodes(data=True) if x in IDList}
@@ -305,15 +329,22 @@ class ResnetGraph (nx.MultiDiGraph):
 
             # adding references
             references = list(set(rel.References.values()))
-            for i in range(0, len(references)):
-                for prop_name, prop_values in references[i].items():
-                    for prop_value in prop_values:
-                        if prop_name in RNEFprops:
-                            et.SubElement(
-                                xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(i)})
-                for ref_id_type,ref_id in references[i].Identifiers.items():
-                    et.SubElement(
-                        xml_control, 'attr',{'name': str(ref_id_type), 'value': str(ref_id), 'index': str(i)})
+            index = 0
+            for ref in references:
+                ref_props = {k:v for k,v in ref.items() if k in RNEFprops}
+                for textref, sentence_props in ref.Sentences.items():
+                    et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(index)})
+                    for sentprop_name, sentprop_values in sentence_props.items():
+                        for v in sentprop_values:
+                            et.SubElement(xml_control, 'attr',{'name': str(sentprop_name), 'value': str(v), 'index': str(index)})
+
+                        for prop_name, prop_values in ref_props.items():
+                            for prop_value in prop_values:
+                                    et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(index)})
+                        for ref_id_type,ref_id in ref.Identifiers.items():
+                            et.SubElement(xml_control, 'attr',{'name': str(ref_id_type), 'value': str(ref_id), 'index': str(index)})
+
+                        index += 1
 
         xml_str = et.tostring(resnet, encoding='utf-8').decode("utf-8")
         return xml_str

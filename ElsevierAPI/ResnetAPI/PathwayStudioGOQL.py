@@ -58,6 +58,21 @@ def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_o
     else: 
         return oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
 
+def get_relations_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=None, MinRef=0):
+    only_object_types = [] if only_object_types is None else only_object_types
+
+    if SearchByProperties[0] in ('id', 'Id', 'ID'):
+        oql_query = "SELECT Relation WHERE id = " + '(' + ','.join([str(int) for int in PropertyValues]) + ')'
+    else:
+        prop_names, values = get_search_strings(SearchByProperties, PropertyValues)
+        oql_query = "SELECT Relation WHERE (" + prop_names + ") = (" + values + ')'
+
+    if len(only_object_types) > 0:
+        object_types = join_with_quotes(',', only_object_types)
+        oql_query = oql_query + ' AND objectType = (' + object_types + ')'
+
+    return oql_query if MinRef == 0 else oql_query + ' AND RelationNumberOfReferences >= ' + str(MinRef)
+
 
 def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=None):
     only_object_types = [] if only_object_types is None else only_object_types
@@ -148,7 +163,7 @@ def get_neighbors(PropertyValues: list, SearchByProperties: list, expand_by_rel_
     expand_by_rel_types_str = join_with_quotes(',',expand_by_rel_types)
 
     property_names, values = get_search_strings(SearchByProperties, PropertyValues)
-    connect_to_str = "to (SELECT Entity WHERE (" + property_names + ") = " + values
+    connect_to_str = " to (SELECT Entity WHERE (" + property_names + ") = (" + values + ")"
     if len(expand_by_rel_types) > 0:
         if len(expand2neighbors) > 0:
             return "SELECT Entity WHERE objectType = (" + expand2neighbors_str + ") AND Connected by (SELECT Relation WHERE objectType= " + expand_by_rel_types_str + ")" + connect_to_str + ")"

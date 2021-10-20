@@ -1,12 +1,11 @@
 import networkx as nx
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation, REF_PROPS, REF_ID_TYPES
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,PSRelation
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
-from xml.dom import minidom
-import xml.etree.ElementTree as et
-
-REL_PROPS = ['Effect','Mechanism']
+import math
+import time
+from datetime import timedelta
 
 class PSNetworx(DataModel):
     def __init__(self, url, username, password):
@@ -14,6 +13,7 @@ class PSNetworx(DataModel):
         self.IDtoRelation = dict()  # {relID:PSRelation} needs to be - Resnet relations may not be binary
         self.Graph = ResnetGraph()
         self.ID2Children = dict()
+
         
     @staticmethod
     def _zeep2psobj(zeep_objects):
@@ -41,7 +41,11 @@ class PSNetworx(DataModel):
 
         return id2entity
 
-    def _load_graph(self, zeep_relations, zeep_objects):
+    @staticmethod
+    def link_id(t:tuple):
+        return t[0]
+
+    def _load_graph(self, zeep_relations, zeep_objects, add2self = True):
         new_graph = ResnetGraph()
         # loading entities and their properties
         id2entity = self._zeep2psobj(zeep_objects)
@@ -93,34 +97,54 @@ class PSNetworx(DataModel):
                     else:
                         new_relations[rel_id].Nodes['Regulators'].append(link)
 
+            try:
+                new_relations[rel_id].Nodes['Targets'].sort(key=self.link_id)
+            except KeyError: pass
+
+            try:
+                new_relations[rel_id].Nodes['Regulators'].sort(key=self.link_id)
+            except KeyError: pass
+            
             for rel in new_relations.values():
                 regulator_target = rel.get_regulators_targets()
                 for pair in regulator_target:
-                    ref_count = rel['RelationNumberOfReferences'][0]
+                    try:
+                        ref_count = rel['RelationNumberOfReferences'][0]
+                    except KeyError: ref_count = 0
                     new_graph.add_edge(pair[0], pair[1], relation=rel, weight=float(ref_count))
                     # print (newGraph.get_edge_data(pair[0], pair[1]))
 
             self.IDtoRelation.update(new_relations)  # must be kept since Resnet relation may not be binary
 
-        self.Graph = nx.compose(new_graph, self.Graph)
+        if add2self:
+            self.Graph = nx.compose(self.Graph,new_graph)
+
         return new_graph
 
-    def load_graph_from_oql(self, oql_query: str, relation_props: list=None, entity_props: list=None, get_links=True):
-        entity_props = set(['Name']+list(entity_props)) if isinstance(entity_props,(list, set)) else {'Name'}
+    def load_graph_from_oql(self, oql_query: str, relation_props: list=None, entity_props: list=None, get_links=True, add2self=True):
+        
+        if isinstance(entity_props,(list, set)):
+            entity_props = set(['Name']+list(entity_props)) if entity_props else set()
+            #specify empty list explicitly to avoid retreival of any properties
+            #can be used to retrieve only IDs for speed
+        else: entity_props = {'Name'}
+        
         if get_links:
-            if isinstance(relation_props,list):
-                relation_props = set(relation_props+['Name','RelationNumberOfReferences'])
+            if isinstance(relation_props,(set,list)):
+                relation_props = set(relation_props+['Name','RelationNumberOfReferences']) if relation_props else set()
+                #specify empty list explicitly to avoid retreival of any properties
+                #can be used to retrieve only IDs for speed
             else: relation_props = {'Name','RelationNumberOfReferences'}
             
             zeep_relations = self.get_data(oql_query, list(relation_props), getLinks=True)
             if type(zeep_relations) != type(None):
                 obj_id_list = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
                 zeep_objects = self.get_object_properties(obj_id_list, list(entity_props))
-                return self._load_graph(zeep_relations, zeep_objects)
+                return self._load_graph(zeep_relations, zeep_objects,add2self)
             else: return ResnetGraph()
         else:
             zeep_objects = self.get_data(oql_query, list(entity_props), getLinks=False)
-            return self._load_graph(None, zeep_objects)
+            return self._load_graph(None, zeep_objects,add2self)
 
     def _obj_id_by_oql(self, oql_query: str):
         zeep_entities = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
@@ -199,7 +223,6 @@ class PSNetworx(DataModel):
     def get_ppi(self, InteractorIdList:set, REL_PROPS:list, ENTITY_PROPS:list):
         splitter = list() #holds lists of ids splits 
         splitter.append(list(InteractorIdList))
-        import math
         number_of_splits = int(math.log2(len(InteractorIdList)))
         ppi_keeper = ResnetGraph()
         for s in range(1, number_of_splits):
@@ -223,6 +246,40 @@ class PSNetworx(DataModel):
             s += 1
 
         return ppi_keeper
+
+    def get_network(self, InteractorIdList:set, connect_by_rel_types:list=None, REL_PROPS:list=None, ENTITY_PROPS:list=None):
+        splitter = list() #holds lists of ids splits 
+        splitter.append(list(InteractorIdList))
+        number_of_splits = int(math.log2(len(InteractorIdList)))
+        print('Will load network of %d nodes in %d iterations' % (len(InteractorIdList),number_of_splits))
+        accumulate_network = ResnetGraph()
+        for s in range(1, number_of_splits):
+            new_splitter = list()
+            half = int(len(splitter[0]) / 2)
+            iter_start = time.time()
+            ids1 = set()
+            ids2 = set()
+            for split in splitter:
+                uq_list1 = split[:half]
+                uq_list2 = split[half:]
+                ids1.update(uq_list1)
+                ids2.update(uq_list2)
+                new_splitter.append(uq_list1)
+                new_splitter.append(uq_list2)
+
+            oql_query = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+            oql_query = oql_query.format(ids1=','.join(map(str,ids1)), ids2=','.join(map(str,ids2)))
+            if isinstance(connect_by_rel_types,list):
+                oql_query = oql_query +  'AND objectType = ({rel_types})'.format(rel_types=','.join(connect_by_rel_types))
+
+            network_iter = self.load_graph_from_oql(oql_query, REL_PROPS,ENTITY_PROPS)
+            accumulate_network = nx.compose(accumulate_network, network_iter)
+
+            splitter = new_splitter
+            execution_time = "{}".format(str(timedelta(seconds=time.time() - iter_start)))
+            print('Iteration %d out of %d was completed in %s' % (s,number_of_splits, execution_time))
+            s += 1
+        return accumulate_network
 
     def _iterate_oql(self, oql_query:str, id_set:set, REL_PROPS:list=None, ENTITY_PROPS:list=None):
         # oql_query MUST contain string placeholder called {ids} 
@@ -250,38 +307,7 @@ class PSNetworx(DataModel):
                 iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS)
                 entire_graph = nx.compose(entire_graph,iter_graph)
         return entire_graph
-
-
-    def get_objects_from_folders(self, FolderIds: list, property_names=None, with_layout=False):
-        if property_names is None: property_names = ['Name']
-        if not hasattr(self,'id2folders'): self.id2folders = self.load_folder_tree()
-        if not hasattr(self,'id2pathways'): self.id2pathways = dict()
-        if not hasattr(self,'id2groups'): self.id2groups = dict()
-        id2objects = dict()
-        for f in FolderIds:
-            folder_name = self.id2folders[f][0]['Name']
-            zeep_objects = self.get_folder_objects_props(f, property_names)
-            id2objs = self._zeep2psobj(zeep_objects)
-            for Id, psObj in id2objs.items():
-                if psObj['ObjTypeName'][0] == 'Pathway':
-                    try:
-                        self.id2pathways[Id].add_unique_property('Folders', folder_name)
-                    except KeyError:
-                            psObj['Folders'] = [folder_name]
-                            self.id2pathways[Id] = psObj
-                    if with_layout:
-                        psObj['layout'] = self.get_layout(Id)
-                if psObj['ObjTypeName'][0] == 'Group':
-                    try:
-                        self.id2groups[Id].add_unique_property('Folders', folder_name)
-                    except KeyError:
-                            psObj['Folders'] = [folder_name]
-                            self.id2groups[Id] = psObj
-
-            id2objects.update(id2objs)
-        return id2objects
-
-
+    
     def get_pathway_member_ids(self, PathwayIds: list, search_pathways_by=None, only_entities=None,
                                with_properties=None):
         if with_properties is None:
@@ -375,200 +401,50 @@ class PSNetworx(DataModel):
                 return ResnetGraph()
 
 
-    def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties:list=None, retrieve_ent_properties:list=None):
-        if not isinstance(retrieve_ent_properties,list): retrieve_ent_properties = ['Name']
-        else: retrieve_ent_properties = list(set(retrieve_ent_properties.append('Name')))
+    def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties:set=set(), retrieve_ent_properties:set=set()):
 
-        if not isinstance(retrieve_rel_properties,list): retrieve_rel_properties = ['Name','RelationNumberOfReferences']
-        else: retrieve_rel_properties = list(set(retrieve_rel_properties + ['Name','RelationNumberOfReferences']))
+        ent_props = retrieve_ent_properties
+        ent_props.add('Name')
+
+        rel_props = retrieve_rel_properties
+        rel_props.update(['Name','RelationNumberOfReferences'])
          
-        ent_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
         rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
-        
         accumulate_pathways = ResnetGraph()
         for pathway_prop in prop_vals:
-            ent_q = ent_query.format(propName=search_by_property,pathway=pathway_prop)
-            pathway_nodes = self.load_graph_from_oql(ent_q,entity_props=retrieve_ent_properties, get_links=False)
 
             rel_q = rel_query.format(propName=search_by_property,pathway=pathway_prop)
-            pathway_relations = self.load_graph_from_oql(rel_q,relation_props=retrieve_rel_properties, get_links=True)
+            pathway_relations_ids_only = self.load_graph_from_oql(rel_q, relation_props=[],get_links=True,add2self=False)
+            new_relations = pathway_relations_ids_only.subtract(self.Graph)
+            exist_relations = self.Graph.intersect(pathway_relations_ids_only)
+            # must subtract from self.Graph to keep references
+    
+            if new_relations:
+                new_relation_ids = new_relations._relations_ids()
+                oql_query = OQL.get_relations_by_props(list(new_relation_ids),['id'])
+                new_relations = self.load_graph_from_oql(oql_query,relation_props=list(rel_props))
 
+            pathway_relations = nx.compose(exist_relations,new_relations)
+            
+            exist_node_ids = set(exist_relations)
+            if exist_node_ids:
+                existing_nodes_str = ','.join(map(str,exist_node_ids))
+                ent_q = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = {pathway}) AND NOT (id = ({exist_nodes}))'
+                ent_q = ent_q.format(propName=search_by_property,pathway=pathway_prop,exist_nodes=existing_nodes_str)
+            else:
+                ent_q = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
+                ent_q = ent_q.format(propName=search_by_property,pathway=pathway_prop)
+
+            pathway_nodes = self.load_graph_from_oql(ent_q,entity_props=list(ent_props), get_links=False)
             pathway_graph = nx.compose(pathway_nodes, pathway_relations)
-            accumulate_pathways = nx.compose(pathway_graph, accumulate_pathways)
+            accumulate_pathways = nx.compose(accumulate_pathways,pathway_graph)
 
         return accumulate_pathways
+
 
     def to_rnef(self, in_graph=None,add_rel_props:dict=None,add_pathway_props:dict=None):
         # add_rel_props structure {PropName:[PropValues]}
         if not isinstance(in_graph,ResnetGraph): in_graph=self.Graph
-        all_rnef_props = set(list(self.RNEFnameToPropType.keys())+REF_PROPS)
+        all_rnef_props = set(self.RNEFnameToPropType.keys()) #set(list(self.RNEFnameToPropType.keys())+REF_PROPS)
         return in_graph.to_rnef(list(all_rnef_props),add_rel_props,add_pathway_props)
 
-    def get_all_pathways(self, property_names=None):
-        if property_names is None: property_names = ['Name']
-        print('retrieving identifiers of all pathways from database')
-
-        if (len(self.id2folders)) == 0: self.load_folder_tree()
-
-        self.id2pathways = dict()
-        urn2pathway = dict()
-        for folderList in self.id2folders.values():
-            for folder in folderList:
-                zeep_objects = self.get_folder_objects_props(folder['Id'], property_names)
-                ps_objects = self._zeep2psobj(zeep_objects)
-                for Id, psObj in ps_objects.items():
-                    if psObj['ObjTypeName'][0] == 'Pathway':
-                        try:
-                            self.id2pathways[Id].add_unique_property('Folders', folder['Name'])
-                        except KeyError:
-                            psObj['Folders'] = [folder['Name']]
-                            self.id2pathways[Id] = psObj
-                            urn2pathway[psObj['URN'][0]] = psObj
-
-        print('Found %d pathways in the database' % (len(self.id2pathways)))
-        return urn2pathway
-
-
-    def get_pathway(self, pathwayId,path_urn=None,path_name=None,rel_props:list=None, ent_props:list=None,
-                    xml_format='RNEF',put2folder:str=None, add_rel_props:dict=None, add_pathway_props:dict=None, as_batch=True, prettify=True):
-    # add_rel_props, add_pathway_props structure - {PropName:[PropValues]}
-        if not isinstance(rel_props,list): rel_props = REF_PROPS + REF_ID_TYPES + ['Effect']
-
-        if hasattr(self,'id2pathways'):
-            if not isinstance(path_urn,str):
-                try:
-                    path_urn = self.id2pathways[pathwayId]['URN'][0]
-                    path_name = self.id2pathways[pathwayId]['Name'][0]
-                except KeyError:
-                    print('Pathway collection does not have %s pathway with URN %s' % (path_name,path_urn))
-
-        if not isinstance(path_urn,str):
-            print('Pathway has no URN specifed!!!! ')
-            path_urn = 'no_urn'
-        
-        if not isinstance(path_name,str):
-            print('Pathway has no Name specifed!!!! ')
-            path_name = 'no_name'
-
-
-        pathway_graph = self.get_pathway_components([pathwayId],'id',retrieve_rel_properties=rel_props,
-                                                    retrieve_ent_properties=ent_props)
-        pathway_graph.count_references()
-
-        graph_xml = self.to_rnef(pathway_graph,add_rel_props,add_pathway_props)
-        import xml.etree.ElementTree as et
-        rnef_xml = et.fromstring(graph_xml)
-        rnef_xml.set('name', path_name)
-        rnef_xml.set('urn', path_urn)
-        rnef_xml.set('type', 'Pathway')
-
-        lay_out = et.Element('attachments')
-        attachments = self.get_layout(pathwayId)
-        if attachments:
-            lay_out.append(et.fromstring(attachments))
-        rnef_xml.append(lay_out)
-        
-        batch_xml = et.Element('batch')
-        batch_xml.insert(0,rnef_xml)
-                   
-        if xml_format == ['SBGN']:
-            pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
-            from ElsevierAPI.ResnetAPI.rnef2sbgn import rnef2sbgn_str
-            pathway_xml = rnef2sbgn_str(pathway_xml, classmapfile='ElsevierAPI/ResnetAPI/rnef2sbgn_map.xml')
-        else:
-            if isinstance(put2folder,str):
-                resnet = et.Element('resnet')
-                xml_nodes = et.SubElement(resnet, 'nodes')
-                folder_local_id = 'F0'
-                xml_node_folder = et.SubElement(xml_nodes, 'node', {'local_id':folder_local_id, 'urn': 'urn:agi-folder:xxxxx_yyyyy_zzzzz'})
-                et.SubElement(xml_node_folder, 'attr', {'name': 'NodeType', 'value': 'Folder'})
-                et.SubElement(xml_node_folder, 'attr', {'name': 'Name', 'value': put2folder})
-                pathway_local_id = 'P0'
-                xml_node_pathway = et.SubElement(xml_nodes, 'node', {'local_id':pathway_local_id, 'urn': path_urn})
-                et.SubElement(xml_node_pathway, 'attr', {'name': 'NodeType', 'value': 'Pathway'})
-                xml_controls = et.SubElement(resnet, 'controls')
-                xml_control = et.SubElement(xml_controls, 'control', {'local_id':'CFE1'})
-                et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':'MemberOf'})
-                et.SubElement(xml_control, 'link', {'type':'in', 'ref':pathway_local_id})
-                et.SubElement(xml_control, 'link', {'type':'out', 'ref':folder_local_id})
-                batch_xml.append(resnet)
-            
-            if as_batch:
-                pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-                if prettify: pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
-            else:
-                pathway_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-                if prettify:
-                    pathway_xml = str(minidom.parseString(pathway_xml).toprettyxml(indent='   '))
-                    pathway_xml = pathway_xml[pathway_xml.find('\n')+1:]
-                #minidom does not work without xml_declaration
-
-        print('\"%s\" pathway downloaded: %d nodes, %d edges supported by %d references' % 
-            (path_name, pathway_graph.number_of_nodes(),pathway_graph.number_of_edges(),pathway_graph.size(weight="weight")))
-
-        return pathway_graph, str(pathway_xml)
-
-    @staticmethod
-    def pretty_xml(xml_string:str, no_declaration = False):
-        pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
-        if no_declaration:
-            pretty_xml = pretty_xml[pretty_xml.find('\n')+1:]
-        
-        return pretty_xml
-
-    def get_group(self, group_id,group_urn=None,group_name=None, ent_props:list=None,put2folder:str=None,as_batch=True, prettify=True):
-        if hasattr(self,'id2groups'):
-            if not isinstance(group_urn,str):
-                try:
-                    group_urn = self.id2groups[group_id]['URN'][0]
-                    group_name = self.id2groups[group_id]['Name'][0]
-                except KeyError:
-                    print('Pathway collection does not have %s pathway with URN %s' % (group_name,group_urn))
-
-        if not isinstance(group_urn,str):
-            print('Pathway has no URN specifed!!!!')
-            group_urn = 'no_urn'
-        
-        if not isinstance(group_name,str):
-            print('Pathway has no Name specifed!!!!')
-            group_name = 'no_name'
-
-        #group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = \'{name}\')'.format(name = group_name),entity_props=ent_props,get_links=False)
-        group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE Id = {objectId})'.format(objectId = group_id),entity_props=ent_props,get_links=False)
-       
-        rnef_xml = et.fromstring(self.to_rnef(group_graph))
-        rnef_xml.set('name', group_name)
-        rnef_xml.set('urn', group_urn)
-        rnef_xml.set('type', 'Group')
-        
-        batch_xml = et.Element('batch')
-        batch_xml.insert(0,rnef_xml)
-                   
-        if isinstance(put2folder,str):
-            folder_resnet = et.Element('resnet')
-            xml_nodes = et.SubElement(folder_resnet, 'nodes')
-            folder_local_id = 'F0'
-            xml_node_folder = et.SubElement(xml_nodes, 'node', {'local_id':folder_local_id, 'urn': 'urn:agi-folder:xxxxx_yyyyy_zzzzz'})
-            et.SubElement(xml_node_folder, 'attr', {'name': 'NodeType', 'value': 'Folder'})
-            et.SubElement(xml_node_folder, 'attr', {'name': 'Name', 'value': put2folder})
-            pathway_local_id = 'P0'
-            xml_node_pathway = et.SubElement(xml_nodes, 'node', {'local_id':pathway_local_id, 'urn':group_urn})
-            et.SubElement(xml_node_pathway, 'attr', {'name': 'NodeType', 'value': 'Group'})
-            xml_controls = et.SubElement(folder_resnet, 'controls')
-            xml_control = et.SubElement(xml_controls, 'control', {'local_id':'CFE1'})
-            et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':'MemberOf'})
-            et.SubElement(xml_control, 'link', {'type':'in', 'ref':pathway_local_id})
-            et.SubElement(xml_control, 'link', {'type':'out', 'ref':folder_local_id})
-            batch_xml.append(folder_resnet)
-        
-        if as_batch:
-            group_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            if prettify: group_xml = minidom.parseString(group_xml).toprettyxml(indent='   ')
-        else:
-            group_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            if prettify: group_xml = self.pretty_xml(group_xml,no_declaration=True)
-            #minidom does not work without xml_declaration
-
-        print('\"%s\" group downloaded: %d nodes' % (group_name, group_graph.number_of_nodes()))
-        return group_graph, str(group_xml)

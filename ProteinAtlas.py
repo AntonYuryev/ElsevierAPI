@@ -12,7 +12,7 @@ ENT_PROPs = ['Name', 'Description', 'Cell Localization']
 ps_api = ps_api = open_api_session()
  
 ps_api.PageSize = 10000
-ps_api.add_rel_props(REL_PROPs+REF_ID_TYPES)
+ps_api.add_rel_props(list(set(REL_PROPs)|REF_ID_TYPES))
 ps_api.add_ent_props(ENT_PROPs)
 
 # this dump file will list all proteins in the database with connectivity >0:
@@ -33,6 +33,5 @@ for node_id, psObj in ProteinsOnyGraph.nodes(data=True):
     oql_query = GOQL.expand_entity([node_id], SearchByProperties=['id'])
     ProteinNeighborsGraph = ps_api.process_oql(oql_query)
     protein_neighbors_file = out_dir + '/' + protein_name + '_neighbors.csv'
-    reference_pandas = ps_api.to_pandas(ProteinNeighborsGraph)
-    reference_pandas.to_csv(protein_neighbors_file, index=False)
+    ps_api.to_csv(protein_neighbors_file)
     ps_api.Graph.clear()  # need to release memory when performing large dumps
