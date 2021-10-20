@@ -308,7 +308,7 @@ class FolderContent (APISession):
         new_pathway_counter = 0
         folder_object_counter = 0
         pathways_xml = str()
-        symlinks = set()
+        symlinks = dict()
         folder_download_start = time.time()
         for pathway_id, pathway in id2pathways.items():
             if not pathway['IsSymlink'][0]:
@@ -341,7 +341,7 @@ class FolderContent (APISession):
                 print('%d out of %d objects in folder %s downloaded in %s' %
                     (folder_object_counter, len(id2pathways),folder_name, self.execution_time(start_time)))
             else:
-                symlinks.add(pathway_id)
+                symlinks[pathway_id] = pathway['URN'][0]
 
             #printing folder object membership
             pathway_urn = pathway['URN'][0]
@@ -423,12 +423,12 @@ class FolderContent (APISession):
                 for folder_id in child2parent.keys():
                     folder_xml, pathway_counter, symlinks = self.pathways_from_folder(folder_id,as_batch=False,skip_id=printed_pathway_ids)
                     f.write(folder_xml)
-                    symlinks_ids.update(symlinks)
+                    symlinks_ids.update(symlinks.keys())
                     download_counter += pathway_counter
                     folder_counter +=1
                     if pathway_counter > 0:
                         print('Downloaded %d pathways from %d out of %d folders in %s' % (download_counter,folder_counter,len(child2parent),self.execution_time(global_start)))
-                        print('Relations cache has %d references\n' % self.Graph.weight())
+                        print('Relations cache has %d relations supported by %d references\n' % (self.Graph.number_of_edges(), self.Graph.weight()))
                     if self.Graph.weight() > self.reference_cache_size:
                         print ('Clearing cache due to size %d' % self.Graph.weight())
                         self.clear()
@@ -480,22 +480,45 @@ class FolderContent (APISession):
             folder_counter = start_folder_idx+1
             rnef_file_to_continue =  self.name_output(folder_name)
             urns_printed = self.load_urns(rnef_file_to_continue)
+
             download_counter = len(urns_printed)
             print ('Resuming download of %s folder from %s' % (folder_name,last_downloaded_folder))
+            symlinks_dict = dict()
             with open(rnef_file_to_continue, "a", encoding='utf-8') as f:
                 for i in range(start_folder_idx+1, len(subfolders)):
                     folder_id = subfolders[i]
-                    folder_xml, pathway_counter = self.pathways_from_folder(folder_id,as_batch=False,skip_urn=urns_printed)
+                    folder_xml, pathway_counter, symlinks = self.pathways_from_folder(folder_id,as_batch=False,skip_urn=urns_printed)
                     f.write(folder_xml)
                     download_counter += pathway_counter
                     folder_counter +=1
+                    symlinks_dict.update(symlinks)
                     if self.Graph.weight() > self.reference_cache_size:
                         print ('Clearing cache due to size %d' % self.Graph.weight())
                         self.clear()
                     print('Downloaded %d pathways from %d out of %d folders in %s' % (download_counter,folder_counter,len(child2parent),self.execution_time(global_start)))
                     print('Graph cache has %d references\n' % self.Graph.weight())
+
+                symlinks_urns = set(symlinks_dict.values())
+                symlinks2print = symlinks_urns.difference(urns_printed)
+                if len(symlinks2print) > 0:
+                    print('Will print %d pathways to support symlinks' % len(symlinks2print))
+                    for pathway_urn in symlinks2print:
+                        pathway_id = list(symlinks_dict.keys())[list(symlinks_dict.values()).index(pathway_urn)]
+                        if pathway_id in self.id2pathways.keys():
+                            pathway_graph, pathway_xml = self.get_pathway(pathway_id,rel_props=set(self.relProps),ent_props=set(self.entProps), as_batch=False)
+                            f.write(pathway_xml)
+                        elif pathway_id in self.id2groups.keys():
+                            pathway_graph, pathway_xml = self.get_group(pathway_id, ent_props=set(self.entProps),as_batch=False)
+                            f.write(pathway_xml)
+                        else:
+                            continue
+                else:
+                    print('All pathways for symlinks were printed for other folders')
+
+                print('Resumed download was finished in %s' % self.execution_time(global_start))
                 f.write('</batch>')
         except ValueError:
+            print ('Folder %s was not found in folder tree' % folder_name)
             return
     
     def urns2rnef(self, pathway_urns:list, fout:str, xml_format:str='RNEF'):
