@@ -1,3 +1,4 @@
+import argparse
 import sqlite3
 import xml.etree.ElementTree as et
 from ElsevierAPI import open_api_session
@@ -107,7 +108,7 @@ def get_content_metadata_and_symlinks(api, folder_subtree, list_props):
             metadata[property['ObjId']][prop_name] = metadata[property['ObjId']][prop_name].union(values)
     return metadata, placement
 
-def flat_pathways_to_rnef_storage(apiconfig_filename, metadata, db_destination):
+def flat_pathways_to_rnef_storage(apiconfig_filename, metadata, db_destination, bypass=False):
     """This method downloads content of pathways and groups by looking at IDs in `metadata`,
     conbines downloaded content with properties stored in `metadata`,
     and submits (id, xml) to SQLite database."""
@@ -115,43 +116,227 @@ def flat_pathways_to_rnef_storage(apiconfig_filename, metadata, db_destination):
     cur = conn.cursor()
     cur.execute('create table if not exists content (id number, rnef text);')
     conn.commit()
-    for key in metadata:
-        cur.execute('select id from content where id = %d;' % (key))
-        if cur.fetchone() is not None:
-            continue
-        if metadata[key]['ObjTypeName'] == 'Pathway':
-            # create new API object each time, otherwise memory leaks somewhere in API degrading performance
-            api = open_api_session(apiconfig_filename)
-            print('Retrieving pathway "%s" (id=%d, urn="%s")' % (next(iter(metadata[key]['Name'])), key, metadata[key]['URN']))
-            _, raw_xml = api.get_pathway(pathwayId=key, path_urn=metadata[key]['URN'], path_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
-            del api
-        elif metadata[key]['ObjTypeName'] == 'Group':
-            api = open_api_session(apiconfig_filename)
-            print('Retrieving group "%s" (id=%d, urn="%s")' % (next(iter(metadata[key]['Name'])), key, metadata[key]['URN']))
-            _, raw_xml = api.get_group(group_id=key, group_urn=metadata[key]['URN'], group_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
-            del api
-        x = et.fromstring(raw_xml)
-        x.set('type', metadata[key]['ObjTypeName'])
-        props = et.Element('properties')
-        for prop_name in metadata[key]:
-            if prop_name in ['URN', 'Name', 'ObjTypeName']:
+    if not bypass:
+        for key in metadata:
+            cur.execute('select id from content where id = %d;' % (key))
+            if cur.fetchone() is not None:
                 continue
-            for prop_value in metadata[key][prop_name]:
-                attr = et.Element('attr')
-                attr.set('name', prop_name)
-                attr.set('value', prop_value)
-                props.append(attr)
-        x.append(props)
-        xml_str = minidom.parseString(et.tostring(x, encoding='utf8').decode('utf8')).toprettyxml(indent='  ')
-        xml_str = xml_str[xml_str.find('\n')+1:]
-        #cur.execute('delete from content where id = %d;' % (key))
-        cur.execute('insert into content (id, rnef) select ?, ?;', (key, xml_str))
-        conn.commit()
+            if metadata[key]['ObjTypeName'] == 'Pathway':
+                # create new API object each time, otherwise memory leaks somewhere in API degrading performance
+                api = open_api_session(apiconfig_filename)
+                print('Retrieving pathway "%s" (id=%d, urn="%s")' % (next(iter(metadata[key]['Name'])), key, metadata[key]['URN']))
+                _, raw_xml = api.get_pathway(pathwayId=key, path_urn=metadata[key]['URN'], path_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
+                del api
+            elif metadata[key]['ObjTypeName'] == 'Group':
+                api = open_api_session(apiconfig_filename)
+                print('Retrieving group "%s" (id=%d, urn="%s")' % (next(iter(metadata[key]['Name'])), key, metadata[key]['URN']))
+                _, raw_xml = api.get_group(group_id=key, group_urn=metadata[key]['URN'], group_name=next(iter(metadata[key]['Name'])), as_batch=False, prettify=False)
+                del api
+            x = et.fromstring(raw_xml)
+            x.set('type', metadata[key]['ObjTypeName'])
+            props = et.Element('properties')
+            for prop_name in metadata[key]:
+                if prop_name in ['URN', 'Name', 'ObjTypeName']:
+                    continue
+                for prop_value in metadata[key][prop_name]:
+                    attr = et.Element('attr')
+                    attr.set('name', prop_name)
+                    attr.set('value', prop_value)
+                    props.append(attr)
+            x.append(props)
+            xml_str = minidom.parseString(et.tostring(x, encoding='utf8').decode('utf8')).toprettyxml(indent='  ')
+            xml_str = xml_str[xml_str.find('\n')+1:]
+            #cur.execute('delete from content where id = %d;' % (key))
+            cur.execute('insert into content (id, rnef) select ?, ?;', (key, xml_str))
+            conn.commit()
 
-PS_API = open_api_session('./ElsevierAPI/.misc/APIconfig.json')
-folder_names, folder_graph = get_folder_tree(PS_API)
-#this_names, this_subtree = get_folder_subtree(folder_graph, folder_names, folder_name='Integrin Receptors')
-#this_metadata, this_placement = get_content_metadata_and_symlinks(PS_API, this_subtree, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
-this_metadata, this_placement = get_content_metadata_and_symlinks(PS_API, folder_graph, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
-del PS_API
-flat_pathways_to_rnef_storage('./ElsevierAPI/.misc/APIconfig.json', this_metadata, '../pathways-pse/rnef.db')
+def folders_to_rnef_storage(subtree, names, metadata, placement, db_destination, table_name, bypass=False):
+    """This method generates RNEF <resnet> elements with folder/folder and folder/object placements,
+    and submits them to SQLite database.
+    """
+    conn = sqlite3.connect(db_destination)
+    cur = conn.cursor()
+    cur.execute('drop table if exists %s;' % (table_name))
+    cur.execute('drop table if exists %s_h;' % (table_name))
+    cur.execute('drop table if exists %s_f;' % (table_name))
+    cur.execute('create table if not exists %s (id number, rnef text);' % (table_name))
+    cur.execute('create table if not exists %s_h (folderid number, objectid number);' % (table_name))
+    cur.execute('create table if not exists %s_f (parentid number, childid number);' % (table_name))
+    conn.commit()
+    if not bypass:
+        for folder_id in placement:
+            for object_id in placement[folder_id]:
+                cur.execute('insert into %s_h (folderid, objectid) select ?, ?;' % (table_name), (folder_id, object_id[0]))
+            conn.commit()
+        hierarchy = {}
+        subtree_rev = reverse_tree(subtree)
+        for parent_folder_id in subtree_rev:
+            urn_parent_folder = 'urn:agi-folder:%d' % (parent_folder_id)
+            name_parent_folder = names[parent_folder_id]
+            type_parent_folder = 'Folder'
+            local_id_parent_folder = 'F%d' % (parent_folder_id)
+            if parent_folder_id not in hierarchy:
+                hierarchy[parent_folder_id] = []
+            for child_folder_id in subtree_rev[parent_folder_id]:
+                urn_child_folder = 'urn:agi-folder:%d' % (child_folder_id)
+                name_child_folder = names[child_folder_id]
+                type_child_folder = 'Folder'
+                local_id_child_folder = 'F%d' % (child_folder_id)
+                hierarchy[parent_folder_id].append((local_id_parent_folder, urn_parent_folder, name_parent_folder, type_parent_folder, local_id_child_folder, urn_child_folder, name_child_folder, type_child_folder, False))
+                cur.execute('insert into %s_f (parentid, childid) select ?, ?;' % (table_name), (parent_folder_id, child_folder_id))
+            conn.commit()
+            if parent_folder_id in placement:
+                for item in placement[parent_folder_id]:
+                    urn_item = metadata[item[0]]['URN']
+                    name_item = next(iter(metadata[item[0]]['Name']))
+                    type_item = metadata[item[0]]['ObjTypeName']
+                    symlink_item = item[1]
+                    local_id_item = 'M%d' % (item[0])
+                    hierarchy[parent_folder_id].append((local_id_parent_folder, urn_parent_folder, name_parent_folder, type_parent_folder, local_id_item, urn_item, name_item, type_item, symlink_item))
+        for child_folder_id in subtree:
+            urn_child_folder = 'urn:agi-folder:%d' % (child_folder_id)
+            name_child_folder = names[child_folder_id]
+            type_child_folder = 'Folder'
+            local_id_child_folder = 'F%d' % (child_folder_id)
+            if child_folder_id in placement:
+                if child_folder_id not in hierarchy:
+                    hierarchy[child_folder_id] = []
+                for item in placement[child_folder_id]:
+                    urn_item = metadata[item[0]]['URN']
+                    name_item = next(iter(metadata[item[0]]['Name']))
+                    type_item = metadata[item[0]]['ObjTypeName']
+                    symlink_item = item[1]
+                    local_id_item = 'M%d' % (item[0])
+                    hierarchy[child_folder_id].append((local_id_child_folder, urn_child_folder, name_child_folder, type_child_folder, local_id_item, urn_item, name_item, type_item, symlink_item))
+        for parent_id in hierarchy:
+            resnet = et.Element('resnet')
+            nodes = et.Element('nodes')
+            controls = et.Element('controls')
+            parent = et.Element('node')
+            nodetype = et.Element('attr')
+            name = et.Element('attr')
+            parent.set('local_id', hierarchy[parent_id][0][0])
+            parent.set('urn', hierarchy[parent_id][0][1])
+            nodetype.set('name', 'NodeType')
+            nodetype.set('value', hierarchy[parent_id][0][3])
+            name.set('name', 'Name')
+            name.set('value', hierarchy[parent_id][0][2])
+            parent.append(nodetype)
+            parent.append(name)
+            nodes.append(parent)
+            for i in range(len(hierarchy[parent_id])):
+                child = et.Element('node')
+                nodetype = et.Element('attr')
+                name = et.Element('attr')
+                child.set('local_id', hierarchy[parent_id][i][4])
+                child.set('urn', hierarchy[parent_id][i][5])
+                nodetype.set('name', 'NodeType')
+                nodetype.set('value', hierarchy[parent_id][i][7])
+                name.set('name', 'Name')
+                name.set('value', hierarchy[parent_id][i][6])
+                child.append(nodetype)
+                child.append(name)
+                nodes.append(child)
+                control = et.Element('control')
+                controltype = et.Element('attr')
+                link_in = et.Element('link')
+                link_out = et.Element('link')
+                control.set('local_id', 'CSF%d' % (i+1))
+                controltype.set('name', 'ControlType')
+                controltype.set('value', 'MemberOf')
+                link_in.set('type', 'in')
+                link_in.set('ref', hierarchy[parent_id][i][4])
+                link_out.set('type', 'out')
+                link_out.set('ref', hierarchy[parent_id][i][0])
+                control.append(controltype)
+                if hierarchy[parent_id][i][8]:
+                    relationship = et.Element('attr')
+                    relationship.set('name', 'Relationship')
+                    relationship.set('value', 'symlink')
+                    control.append(relationship)
+                control.append(link_in)
+                control.append(link_out)
+                controls.append(control)
+            resnet.append(nodes)
+            resnet.append(controls)
+            xml_str = minidom.parseString(et.tostring(resnet, encoding='utf8').decode('utf8')).toprettyxml(indent='  ')
+            xml_str = xml_str[xml_str.find('\n')+1:]
+            cur.execute('insert into %s (id, rnef) select ?, ?;' % (table_name), (parent_id, xml_str))
+            conn.commit()
+
+def write_rnef(rnef_storage, placement_table_name, output_filepath, bypass=False):
+    """This function writes content of intermediate SQLite database into RNEF file."""
+    if not bypass:
+        conn = sqlite3.connect(rnef_storage)
+        cur = conn.cursor()
+        conn2 = sqlite3.connect(rnef_storage)
+        cur2 = conn2.cursor()
+        ids = set()
+        rows = cur.execute('select distinct objectid from %s_h;' % (placement_table_name)).fetchall()
+        for row in rows:
+            ids.add(row[0])
+        with open(output_filepath, mode='w', encoding='utf8') as o:
+            o.write('<batch>\n')
+            with open(output_filepath, mode='r', encoding='utf8') as i:
+                schema = ''
+                for line in i:
+                    schema += line
+                o.write(schema)
+                o.write('\n')
+                rows = cur.execute('select rowid, id from content order by rowid asc;').fetchall()
+                total = 0
+                for row in rows:
+                    rowid = row[0]
+                    itemid = row[1]
+                    if itemid not in ids:
+                        continue
+                    rnef = cur2.execute('select rnef from content where rowid = ?;', (rowid, )).fetchone()[0]
+                    rnef = rnef.replace(' name="Sentence"', ' name="msrc"')
+                    o.write(rnef)
+                    total += 1
+                    print('Wrote %d pathways and groups' % (total))
+                rows = cur.execute('select rnef from %s order by rowid asc;' % (placement_table_name)).fetchall()
+                total = 0
+                for row in rows:
+                    rnef = row[0]
+                    o.write(rnef)
+                    total += 1
+                    print('Wrote %d folder placement RNEFs' % (total))
+                o.write('</batch>\n')
+
+def do_the_job(api_config_json, export_pathways_content=True, export_folder_structure=True, write_rnef_file=True, top_folder_name=None, placement_table_name='placement', output_filepath='out.rnef', rnef_storage='rnef.db'):
+    PS_API = open_api_session(api_config_json)    
+    _names, _graph = get_folder_tree(PS_API)
+    folder_names, subtree = _names, _graph
+    if top_folder_name:
+        folder_names, subtree = get_folder_subtree(_graph, _names, folder_name=top_folder_name)
+    metadata, placement = get_content_metadata_and_symlinks(PS_API, subtree, ['Name', 'Notes', 'Description', 'PMID', 'CellType', 'Organ', 'Tissue', 'PathwayType', 'Organ System'])
+    del PS_API
+    flat_pathways_to_rnef_storage(apiconfig_filename=api_config_json, metadata=metadata, db_destination=rnef_storage, bypass=not export_pathways_content)
+    folders_to_rnef_storage(subtree=subtree, names=folder_names, metadata=metadata, placement=placement, db_destination=rnef_storage, table_name=placement_table_name, bypass=not export_folder_structure)
+    write_rnef(rnef_storage=rnef_storage, placement_table_name=placement_table_name, output_filepath=output_filepath, bypass=not write_rnef_file)
+
+if __name__ == '__main__':
+    """
+    Test:
+    python ExportPathways.py --config .\ElsevierAPI\.misc\APIconfig.json --folder-name "C-Type Lectin/Selectin Receptors/CD Molecules"
+    results in something like:
+    > Pathways
+      > Signal Processing
+        > Receptor Signaling
+          > C-Type Lectin/Selectin Receptors/CD Molecules
+            - SELE -> ELK-SRF Signaling
+            - Sialophorin -> CTNNB/MYC/TP53 Signaling
+    """
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--config', type=str, required=True, help='Path and name of config file')
+    ap.add_argument('--folder-name', type=str, help='Top folder name (will download everything if folder name is not specified)')
+    ap.add_argument('--storage', type=str, default='rnef.db', help='Location for intermediate local data storage')
+    ap.add_argument('--output', type=str, default='out.rnef', help='Location of RNEF file to write')
+    ap.add_argument('--placement-table-name', type=str, default='placement', help='Table name for folder placement data in intermediate local data storage')
+    ap.add_argument('--skip-pathways', type=bool, nargs='?', const=True, default=False, help='Do not download pathways and groups')
+    ap.add_argument('--skip-folders', type=bool, nargs='?', const=True, default=False, help='Do not download folder structure')
+    ap.add_argument('--skip-write-rnef', type=bool, nargs='?', const=True, default=False, help='Do not write RNEF file at the end')
+    args = ap.parse_args()
+    api_config_json, export_pathways_content, export_folder_structure, write_rnef_file, top_folder_name, placement_table_name, output_filepath, rnef_storage = args.config, not args.skip_pathways, not args.skip_folders, not args.skip_write_rnef, args.folder_name, args.placement_table_name, args.output, args.storage
+    do_the_job(api_config_json=api_config_json, export_pathways_content=export_pathways_content, export_folder_structure=export_folder_structure, write_rnef_file=write_rnef_file, top_folder_name=top_folder_name, placement_table_name=args.placement_table_name, output_filepath=output_filepath, rnef_storage=rnef_storage)
