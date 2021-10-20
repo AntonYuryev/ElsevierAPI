@@ -7,11 +7,13 @@ import time
 
 class FolderContent (APISession): 
 
-    def __init__(self, APIconfig):
+    def __init__(self, APIconfig, preload_folder_tree=True):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
         self.PageSize = 1000
         self.DumpFiles = []
-        self.id2folders = self.load_folder_tree() # {folder_id:folder_zobj, folder_name:folder_zobj}
+        self.id2folders = {}
+        if preload_folder_tree:
+            self.id2folders = self.load_folder_tree() # {folder_id:folder_zobj, folder_name:folder_zobj}
         self.reference_cache_size = 1000000
         #self.id2pathways = dict() # {id:PSObj} loaded on demand
         #self.id2groups = dict() # {id:PSObj} loaded on demand
@@ -115,7 +117,7 @@ class FolderContent (APISession):
         
         return pretty_xml
 
-    def get_pathway(self, pathwayId,path_urn:str=None,path_name:str=None,rel_props:set={}, ent_props:set=None,
+    def get_pathway(self, pathwayId,path_urn:str=None,path_name:str=None,rel_props:set=set(), ent_props:set=set(),
                     xml_format='RNEF',put2folder:str=None, add_props2rel:dict=None, add_props2pathway:dict=None, as_batch=True, prettify=True):
     # add_rel_props, add_pathway_props structure - {PropName:[PropValues]}
 
