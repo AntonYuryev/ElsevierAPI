@@ -20,7 +20,7 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--resume_from', type=str, default='')
     args = parser.parse_args()
 
-    api_cofig_file = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTeva.json'
+    api_cofig_file = None
     ps_api = FolderContent(load_api_config(api_cofig_file))
 
     if args.infile:
