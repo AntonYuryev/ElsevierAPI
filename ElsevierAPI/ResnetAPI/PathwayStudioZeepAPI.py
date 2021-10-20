@@ -259,10 +259,7 @@ class DataModel:
                     id_dict_prop_value = prop['PropValues']['string'][i]
                     new_dict_value = dict_folder[id_dict_prop_value] if id_dict_prop_value in dict_folder else id_dict_prop_value
                     prop['PropValues']['string'][i] = new_dict_value
-
         
-
-
         return obj_props
 
     def get_layout(self, PathwayId):
