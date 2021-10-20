@@ -155,7 +155,9 @@ class FolderContent (APISession):
         rnef_xml.set('type', 'Pathway')
 
         lay_out = et.Element('attachments')
-        lay_out.append(et.fromstring(self.get_layout(pathwayId)))
+        attachments = self.get_layout(pathwayId)
+        if attachments:
+            lay_out.append(et.fromstring(attachments))
         rnef_xml.append(lay_out)
         
         batch_xml = et.Element('batch')
