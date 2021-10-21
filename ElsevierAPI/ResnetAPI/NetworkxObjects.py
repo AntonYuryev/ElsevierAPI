@@ -370,9 +370,7 @@ class PSRelation(PSObject):
                 return self['RelationNumberOfReferences'][0]
 
 
-
-    def triple2str(self, columnPropNames: list, return_dict=False, col_sep='\t', cell_sep=';', endOfline='\n',
-                   RefNumPrintLimit=0,add_entities=False):
+    def to_table_dict(self, columnPropNames:list, cell_sep:str=';', RefNumPrintLimit=0, add_entities=False):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
         # initializing table
         col_count = len(columnPropNames) +2 if add_entities else len(columnPropNames)
@@ -414,12 +412,62 @@ class PSRelation(PSObject):
                         table[row][col] = cellValue
                     row += 1
 
-        if return_dict: return table
-        else:
-            tableStr = str()
-            for row in table.values():
-                tableStr = tableStr + col_sep.join(row) + endOfline
-            return tableStr
+        return table
+
+    def to_table_str(self, columnPropNames:list, col_sep:str='\t', 
+                     cell_sep=';', RefNumPrintLimit=0, add_entities=False):
+
+        table_dict = self.to_table_dict(columnPropNames,cell_sep,RefNumPrintLimit,add_entities)
+
+        tableStr = str()
+        for row in table_dict.values():
+            tableStr = tableStr + col_sep.join(row) + '\n'
+        return tableStr
+
+    def to1row(self, columnPropNames:list, col_sep:str='\t', cell_sep:str=';', RefNumPrintLimit=0, add_entities=False):
+        # assumes all properties in columnPropNames were fetched from Database otherwise will crash
+        # initializing table
+        col_count = len(columnPropNames) +2 if add_entities else len(columnPropNames)
+        RelationNumberOfReferences = int(self['RelationNumberOfReferences'][0])
+
+        table = ['']*col_count
+        if add_entities:
+            regulatorIDs = str()
+            targetIDs = str()
+            for k, v in self.Nodes.items():
+                if k == 'Regulators':
+                    regulatorIDs = ','.join(map(str, [x[0] for x in v]))
+                else:
+                    targetIDs = ','.join(map(str, [x[0] for x in v]))
+
+                table[col_count-2] = regulatorIDs
+                table[col_count-1] = targetIDs
+
+        for col in range(len(columnPropNames)):
+            propId = columnPropNames[col]
+            if propId in self.keys(): # filling columns with relation properties
+                propValues = self.prop_values2str(propId)
+                table[col] = propValues.replace(cell_sep, ' ')
+            elif RelationNumberOfReferences >= RefNumPrintLimit: #filling columns with reference properties
+                for propList in self.PropSetToProps.values():
+                    try:
+                        propValues = propList[propId]
+                        no_sep_values = [str(p).replace(cell_sep, ' ') for p in propValues]
+                        add2cell = ' '.join(no_sep_values)
+                        table[col] += add2cell + cell_sep
+                    except KeyError: table[col] += cell_sep
+
+        for c in range(0,len(table)):
+            col = table[c]
+            table[c] = col.strip(cell_sep)
+
+        return col_sep.join(table)+'\n'
+
+    def triple2str(self,columnPropNames:list, col_sep:str='\t', cell_sep:str=';', RefNumPrintLimit=0, add_entities=False, as1row=False):
+        if as1row:
+            return self.to1row(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
+        else: 
+            return  self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
 
     def to_pandas(self, columnPropNames: list, RefNumPrintLimit=0):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash

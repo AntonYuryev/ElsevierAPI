@@ -20,6 +20,7 @@ class APISession(PSNetworx):
     entProps = ['Name']
     DumpFiles = ['ResnetAPIsessionDump.tsv']
     csv_delimeter = '\t'
+    print_rel21row = False
 
     def __init__(self,url, username, password):
         super().__init__(url, username, password)
@@ -130,8 +131,8 @@ class APISession(PSNetworx):
 
     def to_csv(self, file_out, in_graph: ResnetGraph=None, access_mode='w', debug=False):
         if not isinstance(in_graph,ResnetGraph): in_graph = self.Graph
-        in_graph.print_references(file_out, self.relProps, self.entProps, access_mode, 
-                                    self.__IsOn1st_page, col_sep=self.csv_delimeter,debug=debug)
+        in_graph.print_references(file_out, self.relProps, self.entProps, access_mode, self.__IsOn1st_page,
+                                    col_sep=self.csv_delimeter,debug=debug,single_rel_row=self.print_rel21row)
 
     def get_result_size(self,oql_query):
         zeep_relations, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(oql_query, PageSize=1,
