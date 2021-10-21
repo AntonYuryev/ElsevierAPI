@@ -15,7 +15,8 @@ my_goql_query = 'select Relation where CellType LIKE \''+pcnt+'hepatocyte'+pcnt+
 my_goql_query = 'select Relation where objectType=Expression AND CellType LIKE \'' + pcnt + 'hepatocyte' + pcnt + '\''
 my_goql_query = 'select Relation where objectType=StateChange AND CellType LIKE \'' + pcnt + 'hepatocyte' + pcnt + '\''
 request_name = 'Find relations reported in hepatocytes'
-ps_api.print_rel21row = True
+ps_api.print_rel21row = True #set to False to print one row per reference in each relation. 
+#If True ResnetAPIsessionDump.tsv  will have only one row per each relation
 my_graph = ps_api.process_oql(my_goql_query,request_name, debug=False, flush_dump=True)
 # process_oql retreives data by iterations. Iteration size is controled by ps_api.PageSize
 # ps_api.PageSize defaults to 100 relations per iteration and cannot be bigger than 10,000
