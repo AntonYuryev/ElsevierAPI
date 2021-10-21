@@ -149,7 +149,7 @@ class APISession(PSNetworx):
 
     def process_oql(self, oql_query, request_name='', flush_dump=False, debug=False, no_mess=True, iteration_limit=1):
         global_start = time.time()
-        if flush_dump:
+        if flush_dump and self.ResultPos == 0:
             self.flush_dump_files(no_mess)
         self.__replace_goql(oql_query)
 
