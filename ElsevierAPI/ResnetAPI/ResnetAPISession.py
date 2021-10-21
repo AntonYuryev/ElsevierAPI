@@ -28,10 +28,16 @@ class APISession(PSNetworx):
 
     def __init_session(self):
         obj_props = self.relProps if self.__getLinks else self.entProps
+        first_iteration = self.ResultPos
         zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
                                                                                                 self.PageSize,
                                                                                                 obj_props,
                                                                                                 getLinks = self.__getLinks)
+
+        if first_iteration > 0:
+            self.ResultPos = first_iteration
+            return self.__get_next_page()                                                  
+
         if type(zeep_data) != type(None):
             if self.__getLinks:
                 obj_ids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
@@ -47,6 +53,8 @@ class APISession(PSNetworx):
         self.IDtoRelation.clear()
         self.ID2Children.clear()
         
+    def start_download_from(self,result_position:int):
+        self.ResultPos = result_position
 
     def __get_next_page(self, no_mess=True):
         if self.ResultPos < self.ResultSize:
