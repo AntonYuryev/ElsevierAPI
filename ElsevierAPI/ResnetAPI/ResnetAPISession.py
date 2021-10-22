@@ -109,7 +109,7 @@ class APISession(PSNetworx):
         self.ResultRef = None
 
     def add_rel_props(self, add_props:list):
-        self.relProps = self.entProps+[i for i in add_props if i not in self.entProps]
+        self.relProps = self.relProps+[i for i in add_props if i not in self.relProps]
 
     def add_ent_props(self, add_props: list):
         self.entProps = self.entProps+[i for i in add_props if i not in self.entProps]
