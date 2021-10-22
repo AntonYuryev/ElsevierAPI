@@ -108,11 +108,11 @@ class APISession(PSNetworx):
         self.__getLinks = self.__set_get_links()
         self.ResultRef = None
 
-    def add_rel_props(self, add_props: list):
-        self.relProps = list(set(self.relProps + add_props))
+    def add_rel_props(self, add_props:list):
+        self.relProps = self.entProps+[i for i in add_props if i not in self.entProps]
 
     def add_ent_props(self, add_props: list):
-        self.entProps = list(set(self.entProps + add_props))
+        self.entProps = self.entProps+[i for i in add_props if i not in self.entProps]
 
     def add_graph(self, new_graph: ResnetGraph):
         pass  # placeholder to derive child class from APISession (see DiseaseNetwork(APISession) as example)
