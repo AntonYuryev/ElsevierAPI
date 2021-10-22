@@ -5,13 +5,13 @@ ps_api = open_api_session(api_config_file=None)#specify here path to your APIcon
 #If api_config_file not specified the default APIConfig from __init__.py will be used
 
 all_relation_properties = [ #relation properties
-                            'Effect','Mechanism','Source','ChangeType','BiomarkerType','QuantitativeType',
+                            'Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType',
                             #bibliographic properties 
-                            'Title','PubYear', 'Authors', 'Journal', 'MedlineTA',  'Source',
+                            'Title','PubYear', 'Authors', 'Journal', 'MedlineTA',
                             #Document identifiers
                             'PMID', 'DOI', 'PII', 'PUI', 'EMBASE', 'NCT ID',
                             #Sentence properties
-                            'Percent','Organism','CellType', 'CellLineName', 'Organ', 'Tissue','Sentence',
+                            'Sentence', 'Percent','Organism','CellType', 'CellLineName', 'Organ', 'Tissue','Source',
                             #clinical trial properties
                             'TrialStatus', 'Phase', 'StudyType','Start', 'Intervention', 'Condition', 'Company', 'Collaborator'
                             ]
@@ -20,6 +20,8 @@ ps_api.add_rel_props(['Name','Effect','Mechanism','ChangeType','BiomarkerType','
 #add_rel_props specifies what attributes to retreive for relations from the database. The list order defines the column order in the dump file
 ps_api.add_ent_props(['Name','Description','URN'])
 #add_ent_props specifies what attributes to retreive for nodes (entities) from the database.The list order defines the column order in the dump file
+ps_api.clear_graph_cache = False #set it to True for large downloads
+#by default ps_api.clear_graph_cache = False to keep all downloaded data in ps_api.Graph
 
 pcnt = '%'
 my_goql_query = 'SELECT Relation WHERE objectType=StateChange AND CellType LIKE \'' + pcnt + 'hepatocyte' + pcnt + '\''
