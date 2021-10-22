@@ -101,10 +101,10 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
 
 REF_ID_TYPES = {'PMID', 'DOI', 'PII', 'PUI', 'EMBASE', 'NCT ID'}
-REF_PROPS = {'PubYear', 'Authors', 'Journal', 'MedlineTA', 'Organism', 'Source','TrialStatus', 'Phase', 'StudyType', 
+REF_PROPS = {'PubYear', 'Authors', 'Journal', 'MedlineTA', 'TrialStatus', 'Phase', 'StudyType', 
              'Start', 'Intervention', 'Condition', 'Company', 'Collaborator','Title','Percent'}
 
-SENTENCE_PROPS = {'CellType', 'CellLineName', 'Organ', 'Tissue','Sentence'}#TextRef is used as key in Reference
+SENTENCE_PROPS = {'Sentence','Organism','CellType', 'CellLineName', 'Organ', 'Tissue','Source'}#TextRef is used as key in Reference
 RELATION_PROPS = {'Effect','Mechanism','Source','ChangeType','BiomarkerType','QuantitativeType'}
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences

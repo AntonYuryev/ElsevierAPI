@@ -21,6 +21,7 @@ class APISession(PSNetworx):
     DumpFiles = ['ResnetAPIsessionDump.tsv']
     csv_delimeter = '\t'
     print_rel21row = False
+    clear_graph_cache = False
 
     def __init__(self,url, username, password):
         super().__init__(url, username, password)
@@ -73,6 +74,7 @@ class APISession(PSNetworx):
                     return self._load_graph(None, zeep_data)
             else:
                 return None
+        else: return None
 
 
     def get_saved_results(self, results_names:list, get_links=True):
@@ -191,6 +193,7 @@ class APISession(PSNetworx):
             entire_graph = nx.compose(page_graph, entire_graph)
 
             if debug and number_of_iterations >= iteration_limit: break
+            if self.clear_graph_cache: self.clear()
             page_graph = self.__get_next_page(no_mess)
             
 
