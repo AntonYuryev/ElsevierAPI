@@ -447,4 +447,3 @@ class PSNetworx(DataModel):
         if not isinstance(in_graph,ResnetGraph): in_graph=self.Graph
         all_rnef_props = set(self.RNEFnameToPropType.keys()) #set(list(self.RNEFnameToPropType.keys())+REF_PROPS)
         return in_graph.to_rnef(list(all_rnef_props),add_rel_props,add_pathway_props)
-

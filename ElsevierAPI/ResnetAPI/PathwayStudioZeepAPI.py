@@ -2,7 +2,6 @@ import pandas as pd
 import logging
 import sys
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-import zeep
 
 
 def configure_logging(logger):
@@ -239,7 +238,6 @@ class DataModel:
             obj_id = col['ObjId']
             id2symlink[obj_id] = True if col['Value'] == '0' else False
 
-
         # setting objectType name
         for obj in obj_props.Objects.ObjectRef:
             obj_type_id = obj['ObjTypeId']
@@ -259,7 +257,7 @@ class DataModel:
                     id_dict_prop_value = prop['PropValues']['string'][i]
                     new_dict_value = dict_folder[id_dict_prop_value] if id_dict_prop_value in dict_folder else id_dict_prop_value
                     prop['PropValues']['string'][i] = new_dict_value
-        
+
         return obj_props
 
     def get_layout(self, PathwayId):
