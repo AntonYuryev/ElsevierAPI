@@ -22,9 +22,7 @@ def GOQLtoFindDrugs(TargetIds:list, TargetType = 'Protein', drugEffect=['negativ
         return OQLquery
 
 
-if __name__ == "__main__":
-    EntityListFile =str()
-    
+if __name__ == "__main__":   
     instructions = '''
     infile - single column file with entity names that must be modulated by drugs. 
     If you want to use identifiers other than names enter appropriate Propeprty types into SearchByProperties list.
@@ -43,35 +41,33 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--resnet_search_props', type=str, default='Name,Alias')
     parser.add_argument('-a', '--resnet_retreive_props', type=str)
     parser.add_argument('-e', '--effect', type=str, default='negative')
-    parser.add_argument('-r', '--reaxys_prop', type=str)
+    parser.add_argument('-r', '--reaxys_prop', type=str, default='')
     parser.add_argument('--debug', action="store_true")
     args = parser.parse_args()
 
-    if type(args.infile) != type(None):
-        EntityListFile = args.infile
-    else: print('No entity list file was specified')
 
     TargetType = args.target_type 
     SearchPsProps = args.resnet_search_props.split(',')
     drugEffect = [args.effect]
   
-    if type(args.reaxys_prop) != type(None):
+    if args.reaxys_prop:
         ReaxysFields = args.reaxys_prop.split(',')
     else:
         print ('No Reaxys properties specified!')
         ReaxysFields = []
 
-    with open(EntityListFile) as f:
+    with open(str(args.infile)) as f:
         EntitiesToExpand = [line.rstrip('\n') for line in f]
 
     ps_api = open_api_session()
     TargetIDs = ps_api._get_obj_ids_by_props(PropertyValues=EntitiesToExpand, SearchByProperties=SearchPsProps)
-    PSdumpFile = EntityListFile[:len(EntityListFile)-4]+'_psdump.tsv'
+    PSdumpFile = str(args.infile)[:len(str(args.infile))-4]+'_psdump.tsv'
     ps_api.add_dump_file(PSdumpFile, replace_main_dump=True)
     ps_api.entProps = args.resnet_retreive_props.split(',')
     ps_api.add_ent_props('Reaxys ID', 'InChIKey')
   
-    ps_api.relProps = ['Name','Sentence','PMID','DOI','PubYear','RelationNumberOfReferences']#Data dump columns will be ordered according to the order in this list
+    ps_api.relProps = ['Name','Sentence','PMID','DOI','PubYear','RelationNumberOfReferences']
+    #Data dump columns will be ordered according to the order in this list
     ps_api.process_oql(GOQLtoFindDrugs(TargetIDs, TargetType=TargetType, drugEffect=drugEffect))
 
     if len(ReaxysFields) > 0:
@@ -95,9 +91,9 @@ if __name__ == "__main__":
         ReaxysAPI.disconnect()
         print('Found Reaxys properties for %d out of %d Resnet drugs' % (foundRxProps, len(FoundDrugs)))
 
-        fileRx = EntityListFile[:len(EntityListFile)-4]+ '+Rx.tsv'
+        fileRx = str(args.infile)[:len(str(args.infile))-4]+ '+Rx.tsv'
         EntityProps = ps_api.entProps+ReaxysFields
         ps_api.Graph.print_references(fileRx, ps_api.relProps, EntityProps)
 
         print("%d relations supported by %d references and annotated by Reaxys fields are in file: %s" % (ps_api.Graph.number_of_edges(),ps_api.Graph.size(weight='weight'),fileRx))
-        print("Time to fetch drugs linked to %s found in %s ---" % (EntityListFile,ps_api.execution_time(start_time)))
+        print("Time to fetch drugs linked to %s found in %s ---" % (str(args.infile),ps_api.execution_time(start_time)))

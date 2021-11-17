@@ -1,7 +1,5 @@
 import sys
-import os
 import time
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI import open_api_session
 
 ps_api = open_api_session()
@@ -46,7 +44,6 @@ def FindPathways(FoldersWithPathways:list, EntityListFile):
                 
             IDtoPathways = ps_api.get_objects_from_folders(allSubSubFolders)
             MapEntityToPathways(EntityDict, IDtoPathways, Entities, subFolderName)
-
 
     return dict(sorted(EntityDict.items()))
     

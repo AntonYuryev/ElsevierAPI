@@ -68,7 +68,7 @@ if __name__ == "__main__":
     header_pos = 0 if args.infile_has_header else None
 
     search = SemanticSearch(load_api_config())
-    AnnotateNodesWith = args.resnet_retreive_props.split(',') if len(args.resnet_retreive_props) > 0 else []
+    AnnotateNodesWith = str(args.resnet_retreive_props).split(',') if len(args.resnet_retreive_props) > 0 else []
     search.add_ent_props(AnnotateNodesWith)
     if args.dump_references:
         search.add_rel_props(['Name','Sentence','PubYear','Title'])
@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
 
     if len(link2concepts) > 0:
-        search_concept_by = link2concepts.index.name.split(',')
+        search_concept_by = str(link2concepts.index.name).split(',')
         print ('Will search concepts in %s by %s' % (args.targets_file,link2concepts.index.name))
         
         print("\nBegin linking entities mapped from infile to %d concepts from %s" % (concepts_in_file,args.targets_file))

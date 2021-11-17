@@ -4,6 +4,7 @@ import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 import pandas as pd
 import numpy as np
 import time
+import networkx as nx
 
 class RepurposeDrugs(SemanticSearch):
     pass
@@ -41,6 +42,11 @@ class RepurposeDrugs(SemanticSearch):
         self._partner_class()
         SELECTpartners = 'SELECT Entity WHERE Class = {partner_class} AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
         partners_graph = self.process_oql(SELECTpartners.format(partner_class=self.partner_class, select_target=self.find_target_oql))
+        if self.partner_class == 'Ligand':
+            SELECTsecretedpartners = 'SELECT Entity WHERE "Cell Localization" = Secreted AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
+            secreted_partners = self.process_oql(SELECTsecretedpartners.format(select_target=self.find_target_oql))
+            partners_graph = nx.compose(partners_graph,secreted_partners)
+
         partners_ids = partners_graph.get_entity_ids(['Protein'])
         return self.Graph._get_nodes(partners_ids)
 
@@ -288,7 +294,7 @@ class RepurposeDrugs(SemanticSearch):
         weight_index = 0
         for col in refcount_cols:
             col_max = self.RefCountPandas[col].max()
-            NormalizedCount[col] = self.RefCountPandas[col]/col_max
+            NormalizedCount[col] = self.RefCountPandas[col]/col_max if col_max > 0 else 0.0
             column_weight = (number_of_weights-weight_index)/number_of_weights
             weights.at[0,col] = column_weight
             weight_index += 1
@@ -298,20 +304,23 @@ class RepurposeDrugs(SemanticSearch):
         for i in NormalizedCount.index:
             scores_row = NormalizedCount.loc[[i]]
             weighted_sum = 0.0
-            #weight_index = 0
             for col in refcount_cols:
-                #weighted_sum = weighted_sum + scores_row[col]*(number_of_weights-weight_index)/number_of_weights
                 weighted_sum = weighted_sum + scores_row[col]*weights.at[0,col]
-                #weight_index += 1
             combined_scores.append(weighted_sum)
 
         NormalizedCount['Combined score'] = np.array(combined_scores)
-        NormalizedCount[self.__colnameGV__] = self.RefCountPandas[self.__colnameGV__]
+        try:
+            NormalizedCount[self.__colnameGV__] = self.RefCountPandas[self.__colnameGV__]
+        except KeyError:
+            pass
 
         NormalizedCount['#children'] = self.RefCountPandas[self.__temp_id_col__].apply(lambda x: len(x))
         NormalizedCount['Final score'] = NormalizedCount['Combined score']/NormalizedCount['#children']
         NormalizedCount = NormalizedCount.sort_values(by=['Final score'],ascending=False)
-        NormalizedCount = NormalizedCount.loc[(NormalizedCount['Final score'] > 0.0) | (NormalizedCount[self.__colnameGV__].notna())] # removes rows with all zeros
+        NormalizedCount = NormalizedCount.loc[NormalizedCount['Final score'] > 0.0] # removes rows with all zeros
+        try:
+            NormalizedCount = NormalizedCount.loc[NormalizedCount[self.__colnameGV__].notna()]
+        except KeyError: pass
         
         return weights.append(NormalizedCount)
 
@@ -320,9 +329,10 @@ if __name__ == "__main__":
     start_time = time.time()
     APIconfig = load_api_config()
     rd = RepurposeDrugs(APIconfig)
-    rd.set_targets(['IL15'], 'Protein',to_inhibit=True)
+    #rd.set_targets(['IL15'], 'Protein',to_inhibit=True)
     #rd.set_targets(['FGFR3'], 'Protein',to_inhibit=True)
     #rd.set_targets(['F2RL1'], 'Protein',to_inhibit=True)
+    rd.set_targets(['MRGPRX2'], 'Protein',to_inhibit=True)
     rd.PageSize = 500
     rd.flush_dump_files()
 
@@ -330,8 +340,8 @@ if __name__ == "__main__":
     rd.get_pathway_componets()
 
     if rd.target_class != 'Ligand':
-        rd.indications4chem_modulators()    # if target is Ligand use indications4chem_modulators only 
-                                            #if its antibody drugs have relations in Resnet
+    # if target is Ligand use indications4chem_modulators only if its antibody drugs have relations in Resnet
+        rd.indications4chem_modulators() 
         rd.counterindications4chem_antimodulators()
 
     rd.indications4partners()
@@ -349,5 +359,5 @@ if __name__ == "__main__":
     NormalizedCount.to_csv(fout, sep='\t', index=False,float_format='%g')
     print('Repurposing of %s was done in %s' % (t_n, rd.execution_time(start_time)))
     print ('Ranked indications are in %s' % fout)
-    print ('Semantic counts for each indication are in %s', count_file)
+    print ('Semantic counts for each indication are in %s' % count_file)
     print('References supporting semantic counts are in %s' % ref_file)

@@ -31,10 +31,11 @@ request_name = 'Find relations reported in hepatocytes'
 ps_api.print_rel21row = True #if True ResnetAPIsessionDump.tsv will have only 1 row per each relation 
 # with reference properties concatenated into 1 string per property 
 
-ps_api.start_download_from(0) #if download was interrupted change this paramater to resume download from certain position
+if __name__ == "__main__":
+    ps_api.start_download_from(0) #if download was interrupted change this paramater to resume download from certain position
 #position must be specified as the number of relations (or entities) downloaded previously
 
-my_graph = ps_api.process_oql(my_goql_query,request_name, debug=False, flush_dump=True)
+    my_graph = ps_api.process_oql(my_goql_query,request_name, debug=False, flush_dump=True)
 # process_oql retreives data by iterations. Iteration size is controled by ps_api.PageSize
 # ps_api.PageSize defaults to 100 relations per iteration and cannot be bigger than 10,000
 # debug=False retreives resuts only from the first iteration
@@ -43,3 +44,6 @@ my_graph = ps_api.process_oql(my_goql_query,request_name, debug=False, flush_dum
 # dump file delimeter is defined by APISession.csv_delimeter parameter
 # all resultes are appended into dump file specified in ps_api.DumpFiles = ['ResnetAPIsessionDump.tsv']
 # flush_dump=True deletes content of the old 'ResnetAPIsessionDump.tsv' before processing new GOQL query
+
+# ps_api.process_oql rerutn NetworkX::my_graph object that can be writtent to file using variety of graph formats described here: 
+# https://networkx.org/documentation/stable/reference/readwrite/index.html

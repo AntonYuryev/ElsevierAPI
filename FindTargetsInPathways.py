@@ -2,9 +2,10 @@ import time
 import pandas as pd
 import argparse
 import textwrap
-from ElsevierAPI import open_api_session
+from ElsevierAPI import load_api_config
+from ElsevierAPI.ResnetAPI.FolderContent import FolderContent
 
-ps_api = open_api_session()
+ps_api = FolderContent(load_api_config())
 
 def map2pathways(entity2folder2pathway: dict, id2pathways: dict, folderName, FilterBy: list,
                  SearchByProperties=None):
@@ -44,15 +45,15 @@ def find_pathways(FoldersWithPathways: list, entity_pandas: pd.DataFrame, search
             print('Found %d subfolders in %s' % (len(subFolders), PathwayFolder))
 
         id2folder_pathway = dict()
-        ParentFolder = ps_api.IdToFolders[PathwayFolder][0]
+        ParentFolder = ps_api.id2folders[PathwayFolder][0]
         id2pathways = ps_api.get_objects_from_folders([ParentFolder.Id])
         id2members.update(
             map2pathways(id2folder_pathway, id2pathways, PathwayFolder, Entities, search_by_property))
 
         for FolderId in subFolders:
-            subFolder = ps_api.IdToFolders[FolderId][0]
+            subFolder = ps_api.id2folders[FolderId][0]
             subFolderName = subFolder['Name']
-            allSubSubFolders = ps_api.get_subfolders_tree(FolderId)
+            allSubSubFolders = ps_api.get_subfolder_tree(subFolderName)
 
             # {PathwayId:psObject} pathway ID to properties dict
             id2pathways = ps_api.get_objects_from_folders(allSubSubFolders)

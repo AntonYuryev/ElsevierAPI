@@ -2,13 +2,14 @@ import urllib.request
 import urllib.parse
 import json
 import time
+from ETMsearch import APIconfig
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import Reference
-from ElsevierAPI import APIconfig
+from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 import pandas as pd
 
-
+APIconfig = load_api_config()
 ps_api = APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
 fileIn = 'Drugs for Regulators in 4 patients.txt'
 InDir = 'D:\\Python\\PBTA\\PNOC003\\4 patients analysis\\'
@@ -25,7 +26,7 @@ print ('Found %d drugs in Resnet' % len(resnet_drugs))
 resnet2pharmapendium_map = dict()
 for i, drug in resnet_drugs.nodes(data=True):
     try:
-        resnet2pharmapendium_map[(drug['Name'][0]).lower()] = drug['PharmaPendium ID'][0]
+        resnet2pharmapendium_map[str(drug['Name'][0]).lower()] = drug['PharmaPendium ID'][0]
     except KeyError: continue
 
 all_drugs = list(resnet_drugs.nodes(data=True))
@@ -143,7 +144,7 @@ for i, drug in resnet_drugs.nodes(data=True):
 
                     try:PubYear = str(document['year'])
                     except KeyError: PubYear = 'historic'
-                    PPRef.add_single_property('PubYear', PubYear)
+                    PPRef.set_property('PubYear', PubYear)
                     
                     try:dose = ref['dose']
                     except KeyError: dose = ''
@@ -155,11 +156,11 @@ for i, drug in resnet_drugs.nodes(data=True):
                     except KeyError: route=''
                     
                     organism=ref['specie']
-                    PPRef.add_unique_property(route, doseType + ' in ' + organism + ' ' + dose)
+                    PPRef.update_with_value(route, doseType + ' in ' + organism + ' ' + dose)
 
                 addToPandas = set()
                 for ref in refIndex.values():
-                    addToPandas.update([ref.to_string('Title', sep='-')])
+                    addToPandas.update([ref.to_str('Title', sep='-')])
 
                 ToxPandas.at[pandaIndex,col_names[3]] = len(addToPandas)
                 reflist = '|'.join(list(addToPandas))

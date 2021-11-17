@@ -20,7 +20,7 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--resume_from', type=str, default='')
     args = parser.parse_args()
 
-    api_cofig_file = None
+    api_cofig_file = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTeva.json'
     ps_api = FolderContent(load_api_config(api_cofig_file))
 
     if args.infile:
@@ -37,9 +37,10 @@ if __name__ == "__main__":
 
     if args.folder:
         ps_api.reference_cache_size = 800000
-        logfile = args.folder+'_download.log'
         #ps_api.Graph is used to cache relations for speed but can be too big when a lot of pathways are downloaded
-        # reference_cache_size controls the memory use. The smaller max_size the slower is download for large pathway collections  
+        # reference_cache_size controls the memory use by specifying total number of references allowed in ps_api.Graph
+        # The smaller max_size the slower is download for large pathway collections 
+        logfile = args.folder+'_download.log' 
         if args.resume_from:
             with open(logfile, 'a',encoding='utf-8') as f:
                 with redirect_stdout(f):
