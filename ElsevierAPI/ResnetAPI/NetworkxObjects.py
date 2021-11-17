@@ -1,5 +1,6 @@
-import pandas as pd
 import re
+import json
+import itertools
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def __init__(self, dic: dict):
@@ -25,38 +26,27 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def __hash__(self):
         return self['Id'][0]
 
-    def add_single_property(self, PropId, PropValue: str):
+    def set_property(self, PropId, PropValue: str):
         self[PropId] = [PropValue]
 
-    def add_property(self, PropId, PropValue):
+    def append_property(self, PropId, PropValue):
         try:
             self[PropId].append(PropValue)
         except KeyError:
             self[PropId] = [PropValue]
 
-    def add_unique_property(self, PropId, PropValue: str):
+    def update_with_value(self, PropId, PropValue: str):
         try:
-            self[PropId] = list(set(self[PropId] + [PropValue]))
+            self[PropId] = list(set(self[PropId]) | {PropValue})
         except KeyError:
             self[PropId] = [PropValue]
 
-    def add_properties(self, PropId, PropValues: list):
+    def update_with_list(self, PropId, PropValues: list):
         try:
             self[PropId] = list(set(self[PropId] + PropValues))
         except KeyError:
             self[PropId] = list(set(PropValues))
 
-    def prop_values2str(self, propID, cell_sep=';'):
-        try:
-            return cell_sep.join(self[propID])
-        except KeyError:
-            return ''
-
-    def prop_values2list(self, propID):
-        try:
-            return self[propID]
-        except KeyError:
-            return []
 
     def data2str(self, columnPropNames: list, col_sep='\t', cell_sep=';', endOfline='\n'):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
@@ -72,51 +62,65 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
         return table_row[0:len(table_row) - 1] + endOfline
 
-    def to_pandas(self, columnPropNames: list):
-        # assumes all properties in columnPropNames were fetched from Database otherwise will crash
-        properties_pandas = pd.DataFrame(columns = columnPropNames)
-        for propName in columnPropNames:
-            try:
-                # values = self[propName]
-                # prop_val = ';'.join(values)
-                properties_pandas.at[0,propName] = ';'.join(self[propName])
-            except KeyError:
-                continue
 
-        return properties_pandas
-
-    def has_str_property(self, PropName, PropValues: list, case_insensitive=True):
-        if case_insensitive:
-            search_set = {x.lower() for x in PropValues}
-            try:
-                props = [p.lower() for p in self[PropName]]
-                return not search_set.isdisjoint(props)
-            except KeyError: return False
-        else:
-            search_set = set(PropValues)
-            try:
-                return not search_set.isdisjoint(self[PropName])
-            except KeyError: return False
-
+    def has_property(self,prop_name,prop_values:list,case_sensitive=False):
+        try:
+            if case_sensitive:
+                search_in = self[prop_name]
+                search_set = set(prop_values)   
+            else:
+                search_in = list(self[prop_name])
+                search_in  = list(map(lambda x: x.lower(),search_in))
+                search_set = set(map(lambda x: x.lower(),prop_values))
+                
+            return not search_set.isdisjoint(search_in)
+        except KeyError: return False
 
 
 REF_ID_TYPES = {'PMID', 'DOI', 'PII', 'PUI', 'EMBASE', 'NCT ID'}
-REF_PROPS = {'PubYear', 'Authors', 'Journal', 'MedlineTA', 'TrialStatus', 'Phase', 'StudyType', 
-             'Start', 'Intervention', 'Condition', 'Company', 'Collaborator','Title','Percent'}
+CLINTRIAL_PROPS = {'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator'}
+BIBLIO_PROPS = {'PubYear','Authors','Journal','MedlineTA','Title'}
 
-SENTENCE_PROPS = {'Sentence','Organism','CellType', 'CellLineName', 'Organ', 'Tissue','Source'}#TextRef is used as key in Reference
-RELATION_PROPS = {'Effect','Mechanism','Source','ChangeType','BiomarkerType','QuantitativeType'}
+SENTENCE_PROPS = {'Sentence','Organism','CellType','CellLineName','Organ','Tissue','Source','Percent'}
+#also TextRef - used as key in Reference.Sentences
+RELATION_PROPS = {'Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences
 
 
-class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_PROPS[i]:value}
+class Reference(PSObject):  
+# self{BIBLIO_PROPS[i]:value}; Identifiers{REF_ID_TYPES[i]:identifier}; Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}
     pass
 
-    def __init__(self, idType: str, ID: str):
-        super().__init__(dict())
-        self.Identifiers = {idType:ID}
+    def __init__(self, idType:str, ID:str):
+        super().__init__(dict()) # self{BIBLIO_PROPS[i]:value};
+        self.Identifiers = {idType:ID} #from REF_ID_TYPES
         self.Sentences = dict() # {TextRef:{PropID:Value}} from SENTENCE_PROPS
+
+
+    @staticmethod
+    def __parse_textref(textref:str):
+        #TexRef example: 'info:doi/10.1016/j.gendis.2015.05.001#body:49'
+        prefix = textref[:textref.find(':')]
+        if prefix == 'info':
+            tr = textref[5:]
+            slash_pos = tr.find('/')
+            if slash_pos > 0:
+                id_type = tr[:slash_pos]
+                identifier_start = slash_pos+1
+                identifier_end = tr.rfind('#',identifier_start)
+                if identifier_end < 0: identifier_end = len(tr)
+                identifier = tr[identifier_start:identifier_end]
+                return id_type.upper(),identifier
+            else:
+                return 'TextRef', textref
+        else:
+            return 'TextRef', textref
+
+    @classmethod
+    def from_textref(cls, textref:str):
+        id_type, identifier = cls.__parse_textref(textref)
+        return cls(id_type,identifier)
 
     def __key(self):
         for id_type in REF_ID_TYPES:
@@ -124,6 +128,8 @@ class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_
             except KeyError: continue
         
         try: return self.Identifiers['TextRef']
+        #if reference has non-canonical TextRef that cannot be parsed by __parse_textref
+        # self.Identifiers has ['TextRef'] value
         except KeyError: return NotImplemented
 
     def __hash__(self):
@@ -137,38 +143,45 @@ class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_
                 except KeyError:
                     continue
 
-    def to_string(self, id_types: list=None, sep='\t'):
+    def to_str(self, id_types: list=None, col_sep='\t'):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         row = str()
         for t in id_types:
             try:
-                row = row + t+':'+self.Identifiers[t]+sep
+                row = row + t+':'+self.Identifiers[t]+col_sep
             except KeyError:
-                row = row + sep
+                row = row + col_sep
 
         row = row[:len(row)-1] #remove last separator
         for prop_id, prop_values in self.items():
             prop_val = ';'.join(prop_values)
-            if prop_id in ['Sentence','Title']:
+            if prop_id == 'Title':
                 prop_val = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_val)
-            row = row + sep + prop_id + ':' + prop_val
+            row = row + col_sep + prop_id + ':' + prop_val
+
+        for text_ref, prop in self.Sentences.items():
+            for prop_id, prop_value in dict(prop).items():
+                if prop_id == 'Sentence':
+                    prop_value = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_value)
+                row = row + col_sep + prop_id + ' ('+text_ref+')' + ':' + prop_value
         return row
 
 
-    def merge_reference(self, other):
+    def _merge(self, other):
         if isinstance(other, Reference):
+            self.update(other)
             self.Identifiers.update(other.Identifiers)
             self.Sentences.update(other.Sentences)
 
     def is_from_abstract(self):
         for textref in self.Sentences.keys():
             try:
-                return bool(textref.rindex('#abs', len(textref) - 8, len(textref) - 3))
+                return bool(str(textref).rindex('#abs', len(textref) - 8, len(textref) - 3))
             except ValueError:
                 continue
         return False
 
-    def make_textref(self):
+    def _make_textref(self):
         try:
             return 'info:pmid/'+ self.Identifiers['PMID']
         except KeyError:
@@ -192,31 +205,6 @@ class Reference(PSObject):  # Identifiers{REF_ID_TYPES[i]:identifier}; self{REF_
                                 except KeyError:
                                     return NotImplemented
 
-    @staticmethod
-    def parse_textref(textref:str):
-        #'info:doi/10.1016/j.gendis.2015.05.001#body:49"'
-        prefix = textref[:textref.find(':')]
-        if prefix == 'info':
-            tr = textref[5:]
-            slash_pos = tr.find('/')
-            if slash_pos > 0:
-                id_type = tr[:slash_pos]
-                identifier_start = slash_pos+1
-                end = tr.rfind('#',identifier_start)
-                if end < 0: end = len(tr)
-                identifier = tr[identifier_start:end]
-                return id_type.upper(),identifier
-            else:
-                return 'TextRef', textref
-        else:
-            return 'TextRef', textref
-
-
-    @classmethod
-    def from_textref(cls, textref:str):
-        id_type, identifier = cls.parse_textref(textref)
-        return cls(id_type,identifier)
-        
 
 class PSRelation(PSObject):
     pass
@@ -224,7 +212,7 @@ class PSRelation(PSObject):
     Nodes = dict()
     References = dict()
 
-    def __init__(self, dic: dict):
+    def __init__(self, dic:dict):
         super().__init__(dic)
         self.PropSetToProps = dict()  # {PropSetID:{PropID:[values]}}
         self.Nodes = dict()  # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
@@ -240,13 +228,8 @@ class PSRelation(PSObject):
     def __hash__(self):
         return self['Id'][0]
 
-    def is_directional(self, Links):
-        if len(Links[self['Id'][0]]) > 1:
-            return True
-        else:
-            return False
 
-    def prop_values2str(self, prop_id, cell_sep: str =';'):
+    def __props2str(self, prop_id, cell_sep: str =';'):
         try:
             return cell_sep.join(map(str, self[prop_id]))
         except KeyError:
@@ -262,7 +245,7 @@ class PSRelation(PSObject):
                 to_return = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', to_return)
             return to_return
 
-    def prop_values2list(self, propID, cell_sep=';'):
+    def props2list(self, propID, cell_sep=';'):
         try:
             return self[propID]
         except KeyError:
@@ -279,43 +262,38 @@ class PSRelation(PSObject):
 
     def load_references(self):
         if self.References: return
-        propset_idx = 1
         for propSet in self.PropSetToProps.values():
-            propset_references = list()
+            my_reference_tuples = list()
             for ref_id_type in REF_ID_TYPES:
                 try:
                     ref_id = propSet[ref_id_type][0]
-                    propset_references.append((ref_id_type, ref_id))
+                    my_reference_tuples.append((ref_id_type, ref_id))
                 except KeyError:
                     continue
 
-            if propset_references: # propSet is valid reference - resolving duplicates 
+            if my_reference_tuples: # propSet is valid reference - resolving duplicates 
                 # case when reference have valid identifiers
-                propset_article_identifiers = {x[1] for x in propset_references}
-                existing_ref = {r for i, r in self.References.items() if i in propset_article_identifiers}
-                if len(existing_ref) == 0:  # case when reference is new
-                    id_type, id_value = propset_references[0][0], propset_references[0][1]
-                    # id_value = propset_references[0][1]
+                article_identifiers = {x[1] for x in my_reference_tuples}
+                existing_ref = [r for i, r in self.References.items() if i in article_identifiers]
+                if not existing_ref:  # case when reference is new
+                    id_type, id_value = my_reference_tuples[0][0], my_reference_tuples[0][1]
                     ref = Reference(id_type, id_value)
                     self.References[id_value] = ref
-                    for Id in range(1, len(propset_references)):
-                        id_type, id_value = propset_references[Id][0], propset_references[Id][1]
+                    for Id in range(1, len(my_reference_tuples)):
+                        id_type, id_value = my_reference_tuples[Id][0], my_reference_tuples[Id][1]
                         ref.Identifiers[id_type] = id_value
                         self.References[id_value] = ref
-                elif len(existing_ref) > 1:  # identifiers from one propset point to different references
+                else: 
+                    ref = existing_ref[0]
+                    if len(existing_ref) > 1:  # identifiers from one propset point to different references
                     # will merge all references from propset with the first one
-                    conflict_refs = list(existing_ref)
-                    anchor_ref = conflict_refs[0]
-                    for i in range(1, len(conflict_refs)):
-                        ref_to_merge = conflict_refs[i]
-                        anchor_ref.merge_reference(ref_to_merge)
-                        for id_value in ref_to_merge.Identifiers.values():
-                            self.References[id_value] = anchor_ref
-                        ref = anchor_ref
-                else:
-                    ref = next(iter(existing_ref))  # if len(existing_ref) == 1: there is nothing to do but take it and add sentences
+                        for i in range(1, len(existing_ref)):
+                            ref._merge(existing_ref[i])
+                            for id_value in dict(existing_ref[i].Identifiers).values():
+                                self.References[id_value] = ref
+                        del existing_ref[1:]
 
-            else: #propSet is not valid reference - try to create one using Title or TexRef
+            else: #propSet is not valid reference - trying to create one using Title or TexRef
                 try:
                     # trying id reference by title as a last resort since it does not have valid identifiers
                     propset_title = propSet['Title'][0]
@@ -337,37 +315,36 @@ class PSRelation(PSObject):
             textref = None 
             sentence_props = dict()
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
-                if propId in REF_PROPS:
-                    ref.add_properties(propId, propValues)
+                if propId in BIBLIO_PROPS:
+                    ref.update_with_list(propId, propValues)
                 elif propId in SENTENCE_PROPS:
                     sentence_props[propId] = propValues
-                else:
-                    if propId == 'TextRef': textref = propValues[0]
+                elif propId in CLINTRIAL_PROPS:
+                    ref.update_with_list(propId, propValues)
+                elif propId == 'TextRef': textref = propValues[0]
 
             if not isinstance(textref,str): 
-                textref = ref.make_textref()
-            if textref[:10] == 'urn:hash::':
-                textref = ref.make_textref()
+                textref = ref._make_textref()
+            elif textref[4:10] == 'hash::': # references from older Resnet versions can start with 'urn:hash::'
+                textref = ref._make_textref()
             elif textref == 'Admin imported': 
-                continue
+                continue # ignore and move to the next PropSet
             
-
-            if sentence_props: ref.Sentences[textref] = sentence_props
+            if sentence_props: 
+                ref.Sentences[textref] = sentence_props
             else: 
-                ref.Sentences[textref] = {'Sentence':[]}
+                ref.Sentences[textref] = {'Sentence':[]} #load empty dict for data consistency
 
-            propset_idx +=1
+        self.PropSetToProps.clear() # PropSetToProps are not needed anymore. Everything is loaded into References.
 
 
     def get_reference_count(self, count_abstracts=False):
         if count_abstracts:
             ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
             return len(ref_from_abstract)
-        else:
-            if self.References:
-                return len(self.References)
-            else:
-                return self['RelationNumberOfReferences'][0]
+        else:        
+            return len(self.References) if self.References else self['RelationNumberOfReferences'][0]
+
 
 
     def to_table_dict(self, columnPropNames:list, cell_sep:str=';', RefNumPrintLimit=0, add_entities=False):
@@ -401,7 +378,7 @@ class PSRelation(PSObject):
             propId = columnPropNames[col]
             if propId in self.keys(): # filling columns with relation properties
                 for row in range(0, rowCount):
-                    propValue = self.prop_values2str(propId)
+                    propValue = self.__props2str(propId)
                     table[row][col] = propValue
             elif RelationNumberOfReferences >= RefNumPrintLimit: #filling columns with reference properties
                 row = 0
@@ -446,7 +423,7 @@ class PSRelation(PSObject):
         for col in range(len(columnPropNames)):
             propId = columnPropNames[col]
             if propId in self.keys(): # filling columns with relation properties
-                propValues = self.prop_values2str(propId)
+                propValues = self.__props2str(propId)
                 table[col] = propValues.replace(cell_sep, ' ')
             elif RelationNumberOfReferences >= RefNumPrintLimit: #filling columns with reference properties
                 for propList in self.PropSetToProps.values():
@@ -469,55 +446,10 @@ class PSRelation(PSObject):
         else: 
             return  self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
 
-    def to_pandas(self, columnPropNames: list, RefNumPrintLimit=0):
-        # assumes all properties in columnPropNames were fetched from Database otherwise will crash
-        # initializing table
-        col_count = len(columnPropNames) + 2
-        RelationNumberOfReferences = int(self['RelationNumberOfReferences'][0])
-
-        rowCount = 1
-        if RelationNumberOfReferences >= RefNumPrintLimit:
-            rowCount = max(1, len(self.PropSetToProps))
-
-        regulatorIDs = str()
-        targetIDs = str()
-        for k, v in self.Nodes.items():
-            if k == 'Regulators':
-                regulatorIDs = ','.join(map(str, [x[0] for x in v]))
-            else:
-                targetIDs = ','.join(map(str, [x[0] for x in v]))
-
-        
-        reference_pandas = pd.DataFrame(columns = columnPropNames+["Regulators Id","Targets Id"])
-        for row in range(0, rowCount):
-            reference_pandas.at[row,"Regulators Id"] = regulatorIDs
-            reference_pandas.at[row,"Targets Id"] = targetIDs
-
-        for col in columnPropNames:
-            if col in self.keys():
-                reference_pandas[col] = self.prop_values2str(col)
-            elif RelationNumberOfReferences >= RefNumPrintLimit:
-                row = 0
-                for propList in self.PropSetToProps.values():
-                    if col in propList.keys():
-                        propValues = propList[col]
-                        cellValue = ';'.join(propValues)
-                        reference_pandas.at[row,col] = cellValue
-                    row += 1
-                
-        return reference_pandas
-
     def get_regulators_targets(self):
-        # relEntities = self.Links[relId]
         if len(self.Nodes) > 1:
-            RegTargetPairs = []
-            for regTriple in self.Nodes['Regulators']:
-                for targetTriple in self.Nodes['Targets']:
-                    pairTuple = (regTriple[0], targetTriple[0])
-                    RegTargetPairs.append(pairTuple)
-            return RegTargetPairs
+            return [(r[0],t[0]) for r in self.Nodes['Regulators'] for t in self.Nodes['Targets']]
         else:
-            import itertools
             try:
                 objIdList = [x[0] for x in self.Nodes['Regulators']]
                 return itertools.combinations(objIdList, 2)
@@ -530,7 +462,6 @@ class PSRelation(PSObject):
         return list(nodeIds)
 
     def to_json(self):
-        import json
         str1 = '{"Relation Properties": ' + json.dumps(self) + '}'
         strP = '{"Relation References": ' + json.dumps(self.PropSetToProps) + '}'
         strR = json.dumps(self.Nodes)

@@ -2,7 +2,7 @@ import networkx as nx
 import pandas as pd
 import os
 import xml.etree.ElementTree as et
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation
 
 NO_RNEF_NODE_PROPS = ['Id','URN','ObjClassId','ObjTypeId','ObjTypeName','OwnerId','DateCreated','DateModified']
 NO_RNEF_REL_PROPS = NO_RNEF_NODE_PROPS + ['RelationNumberOfReferences', '# of Total References', 'Name']
@@ -14,12 +14,12 @@ class ResnetGraph (nx.MultiDiGraph):
     def add_graph(self, other: "ResnetGraph"):
         self.update(other)
       
-    def get_entity_ids(self, SearchValues: list, search_by_properties: list=None):
+    def get_entity_ids(self, SearchValues:list, search_by_properties:list=None):
         if search_by_properties is None: search_by_properties = ['ObjTypeName']
         all_ids = set()
         for i, node in self.nodes(data=True):
             for propName in search_by_properties:
-                if PSObject(node).has_str_property(propName, SearchValues):
+                if PSObject(node).has_property(propName, SearchValues):
                     all_ids.add(i)
                     break
         return list(all_ids)
@@ -55,7 +55,7 @@ class ResnetGraph (nx.MultiDiGraph):
         for i, node in self.nodes(data=True):
             for propName in search_by_properties:
                 ps_obj = PSObject(node)
-                if ps_obj.has_str_property(propName, SearchValues):
+                if ps_obj.has_property(propName, SearchValues):
                     all_objects.add(ps_obj)
                     break
         return list(all_objects)
@@ -84,6 +84,18 @@ class ResnetGraph (nx.MultiDiGraph):
 
     def __relations(self):
         return {rel for regulatorID, targetID, rel in self.edges.data('relation') }
+
+    def find_relations(self, reg_id, targ_id, rel_type, effect:str=None, mechanism:str=None):
+        rel_set = [rel for regulatorID, targetID, rel in self.edges.data('relation') 
+                if regulatorID == reg_id and targetID == targ_id and rel['ObjTypeName'][0]==rel_type
+        ]
+        if isinstance(effect,str):
+            rel_set = [x for x in rel_set if x['Effect'] == effect]
+        
+        if isinstance(mechanism,str):
+            rel_set = [x for x in rel_set if x['Mechanism'] == mechanism]
+
+        return rel_set
 
     def _relations_ids(self):
         return {rel['Id'][0] for regulatorID, targetID, rel in self.edges.data('relation')}
@@ -169,22 +181,18 @@ class ResnetGraph (nx.MultiDiGraph):
                 for i in range(0, len(self[nodeId2][nodeId1])):
                     self[nodeId2][nodeId1][i]['relation'][PropertyName] = PropertyValues
 
-
     def print_triples(self, fileOut, relPropNames, access_mode='w', printHeader=True):
-        
         with open(fileOut, access_mode, encoding='utf-8') as f:
             if printHeader:
                 header = '\t'.join(relPropNames) + '\t' + "Regulators Id" + '\t' + "Targets Id"
                 f.write(header + '\n')
 
-        for regulatorID, targetID, rel in self.edges.data('relation'):
-            f.write(rel.triple2str(relPropNames))
+            for regulatorID, targetID, rel in self.edges.data('relation'):
+                f.write(rel.triple2str(relPropNames))
 
 
-    def print_references(self, fileOut:str, relPropNames:list, entity_prop_names=None,access_mode='w',
+    def print_references(self, fileOut:str, relPropNames:list, entity_prop_names=[],access_mode='w',
                           printHeader=True, RefNumPrintLimit=0, col_sep:str='\t', debug=False, single_rel_row=False):
-
-        if entity_prop_names is None: entity_prop_names = []
         
         with open(fileOut, access_mode, encoding='utf-8') as f:
             if printHeader:
@@ -204,7 +212,7 @@ class ResnetGraph (nx.MultiDiGraph):
                 f.write(header + '\n')
 
             if self.number_of_edges() > 0:
-                if len(entity_prop_names) == 0:
+                if not entity_prop_names:
                     for regulatorID, targetID, rel in self.edges.data('relation'):
                         reference_view_triple = str(rel.triple2str(relPropNames,as1row=single_rel_row))
                         f.write(reference_view_triple)
@@ -225,8 +233,8 @@ class ResnetGraph (nx.MultiDiGraph):
                             reference_table_view = reg_props_str[0:len(reg_props_str) - 1]+col_sep+reference_table_view
                             reference_table_view += col_sep + target_props_str
                         else:
-                            rel_props_str_list = dict(rel.to_table_dict(relPropNames, RefNumPrintLimit=RefNumPrintLimit,
-                                                        col_sep=col_sep, add_entities=debug))
+                            rel_props_str_list = dict(rel.to_table_dict(
+                                                        relPropNames, RefNumPrintLimit=RefNumPrintLimit,add_entities=debug))
                             
                             for row in rel_props_str_list.values():
                                 reference_table_view += reg_props_str[0:len(reg_props_str) - 1]
@@ -240,7 +248,7 @@ class ResnetGraph (nx.MultiDiGraph):
                     f.write(node_prop_str)
 
 
-    def ref2pandas (self, relPropNames: list, entity_prop_names=None, RefNumPrintLimit=0) -> 'pd.DataFrame':
+    def ref2pandas (self, relPropNames:list, entity_prop_names=[], RefNumPrintLimit=0) -> 'pd.DataFrame':
         temp_fname = '__temp__.tsv'
         self.print_references(temp_fname,relPropNames,entity_prop_names,RefNumPrintLimit=RefNumPrintLimit)
         to_return = pd.read_csv(temp_fname,sep='\t',header=0,index_col=False, dtype='unicode')
@@ -359,3 +367,105 @@ class ResnetGraph (nx.MultiDiGraph):
     @staticmethod
     def get_att_set(prop_name:str,ps_objects:list):
         return set([i for sublist in [x[prop_name] for x in ps_objects] for i in sublist])
+
+    def read_rnef(self, rnef_file:str, new_node_id=100000, new_control_id= 1000000):
+        tree = et.parse(rnef_file)
+        resnets = tree.findall('./batch/resnet')
+        nodel_local_ids = dict()
+        for resnet in resnets:
+            for node in resnet.findall('./nodes/node'):
+                node_urn = node.get('urn')
+                local_id = node.get('local_id')
+                node_objs = list(self.get_objects([node_urn],['URN']))
+                if len(node_objs) > 0:
+                    node_obj = node_objs[0]
+                else:  
+                    new_node_id += 1
+                    node_id = new_node_id
+                    node_obj = PSObject({'Id':[node_id]})
+
+                for attr in node.findall('attr'):
+                    prop_id = attr.get('name')
+                    prop_value = attr.get('value')
+                    if prop_id == 'NodeType': prop_id = 'ObjTypeName'
+                    node_obj.append_property(prop_id, prop_value)
+
+                self.add_node(node_id,node_obj.items())
+                nodel_local_ids[local_id] = node_obj
+                    
+
+            for rel in resnet.findall('./controls/control'):
+                regulators = list()
+                targets = list()
+                for link in rel.findall('link'):
+                    link_type = link.get('type')
+                    link_ref = link.get('ref')
+                    node_obj = nodel_local_ids[link_ref]
+                    if link_type == 'out': targets.append(node_obj)
+                    else: regulators.append(node_obj)
+
+                ps_rel = PSRelation(dict())
+                effect = rel.find('./Effect')
+                effect_val = 'unknown' if type(effect) == type(None) else effect.text
+                mechanism = rel.find('./Mechanism')
+                if type(mechanism) != type(None): mechanism = mechanism.text
+
+                for reg in regulators:
+                    try: 
+                        ps_rel.Nodes['Regulators'].append(tuple(reg['Id'][0], '0', effect_val))
+                    except KeyError:
+                        ps_rel.Nodes['Regulators'] = [tuple(reg['Id'][0], '0', effect_val)]
+                    
+                for targ in targets:
+                    try: 
+                        ps_rel.Nodes['Targets'].append(tuple(targ['Id'][0], '0', effect_val))
+                    except KeyError:
+                        ps_rel.Nodes['Targets'] = [tuple(targ['Id'][0], '0', effect_val)]
+                            
+                for attr in rel.findall('attr'):
+                    prop_id = attr.get('name')
+                    prop_value = attr.get('value')
+                    if prop_id == 'ControlType': prop_id = 'ObjTypeName'
+
+                    index = attr.get('index')
+                    if type(index) == type(None):
+                        ps_rel.append_property(prop_id, prop_value)
+                    else:
+                        try:
+                            props = ps_rel.PropSetToProps[index]
+                            try:
+                                props[prop_id].append(prop_value)
+                            except KeyError:
+                                 props[prop_id] = [prop_value]
+                        except KeyError:
+                            ps_rel.PropSetToProps[index] = {prop_id:prop_value}
+
+                ref_count = len(ps_rel.PropSetToProps)
+                if targets:
+                    for r in regulators:
+                        for t in targets:
+                            existing_rel = self.find_relations(r['Id'][0],t['Id'][0],rel['ObjTypeName'][0],effect,mechanism)
+                            if existing_rel:
+                                for e in existing_rel:
+                                    e.copy(rel)
+                                    self.add_edge(r['Id'][0],t['Id'][0],relation=e, weight=float(len(e.PropSetToProps)))
+                            else:
+                                new_control_id += 1
+                                rel['Id'] = [new_control_id]
+                                self.add_edge(r['Id'][0],t['Id'][0],relation=rel, weight=float(ref_count))
+
+                else:
+                    for i in range(0, len(regulators)):
+                        r = regulators[i]
+                        for j in range(i, len(regulators)):
+                            t = regulators[j]
+                            existing_rel = self.find_relations(r['Id'][0],t['Id'][0],rel['ObjTypeName'][0],effect,mechanism)
+                            if existing_rel:
+                                for e in existing_rel:
+                                    e.copy(rel)
+                                    self.add_edge(r['Id'][0],t['Id'][0],relation=e, weight=float(len(e.PropSetToProps)))
+                            else:
+                                new_control_id += 1
+                                rel['Id'] = [new_control_id]
+                                self.add_edge(r['Id'][0],t['Id'][0],relation=rel, weight=float(ref_count))
+

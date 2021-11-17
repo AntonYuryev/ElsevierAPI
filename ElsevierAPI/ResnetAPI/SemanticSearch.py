@@ -24,7 +24,7 @@ class SemanticSearch (APISession):
     __only_map2types__ = list()
     __iter_size__ = 500 #controls the iteration size in sematic reference count
     RefCountPandas = pd.DataFrame()
-    relProps = REF_ID_TYPES # if need_references() add here ['Name','Sentence','PubYear','Title']
+    relProps = list(REF_ID_TYPES) # if need_references() add here ['Name','Sentence','PubYear','Title']
 
     def __init__(self, APIconfig):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
@@ -137,7 +137,7 @@ class SemanticSearch (APISession):
             psobj_id = psobj['Id']
             prop_values = [x for x in psobj[propName] if x in propValues]
             mapped_by_propvalue = propName + ':' + ','.join(prop_values)
-            psobj.add_unique_property(self.__mapped_by__, mapped_by_propvalue)
+            psobj.update_with_value(self.__mapped_by__, mapped_by_propvalue)
 
             if get_childs:
                 lazy_key = tuple(psobj_id)
@@ -150,14 +150,14 @@ class SemanticSearch (APISession):
                         has_childs += 1
                         child_ids2entities = self._zeep2psobj(zeep_entities)
                         for child in child_ids2entities.values():
-                            child.add_unique_property(self.__mapped_by__, mapped_by_propvalue)
+                            child.update_with_value(self.__mapped_by__, mapped_by_propvalue)
                         child_id2psobj.update(child_ids2entities)
                         child_ids = list(child_ids2entities.keys())
                     else:
                         child_ids = []
                     lazy_child_dict[lazy_key] = child_ids
 
-                psobj.add_properties(self.__child_ids__, child_ids)
+                psobj.update_with_list(self.__child_ids__, child_ids)
 
             for prop_val in prop_values:
                 try:

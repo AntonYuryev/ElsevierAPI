@@ -93,14 +93,14 @@ class FolderContent (APISession):
                 for Id, psObj in ps_objects.items():
                     if psObj['ObjTypeName'][0] == 'Pathway':
                         try:
-                            self.id2pathways[Id].add_unique_property('Folders', folder['Name'])
+                            self.id2pathways[Id].update_with_value('Folders', folder['Name'])
                         except KeyError:
                             psObj['Folders'] = [folder['Name']]
                             self.id2pathways[Id] = psObj
                             urn2pathway[psObj['URN'][0]] = psObj
                     if psObj['ObjTypeName'][0] == 'Group':
                         try:
-                            self.id2groups[Id].add_unique_property('Folders', folder['Name'])
+                            self.id2groups[Id].update_with_value('Folders', folder['Name'])
                         except KeyError:
                                 psObj['Folders'] = [folder['Name']]
                                 self.id2groups[Id] = psObj
@@ -271,7 +271,7 @@ class FolderContent (APISession):
             for Id, psObj in id2objs.items():
                 if psObj['ObjTypeName'][0] == 'Pathway':
                     try:
-                        self.id2pathways[Id].add_unique_property('Folders', folder_name)
+                        self.id2pathways[Id].update_with_value('Folders', folder_name)
                     except KeyError:
                             psObj['Folders'] = [folder_name]
                             self.id2pathways[Id] = psObj
@@ -279,7 +279,7 @@ class FolderContent (APISession):
                         psObj['layout'] = self.get_layout(Id)
                 if psObj['ObjTypeName'][0] == 'Group':
                     try:
-                        self.id2groups[Id].add_unique_property('Folders', folder_name)
+                        self.id2groups[Id].update_with_value('Folders', folder_name)
                     except KeyError:
                             psObj['Folders'] = [folder_name]
                             self.id2groups[Id] = psObj
@@ -377,16 +377,14 @@ class FolderContent (APISession):
     def name_output(folder_name):
         return 'content of '+folder_name+'.rnef'
     
-    def content2rnef(self, folder_name:str,include_subfolders=True, add_props2rel:dict=None,add_pathway_props:dict=None):
+    def content2rnef(self, top_folder_name:str,include_subfolders=True, add_props2rel:dict=None,add_pathway_props:dict=None):
 
         if not include_subfolders:
-            return self.pathways_from_folder(None,folder_name,add_props2rel=add_props2rel,add_pathway_props=add_pathway_props)
+            return self.pathways_from_folder(None,top_folder_name,add_props2rel=add_props2rel,add_pathway_props=add_pathway_props)
         else:
-            child2parent, parent2child = self.get_subfolder_tree(folder_name)
-
+            child2parent, parent2child = self.get_subfolder_tree(top_folder_name)
             global_start = time.time()
-            
-            with open(self.name_output(folder_name), "w", encoding='utf-8') as f:
+            with open(self.name_output(top_folder_name), "w", encoding='utf-8') as f:
                 f.write('<?xml version="1.0" ?>\n')
                 f.write('<batch>\n')
 
@@ -423,7 +421,9 @@ class FolderContent (APISession):
                 folder_counter = 0
                 printed_pathway_ids = set()
                 symlinks_ids = set()
-                for folder_id in child2parent.keys():
+            
+                for folder_id in child2parent.keys(): 
+                # child2parent has {top_folder_id:top_folder_id} to process pathways in top_folder_name
                     folder_xml, pathway_counter, symlinks = self.pathways_from_folder(folder_id,as_batch=False,skip_id=printed_pathway_ids)
                     f.write(folder_xml)
                     symlinks_ids.update(symlinks.keys())
@@ -473,19 +473,19 @@ class FolderContent (APISession):
         return urns
 
 
-    def resume_download(self, folder_name:str, last_downloaded_folder:str):
-        child2parent, parent2child = self.get_subfolder_tree(folder_name)
+    def resume_download(self, top_folder_name:str, last_downloaded_folder:str):
+        child2parent, parent2child = self.get_subfolder_tree(top_folder_name)
         subfolders = list(child2parent.keys())
         global_start = time.time()
         try:
             last_downloaded_folder_id = self.get_folder_id(last_downloaded_folder)
             start_folder_idx = subfolders.index(last_downloaded_folder_id)
             folder_counter = start_folder_idx+1
-            rnef_file_to_continue =  self.name_output(folder_name)
+            rnef_file_to_continue =  self.name_output(top_folder_name)
             urns_printed = self.load_urns(rnef_file_to_continue)
 
             download_counter = len(urns_printed)
-            print ('Resuming download of %s folder from %s' % (folder_name,last_downloaded_folder))
+            print ('Resuming download of %s folder from %s' % (top_folder_name,last_downloaded_folder))
             symlinks_dict = dict()
             with open(rnef_file_to_continue, "a", encoding='utf-8') as f:
                 for i in range(start_folder_idx+1, len(subfolders)):
@@ -521,7 +521,7 @@ class FolderContent (APISession):
                 print('Resumed download was finished in %s' % self.execution_time(global_start))
                 f.write('</batch>')
         except ValueError:
-            print ('Folder %s was not found in folder tree' % folder_name)
+            print ('Folder %s was not found in folder tree' % last_downloaded_folder)
             return
     
     def urns2rnef(self, pathway_urns:list, fout:str, xml_format:str='RNEF'):
