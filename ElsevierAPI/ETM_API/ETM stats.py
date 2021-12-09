@@ -195,6 +195,34 @@ def parse_contributors(article:dict):
 
     return authors, institutions
 
+def parse_snippet(article:dict):
+    term_ids = set()
+    try:
+        snippet = str(article['data']['snippet']['text'])
+        pos_shift = 0
+        highlights = article['data']['snippet']['highlight']
+        if not isinstance(highlights, list): highlights = [highlights]
+        for markup in highlights:
+            try:
+                query_term = markup['queryTerm']
+                query_start = markup['start']
+                snippet = snippet[:pos_shift+query_start] + '{'+query_term+'}='+snippet[pos_shift+query_start:]
+                pos_shift += len(query_term)+3
+            
+                try:
+                    term_id = markup['term']['id']
+                    term_name = markup['term']['value']
+                    term_ids.update([term_id+'\t'+term_name])
+                except KeyError:
+                    continue
+            except KeyError: continue
+    except KeyError:
+        try:
+            snippet = article['article']['body']['sec']['addressOrAlternativesOrArray']['p']
+        except KeyError:
+            snippet = ''
+
+    return snippet, term_ids
 
 if __name__ == "__main__":
     APIconfig = load_api_config()
@@ -277,31 +305,7 @@ if __name__ == "__main__":
         ref.update_with_list('Authors',authors)
         ref.update_with_list('Affiliations',[i[0] for i in institutions])
 
-        term_ids = set()
-        try:
-            snippet = str(article['data']['snippet']['text'])
-            pos_shift = 0
-            highlights = article['data']['snippet']['highlight']
-            if not isinstance(highlights, list): highlights = [highlights]
-            for markup in highlights:
-                try:
-                    query_term = markup['queryTerm']
-                    query_start = markup['start']
-                    snippet = snippet[:pos_shift+query_start] + '{'+query_term+'}='+snippet[pos_shift+query_start:]
-                    pos_shift += len(query_term)+3
-                
-                    try:
-                        term_id = markup['term']['id']
-                        term_name = markup['term']['value']
-                        term_ids.update([term_id+'\t'+term_name])
-                    except KeyError:
-                        continue
-                except KeyError: continue
-        except KeyError:
-            try:
-                snippet = article['article']['body']['sec']['addressOrAlternativesOrArray']['p']
-            except KeyError:
-                snippet = ''
+        snippet, term_ids = parse_snippet(article)
 
         text_ref = ref._make_textref()
         ref.add_sentence_prop(text_ref, 'Sentence', snippet)
