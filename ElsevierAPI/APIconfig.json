@@ -2,6 +2,7 @@
 	"ELSapikey": "obtain@https://dev.elsevier.com",
 	"insttoken": "obtain@https://dev.elsevier.com",
 	"ETMapikey": "obtain@hhttps://demo.elseviertextmining.com",
+	"ETMURL" : "https://demo.elseviertextmining.com/api",
 	"PSuserName": "obtain@https://www.elsevier.com/solutions/professional-services",
 	"PSpassword": "obtain@https://www.elsevier.com/solutions/professional-services",
 	"ResnetURL":"http://mammal-profservices.pathwaystudio.com/services/SputnikServiceSoap?WSDL",
