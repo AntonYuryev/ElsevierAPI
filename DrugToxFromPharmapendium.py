@@ -2,7 +2,6 @@ import urllib.request
 import urllib.parse
 import json
 import time
-from ETMsearch import APIconfig
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import Reference
 from ElsevierAPI import load_api_config

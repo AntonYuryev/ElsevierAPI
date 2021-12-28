@@ -1,6 +1,6 @@
 import time
 from ElsevierAPI import open_api_session
-from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_ID_TYPES
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PS_ID_TYPES
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
 
 global_start = time.time()
@@ -12,7 +12,7 @@ ENT_PROPs = ['Name', 'Description', 'Cell Localization']
 ps_api = ps_api = open_api_session()
  
 ps_api.PageSize = 10000
-ps_api.add_rel_props(list(set(REL_PROPs)|REF_ID_TYPES))
+ps_api.add_rel_props(list(set(REL_PROPs)|PS_ID_TYPES))
 ps_api.add_ent_props(ENT_PROPs)
 
 # this dump file will list all proteins in the database with connectivity >0:

@@ -1,4 +1,3 @@
-import ElsevierAPI
 from ElsevierAPI import open_api_session
 import time
 import argparse

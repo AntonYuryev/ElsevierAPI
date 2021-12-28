@@ -20,7 +20,7 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--resume_from', type=str, default='')
     args = parser.parse_args()
 
-    api_cofig_file = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTeva.json'
+    api_cofig_file = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
     ps_api = FolderContent(load_api_config(api_cofig_file))
 
     if args.infile:
@@ -53,15 +53,10 @@ if __name__ == "__main__":
                         # Uncomment line below to download pathways with Relations annotated with Sentence
                         #ps_api.add_rel_props(['Sentence'])
                         # add names of other attributes to input list for addtional Relation annotation
-                        #max number of references in the ps_api.Graph until clearing
+                        # max number of references in the ps_api.Graph until clearing
                         ps_api.content2rnef(args.folder)
                         #results will be written into the RNEF XML file called "content of args.folder" 
                         #results will contain pathways and groups from the specified folder
                         #command performing same operation is available in Pathway UI from folder context menu accesible by right-clicking on the folder 
-
-                   
-
-
-
 
 

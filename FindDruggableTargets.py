@@ -4,7 +4,6 @@ import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
 from ElsevierAPI import open_api_session
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import nx2neo4j
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import REL_PROPs, ENT_PROP_Neo4j
-from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 
 ps_api = open_api_session()
 
@@ -34,7 +33,7 @@ print("Finding Proteins containing GeneticVariants linked to %s" % InputDiseaseN
 ps_api.add_dump_file(foutDiseaseProteins, replace_main_dump=True)
 ps_api.process_oql(
     GOQL.expand_entity(PropertyValues=SNPIds, SearchByProperties=['id'], expand_by_rel_types=['GeneticChange'],
-                       expand2neighbors=['Protein']), flash_dump=True)
+                       expand2neighbors=['Protein']), flush_dump=True)
 
 foutDiseasePPI = myDir + "\\PPIs between genes linked to " + InputDiseaseNames + '.tsv'
 PPIgraph = ps_api.get_ppi_graph(foutDiseasePPI)
