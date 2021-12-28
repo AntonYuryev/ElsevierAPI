@@ -47,7 +47,7 @@ class APISession(PSNetworx):
             else:
                 return self._load_graph(None, zeep_data)
         else:
-            return None
+            return ResnetGraph()
 
     def clear(self):
         self.Graph.clear()
@@ -66,22 +66,22 @@ class APISession(PSNetworx):
             zeep_data, self.ResultSize, self.ResultPos = self.get_session_page(self.ResultRef, self.ResultPos, self.PageSize,
                                                                        self.ResultSize, obj_props ,getLinks=self.__getLinks)                                                                      
             if type(zeep_data) != type(None):
-                if self.__getLinks:
+                if self.__getLinks and len(zeep_data.Links.Link) > 0:
                     obj_ids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
                     zeep_objects = self.get_object_properties(obj_ids, self.entProps)
                     return self._load_graph(zeep_data, zeep_objects)
                 else:
                     return self._load_graph(None, zeep_data)
             else:
-                return None
-        else: return None
+                return ResnetGraph()
+        else: return ResnetGraph()
 
 
     def get_saved_results(self, results_names:list, get_links=True):
         query_names = OQL.join_with_quotes(',',results_names)
         oql_query = 'SELECT Result WHERE Name = ({names})'
         oql_query = oql_query.format(names=query_names)
-        result_graph = self.load_graph_from_oql(oql_query,self.relProps,self.entProps,get_links)
+        result_graph = self.load_graph_from_oql(oql_query,list(self.relProps),list(self.entProps),get_links=False)
         #result_ids = self._obj_id_by_oql(oql_query)
         self.ResultPos = 0
         self.ResultSize  = 1
@@ -89,16 +89,16 @@ class APISession(PSNetworx):
         entire_graph = ResnetGraph()
         start = time.time()
 
+        self.__getLinks = get_links
         for id, name in result_graph.nodes(data='Name'):
             self.ResultRef  = 'ID='+str(id)
-            self.__getLinks = get_links
             while self.ResultPos < self.ResultSize:
                 page_graph = self.__get_next_page()
                 entire_graph = nx.compose(page_graph, entire_graph)
                 iteration = math.ceil(self.ResultPos / self.PageSize)
                 total_iterations = math.ceil(self.ResultSize/self.PageSize)
-                print ('%d out of %d iterations fetching %d objects from %s performed in %s' % 
-                (iteration, total_iterations, self.ResultSize, name, self.execution_time(start)))
+                print ('%d out of %d iterations fetching %d objects from %s search results performed in %s' % 
+                (iteration, total_iterations, self.ResultSize, name[0], self.execution_time(start)))
 
         return entire_graph
 
@@ -169,7 +169,7 @@ class APISession(PSNetworx):
             if no_mess:
                 print('Progress report is suppressed. Retrieval may take long time - be patient!')
 
-        while isinstance(page_graph, ResnetGraph):
+        while page_graph:
             page_ref_count = page_graph.size(weight='weight')
             reference_counter += page_ref_count
             exec_time = self.execution_time(start_time)

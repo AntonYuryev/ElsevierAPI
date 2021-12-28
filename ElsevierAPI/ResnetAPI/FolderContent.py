@@ -1,9 +1,11 @@
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, REF_ID_TYPES,SENTENCE_PROPS,RELATION_PROPS
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PS_ID_TYPES,SENTENCE_PROPS,PS_BIBLIO_PROPS,CLINTRIAL_PROPS
+from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 from ElsevierAPI.ResnetAPI.rnef2sbgn import rnef2sbgn_str
 import xml.etree.ElementTree as et
 from xml.dom import minidom
 import time
+from urllib.parse import quote
 
 class FolderContent (APISession): 
 
@@ -85,6 +87,7 @@ class FolderContent (APISession):
 
         self.id2pathways = dict()
         self.id2groups = dict()
+        self.id2results = dict()
         urn2pathway = dict()
         for folderList in self.id2folders.values():
             for folder in folderList:
@@ -98,14 +101,21 @@ class FolderContent (APISession):
                             psObj['Folders'] = [folder['Name']]
                             self.id2pathways[Id] = psObj
                             urn2pathway[psObj['URN'][0]] = psObj
-                    if psObj['ObjTypeName'][0] == 'Group':
+                    elif psObj['ObjTypeName'][0] == 'Group':
                         try:
                             self.id2groups[Id].update_with_value('Folders', folder['Name'])
                         except KeyError:
                                 psObj['Folders'] = [folder['Name']]
                                 self.id2groups[Id] = psObj
+                    elif psObj['ObjTypeName'][0] == 'attributesSearch':
+                        try:
+                            self.id2results[Id].update_with_value('Folders', folder['Name'])
+                        except KeyError:
+                                psObj['Folders'] = [folder['Name']]
+                                psObj['URN'] = ['urn:agi-pathway:'+quote(psObj['Name'][0])]
+                                self.id2results[Id] = psObj
 
-        print('Found %d pathways in the database' % (len(self.id2pathways)))
+        print('Found %d pathways,%d groups, %d results in the database' % (len(self.id2pathways), len(self.id2groups), len(self.id2results)))
         return urn2pathway
 
 
@@ -117,16 +127,9 @@ class FolderContent (APISession):
         
         return pretty_xml
 
-    def get_pathway(self, pathwayId,path_urn:str=None,path_name:str=None,rel_props:set=set(), ent_props:set=set(),
+    def get_pathway(self, pathwayId,path_urn:str=None,path_name:str=None,
                     xml_format='RNEF',put2folder:str=None, add_props2rel:dict=None, add_props2pathway:dict=None, as_batch=True, prettify=True):
     # add_rel_props, add_pathway_props structure - {PropName:[PropValues]}
-
-        get_rel_props = REF_ID_TYPES | rel_props | {'TextRef'} | RELATION_PROPS
-        #REF_ID_TYPES are needed to load_references
-        # 'TextRef' is needed for references with several supporting snippets
-        if not rel_props:
-            get_rel_props = get_rel_props | SENTENCE_PROPS
-        
 
         if hasattr(self,'id2pathways'):
             if not isinstance(path_urn,str):
@@ -145,8 +148,8 @@ class FolderContent (APISession):
             path_name = 'no_name'
 
 
-        pathway_graph = self.get_pathway_components([pathwayId],'id',retrieve_rel_properties=get_rel_props,
-                                                    retrieve_ent_properties=ent_props)
+        pathway_graph = self.get_pathway_components([pathwayId],'id',retrieve_rel_properties=set(self.relProps),
+                                                    retrieve_ent_properties=set(self.entProps))
         pathway_graph.count_references()
 
         graph_xml = self.to_rnef(pathway_graph,add_props2rel,add_props2pathway)
@@ -203,7 +206,7 @@ class FolderContent (APISession):
         return pathway_graph, str(pathway_xml)
 
 
-    def get_group(self, group_id,group_urn:str=None,group_name:str=None, ent_props:set=None,put2folder:str=None,as_batch=True, prettify=True):
+    def get_group(self, group_id,group_urn:str=None,group_name:str=None, put2folder:str=None,as_batch=True, prettify=True):
         if hasattr(self,'id2groups'):
             if not isinstance(group_urn,str):
                 try:
@@ -220,7 +223,7 @@ class FolderContent (APISession):
             print('Pathway has no Name specified!!!!')
             group_name = 'no_name'
 
-        group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE Id = {objectId})'.format(objectId = group_id),entity_props=ent_props,get_links=False)
+        group_graph = self.load_graph_from_oql('SELECT Entity WHERE MemberOf (SELECT Group WHERE Id = {objectId})'.format(objectId = group_id),entity_props=self.entProps,get_links=False)
         rnef_xml = et.fromstring(self.to_rnef(group_graph))
         rnef_xml.set('name', group_name)
         rnef_xml.set('urn', group_urn)
@@ -258,11 +261,60 @@ class FolderContent (APISession):
         return group_graph, str(group_xml)
 
 
+    def get_result(self, result_id,put2folder:str=None,add_props2rel:dict=None, add_props2pathway:dict=None, as_batch=True, prettify=True):
+        if not hasattr(self,'id2results'): return ResnetGraph(), ''
+        try:
+            result = self.id2results[result_id]
+        except KeyError: 
+            print('No results with %d id exists!' % result_id)
+
+        result_name = result['Name'][0]
+        result_graph = self.get_saved_results(result['Name'])
+        result_graph.count_references()
+        rnef_xml = et.fromstring(self.to_rnef(result_graph,add_props2rel,add_props2pathway))
+        rnef_xml.set('name', result['Name'][0])
+        rnef_xml.set('type', 'Pathway')
+        pathway_urn = result['URN'][0]
+        
+        batch_xml = et.Element('batch')
+        batch_xml.insert(0,rnef_xml)
+                   
+        if isinstance(put2folder,str):
+            folder_resnet = et.Element('resnet')
+            xml_nodes = et.SubElement(folder_resnet, 'nodes')
+            folder_local_id = 'F0'
+            xml_node_folder = et.SubElement(xml_nodes, 'node', {'local_id':folder_local_id, 'urn': 'urn:agi-folder:xxxxx_yyyyy_zzzzz'})
+            et.SubElement(xml_node_folder, 'attr', {'name': 'NodeType', 'value': 'Folder'})
+            et.SubElement(xml_node_folder, 'attr', {'name': 'Name', 'value': put2folder})
+            pathway_local_id = 'P0'
+            xml_node_pathway = et.SubElement(xml_nodes, 'node', {'local_id':pathway_local_id, 'urn':pathway_urn})
+            et.SubElement(xml_node_pathway, 'attr', {'name': 'NodeType', 'value': 'Group'})
+            xml_controls = et.SubElement(folder_resnet, 'controls')
+            xml_control = et.SubElement(xml_controls, 'control', {'local_id':'CFE1'})
+            et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':'MemberOf'})
+            et.SubElement(xml_control, 'link', {'type':'in', 'ref':pathway_local_id})
+            et.SubElement(xml_control, 'link', {'type':'out', 'ref':folder_local_id})
+            batch_xml.append(folder_resnet)
+        
+        if as_batch:
+            pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+            if prettify: group_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
+        else:
+            pathway_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+            if prettify: pathway_xml = self.pretty_xml(pathway_xml,no_declaration=True)
+            #minidom does not work without xml_declaration
+
+        print('\"%s\" search result downloaded as pathway: %d nodes, %d edges supported by %d references' % (result_name, result_graph.number_of_nodes(),result_graph.number_of_edges(),result_graph.size(weight="weight")))
+
+        return result_graph, str(pathway_xml)
+
+
     def get_objects_from_folders(self, FolderIds: list, property_names=None, with_layout=False):
         if property_names is None: property_names = ['Name']
         if not hasattr(self,'id2folders'): self.id2folders = self.load_folder_tree()
         if not hasattr(self,'id2pathways'): self.id2pathways = dict()
         if not hasattr(self,'id2groups'): self.id2groups = dict()
+        if not hasattr(self,'id2results'): self.id2results = dict()
         id2objects = dict()
         for f in FolderIds:
             folder_name = self.id2folders[f][0]['Name']
@@ -277,15 +329,23 @@ class FolderContent (APISession):
                             self.id2pathways[Id] = psObj
                     if with_layout:
                         psObj['layout'] = self.get_layout(Id)
-                if psObj['ObjTypeName'][0] == 'Group':
+                elif psObj['ObjTypeName'][0] == 'Group':
                     try:
                         self.id2groups[Id].update_with_value('Folders', folder_name)
                     except KeyError:
                             psObj['Folders'] = [folder_name]
                             self.id2groups[Id] = psObj
+                elif psObj['ObjTypeName'][0] == 'attributesSearch':
+                    try:
+                        self.id2results[Id].update_with_value('Folders', folder_name)
+                    except KeyError:
+                            psObj['Folders'] = [folder_name]
+                            psObj['URN'] = ['urn:agi-pathway:'+quote(psObj['Name'][0])]
+                            self.id2results[Id] = psObj
 
             id2objects.update(id2objs)
         return id2objects
+
 
     def pathways_from_folder(self,folder_id:int=None,folder_name:str=None,skip_id:set=None,skip_urn:set=None,
                             add_props2rel:dict=None,add_props2pathway:dict=None,as_batch=True):
@@ -328,10 +388,11 @@ class FolderContent (APISession):
                         continue
 
                 if pathway['ObjTypeName'][0] == 'Pathway':
-                    pathway_graph, pathway_xml = self.get_pathway(pathway_id,rel_props=set(self.relProps),add_props2rel=add_props2rel,
-                                    ent_props=set(self.entProps),add_props2pathway=add_props2pathway, as_batch=False)
+                    pathway_graph, pathway_xml = self.get_pathway(pathway_id,add_props2rel=add_props2rel,add_props2pathway=add_props2pathway,as_batch=False)
                 elif pathway['ObjTypeName'][0] == 'Group':
-                    pathway_graph, pathway_xml = self.get_group(pathway_id, ent_props=set(self.entProps),as_batch=False)
+                    pathway_graph, pathway_xml = self.get_group(pathway_id, as_batch=False)
+                elif pathway['ObjTypeName'][0] == 'attributesSearch':
+                    pathway_graph, pathway_xml = self.get_result(pathway_id,add_props2rel=add_props2rel,add_props2pathway=add_props2pathway,as_batch=False)
                 else:
                     print ('%s folder has object with unknown type %s: id = %d' % (folder_name,pathway['ObjTypeName'][0],pathway_id))
                     continue
@@ -378,6 +439,8 @@ class FolderContent (APISession):
         return 'content of '+folder_name+'.rnef'
     
     def content2rnef(self, top_folder_name:str,include_subfolders=True, add_props2rel:dict=None,add_pathway_props:dict=None):
+
+        self.add_rel_props(list(PS_ID_TYPES | SENTENCE_PROPS | {'TextRef'} | PS_BIBLIO_PROPS | CLINTRIAL_PROPS))
 
         if not include_subfolders:
             return self.pathways_from_folder(None,top_folder_name,add_props2rel=add_props2rel,add_pathway_props=add_pathway_props)
@@ -433,7 +496,7 @@ class FolderContent (APISession):
                         print('Downloaded %d pathways from %d out of %d folders in %s' % (download_counter,folder_counter,len(child2parent),self.execution_time(global_start)))
                         print('Relations cache has %d relations supported by %d references\n' % (self.Graph.number_of_edges(), self.Graph.weight()))
                     if self.Graph.weight() > self.reference_cache_size:
-                        print ('Clearing cache due to size %d' % self.Graph.weight())
+                        print('Clearing cache due to size %d' % self.Graph.weight())
                         self.clear()
 
                 symlinks2print = symlinks_ids.difference(printed_pathway_ids)
@@ -441,10 +504,13 @@ class FolderContent (APISession):
                     print('Will print %d pathways to support symlinks' % len(symlinks2print))
                     for pathway_id in symlinks2print:
                         if pathway_id in self.id2pathways.keys():
-                            pathway_graph, pathway_xml = self.get_pathway(pathway_id,rel_props=set(self.relProps),ent_props=set(self.entProps), as_batch=False)
+                            pathway_graph, pathway_xml = self.get_pathway(pathway_id, as_batch=False)
                             f.write(pathway_xml)
                         elif pathway_id in self.id2groups.keys():
-                            pathway_graph, pathway_xml = self.get_group(pathway_id, ent_props=set(self.entProps),as_batch=False)
+                            pathway_graph, pathway_xml = self.get_group(pathway_id, as_batch=False)
+                            f.write(pathway_xml)
+                        elif pathway_id in self.id2results.keys():
+                            pathway_graph, pathway_xml = self.get_result(pathway_id, as_batch=False)
                             f.write(pathway_xml)
                         else:
                             continue
@@ -508,10 +574,13 @@ class FolderContent (APISession):
                     for pathway_urn in symlinks2print:
                         pathway_id = list(symlinks_dict.keys())[list(symlinks_dict.values()).index(pathway_urn)]
                         if pathway_id in self.id2pathways.keys():
-                            pathway_graph, pathway_xml = self.get_pathway(pathway_id,rel_props=set(self.relProps),ent_props=set(self.entProps), as_batch=False)
+                            pathway_graph, pathway_xml = self.get_pathway(pathway_id, as_batch=False)
                             f.write(pathway_xml)
                         elif pathway_id in self.id2groups.keys():
-                            pathway_graph, pathway_xml = self.get_group(pathway_id, ent_props=set(self.entProps),as_batch=False)
+                            pathway_graph, pathway_xml = self.get_group(pathway_id, as_batch=False)
+                            f.write(pathway_xml)
+                        elif pathway_id in self.id2results.keys():
+                            pathway_graph, pathway_xml = self.get_result(pathway_id, as_batch=False)
                             f.write(pathway_xml)
                         else:
                             continue

@@ -2,6 +2,8 @@ import re
 import json
 import itertools
 
+from ElsevierAPI.ETM_API.references import PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
+
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def __init__(self, dic: dict):
         super().__init__(dic)
@@ -59,7 +61,6 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
                 prop_val = ''
 
             table_row = table_row + prop_val + col_sep
-
         return table_row[0:len(table_row) - 1] + endOfline
 
 
@@ -77,135 +78,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError: return False
 
 
-REF_ID_TYPES = {'PMID', 'DOI', 'PII', 'PUI', 'EMBASE', 'NCT ID'}
-CLINTRIAL_PROPS = {'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator'}
-BIBLIO_PROPS = {'PubYear','Authors','Journal','MedlineTA','Title'}
-
-SENTENCE_PROPS = {'Sentence','Organism','CellType','CellLineName','Organ','Tissue','Source','Percent'}
-#also TextRef - used as key in Reference.Sentences
-RELATION_PROPS = {'Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
-
-NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences
-
-
-class Reference(PSObject):  
-# self{BIBLIO_PROPS[i]:value}; Identifiers{REF_ID_TYPES[i]:identifier}; Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}
-    pass
-
-    def __init__(self, idType:str, ID:str):
-        super().__init__(dict()) # self{BIBLIO_PROPS[i]:value};
-        self.Identifiers = {idType:ID} #from REF_ID_TYPES
-        self.Sentences = dict() # {TextRef:{PropID:Value}} from SENTENCE_PROPS
-
-
-    @staticmethod
-    def __parse_textref(textref:str):
-        #TexRef example: 'info:doi/10.1016/j.gendis.2015.05.001#body:49'
-        prefix = textref[:textref.find(':')]
-        if prefix == 'info':
-            tr = textref[5:]
-            slash_pos = tr.find('/')
-            if slash_pos > 0:
-                id_type = tr[:slash_pos]
-                identifier_start = slash_pos+1
-                identifier_end = tr.rfind('#',identifier_start)
-                if identifier_end < 0: identifier_end = len(tr)
-                identifier = tr[identifier_start:identifier_end]
-                return id_type.upper(),identifier
-            else:
-                return 'TextRef', textref
-        else:
-            return 'TextRef', textref
-
-    @classmethod
-    def from_textref(cls, textref:str):
-        id_type, identifier = cls.__parse_textref(textref)
-        return cls(id_type,identifier)
-
-    def __key(self):
-        for id_type in REF_ID_TYPES:
-            try: return self.Identifiers[id_type]
-            except KeyError: continue
-        
-        try: return self.Identifiers['TextRef']
-        #if reference has non-canonical TextRef that cannot be parsed by __parse_textref
-        # self.Identifiers has ['TextRef'] value
-        except KeyError: return NotImplemented
-
-    def __hash__(self):
-        return hash(self.__key())
-
-    def __eq__(self, other):
-        if isinstance(other, Reference):
-            for id_type in REF_ID_TYPES:
-                try:
-                    return self.Identifiers[id_type] == other.Identifiers[id_type]
-                except KeyError:
-                    continue
-
-    def to_str(self, id_types: list=None, col_sep='\t'):
-        id_types = id_types if isinstance(id_types,list) else ['PMID']
-        row = str()
-        for t in id_types:
-            try:
-                row = row + t+':'+self.Identifiers[t]+col_sep
-            except KeyError:
-                row = row + col_sep
-
-        row = row[:len(row)-1] #remove last separator
-        for prop_id, prop_values in self.items():
-            prop_val = ';'.join(prop_values)
-            if prop_id == 'Title':
-                prop_val = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_val)
-            row = row + col_sep + prop_id + ':' + prop_val
-
-        for text_ref, prop in self.Sentences.items():
-            for prop_id, prop_value in dict(prop).items():
-                if prop_id == 'Sentence':
-                    prop_value = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_value)
-                row = row + col_sep + prop_id + ' ('+text_ref+')' + ':' + prop_value
-        return row
-
-
-    def _merge(self, other):
-        if isinstance(other, Reference):
-            self.update(other)
-            self.Identifiers.update(other.Identifiers)
-            self.Sentences.update(other.Sentences)
-
-    def is_from_abstract(self):
-        for textref in self.Sentences.keys():
-            try:
-                return bool(str(textref).rindex('#abs', len(textref) - 8, len(textref) - 3))
-            except ValueError:
-                continue
-        return False
-
-    def _make_textref(self):
-        try:
-            return 'info:pmid/'+ self.Identifiers['PMID']
-        except KeyError:
-            try:
-                return 'info:doi/'+ self.Identifiers['DOI']
-            except KeyError:
-                try:
-                    return 'info:pii/'+ self.Identifiers['PII']
-                except KeyError:
-                    try:
-                        return 'info:pui/'+ self.Identifiers['PUI']
-                    except KeyError:
-                        try:
-                            return 'info:embase/'+ self.Identifiers['EMBASE']
-                        except KeyError:
-                            try:
-                                return 'info:nctid/'+ self.Identifiers['NCT ID']
-                            except KeyError:
-                                try:
-                                    return self.Identifiers['TextRef']
-                                except KeyError:
-                                    return NotImplemented
-
-
+from ElsevierAPI.ETM_API.references import Reference
 class PSRelation(PSObject):
     pass
     PropSetToProps = dict()
@@ -264,7 +137,7 @@ class PSRelation(PSObject):
         if self.References: return
         for propSet in self.PropSetToProps.values():
             my_reference_tuples = list()
-            for ref_id_type in REF_ID_TYPES:
+            for ref_id_type in PS_ID_TYPES:
                 try:
                     ref_id = propSet[ref_id_type][0]
                     my_reference_tuples.append((ref_id_type, ref_id))
@@ -315,7 +188,7 @@ class PSRelation(PSObject):
             textref = None 
             sentence_props = dict()
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
-                if propId in BIBLIO_PROPS:
+                if propId in PS_BIBLIO_PROPS:
                     ref.update_with_list(propId, propValues)
                 elif propId in SENTENCE_PROPS:
                     sentence_props[propId] = propValues
@@ -331,9 +204,9 @@ class PSRelation(PSObject):
                 continue # ignore and move to the next PropSet
             
             if sentence_props: 
-                ref.Sentences[textref] = sentence_props
+                ref.snippets[textref] = sentence_props
             else: 
-                ref.Sentences[textref] = {'Sentence':[]} #load empty dict for data consistency
+                ref.snippets[textref] = {'Sentence':[]} #load empty dict for data consistency
 
         self.PropSetToProps.clear() # PropSetToProps are not needed anymore. Everything is loaded into References.
 
@@ -344,8 +217,6 @@ class PSRelation(PSObject):
             return len(ref_from_abstract)
         else:        
             return len(self.References) if self.References else self['RelationNumberOfReferences'][0]
-
-
 
     def to_table_dict(self, columnPropNames:list, cell_sep:str=';', RefNumPrintLimit=0, add_entities=False):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
@@ -448,12 +319,15 @@ class PSRelation(PSObject):
 
     def get_regulators_targets(self):
         if len(self.Nodes) > 1:
+            # for directional relations
             return [(r[0],t[0]) for r in self.Nodes['Regulators'] for t in self.Nodes['Targets']]
         else:
             try:
+                # for non-directions relations
                 objIdList = [x[0] for x in self.Nodes['Regulators']]
                 return itertools.combinations(objIdList, 2)
             except KeyError:
+                # for wiered cases
                 objIdList = [x[0] for x in self.Nodes['Targets']]
                 return itertools.combinations(objIdList, 2)
 

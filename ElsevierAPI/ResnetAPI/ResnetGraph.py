@@ -347,7 +347,7 @@ class ResnetGraph (nx.MultiDiGraph):
             index = 0
             for ref in references:
                 ref_props = {k:v for k,v in ref.items() if k in RNEFprops}
-                for textref, sentence_props in ref.Sentences.items():
+                for textref, sentence_props in ref.snippets.items():
                     et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(index)})
                     for sentprop_name, sentprop_values in sentence_props.items():
                         for v in sentprop_values:

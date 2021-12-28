@@ -5,7 +5,7 @@ import networkx as nx
 import math
 import re
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI.ResnetAPI.NetworkxObjects import REF_ID_TYPES
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PS_ID_TYPES
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 
@@ -24,7 +24,7 @@ class SemanticSearch (APISession):
     __only_map2types__ = list()
     __iter_size__ = 500 #controls the iteration size in sematic reference count
     RefCountPandas = pd.DataFrame()
-    relProps = list(REF_ID_TYPES) # if need_references() add here ['Name','Sentence','PubYear','Title']
+    relProps = list(PS_ID_TYPES) # if need_references() add here ['Name','Sentence','PubYear','Title']
 
     def __init__(self, APIconfig):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
@@ -259,10 +259,10 @@ class SemanticSearch (APISession):
             
             exec_time = self.execution_time(start_time)
             self.print_ref_count() #prints cache files for temp storage to handle network interruptions
-            print("Concept \"%s\" is linked to %d rows from infile by %s relations of type \"%s\" supported by %d references with effect \"%s\" in %s" %
+            print("Concept \"%s\" is linked to %d entities by %s relations of type \"%s\" supported by %d references with effect \"%s\" in %s" %
                  (ConceptName, linked_entities_counter, relations.number_of_edges(), relTypeStr, len(ref_sum), effecStr, exec_time))
 
-        else: print("Concept \"%s\" has no links to entities in infile" % (ConceptName))
+        else: print("Concept \"%s\" has no links to entities" % (ConceptName))
         return linked_entities_counter
     
 
