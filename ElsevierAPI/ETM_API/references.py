@@ -1,24 +1,31 @@
-#from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
-from textblob import TextBlob
 from ElsevierAPI.ETM_API.medscan import MedScan
 import xlsxwriter
 import re
+from datetime import timedelta
+import time
 
 AUTHORS = 'Authors'
 INSTITUTIONS = 'Institutions'
 JOURNAL = 'Journal'
 PUBYEAR = 'PubYear'
+PUBMONTH = 'PubMonth'
+PUBDAY = 'PubDay'
 SENTENCE = 'Sentence'
+TITLE = 'Title'
+ABSTRACT = 'Abstract'
+CLAIMS = 'Claims'
+PATENT_APP_NUM = 'Patent Application Number'
+PATENT_GRANT_NUM = 'Patent Grant Number'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
 PS_ID_TYPES = {'PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID'}
 ETM_ID_TYPES = {'ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER'}
-OTHER_ID_TYPES = {'Patent ID'}
+PATENT_ID_TYPES = {PATENT_APP_NUM, PATENT_GRANT_NUM}
 CLINTRIAL_PROPS = {'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator'}
-PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,JOURNAL,'MedlineTA','Title','PubMonth','PubDay'}
+PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,JOURNAL,'MedlineTA',TITLE,'PubMonth','PubDay'}
 BIBLIO_PROPS = set(PS_BIBLIO_PROPS)
 BIBLIO_PROPS.add(INSTITUTIONS)
-REF_ID_TYPES = PS_ID_TYPES | ETM_ID_TYPES |OTHER_ID_TYPES
+REF_ID_TYPES = PS_ID_TYPES | ETM_ID_TYPES | PATENT_ID_TYPES
 
 SENTENCE_PROPS = {SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent'}
 #also TextRef - used as key in Reference.Sentences
@@ -27,13 +34,13 @@ RELATION_PROPS = {'Effect','Mechanism','ChangeType','BiomarkerType','Quantitativ
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences
 
 class Reference(dict):  
-# self{BIBLIO_PROPS[i]:value}; Identifiers{REF_ID_TYPES[i]:identifier}; Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}
+# self{BIBLIO_PROPS[i]:[values]}; Identifiers{REF_ID_TYPES[i]:identifier}; Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}
     pass
 
     def __init__(self, idType:str, ID:str):
-        super().__init__(dict()) # self{BIBLIO_PROPS[i]:value};
+        super().__init__(dict()) # self{BIBLIO_PROPS[i]:[value]};
         self.Identifiers = {idType:ID} #from REF_ID_TYPES
-        self.snippets = dict() # {TextRef:{PropID:[Values]}} from SENTENCE_PROPS. contains senetences marked up by NLP
+        self.snippets = dict() # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
         self.addresses = dict() # {orgname:adress}
 
     @classmethod
@@ -104,7 +111,7 @@ class Reference(dict):
         except KeyError:
             self[PropId] = [PropValue]
 
-    def update_with_value(self, PropId, PropValue: str):
+    def update_with_value(self, PropId, PropValue:str):
         try:
             self[PropId] = list(set(self[PropId]) | {PropValue})
         except KeyError:
@@ -127,7 +134,19 @@ class Reference(dict):
         except KeyError:
             self.snippets[text_ref] = {propID:[prop_value]}
 
-    def to_str(self, id_types: list=None, col_sep='\t'):
+    def add_sentence_props(self, text_ref:str, propID:str, prop_values:list):
+        try:
+            exist_sentence = self.snippets[text_ref]
+            try:
+                vals = set(exist_sentence[propID]+ prop_values)
+                exist_sentence[propID]= list(vals)
+            except KeyError:
+                exist_sentence[propID] = prop_values
+            self.snippets[text_ref] = exist_sentence
+        except KeyError:
+            self.snippets[text_ref] = {propID:prop_values}
+
+    def to_str(self, id_types: list=None, col_sep='\t',sentence_props={}):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         row = str()
         for t in id_types:
@@ -143,12 +162,23 @@ class Reference(dict):
                 prop_val = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_val)
             row = row + col_sep + prop_id + ':' + prop_val
 
-        for text_ref, prop in self.snippets.items():
-            for prop_id, prop_values in dict(prop).items():
-                prop_value = '.'.join(prop_values)
-                if prop_id == 'Sentence':
-                    prop_value = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_value)
-                row = row + col_sep + prop_id + ' ('+text_ref+')' + ':' + prop_value
+        if not sentence_props: #printing only sentences
+            for text_ref, prop in self.snippets.items():
+                sntc = '.'.join(prop[SENTENCE])
+                sntc = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sntc)
+                row = row + col_sep + text_ref + ':' + sntc
+        else:
+            for text_ref, prop in self.snippets.items():
+                has_annotation = False
+                for prop_id, prop_values in dict(prop).items():
+                    if prop_id in sentence_props:
+                        prop_value = '.'.join(prop_values)
+                        row = row + col_sep + prop_id + ' ('+text_ref+')' + ':' + prop_value
+                        has_annotation = True
+                if has_annotation:
+                    sentence_with_prop = '.'.join(self.snippets[text_ref][SENTENCE])
+                    sentence_with_prop = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sentence_with_prop)
+                    row = row + col_sep + text_ref+ ':' + sentence_with_prop
         return row
 
 
@@ -204,14 +234,27 @@ class Reference(dict):
                         return 'info:nihgrant/'+ self.Identifiers['GRANTNUMREPORTER']
                     except KeyError:
                         try:
-                            return 'info:patent/'+ self.Identifiers['PATENT ID']
+                            return 'info:patentapp/'+ self.Identifiers[PATENT_APP_NUM]
                         except KeyError:
-                            return NotImplemented
+                            try:
+                                return 'info:patentgrant/'+ self.Identifiers[PATENT_GRANT_NUM]
+                            except KeyError:
+                                return NotImplemented
 
 
     def _make_textref(self):
         textref = self._make_standard_textref()
         return textref if textref else self._make_non_standard_textref()
+
+
+    def set_weight(self, weight:float):
+        try:
+            w = self['weight']
+            if w < weight:
+                self['weight'] = weight
+        except KeyError:
+            self['weight'] = weight
+
 
 
 
@@ -224,42 +267,69 @@ INSTITUTION_KEYWORDS = {'institute', 'institut', 'clinic', 'hospital', 'universi
 class DocMine (Reference):
     def __init__(self, doc_id_type, doc_id):
         super().__init__(doc_id_type, doc_id)
-        self.sections = dict() #{{abstract:[sentences]}, {claims:[sentences]}. Sentences to be markerd up by NLP
+        self.sections = dict() #{{abstract:[text]}, {claims:[claims]}. Texts to be markerd up by NLP.
 
-    def get_title(self): return self['Title']
-    def add2section(self,section_name:str, sentence_list:str):
-        for s in sentence_list:
-            sentences = list(map(str,TextBlob(s).sentences))
-            try:
-                section_sentences = self.sections[section_name] + sentences
-            except KeyError: 
-                section_sentences = sentences
+    @staticmethod
+    def __textref_suffix(section_name:str):
+        name2suffix = {TITLE:'title', ABSTRACT:'abs',CLAIMS:'claims'}
+        try:
+            return name2suffix[section_name]
+        except KeyError:
+            return 'cont'
 
-            self.sections[section_name] = section_sentences
+    def get_title(self): return self['Title'][0]
 
+    def add2section(self,section_name:str, paragraph:str): 
+        if not paragraph: 
+            #print('%s in %s is empty' % (section_name, self.get_title()))
+            return
+        if not isinstance(paragraph,str):
+            #print('%s has no section %s' % (self.get_title(),section_name))
+            return
+        try:
+            self.sections[section_name].append(paragraph)
+        except KeyError:
+            self.sections[section_name] = [paragraph]
 
     def set_date (self, year, month='', day=''): 
-        self['PubYear'] = [year]
-        if month: self['PubMonth'] = [month]
-        if day: self['PubDay'] = [day]
+        self[PUBYEAR] = [year]
+        if month: self[PUBMONTH] = [month]
+        if day: self[PUBDAY] = [day]
 
+    def _set_title(self, title:str):
+        self[TITLE] = [title]
+        self.add2section(TITLE,title)
 
-    def medscan_annotate (self,id_ranges:list, org_name:str, license:str):
-        medscan = MedScan(license,org_name)
-        for secname, sentences in self.sections.items():
-            sec_annotation = dict()
-            for s in sentences:
-                sec_annotation.update(medscan.find_concepts(s,id_ranges))
-            self.section_annotations[secname] = sec_annotation
+    def medscan_annotate(self,medscan:MedScan):
+        base_text_ref = self._make_textref()
+        for secname, paragraphs in self.sections.items():
+            textref_suf = self.__textref_suffix(secname)
+            sentence_idx = 1
+            for paragraph in paragraphs:
+                paragraph_annotation = medscan.find_concepts(paragraph) # paragraph_annotation = {snippet:{id_range:{id:obj_name}}}
+                for sentence_markup, range2dict in paragraph_annotation.items():
+                    if range2dict:
+                        text_ref = base_text_ref+'#'+textref_suf+':'+str(sentence_idx)
+                        self.add_sentence_prop(text_ref,SENTENCE,sentence_markup)
+                        #self.snippets[text_ref] = {SENTENCE: [sentence_markup]}
+                        for msid_range, concept_dict in range2dict.items():
+                            prop_name = medscan.get_concept_type(msid_range)
+                            self.add_sentence_props(text_ref,prop_name,list(concept_dict.values()))
+                            #self.snippets[text_ref]= {prop_name: list(concept_dict.values())}
 
-    def count_str(self,counter:dict, prop_name:str):
+                    sentence_idx +=1
+
+    def get_annotations(self, prop_name:str):
         try:
-            prop_values = list(self[prop_name])
+            return list(self[prop_name])
         except KeyError:
             if prop_name == INSTITUTIONS:
-                prop_values = [k for k,v in self.addresses.items()]
-            else: return
+                return list(self.addresses.keys())
+            else: 
+                return []
 
+    def count_property(self,counter:dict, prop_name:str):
+        prop_values = self.get_annotations(prop_name)
         for v in prop_values:
             try:
                 current_count = counter[v]
@@ -290,3 +360,13 @@ class DocMine (Reference):
         for w in name_words:
             if w.lower() in INSTITUTION_KEYWORDS: return True
         return False
+
+    @staticmethod
+    def execution_time(execution_start):
+        return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
+
+
+
+            
+            
+
