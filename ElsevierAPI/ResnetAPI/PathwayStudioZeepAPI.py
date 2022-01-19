@@ -33,7 +33,7 @@ class DataModel:
         try:
             self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
             self.__load_model()
-            print('Connected to Resnet API server:\n%s' % url)
+            print('Connected to Resnet API server:\n%s as %s' % (url,username))
         except Exception as error:
             self.logger.error("Pathway Studio server connection failed: {error}".format(error=error))
             raise ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
@@ -312,6 +312,9 @@ class DataModel:
         rp.CreateResult = True
         rp.MaxPageSize = PageSize
         obj_props = self.oql_response(OQLrequest, rp)
+
+        if type(obj_props) == type(None):
+            return None, ('', 0, 0)
         if type(obj_props.Objects) == type(None):
             # print('Your SOAP response is empty! Check your OQL query and try again\n')
             return None, (obj_props.ResultRef, obj_props.ResultSize, obj_props.ResultPos)

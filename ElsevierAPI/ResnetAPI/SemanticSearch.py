@@ -25,6 +25,7 @@ class SemanticSearch (APISession):
     __iter_size__ = 500 #controls the iteration size in sematic reference count
     RefCountPandas = pd.DataFrame()
     relProps = list(PS_ID_TYPES) # if need_references() add here ['Name','Sentence','PubYear','Title']
+    __print_refs__ = True
 
     def __init__(self, APIconfig):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
@@ -32,7 +33,18 @@ class SemanticSearch (APISession):
         self.DumpFiles = []
 
     def need_references(self):
-        return 'Sentence' in self.relProps
+        return 'Sentence' in self.relProps if self.__print_refs__ else False
+
+    def reset_pandas(self):
+        score_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
+        for col in score_columns:
+                self.RefCountPandas[col] = 0.0
+        print('DataFrame was reset')
+
+    def drop_refcount_columns(self):
+        ref_count_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
+        self.RefCountPandas.drop(columns=ref_count_columns, inplace=True) #defaults to deleting rows, column must be specified
+        print('%d refcount columns were dropped' % len(ref_count_columns))
 
     def load_pandas(self, EntityPandas:pd.DataFrame,prop_names_in_header, use_cache=False, map2type = None ):
         self.__only_map2types__ = map2type if isinstance(map2type,list) else []
@@ -44,7 +56,7 @@ class SemanticSearch (APISession):
         else:
             self.all_entity_ids = self.map_entities(EntityPandas,prop_names_in_header)
             
-    def set_how2connect(self, connect_by_rels, rel_effect, rel_dir):
+    def set_how2connect(self, connect_by_rels:list, rel_effect, rel_dir:str):
         self.__connect_by_rels__ = connect_by_rels
         self.__rel_effect__ = rel_effect
         self.__rel_dir__ = rel_dir
@@ -107,9 +119,13 @@ class SemanticSearch (APISession):
         return list(set.union(*set_list))
 
 
-    def map_prop2entities(self, propValues: list, propName: str,map2types=None,get_childs=False,MinConnectivity=1):
+    def map_prop2entities(self, propValues:list, propName:str,map2types=None, get_childs=False, MinConnectivity=1):
         only_object_types = [] if map2types is None else map2types
+
         ent_props = self.entProps
+        if propName not in ent_props: 
+            ent_props.append(propName)
+
         step = 1000
         iteration_counter = math.ceil(len(propValues) / step)
 
@@ -132,10 +148,12 @@ class SemanticSearch (APISession):
         lazy_child_dict = dict()
         child_id2psobj = dict()
         has_childs = 0
+        child_counter = set()
         prop2psobj = dict()
         for psobj in id2entity.values():
             psobj_id = psobj['Id']
-            prop_values = [x for x in psobj[propName] if x in propValues]
+            lower_case_values = list(map(lambda x: str(x).lower(),psobj[propName]))
+            prop_values = [x for x in propValues if str(x).lower() in lower_case_values]
             mapped_by_propvalue = propName + ':' + ','.join(prop_values)
             psobj.update_with_value(self.__mapped_by__, mapped_by_propvalue)
 
@@ -153,6 +171,7 @@ class SemanticSearch (APISession):
                             child.update_with_value(self.__mapped_by__, mapped_by_propvalue)
                         child_id2psobj.update(child_ids2entities)
                         child_ids = list(child_ids2entities.keys())
+                        child_counter.update(child_ids)
                     else:
                         child_ids = []
                     lazy_child_dict[lazy_key] = child_ids
@@ -166,7 +185,7 @@ class SemanticSearch (APISession):
                     prop2psobj[prop_val] = {psobj['Id'][0]: psobj}
 
         if get_childs:
-            print('Childs for %d entities were found in database' % has_childs)
+            print('%s children for %d entities were found in database' % (len(child_counter),has_childs))
             id2entity.update(child_id2psobj)
 
         self.Graph.add_nodes_from([(k, v.items()) for k, v in id2entity.items()])
@@ -224,20 +243,23 @@ class SemanticSearch (APISession):
 
         return accumulate_reference, accumulate_relation
 
-    def link2concept(self,ConceptName,concept_ids:list,no_mess=True):
+    def link2concept(self,ConceptName,concept_ids:list,no_mess=True, relations:ResnetGraph=None):
         print('\nLinking input entities to \"%s\" concept with %d ontology children' % (ConceptName,len(concept_ids)))
         if (len(concept_ids) > 500 and len(self.RefCountPandas) > 500):
             print('%s concept has %d ontology children! Linking may take a while, be patient' % (ConceptName,len(concept_ids)-1))
         
         new_column = self._col_name_prefix + ConceptName
         self.RefCountPandas.insert(len(self.RefCountPandas.columns),new_column,0)
+        if hasattr(self,'weight_prop'):
+            self.RefCountPandas[new_column] = pd.to_numeric(self.RefCountPandas[new_column], downcast="float")
 
         effecStr = ','.join(self.__rel_effect__) if len(self.__rel_effect__)>0 else 'all'
         relTypeStr = ','.join(self.__connect_by_rels__) if len(self.__connect_by_rels__)>0 else 'all'
 
         linked_entities_counter = 0
         start_time  = time.time()
-        relations = self.semantic_refcount_by_ids(concept_ids, self.all_entity_ids,no_mess)
+        if not isinstance(relations,ResnetGraph):
+            relations = self.semantic_refcount_by_ids(concept_ids, self.all_entity_ids,no_mess)
         if relations.size() > 0:
             for regulatorID, targetID, rel in relations.edges.data('relation'):
                 try:
@@ -251,8 +273,15 @@ class SemanticSearch (APISession):
             ref_sum = set()
             for idx in self.RefCountPandas.index:
                 idx_entity_ids = list(self.RefCountPandas.at[idx,self.__temp_id_col__])
-                references = relations.count_references_between(idx_entity_ids, concept_ids)
-                self.RefCountPandas.at[idx,new_column] = len(references)
+                if hasattr(self,'weight_prop'):
+                    references = relations.count_references_between(idx_entity_ids, concept_ids,self.weight_prop,self.weight_dict)
+                    ref_weights = [r['weight'] for r in references]
+                    weighted_count = float(sum(ref_weights))
+                    self.RefCountPandas.at[idx,new_column] = weighted_count
+                else:
+                    references = relations.count_references_between(idx_entity_ids, concept_ids)
+                    self.RefCountPandas.at[idx,new_column] = len(references)
+
                 if len(references) > 0:
                     ref_sum.update(references)
                     linked_entities_counter += 1
@@ -265,6 +294,11 @@ class SemanticSearch (APISession):
         else: print("Concept \"%s\" has no links to entities" % (ConceptName))
         return linked_entities_counter
     
+    def flush_dump(self):
+        self.flush_dump_files()
+        open(self.__cntCache__, 'w').close()
+        open(self.__refCache__, 'w').close()
+
 
     def print_ref_count(self, refCountsOut='', referencesOut='',**kwargs):
         PandasToPrint = pd.DataFrame(self.RefCountPandas)    

@@ -60,6 +60,16 @@ class ResnetGraph (nx.MultiDiGraph):
                     break
         return list(all_objects)
 
+    def get_relations(self, search_values:list, search_by_properties: list=None):
+        if search_by_properties is None: search_by_properties = ['ObjTypeName']
+        relations2return = set()
+        for regulatorID, targetID, rel in self.edges.data('relation'):
+            for prop_name in search_by_properties:
+                if rel.has_property(prop_name, search_values):
+                    relations2return.add(rel)
+                    break
+        return relations2return
+
     def get_prop2obj_dic(self, search_by_property:str):
         to_return = dict()
         for i, n in self.nodes(data=True):
@@ -82,9 +92,6 @@ class ResnetGraph (nx.MultiDiGraph):
         else:
             return [PSObject(ddict) for id,ddict in self.nodes(data=True) if id in node_ids]
 
-    def __relations(self):
-        return {rel for regulatorID, targetID, rel in self.edges.data('relation') }
-
     def find_relations(self, reg_id, targ_id, rel_type, effect:str=None, mechanism:str=None):
         rel_set = [rel for regulatorID, targetID, rel in self.edges.data('relation') 
                 if regulatorID == reg_id and targetID == targ_id and rel['ObjTypeName'][0]==rel_type
@@ -99,6 +106,20 @@ class ResnetGraph (nx.MultiDiGraph):
 
     def _relations_ids(self):
         return {rel['Id'][0] for regulatorID, targetID, rel in self.edges.data('relation')}
+
+    def find_regulators(self, for_relation:PSRelation, filter_by:list=None, in_properties:list=None):
+        regulators_ids = for_relation.get_regulator_ids()
+        regulators = self.get_objects(regulators_ids,['Id'])
+
+        if isinstance(filter_by,list):
+            search_in_properties = in_properties if isinstance(in_properties,list) else ['ObjTypeName']
+            must_values = set(filter_by)
+            filtered_regulators = set()
+            for prop_name in search_in_properties:
+                filtered_regulators.update([x for x in regulators if not set(x[prop_name]).isdisjoint(must_values)]) 
+            return filtered_regulators
+        else:
+            return regulators
 
     def get_properties(self, IDList: set, PropertyName):
         id2props = {x: y[PropertyName] for x, y in self.nodes(data=True) if x in IDList}
@@ -121,6 +142,18 @@ class ResnetGraph (nx.MultiDiGraph):
                 t = nx.bfs_tree(self, Id)
                 all_trees = nx.compose(all_trees, t)
         return all_trees
+
+    def subgraph_by_relprops(self, search_values:list, in_properties:list=None):
+        if in_properties is None: in_properties = ['ObjTypeName']
+        search_value_set = set(search_values)
+        subgraph = ResnetGraph()
+        for prop_type in in_properties:
+            for n1, n2, rel in self.edges.data('relation'):
+                if set(rel[prop_type]).intersection(search_value_set):
+                    subgraph.add_edge(n2, n1, relation=rel,weight=rel['RelationNumberOfReferences'])
+                    subgraph.add_nodes_from([(n1, self.nodes[n1]),(n2, self.nodes[n2])])
+        return subgraph
+
 
     def get_subgraph(self,between_node_ids:list,and_node_ids:list,by_relation_type=None,with_effect=None,in_direction=None)->"ResnetGraph":
         subgraph = ResnetGraph()
@@ -160,17 +193,23 @@ class ResnetGraph (nx.MultiDiGraph):
     def get_neighbors_graph(self, node_ids:set, only_neighbors_with_ids=None):
         neighbors_ids = self.get_neighbors(node_ids,only_neighbors_with_ids)
         return self.get_subgraph(node_ids,neighbors_ids)
-
-    def count_references(self):
+            
+    def count_references(self, weight_by_prop_name:str=None, proval2weight:dict=None):
         references = set()
-        for regulatorID, targetID, rel in self.edges.data('relation'):
-            rel.load_references()
-            references.update(rel.References.values())
+        if isinstance(weight_by_prop_name,str):
+            for regulatorID, targetID, rel in self.edges.data('relation'):
+                rel.load_references()
+                rel._weight2ref(weight_by_prop_name,proval2weight)
+                references.update(rel.References.values())
+        else:
+            for regulatorID, targetID, rel in self.edges.data('relation'):
+                rel.load_references()
+                references.update(rel.References.values())
         return references
 
-    def count_references_between(self, between_node_ids: list, and_node_ids: list):
+    def count_references_between(self, between_node_ids: list, and_node_ids: list, weight_by_prop_name:str=None, proval2weight:dict=None):
         sub_graph = self.get_subgraph(between_node_ids, and_node_ids)
-        return sub_graph.count_references()
+        return sub_graph.count_references(weight_by_prop_name,proval2weight)
 
     def set_edge_property(self, nodeId1, nodeId2, PropertyName, PropertyValues: list, bothDirs=True):
         if self.has_edge(nodeId1, nodeId2):

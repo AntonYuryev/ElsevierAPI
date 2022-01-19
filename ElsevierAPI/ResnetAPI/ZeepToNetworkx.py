@@ -155,12 +155,10 @@ class PSNetworx(DataModel):
             return set()
 
     def _get_obj_ids_by_props(self, propValues: list, search_by_properties=None, get_childs=True,
-                             only_obj_types=None):
-
-        if only_obj_types is None: only_object_types = [] 
+                             only_obj_types=[]):
         if search_by_properties is None: search_by_properties = ['Name','Alias']
         
-        query_node = OQL.get_entities_by_props(propValues, search_by_properties, only_object_types)
+        query_node = OQL.get_entities_by_props(propValues, search_by_properties, only_obj_types)
         target_ids = self._obj_id_by_oql(query_node)
         
         if get_childs:
@@ -170,12 +168,28 @@ class PSNetworx(DataModel):
                     child_ids = child_ids + self.ID2Children[i]
                 except KeyError:
                     query_ontology = OQL.get_childs([i],['id'])
-                    self.ID2Children[i] = list(self._obj_id_by_oql(query_ontology))
-                    child_ids = child_ids + self.ID2Children[i]
+                    children = list(self._obj_id_by_oql(query_ontology))
+                    self.ID2Children[i] = children
+                    child_ids = child_ids + children
 
             target_ids.update(child_ids)
             
         return target_ids
+
+
+    def get_children(self, parent_ids:list):
+        child_ids = set()
+        for parent_id in parent_ids:
+            try:
+                children = list(self.ID2Children[parent_id])
+                child_ids.update(children)
+            except KeyError:
+                query_ontology = OQL.get_childs([parent_id],['id'])
+                children = list(self._obj_id_by_oql(query_ontology))
+                self.ID2Children[parent_id] = children
+                child_ids.update(children)
+
+        return list(child_ids)
 
 
     def find_drugs(self, for_targets_with_ids: list, REL_PROPS: list, ENTITY_PROPS: list):

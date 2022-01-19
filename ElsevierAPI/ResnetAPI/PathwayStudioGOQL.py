@@ -1,8 +1,10 @@
+
+NEED_QUOTES = {' ', '-', '/', '(', ')', '[', ']', '+', '#',':'}
+
 def join_with_quotes(separator, NameList: list):
-    need_quotes = {' ', '-', '/', '(', ')', '[', ']', '+', '#'}
     to_return = str()
     for name in NameList:
-        if 1 in [c in name for c in need_quotes]:
+        if 1 in [c in name for c in NEED_QUOTES]:
             to_return = to_return + '\'' + name + '\'' + separator
         else:
             to_return = to_return + name + separator
@@ -11,14 +13,13 @@ def join_with_quotes(separator, NameList: list):
 
 
 def get_search_strings(PropertyNameList: list, PropValuesList: list):
-    need_quotes = {' ', '-', '/', '(', ')', '[', ']', '+', '#'}
     some_values_have_quotes = False
     values = str()
     unique_values_list = set(PropValuesList)
     for v in unique_values_list:
         val = str(v)
         val = val.replace('\'', '')
-        if 1 in [c in val for c in need_quotes]:
+        if 1 in [c in val for c in NEED_QUOTES]:
             val = '\'' + val + '\''
             some_values_have_quotes = True
         values = values + val + ','
@@ -41,9 +42,7 @@ def get_search_strings(PropertyNameList: list, PropValuesList: list):
     return property_names, values
 
 
-def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=None, MinConnectivity=0):
-    only_object_types = [] if only_object_types is None else only_object_types
-
+def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=[], MinConnectivity=0):
     if SearchByProperties[0] in ('id', 'Id', 'ID'):
         oql_query = "SELECT Entity WHERE id = " + '(' + ','.join([str(int) for int in PropertyValues]) + ')'
     else:
@@ -58,9 +57,7 @@ def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_o
     else: 
         return oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
 
-def get_relations_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=None, MinRef=0):
-    only_object_types = [] if only_object_types is None else only_object_types
-
+def get_relations_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=[], MinRef=0):
     if SearchByProperties[0] in ('id', 'Id', 'ID'):
         oql_query = "SELECT Relation WHERE id = " + '(' + ','.join([str(int) for int in PropertyValues]) + ')'
     else:
@@ -74,9 +71,7 @@ def get_relations_by_props(PropertyValues: list, SearchByProperties: list, only_
     return oql_query if MinRef == 0 else oql_query + ' AND RelationNumberOfReferences >= ' + str(MinRef)
 
 
-def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=None):
-    only_object_types = [] if only_object_types is None else only_object_types
-
+def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=[]):
     ontology_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE {entities})'
     if SearchByProperties[0] in ('id', 'Id', 'ID'):
         entity_query = "id = (" + ','.join([str(i) for i in PropertyValues]) + ')'
@@ -121,7 +116,7 @@ def expand_entity_by_id(IDlist: list, expand_by_rel_types=None, expand2neighbors
     return expand
 
 
-def expand_entity(PropertyValues: list, SearchByProperties: list, expand_by_rel_types=None,
+def expand_entity(PropertyValues: list, SearchByProperties: list, expand_by_rel_types:list=None,
                   expand2neighbors=None, direction=''):
     expand2neighbors = [] if expand2neighbors is None else expand2neighbors
     expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
@@ -146,7 +141,7 @@ def expand_entity(PropertyValues: list, SearchByProperties: list, expand_by_rel_
             expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + opposite_direction
             expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
         else:
-            expand + " AND objectType = (" + expand_by_rel_types_str + ")"
+            expand += " AND objectType = (" + expand_by_rel_types_str + ")"
     else:
         if len(expand2neighbors) > 0:
             expand += ' AND NeighborOf ' + opposite_direction + ' (SELECT Entity WHERE objectType = ('

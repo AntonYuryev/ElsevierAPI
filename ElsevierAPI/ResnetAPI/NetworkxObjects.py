@@ -1,8 +1,10 @@
 import re
 import json
 import itertools
-
 from ElsevierAPI.ETM_API.references import PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
+
+
+PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def __init__(self, dic: dict):
@@ -66,7 +68,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
     def has_property(self,prop_name,prop_values:list,case_sensitive=False):
         try:
-            if case_sensitive:
+            if case_sensitive or prop_name in {'Id','id','ID'}:
                 search_in = self[prop_name]
                 search_set = set(prop_values)   
             else:
@@ -331,12 +333,37 @@ class PSRelation(PSObject):
                 objIdList = [x[0] for x in self.Nodes['Targets']]
                 return itertools.combinations(objIdList, 2)
 
-    def get_entities_ids(self):
-        nodeIds = {[x[0] for x in self.Nodes['Regulators']] + [x[0] for x in self.Nodes['Targets']]}
+    def get_regulator_ids(self):
+        nodeIds = [x[0] for x in self.Nodes['Regulators']]
         return list(nodeIds)
+
+    def get_target_ids(self):
+        try:
+            nodeIds = [x[0] for x in self.Nodes['Targets']]
+            return list(nodeIds)
+        except KeyError: return []
+
+    def get_entities_ids(self):
+        return self.get_regulator_ids()+self.get_target_ids()
 
     def to_json(self):
         str1 = '{"Relation Properties": ' + json.dumps(self) + '}'
         strP = '{"Relation References": ' + json.dumps(self.PropSetToProps) + '}'
         strR = json.dumps(self.Nodes)
         return str1 + '\n' + strP + '\n' + strR + '\n'
+
+    def _weight2ref (self, weight_by_prop_name:str, proval2weight:dict):
+        try:
+            values2weight = set(self[weight_by_prop_name])
+            max_weight = 0.0
+            for v in values2weight:
+                try:
+                    weight = proval2weight[v]
+                    if weight > max_weight: max_weight = weight
+                except KeyError: continue
+            for ref in self.References.values():
+                ref.set_weight(max_weight)
+        except KeyError:
+                for ref in self.References:
+                    ref.set_weight(0.0)
+

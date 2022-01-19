@@ -149,7 +149,7 @@ class APISession(PSNetworx):
                                                                                               property_names=[])
         return self.ResultSize
 
-    def process_oql(self, oql_query, request_name='', flush_dump=False, debug=False, no_mess=True, iteration_limit=1):
+    def process_oql(self, oql_query, request_name='', flush_dump=False, debug=False, no_mess=True, iteration_limit=1) -> ResnetGraph:
         global_start = time.time()
         if flush_dump and self.ResultPos == 0:
             self.flush_dump_files(no_mess)
