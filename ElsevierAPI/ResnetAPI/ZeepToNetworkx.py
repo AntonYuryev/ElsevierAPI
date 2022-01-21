@@ -191,11 +191,11 @@ class PSNetworx(DataModel):
 
         return list(child_ids)
 
-    def get_children_props(self, psobjs:list, prop_name:str):
-        psobjs_prop_lists = [x[prop_name] for x in psobjs] 
+    def get_children_props(self, for_psobjs:list, prop_name:str):
+        psobjs_prop_lists = [x[prop_name] for x in for_psobjs] 
         psobjs_props = [prop for x in psobjs_prop_lists for prop in x]
         children_props = list()
-        psobjs_ids = [x['Id'][0] for x in psobjs]
+        psobjs_ids = [x['Id'][0] for x in for_psobjs]
         children_ids = self.get_children(psobjs_ids) # finds children in cache for the enzyme
         if children_ids:
             children_prop_lists = [x[prop_name] for nodeid,x in self.Graph.nodes(data=True) if x['Id'][0] in children_ids]
