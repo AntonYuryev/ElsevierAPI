@@ -12,6 +12,7 @@ COMMON_METABOLITES={'H2O','PPi', 'ATP','ADP','AMP','Pi','GDP','GTP','NADP+','NAD
 
 start_time = time.time()
 excel_file_name = 'my_metabolites.xlsx'
+excel_file_name = 'D:/Python/MDACC/210908_FattyAcidData_LisaMullany.xlsx'
 input_excel = pd.read_excel(excel_file_name)
 #metabolites names or aliases must be in the first column in Excel file.
 input_metabolite_names = []
@@ -20,6 +21,7 @@ input_metabolite_names = []
 
 # ps_api retreives data from the database and loads it into APISession.Graph derived from Networkx:MultiDiGraph
 api_config = 'path2apiconfig.json'
+api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
 ps_api = open_api_session(api_config) # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json
 ps_api.add_ent_props(['Alias']) # need to retreive aliases from the database in case input metabolites are found by Alias
 ps_api.PageSize = 10000
@@ -43,12 +45,10 @@ metabolite_ids = list(objid2input_names.keys())
 # find enzymes linked to ChemicalReactions and retreive their ontology children (proteins)
 enzymes = reactions_graph.get_objects(PROTEIN_TYPES)
 enzymes_ids = [x['Id'][0] for x in enzymes]
-ps_api._get_obj_ids_by_props(enzymes_ids,['Id'],PROTEIN_TYPES) #loading ontology children for enzymes
+ps_api._get_obj_ids_by_props(enzymes_ids,['Id'],PROTEIN_TYPES get_childs=True) #loading ontology children for enzymes
 #retrieved children are stored in ps_api.ID2Children structure
 
-chemical_reactions = reactions_graph.get_relations(['ChemicalReaction']) #makes simple list of all relations for iteration
 unique_rows= set() # duplicate row filter. Relations can be duplicated due to diffrent Owner,Effect,Mechanism
-# report = pd.DataFrame(columns=['Metabolite input name','Metabolite name in Database','direction','Substrate or Product','gene'])
 temp_report_file = 'temp_report.txt'
 with open(temp_report_file, 'w', encoding='utf-8') as f:
     f.write('Metabolite input name'+'\t'+'Metabolite name in Database'+'\t'+'direction'+'\t'+'Substrate or Product'+'\t'+'gene'+'\n')
@@ -57,7 +57,7 @@ with open(temp_report_file, 'w', encoding='utf-8') as f:
             target = reactions_graph._get_node(targetID)
             if target['ObjTypeName'][0] == 'SmallMol' and target['Name'][0] not in COMMON_METABOLITES:
                 enzyme_objects = reactions_graph.find_regulators(for_relation=reaction,filter_by=PROTEIN_TYPES)# enzymes are always regulators in ChemicalReaction
-                gene_names = ps_api.get_children_props(enzyme_objects,'Name')
+                gene_names = ps_api.get_children_props(for_psobjs=enzyme_objects,prop_name='Name')
                 gene_names = ','.join(gene_names)
                 
                 input_metabolite_obj = reactions_graph._get_node(regulatorID)
