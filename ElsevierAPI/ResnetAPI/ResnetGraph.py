@@ -70,18 +70,35 @@ class ResnetGraph (nx.MultiDiGraph):
                     break
         return relations2return
 
-    def get_prop2obj_dic(self, search_by_property:str):
-        to_return = dict()
-        for i, n in self.nodes(data=True):
-            try:
-                for v in n[search_by_property]:
-                    try:
-                        to_return[v].append(PSObject(n))
-                    except KeyError:
-                        to_return[v] = [PSObject(n)]
-            except KeyError:
-                continue
-        return to_return
+    def get_prop2obj_dic(self, search_by_property:str, filter_by_values=[]):
+        search_value2obj = dict()
+        objid2search_values = dict()
+        if filter_by_values:
+            lower_case_filter = list(map(lambda x: str(x).lower(), filter_by_values))
+            for nodeid, n in self.nodes(data=True):
+                try:
+                    allowed_values = [x for x in n[search_by_property] if str(x).lower() in lower_case_filter]
+                    for v in allowed_values:
+                        objid2search_values[nodeid] = allowed_values
+                        try:
+                            search_value2obj[v].append(PSObject(n))
+                        except KeyError:
+                            search_value2obj[v] = [PSObject(n)]
+                except KeyError: continue
+        else:
+            for nodeid, n in self.nodes(data=True):
+                try:
+                    all_values = n[search_by_property]
+                    objid2search_values[nodeid] = list(map(lambda x: str(x).lower(),all_values))
+                    for v in all_values:
+                        try:
+                            search_value2obj[v].append(PSObject(n))
+                        except KeyError:
+                            search_value2obj[v] = [PSObject(n)]
+                except KeyError: continue
+        return search_value2obj, objid2search_values
+
+
 
     def _get_node(self, nodeId):
         return PSObject({k: v for k, v in self.nodes[nodeId].items()})
