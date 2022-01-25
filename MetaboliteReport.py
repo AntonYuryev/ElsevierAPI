@@ -1,3 +1,4 @@
+from itertools import count
 from ElsevierAPI import open_api_session
 import pandas as pd
 import os
@@ -12,11 +13,12 @@ COMMON_METABOLITES={'H2O','PPi', 'ATP','ADP','AMP','Pi','GDP','GTP','NADP+','NAD
 
 start_time = time.time()
 excel_file_name = 'my_metabolites.xlsx'
-excel_file_name = 'D:/Python/MDACC/210908_FattyAcidData_LisaMullany.xlsx'
+excel_file_name = 'D:/Python/MDACC/211109_LipidData_MinhNguyen.xlsx'
 input_excel = pd.read_excel(excel_file_name)
+metabolite_column = 1
 #metabolites names or aliases must be in the first column in Excel file.
 input_metabolite_names = []
-[input_metabolite_names.append(x) for x in input_excel[input_excel.columns[0]] if x not in input_metabolite_names] # making alias list unique
+[input_metabolite_names.append(x) for x in input_excel[input_excel.columns[metabolite_column]] if x not in input_metabolite_names] # making alias list unique
 #input_metabolite_names = input_metabolite_names[0:3]
 
 # ps_api retreives data from the database and loads it into APISession.Graph derived from Networkx:MultiDiGraph
@@ -31,10 +33,13 @@ ps_api.PageSize = 10000
 ps_api.DumpFiles.clear()
 
 # retreive all ChemicalReaction linked to metabolites in excel_file_name as ResnetGraph from the database:
-my_goql_query = OQL.expand_entity(input_metabolite_names,['Name','Alias'], expand_by_rel_types=['ChemicalReaction'])
-request_name ='Retrieve metabolic reactions graph'
-reactions_graph = ps_api.process_oql(my_goql_query,request_name)
+for i in range(0,len(input_metabolite_names),1000):
+    name_list = input_metabolite_names[i:1000]
+    my_goql_query = OQL.expand_entity(name_list,['Name','Alias'], expand_by_rel_types=['ChemicalReaction'])
+    request_name ='Retrieve metabolic reactions graph for {count} metabolites'.format(count=len(name_list))
+    ps_api.process_oql(my_goql_query,request_name)
 
+reactions_graph = ps_api.Graph
 input_name2objs, objid2input_names = reactions_graph.get_prop2obj_dic('Name', input_metabolite_names)
 aliasinput_2objs, objid2input_alias = reactions_graph.get_prop2obj_dic('Alias', input_metabolite_names)
 objid2input_names.update(objid2input_alias)
@@ -45,7 +50,7 @@ metabolite_ids = list(objid2input_names.keys())
 # find enzymes linked to ChemicalReactions and retreive their ontology children (proteins)
 enzymes = reactions_graph.get_objects(PROTEIN_TYPES)
 enzymes_ids = [x['Id'][0] for x in enzymes]
-ps_api._get_obj_ids_by_props(enzymes_ids,['Id'],PROTEIN_TYPES get_childs=True) #loading ontology children for enzymes
+ps_api._get_obj_ids_by_props(enzymes_ids,['Id'], get_childs=True, only_obj_types=PROTEIN_TYPES) #loading ontology children for enzymes
 #retrieved children are stored in ps_api.ID2Children structure
 
 unique_rows= set() # duplicate row filter. Relations can be duplicated due to diffrent Owner,Effect,Mechanism
