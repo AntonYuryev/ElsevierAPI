@@ -1,10 +1,11 @@
-from itertools import count
 from ElsevierAPI import open_api_session
 import pandas as pd
 import os
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PROTEIN_TYPES
 import time
+
+from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 
 
 COMMON_METABOLITES={'H2O','PPi', 'ATP','ADP','AMP','Pi','GDP','GTP','NADP+','NADPH+','NAD+','NADH+','acceptor','reduced acceptor',
@@ -18,6 +19,7 @@ metabolite_column = 1
 #metabolites names or aliases must be in the first column in Excel file.
 input_metabolite_names = []
 [input_metabolite_names.append(x) for x in input_excel[input_excel.columns[metabolite_column]] if x not in input_metabolite_names] # making alias list unique
+#input_metabolite_names = input_metabolite_names[0:3]
 
 # ps_api retreives data from the database and loads it into APISession.Graph derived from Networkx:MultiDiGraph
 api_config = 'path2apiconfig.json'
@@ -30,8 +32,9 @@ ps_api.PageSize = 10000
 ps_api.DumpFiles.clear()
 
 # retreive all ChemicalReaction linked to metabolites in excel_file_name as ResnetGraph from the database:
-for i in range(0,len(input_metabolite_names),1000):
-    name_list = input_metabolite_names[i:1000]
+step = 1000
+for i in range(0,len(input_metabolite_names),step):
+    name_list = input_metabolite_names[i:i+step]
     my_goql_query = OQL.expand_entity(name_list,['Name','Alias'], expand_by_rel_types=['ChemicalReaction'])
     request_name ='Retrieve metabolic reactions graph for {count} metabolites'.format(count=len(name_list))
     ps_api.process_oql(my_goql_query,request_name)
@@ -93,13 +96,33 @@ with open(temp_report_file, 'w', encoding='utf-8') as f:
 report = pd.read_csv(temp_report_file,sep='\t')
 report.sort_values(['Metabolite input name','Substrate or Product'], inplace=True)
 report.to_csv('Metabolite report.txt',index=False,sep='\t')
-print('Report is generated in %s' % ps_api.execution_time(start_time))
+metabolites_with_reactions = set(report['Metabolite input name'])
+print('Metabolite Report is generated in %s' % ps_api.execution_time(start_time))
 
-mapped_metabolites = set(report['Metabolite input name'])
-umappped_metabolites = set(input_metabolite_names).difference(mapped_metabolites)
+print('Generating report on missing metabolites')
+noreaction_metabolites = list(set(input_metabolite_names).difference(metabolites_with_reactions))
+mapped_noreaction_graph = ResnetGraph()
+for i in range(0,len(noreaction_metabolites),step):
+    name_list = noreaction_metabolites[i:i+step]
+    name_list_str = OQL.join_with_quotes(',',name_list)
+    oql_query = 'SELECT Entity WHERE (Name,Alias) = ({names})'.format(names=name_list_str)
+    request_name ='Retrieve metabolites for {count} input names'.format(count=len(name_list))
+    mapped_noreaction_graph.add_graph(ps_api.process_oql(my_goql_query,request_name))
 
+all_input_name2objs, all_objid2input_names = mapped_noreaction_graph.get_prop2obj_dic('Name', input_metabolite_names)
+all_aliasinput_2objs, all_objid2input_alias = mapped_noreaction_graph.get_prop2obj_dic('Alias', input_metabolite_names)
+all_input_name2objs.update(all_aliasinput_2objs)
+with open("mapped metabolites without reactions.txt", 'w', encoding='utf-8') as f:
+    f.write('Metabolite input name\tMetabolite name in Database\tMapped metabolite URNs\n')
+    for input_name, psobjects in all_input_name2objs.items():
+        mapped_urns = [x['URN'][0] for x in psobjects]
+        mapped_names = [x['Name'][0] for x in psobjects]
+        f.write(input_name+'\t'+','.join(mapped_names)+'\t'+','.join(mapped_urns) +'\n')
+
+umappped_metabolites = set(noreaction_metabolites).difference(set(all_input_name2objs.keys()))
 with open("unmapped metabolites.txt", 'w', encoding='utf-8') as f:
     for m in umappped_metabolites:
         f.write(m +'\n')
 
 os.remove(temp_report_file)
+print('Report is generated in %s' % ps_api.execution_time(start_time))
