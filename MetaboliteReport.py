@@ -18,7 +18,6 @@ metabolite_column = 1
 #metabolites names or aliases must be in the first column in Excel file.
 input_metabolite_names = []
 [input_metabolite_names.append(x) for x in input_excel[input_excel.columns[metabolite_column]] if x not in input_metabolite_names] # making alias list unique
-#input_metabolite_names = input_metabolite_names[0:3]
 
 # ps_api retreives data from the database and loads it into APISession.Graph derived from Networkx:MultiDiGraph
 api_config = 'path2apiconfig.json'
@@ -95,4 +94,12 @@ report = pd.read_csv(temp_report_file,sep='\t')
 report.sort_values(['Metabolite input name','Substrate or Product'], inplace=True)
 report.to_csv('Metabolite report.txt',index=False,sep='\t')
 print('Report is generated in %s' % ps_api.execution_time(start_time))
+
+mapped_metabolites = set(report['Metabolite input name'])
+umappped_metabolites = set(input_metabolite_names).difference(mapped_metabolites)
+
+with open("unmapped metabolites.txt", 'w', encoding='utf-8') as f:
+    for m in umappped_metabolites:
+        f.write(m +'\n')
+
 os.remove(temp_report_file)
