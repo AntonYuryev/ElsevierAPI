@@ -79,13 +79,18 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             return not search_set.isdisjoint(search_in)
         except KeyError: return False
 
+    def has_value_in(self,prop_names:list, prop_values:list,case_sensitive=False):
+        for prop_name in prop_names:
+            if self.has_property(prop_name,prop_values,case_sensitive): return True
 
+        return False
+    
 from ElsevierAPI.ETM_API.references import Reference
 class PSRelation(PSObject):
     pass
-    PropSetToProps = dict()
-    Nodes = dict()
-    References = dict()
+    PropSetToProps = dict() # {PropSetID:{PropID:[values]}}
+    Nodes = dict() # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
+    References = dict() # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
 
     def __init__(self, dic:dict):
         super().__init__(dic)
@@ -120,6 +125,7 @@ class PSRelation(PSObject):
                 to_return = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', to_return)
             return to_return
 
+    
     def props2list(self, propID, cell_sep=';'):
         try:
             return self[propID]
@@ -137,6 +143,8 @@ class PSRelation(PSObject):
 
     def load_references(self):
         if self.References: return
+        if self['Id'][0] == 216172782119007911:
+            print('')
         for propSet in self.PropSetToProps.values():
             my_reference_tuples = list()
             for ref_id_type in PS_ID_TYPES:
@@ -190,6 +198,8 @@ class PSRelation(PSObject):
             textref = None 
             sentence_props = dict()
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
+                if propValues[0] == 'info:pmid/16842844':
+                    print('')
                 if propId in PS_BIBLIO_PROPS:
                     ref.update_with_list(propId, propValues)
                 elif propId in SENTENCE_PROPS:
@@ -213,12 +223,33 @@ class PSRelation(PSObject):
         self.PropSetToProps.clear() # PropSetToProps are not needed anymore. Everything is loaded into References.
 
 
+    def add_reference(self, ref:Reference):
+        self.load_references()
+        new_ref_identifiers = set(ref.Identifiers.values())
+        relation_ref_identifiers = set(self.References.keys())
+        overlap = relation_ref_identifiers.difference(new_ref_identifiers)
+        if overlap:
+            self.References[overlap[0]]._merge(ref)
+        else:
+            for i in new_ref_identifiers:
+                self.References[i] = ref
+
+
+    def filter_references(self, prop_names2values:dict):
+        # prop_names2values = {prop_name:[values]}
+        all_refs = set(self.References.values())
+        ref2keep = {ref for ref in all_refs if ref.has_properties(prop_names2values)}
+        self.References = {k:r for k,r in self.References.items() if r in ref2keep}
+        return
+        #self['RelationNumberOfReferences'] will NOT be changed to keep the original number of references for relation
+
     def get_reference_count(self, count_abstracts=False):
         if count_abstracts:
             ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
             return len(ref_from_abstract)
         else:        
             return len(self.References) if self.References else self['RelationNumberOfReferences'][0]
+
 
     def to_table_dict(self, columnPropNames:list, cell_sep:str=';', RefNumPrintLimit=0, add_entities=False):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash

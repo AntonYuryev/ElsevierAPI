@@ -6,7 +6,7 @@ from datetime import timedelta
 from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-
+from ElsevierAPI.ETM_API.references import SENTENCE_PROPS
 
 class APISession(PSNetworx):
     pass
@@ -112,6 +112,8 @@ class APISession(PSNetworx):
 
     def add_rel_props(self, add_props:list):
         self.relProps = self.relProps+[i for i in add_props if i not in self.relProps]
+        if SENTENCE_PROPS.difference(add_props) and 'TextRef' not in self.relProps:
+            self.relProps.append('TextRef')
 
     def add_ent_props(self, add_props: list):
         self.entProps = self.entProps+[i for i in add_props if i not in self.entProps]

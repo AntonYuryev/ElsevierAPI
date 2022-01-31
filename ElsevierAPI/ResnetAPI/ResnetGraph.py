@@ -109,6 +109,7 @@ class ResnetGraph (nx.MultiDiGraph):
         else:
             return [PSObject(ddict) for id,ddict in self.nodes(data=True) if id in node_ids]
 
+
     def find_relations(self, reg_id, targ_id, rel_type, effect:str=None, mechanism:str=None):
         rel_set = [rel for regulatorID, targetID, rel in self.edges.data('relation') 
                 if regulatorID == reg_id and targetID == targ_id and rel['ObjTypeName'][0]==rel_type
@@ -121,8 +122,21 @@ class ResnetGraph (nx.MultiDiGraph):
 
         return rel_set
 
+
+    def filter_references(self, prop_names2values:dict, rel_types=[]):
+        # prop_names2values = {prop_name:[values]}
+        if rel_types:
+            for regulatorID, targetID, rel in self.edges.data('relation'):        
+                if rel['ObjTypeName'][0] in rel_types:
+                    rel.filter_references(prop_names2values)
+        else:
+            for regulatorID, targetID, rel in self.edges.data('relation'):
+                rel.filter_references(prop_names2values)
+
+
     def _relations_ids(self):
         return {rel['Id'][0] for regulatorID, targetID, rel in self.edges.data('relation')}
+
 
     def find_regulators(self, for_relation:PSRelation, filter_by:list=None, in_properties:list=None):
         regulators_ids = for_relation.get_regulator_ids()

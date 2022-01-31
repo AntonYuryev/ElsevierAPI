@@ -42,6 +42,7 @@ class SemanticSearch (APISession):
         print('DataFrame was reset')
 
     def drop_refcount_columns(self):
+        # is used to drop columns with refcount to redo semantic search with weighted refrecne counting
         ref_count_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
         self.RefCountPandas.drop(columns=ref_count_columns, inplace=True) #defaults to deleting rows, column must be specified
         print('%d refcount columns were dropped' % len(ref_count_columns))
