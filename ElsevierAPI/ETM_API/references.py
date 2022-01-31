@@ -38,7 +38,7 @@ class Reference(dict):
     pass
 
     def __init__(self, idType:str, ID:str):
-        super().__init__(dict()) # self{BIBLIO_PROPS[i]:[value]};
+        super().__init__(dict()) # self{BIBLIO_PROPS[i]:[values]};
         self.Identifiers = {idType:ID} #from REF_ID_TYPES
         self.snippets = dict() # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
         self.addresses = dict() # {orgname:adress}
@@ -139,13 +139,45 @@ class Reference(dict):
             exist_sentence = self.snippets[text_ref]
             try:
                 vals = set(exist_sentence[propID]+ prop_values)
-                exist_sentence[propID]= list(vals)
+                exist_sentence[propID] = list(vals)
             except KeyError:
                 exist_sentence[propID] = prop_values
             self.snippets[text_ref] = exist_sentence
         except KeyError:
             self.snippets[text_ref] = {propID:prop_values}
 
+
+    def has_properties(self, prop_names2values:dict,case_sensitive=False):
+        # prop_names2values = {prop_name:[values]}
+        for prop2values in self.snippets.values():
+            for prop, values in prop2values.items():
+                try:
+                    match_values = set(prop_names2values[prop])
+                    # assumes match_values are in lowercase for case insensitive search
+                    if case_sensitive:
+                        search_set = values
+                    else:
+                        search_set = set(map(lambda x: x.lower(),values))
+                    if not match_values.isdisjoint(search_set): 
+                        return True
+                    else: continue
+                except KeyError: continue
+
+        for prop, values in self.items():
+            try:
+                match_values = set(prop_names2values[prop])
+                if case_sensitive:
+                    search_set = values
+                else:
+                    search_set = set(map(lambda x: x.lower(),values))
+                if not match_values.isdisjoint(search_set): 
+                    return True
+                else: continue
+            except KeyError: continue
+
+        return False
+           
+    
     def to_str(self, id_types: list=None, col_sep='\t',sentence_props={}):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         row = str()
@@ -186,7 +218,11 @@ class Reference(dict):
         if isinstance(other, Reference):
             self.update(other)
             self.Identifiers.update(other.Identifiers)
-            self.snippets.update(other.snippets)
+
+            for textref, prop2val in other.snippets.items():
+                for prop, values in prop2val.items():
+                    self.add_sentence_props(textref,prop,values)
+            self.addresses.update(other.addresses)
 
     def is_from_abstract(self):
         for textref in self.snippets.keys():
