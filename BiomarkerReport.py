@@ -1,11 +1,12 @@
-from os import sep
 from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
+from ElsevierAPI.ETM_API.references import JOURNAL_PROPS
 import pandas as pd
 import numpy as np
 import time
+from ElsevierAPI.ETM_API.etm import ETM
 
 QUANTITATIVE_BIOMARKER_RELS = ['Biomarker','StateChange','QuantitativeChange','CellExpression']
 GENETIC_BIOMARKER_RELS = ['GeneticChange']
@@ -15,22 +16,48 @@ GENETIC_BIOMARKERS = ['Protein']
 SPECIFICITY = 'Promiscuity'
 SOLUBLE_BIOMARKERS_TISSUES = ['blood', 'plasma', 'serum']
 
+#Biomarker Types:
+QUANTITATIVE = 0
+GENETIC = 1
+SOLUBLE = 2
+
 class BiomarkersReport(SemanticSearch):
     pass
+    biomarker_type = 0
+    journal_filter = dict()
+    data_dir = ''
+
+    @staticmethod
+    def read_journal_list(fname:str):
+        journal_filter = dict()
+        with open(fname,'r') as f:
+            line = f.readline().strip()
+            header = line.split('\t') #header must contain one of: Journal,ISSN,ESSN
+            line = f.readline().strip()
+            while line:
+                row = line.split('\t')
+                for i in range (0, len(header)):
+                    col_name = header[i]
+                    try:
+                        journal_filter[col_name].update([row[i]])
+                    except KeyError: journal_filter[col_name] = set([row[i]])
+                line = f.readline().strip()
+
+        return journal_filter
     
-    def __init__(self, APIconfig):
+    def __init__(self, APIconfig, biomarker_type:int, journal_filter_fname=''):
         super().__init__(APIconfig)
+        self.APIconfig = APIconfig
         self.PageSize = 500
         self.add_rel_props(['Name','Sentence','PubYear','Title','RelationNumberOfReferences'])
         self.add_ent_props(['Name'])
-        self.score_genetic_biomarkers = False
-        self.only_soluble = False
+        self.biomarker_type = biomarker_type
+        if biomarker_type == SOLUBLE: self.add_rel_props(['Tissue'])
+        if journal_filter_fname:
+            self.journal_filter = self.read_journal_list(journal_filter_fname)
+            self.journal_filter = {k:list(v) for k,v in self.journal_filter.items()}
+            self.add_rel_props(list(JOURNAL_PROPS))
 
-    def find_only_soluble(self):
-        self.only_soluble = True
-        self.score_genetic_biomarkers = False
-        self.add_rel_props(['Tissue'])
-        
 
     def find_diseases(self, disease_name:str):
         mapping_prop = 'Name'
@@ -54,14 +81,14 @@ class BiomarkersReport(SemanticSearch):
         self.diseases = disease_graph.get_objects(DISEASES)
 
     def load_graph(self, disease_ids:list):
-        if self.score_genetic_biomarkers:
+        if self.biomarker_type == GENETIC:
             biomarker_types = GENETIC_BIOMARKERS 
             biomarker_rel_types = GENETIC_BIOMARKER_RELS
         else:
             biomarker_types = QUANTITATIVE_BIOMARKERS
             biomarker_rel_types = QUANTITATIVE_BIOMARKER_RELS
         
-        if self.only_soluble:
+        if self.biomarker_type ==  SOLUBLE:
             oql_query = 'Select Relation WHERE NeighborOf (SELECT Entity WHERE id = (' + ','.join(map(str,disease_ids)) + '))'
             oql_query += " AND objectType = (" + ','.join(biomarker_rel_types) + ')'
             oql_query += ' AND NeighborOf (SELECT Entity WHERE objectType = (' + ','.join(biomarker_types) + ') AND "Cell Localization" = Secreted)'
@@ -73,25 +100,28 @@ class BiomarkersReport(SemanticSearch):
 
         self.process_oql(oql_query, query_name)
 
-        if not self.score_genetic_biomarkers:
+        if self.biomarker_type != GENETIC:
             select_metabolites = '(SELECT Entity WHERE objectType=SmallMol AND Class=\'Endogenous compound\')'
             oql_query = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = ({ids})) AND NeighborOf {metabolites} AND objectType = ({biomarkers})'
             query_name = 'Find metabolite biomakers'
-            if self.only_soluble:
+            if self.biomarker_type == SOLUBLE:
                 oql_query = oql_query + ' AND Tissue = ({blood_tissues})'.format(blood_tissues=','.join(SOLUBLE_BIOMARKERS_TISSUES))
                 query_name = 'Find metabolite biomakers in blood tissues'
             oql_query = oql_query.format(ids=','.join(map(str,disease_ids)),metabolites=select_metabolites, biomarkers=','.join(biomarker_rel_types))
             self.process_oql(oql_query, query_name)
-
 
         biomarker_ids = [y['Id'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] not in DISEASES]
         disease_ids =  [y['Id'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] in DISEASES]
         oql_query = OQL.connect_ids(biomarker_ids,disease_ids,['Regulation'])
         self.process_oql(oql_query, 'Find Regulation between biomarkers and diseases')
 
-        if self.only_soluble:
-            self.Graph.count_references()
+        self.Graph.count_references()
+
+        if self.biomarker_type == SOLUBLE:
             self.Graph.filter_references({'Tissue':SOLUBLE_BIOMARKERS_TISSUES},QUANTITATIVE_BIOMARKER_RELS)
+
+        if self.journal_filter:
+            self.Graph.filter_references(self.journal_filter)
 
     def init_semantic_search (self, reset_pandas = False):
         BiomarkerNames =  [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] not in DISEASES]
@@ -107,7 +137,7 @@ class BiomarkersReport(SemanticSearch):
             disease_ids = list(self._get_obj_ids_by_props(disease['Id'],["Id"],only_obj_types=DISEASES)) #finds children for disease
             disease_name2ids[dis_name] = disease_ids
 
-        if self.score_genetic_biomarkers:
+        if self.biomarker_type == GENETIC:
             biomarker_rel_types = QUANTITATIVE_BIOMARKER_RELS + GENETIC_BIOMARKER_RELS
         else:
             biomarker_rel_types = QUANTITATIVE_BIOMARKER_RELS
@@ -124,10 +154,15 @@ class BiomarkersReport(SemanticSearch):
         self.name2objs, objid2names = bm.Graph.get_prop2obj_dic('Name', list(bm.RefCountPandas['Name']))
         bm.RefCountPandas['Type'] = bm.RefCountPandas['Name'].apply(lambda x: self.name2objs[x][0]['ObjTypeName'][0])
 
-        biomarker_descr = ' genetic ' if bm.score_genetic_biomarkers else ' soluble '
+        biomarker_descr = ' quatitative' 
+        if bm.biomarker_type == GENETIC: biomarker_descr = ' genetic'
+        if bm.biomarker_type == SOLUBLE: biomarker_descr = ' soluble'
+
         self.fout_prefix = bm.Disease['Name'][0]+biomarker_descr
-        count_file = self.fout_prefix+" biomarkers counts.tsv"
-        ref_file = self.fout_prefix+" biomarker references.tsv"
+        if self.journal_filter:
+            self.fout_prefix  += ' from selected journals '
+        count_file = self.data_dir+self.fout_prefix+" biomarkers counts.tsv"
+        ref_file = self.data_dir+self.fout_prefix+" biomarker references.tsv"
         self.print_ref_count(count_file,referencesOut=ref_file,sep='\t')
         print ('Semantic counts for each biomarker are in %s' % count_file)
         print('References supporting semantic counts are in %s' % ref_file)
@@ -139,6 +174,7 @@ class BiomarkersReport(SemanticSearch):
         oql_query = oql_query.format(rel_types=','.join(QUANTITATIVE_BIOMARKER_RELS), id=','.join(map(str,list(biomarker_ids))))
         disease_count = self.get_result_size(oql_query)
         return disease_count
+
 
     def add_specificity(self):
         biomarker_count = len(self.RefCountPandas.index)
@@ -168,11 +204,11 @@ class BiomarkersReport(SemanticSearch):
             self.RefCountPandas = self.RefCountPandas.sort_values(by=[input_disease_col],ascending=False)
             self.RefCountPandas.insert(2, input_disease_col, self.RefCountPandas.pop(input_disease_col))
         
-        count_file = self.fout_prefix+" biomarkers normalized weighted scores.tsv" if calculate_specificity else self.fout_prefix+" biomarkers weighted scores.tsv"
+        count_file = self.data_dir+self.fout_prefix+" biomarkers normalized weighted scores.tsv" if calculate_specificity else self.fout_prefix+" biomarkers weighted scores.tsv"
         self.print_ref_count(count_file,sep='\t')
         print ('Weighted semantic counts for each biomarker are in %s' % count_file)
 
-    def biomarker_disease_scores(self):
+    def biomarker_disease_scores(self, max_etm_row=100):
         biomarker2disease = pd.DataFrame()
         row_counter = 0
         ref_count_columns = [col for col in bm.RefCountPandas.columns if bm._col_name_prefix in col]
@@ -185,29 +221,52 @@ class BiomarkersReport(SemanticSearch):
                     biomarker2disease.at[row_counter,'Biomarker'] = biomarker
                     biomarker2disease.at[row_counter,'Disease'] = disease
                     biomarker2disease.at[row_counter,'Weighted Refcount'] = float(refcount)
+
                     row_counter += 1
 
-        biomarker2disease.sort_values(by=['Weighted Refcount'],ascending=False, inplace=True)
+        biomarker2disease.sort_values(by=['Weighted Refcount'],ascending=False, inplace=True,ignore_index=True)
+        add2etm = []
+        if self.biomarker_type == GENETIC: add2etm = ['terms for genetic variations']
+        if self.biomarker_type == SOLUBLE: add2etm = ['blood']
+
+        if self.journal_filter:
+            for row in biomarker2disease.index:
+                biomarker = biomarker2disease.loc[row]['Biomarker']
+                disease = biomarker2disease.loc[row]['Disease']
+                total_refs, ref_ids, ps_references = self.Graph.recent_refs(biomarker,disease,with_children=True)
+                biomarker2disease.at[row, 'Recent pubs'] = ref_ids
+        elif max_etm_row:
+            for i in range(0,max_etm_row):
+                biomarker = biomarker2disease.loc[i]['Biomarker']
+                disease = biomarker2disease.loc[i]['Disease']
+                search_terms = [biomarker,disease] + add2etm
+                ethm_hit_count,ref_ids,etm_refs = ETM.etm_relevance(search_terms,self.APIconfig)
+                biomarker2disease.at[i,'#ETM refs'] = int(ethm_hit_count)
+                biomarker2disease.at[i,'top ETM refs'] = ref_ids
+
         biomarker2disease['Type'] = biomarker2disease['Biomarker'].apply(lambda x: self.name2objs[x][0]['ObjTypeName'][0])
-        count_file = self.fout_prefix+' biomarker-disease map.txt'
+        count_file = self.data_dir+self.fout_prefix+' biomarker-disease map.txt'
         biomarker2disease.to_csv(count_file,sep='\t', index=False)
         print ('Semantic counts for each biomarker-disease pair are in %s' % count_file)
+
 
 
 if __name__ == "__main__":
     start_time = time.time()
     APIconfig = load_api_config()
-    bm = BiomarkersReport(APIconfig)
+    journal_filter_fname = 'D:/Python/Quest/High-quality journals.txt'
+    #journal_filter_fname = ''
+            
+    bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
+    bm.data_dir = 'D:/Python/Quest/'
     bm.flush_dump()
-    bm.score_genetic_biomarkers = False
-    bm.find_only_soluble()
 
-    calculate_specificity = False if bm.score_genetic_biomarkers else False 
+    calculate_specificity = False if bm.biomarker_type == GENETIC else False 
     # change here to True to calculate biomarker specificity
     # there is no scientific rational to calculate biomarker specificity for genetic biomarkers
     bm.find_diseases('Uterine neoplasm')
-   
-    disease_ids =  [y['Id'][0] for x,y in bm.Graph.nodes(data=True) if y['ObjTypeName'][0] in DISEASES]
+    
+    disease_ids = [y['Id'][0] for x,y in bm.Graph.nodes(data=True) if y['ObjTypeName'][0] in DISEASES]
     bm.load_graph(disease_ids)
     bm.init_semantic_search()
     bm.semantic_search()

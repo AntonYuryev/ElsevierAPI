@@ -1,4 +1,5 @@
 from ElsevierAPI import load_api_config
+from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 import pandas as pd
@@ -14,45 +15,53 @@ class RepurposeDrugs(SemanticSearch):
         self.PageSize = 500
         self.add_rel_props(['Name','Sentence','PubYear','Title','RelationNumberOfReferences'])
 
+
     def set_targets(self, target_names: list, target_objtype: str, to_inhibit=True):
         prop_names_str, prop_values_str = OQL.get_search_strings(['Name'],target_names)
         self.add_ent_props(['Class'])
-        self.find_target_oql = 'SELECT Entity WHERE ({prop_name}) = ({values}) AND objectType = '+target_objtype 
-        self.process_oql(self.find_target_oql.format(prop_name=prop_names_str,values=prop_values_str))
+        self.find_targets_oql = 'SELECT Entity WHERE ({prop_name}) = ({values}) AND objectType = '+target_objtype 
+        self.process_oql(self.find_targets_oql.format(prop_name=prop_names_str,values=prop_values_str))
         
         self.target_ids = self.Graph.get_entity_ids(SearchValues=target_names,search_by_properties=['Name'])
-        self.find_target_oql = 'SELECT Entity WHERE id = ('+ ','.join(map(str,self.target_ids))+')'
-        self.Drug_Target = self.Graph._get_node(self.target_ids[0])
+        self.find_targets_oql = 'SELECT Entity WHERE id = ('+ ','.join(map(str,self.target_ids))+')'
+        self.Drug_Targets = self.Graph._get_nodes(self.target_ids)
 
         self.repurpose_antagonist = to_inhibit
         self.partners = self.select_partners()
-        if self.partners != NotImplemented:
+        if self.partners:
             partners_ids = [p['Id'][0] for p in self.partners]
             self.find_partners_oql = 'SELECT Entity WHERE id = ('+ ','.join(map(str,partners_ids))+')'
         else: self.find_partners_oql = ''
-        
+
+
     def _partner_class(self):
         #finding effect for complementary receptor or ligands
-        self.target_class = self.Drug_Target['Class'][0]
+        self.target_class = self.Drug_Targets[0]['Class'][0]
         if self.target_class == 'Ligand': self.partner_class = "Receptor"
         elif self.target_class == 'Receptor': self.partner_class = "Ligand"
         else: self.target_class = NotImplemented
 
+
     def select_partners(self):
         self._partner_class()
         SELECTpartners = 'SELECT Entity WHERE Class = {partner_class} AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
-        partners_graph = self.process_oql(SELECTpartners.format(partner_class=self.partner_class, select_target=self.find_target_oql))
+        partners_graph = self.process_oql(SELECTpartners.format(partner_class=self.partner_class, select_target=self.find_targets_oql))
         if self.partner_class == 'Ligand':
             SELECTsecretedpartners = 'SELECT Entity WHERE "Cell Localization" = Secreted AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
-            secreted_partners = self.process_oql(SELECTsecretedpartners.format(select_target=self.find_target_oql))
+            secreted_partners = self.process_oql(SELECTsecretedpartners.format(select_target=self.find_targets_oql))
             partners_graph = nx.compose(partners_graph,secreted_partners)
 
         partners_ids = partners_graph.get_entity_ids(['Protein'])
+        target_names = ','.join([x['Name'][0] for x in self.Drug_Targets])
+        partners_str = ','.join(n['Name'][0] for n in partners_graph._get_nodes())
+        print ('Found %s %ss as partners for %s'%(partners_str, self.partner_class,target_names))
         return self.Graph._get_nodes(partners_ids)
 
+
     def find_target_indications(self):
-        f_t = self.find_target_oql
-        t_n = self.Drug_Target['Name'][0]
+        f_t = self.find_targets_oql
+        target_names = [x['Name'][0] for x in self.Drug_Targets]
+        t_n = ','.join(target_names)
         effect = 'positive' if self.repurpose_antagonist else 'negative'
         REQUEST_NAME = 'Find indications {effect}ly modulated by {target}'.format(effect=effect, target=t_n)
         OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {effect} AND NeighborOf({select_target}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease,Virus))'      
@@ -60,7 +69,6 @@ class RepurposeDrugs(SemanticSearch):
         found_diseases= ModulatedByTargetNetwork.get_entity_ids(['Disease'])
         print('Found %d diseases modulated by target %s' % (len(found_diseases), t_n))
 
-   
         REQUEST_NAME = 'Find indications {effect}ly regulating {target}'.format(effect=effect, target=t_n)
         OQLquery = 'SELECT Relation WHERE objectType = QuantitativeChange AND Effect = {effect} AND NeighborOf ({select_target}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease,Virus))'  
         ActivatedInDiseaseNetwork = self.process_oql(OQLquery.format(select_target=f_t, effect = effect),REQUEST_NAME)
@@ -72,8 +80,8 @@ class RepurposeDrugs(SemanticSearch):
         OQLquery = 'SELECT Relation WHERE NeighborOf({select_gvs}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease,Virus))'
         self.GVsInDiseaseNetwork = self.process_oql(OQLquery.format(select_gvs=selectGVs),REQUEST_NAME)
         found_diseases= self.GVsInDiseaseNetwork.get_entity_ids(['Disease'])
-        found_GVs = self.Graph.get_entity_ids(['GeneticVariant'],self.GVsInDiseaseNetwork)
-        print('Found %d diseases genetically linked to %d %s genetic Variants' % 
+        found_GVs = self.GVsInDiseaseNetwork.get_entity_ids(['GeneticVariant'])
+        print('Found %d diseases genetically linked to %d Genetic Variants in %s' % 
              (len(found_diseases), len(found_GVs), t_n))
 
         REQUEST_NAME = 'Find indications where {target} is biomarker'.format(target=t_n)
@@ -84,8 +92,8 @@ class RepurposeDrugs(SemanticSearch):
 
 
     def indications4chem_modulators(self, linked_to_target_by=['DirectRegulation']):
-        f_t = self.find_target_oql
-        t_n = self.Drug_Target['Name'][0]
+        f_t = self.find_targets_oql
+        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         effect = 'negative'if self.repurpose_antagonist else 'positive'
         
         REQUEST_NAME = 'Find substances {effect}ly regulating {target}'.format(effect=effect,target=t_n)
@@ -102,11 +110,12 @@ class RepurposeDrugs(SemanticSearch):
         found_diseases= InhibitorsIndicationNetwork.get_entity_ids(['Disease'])
         print('Found %d indications for %d substances %sly regulating %s' %  
              (len(found_diseases), len(self.TargetInhibitorsIDs),effect,t_n))
-        
+
+
     def counterindications4chem_antimodulators(self,liked_to_target_by=['DirectRegulation']):
         # liked_to_target_by can be relaxed to (DirectRegulation,Regulation,Expression,MolTransport)
-        f_t = self.find_target_oql
-        t_n = self.Drug_Target['Name'][0]
+        f_t = self.find_targets_oql
+        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         opposite_effect = 'positive' if self.repurpose_antagonist else 'negative'
         REQUEST_NAME = 'Find substances {effect}ly regulating {target}'.format(effect=opposite_effect,target=t_n)
         OQLquery = 'SELECT Relation WHERE objectType = {rel_type} and Effect = {effect} AND NeighborOf ({select_target}) AND NeighborOf (SELECT Entity WHERE objectType = SmallMol AND Connectivity > 1)'     
@@ -121,25 +130,27 @@ class RepurposeDrugs(SemanticSearch):
         found_diseases= AgonistToxicitiesnNetwork.get_entity_ids(['Disease'])
         print('Found %d indications for %d substances %sly regulating %s' %  
              (len(found_diseases), len(self.TargetAgonistIDs),opposite_effect,t_n))
-        
+
+     
     def indications4partners(self):
-        t_n = ','.join(self.Drug_Target['Name'])
+        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         effect = 'positive' if self.repurpose_antagonist else 'negative'
-        REQUEST_NAME = 'Find indications for {targets} {partner}s'.format(targets=t_n,partner=self.partner_class.lower())
+        REQUEST_NAME = 'Find indications for {partner}s of {targets} '.format(targets=t_n,partner=self.partner_class.lower())
         OQLquery = 'SELECT Relation WHERE objectType = (Regulation,QuantitativeChange) AND Effect = {effect} AND NeighborOf ({select_partners}) AND NeighborOf (SELECT Entity WHERE objectType = Disease)'
-        if self.partners != NotImplemented:
+        if self.partners:
             OQLquery = OQLquery.format(effect=effect,select_partners=self.find_partners_oql)
             self.PartnerIndicationNetwork = self.process_oql(OQLquery,REQUEST_NAME)
             found_diseases = self.PartnerIndicationNetwork.get_entity_ids(['Disease'])
-            print('Found %d indications for %d %s %ss' %  
+            print('Found %d indications for %d %ss of %s' %  
                  (len(found_diseases), len(self.partners),t_n,self.partner_class.lower()))
 
+
     def indications4cells_secreting_target(self):
-        t_n = self.Drug_Target['Name'][0]
+        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         if self.target_class == 'Ligand':
             REQUEST_NAME = 'Find indications linked to cells secreting the {target}'.format(target=t_n)
-            OQLquery = 'SELECT Relation WHERE objectType = (CellExpression,MolTransport) AND NeighborOf ({select_target}) AND NeighborOf (SELECT Entity WHERE objectType = Cell)'
-            cells_make_target = self.process_oql(OQLquery.format(select_target=self.find_target_oql),REQUEST_NAME)
+            OQLquery = 'SELECT Relation WHERE objectType = (CellExpression,MolTransport) AND NeighborOf ({select_targets}) AND NeighborOf (SELECT Entity WHERE objectType = Cell)'
+            cells_make_target = self.process_oql(OQLquery.format(select_targets=self.find_targets_oql),REQUEST_NAME)
             self.ProducingCellsIDs = cells_make_target.get_entity_ids(['CellType'])
             print('Found %d cell types producing %s' % (len(self.ProducingCellsIDs),t_n))
 
@@ -154,38 +165,64 @@ class RepurposeDrugs(SemanticSearch):
             print('Found %d indications for %d cells producing %s' %  
                  (len(found_diseases), len(self.ProducingCellsIDs),t_n))
 
-    def pathway_oql(self):
-        if self.partners != NotImplemented:
-            SELECTpathways = 'SELECT Network WHERE ParentOf ({select_target}) AND ParentOf ({select_partner})'#Name LIKE (\''+percent_sign+'FGF'+percent_sign+'\')'
-            SELECTpathways = SELECTpathways.format(select_target=self.find_target_oql,select_partner=self.find_partners_oql)
-        else:
-            SELECTpathways = 'SELECT Network WHERE ParentOf ({select_target})'#Name LIKE (\''+percent_sign+'FGF'+percent_sign+'\')'
-            SELECTpathways = SELECTpathways.format(select_target=self.find_target_oql)
 
-        SELECTMergedPathway = 'SELECT Relation WHERE objectType = (DirectRegulation,Binding,ProtModification,PromoterBinding,ChemicalReaction) AND MemberOf ({select_networks})'
-        return SELECTMergedPathway.format(select_networks=SELECTpathways)
+    def pathway_oql(self, pathway_name_must_include_target=False):
+        #set pathway_name_must_include_target to True if targets have a lot of large curated pathways
+        if self.partners:
+            SELECTpathways = 'SELECT Network WHERE ParentOf ({select_targets}) AND ParentOf ({select_partner})'#Name LIKE (\''+percent_sign+'FGF'+percent_sign+'\')'
+            SELECTpathways = SELECTpathways.format(select_targets=self.find_targets_oql,select_partner=self.find_partners_oql)
+        else:
+            SELECTpathways = 'SELECT Network WHERE ParentOf ({select_targets})'#Name LIKE (\''+percent_sign+'FGF'+percent_sign+'\')'
+            SELECTpathways = SELECTpathways.format(select_targets=self.find_targets_oql)
+        
+        if pathway_name_must_include_target:
+            pct = '%'
+            oql_queries = dict()
+            for target in self.Drug_Targets:
+                drug_target_name = target['Name'][0]
+                SELECTpathways4target = SELECTpathways + ' AND Name LIKE (\''+pct+drug_target_name+pct+'\')' #additional refinement for popular targets
+                SELECTMergedPathway = 'SELECT Relation WHERE objectType = (DirectRegulation,Binding,ProtModification,PromoterBinding,ChemicalReaction) AND MemberOf ({select_networks})'
+                oql_queries[drug_target_name] = (SELECTMergedPathway.format(select_networks=SELECTpathways4target))
+
+            return oql_queries
+        else:
+            target_names = ','.join([x['Name'][0] for x in self.Drug_Targets])
+            return {target_names:SELECTpathways}
     
+
     def get_pathway_componets(self):
         #finding downstream pathway components
-        OQLquery = self.pathway_oql()
-        t_n = ','.join(self.Drug_Target['Name'])
+        oql_queries = self.pathway_oql() # separate oql_qury for each target
         partners_names = [p['Name'][0] for p in self.partners]
-        REQUEST_NAME = 'Find curated pathways containing {target} and {partners}'.format(target=t_n,partners=','.join(partners_names))
-        MergedPathway = self.process_oql(OQLquery,REQUEST_NAME) 
-        MergedPathway = MergedPathway.get_regulome(self.Drug_Target['Id'])
-        self.PathwayComponentsIDs = list(MergedPathway.nodes)
+        REQUEST_NAME = 'Find curated pathways containing {targets} and {partners}'
+        TargetsRegulome = ResnetGraph()
+        self.PathwayComponentsIDs = list()
+        target_names_with_regulome = list()
+        for target_name, oql_query in oql_queries.items():
+            REQUEST_NAME = REQUEST_NAME.format(targets=target_name,partners=','.join(partners_names))
+            MergedPathway = self.process_oql(oql_query,REQUEST_NAME)
+            if MergedPathway:
+                TargetsRegulome.add_graph(MergedPathway.get_regulome(self.target_ids))
+                self.PathwayComponentsIDs.append(list(MergedPathway.nodes))
+                target_names_with_regulome.append(target_name)
+
+        t_n = ','.join(target_names_with_regulome)
         print ('Found %s regulome with %d components' %(t_n,len(self.PathwayComponentsIDs)))
+        return TargetsRegulome
+
 
     def init_semantic_search(self):
-        t_n = self.Drug_Target['Name'][0]
+        print('Initializing semantic search')
+        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         DiseaseNames = [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] in ['Disease']]
         DiseaseScores = pd.DataFrame()
         DiseaseScores['Name'] = np.array(DiseaseNames)
         print('Will score %d diseases linked to %s' % (len(DiseaseScores),t_n))
         self.load_pandas(DiseaseScores,prop_names_in_header=True,map2type=['Disease'])
 
+
     def score_GVs(self):
-        t_n = self.Drug_Target['Name'][0]
+        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         self.__colnameGV__ = t_n+' GVs'
         allGVids = self.Graph.get_entity_ids(['GeneticVariant'])
         gvlinkcounter = 0
@@ -204,13 +241,14 @@ class RepurposeDrugs(SemanticSearch):
 
         print('Found %d diseases linked to %d GVs' % (gvlinkcounter, len(allGVids)))
 
+
     def score_semantics(self):
-        t_n = self.Drug_Target['Name'][0]
+        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         #references supporting target modulation of disease
         colname = 'Modulated by '+ t_n
         effect = 'positive' if self.repurpose_antagonist else 'negative'
         self.set_how2connect(['Regulation'],[effect],'')
-        linked_entities_count = self.link2concept(colname,self.Drug_Target['Id'])
+        linked_entities_count = self.link2concept(colname,self.target_ids)
         print('%d diseases are %sly regulated by %s' % (linked_entities_count,effect,t_n))
     
         #references where target expression or activity changes in the disease
@@ -269,6 +307,7 @@ class RepurposeDrugs(SemanticSearch):
                 effect = 'negative'
                 drug_class = 'antagonists'
 
+            print('Finding %s for %s'%(drug_class, t_n))
             self.set_how2connect(['Regulation'],[effect],'')
             linked_entities_count = self.link2concept(colname,self.TargetAgonistIDs)
             print('Found %d diseases are toxicities for %s %s' % (linked_entities_count,t_n,drug_class))
@@ -281,7 +320,6 @@ class RepurposeDrugs(SemanticSearch):
             linked_entities_count = self.link2concept(colname,self.PathwayComponentsIDs)
             print('%d indications are linked to %s pathway components' % (linked_entities_count,t_n))
         
-    
 
     def normalize_counts(self):
         NormalizedCount = pd.DataFrame()
