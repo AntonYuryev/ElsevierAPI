@@ -149,10 +149,3 @@ if __name__ == "__main__":
                     
 
         workbook.close()
-
-    #query = '((inhaled OR inhalable OR inhalant OR volatile OR aerosol OR mist) NEXT/2 ({drugs}/exp OR {natural products and their synthetic derivatives}/exp)) OR (({drugs}/exp OR {natural products and their synthetic derivatives}/exp) NEXT/2 (inhaled OR inhalable OR inhalant OR aerosol OR mist))'
-    #search_name = 'PTH inhalation'
-    #query = 'parag({PTH} AND {inhalation}) OR title({PTH} AND {inhalation}) OR abs({PTH} AND {inhalation})'
-    #query = '(({drugs}/exp OR {natural products and their synthetic derivatives}/exp) NEXT/2 (aerosol OR mist)) OR ((aerosol OR mist) NEXT/2 ({drugs}/exp OR {natural products and their synthetic derivatives}/exp))'
-    #query = '{drugs}/exp NEXT inhalants' # returns 83 hits, used for testing
-    #query = 'volatile NEXT/2 ({drugs}/exp OR {natural products and their synthetic derivatives}/exp)'
