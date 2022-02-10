@@ -1,7 +1,7 @@
 import re
 import json
 import itertools
-from ElsevierAPI.ETM_API.references import PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
+from ElsevierAPI.ETM_API.references import JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS,MEDLINETA
 
 
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
@@ -79,8 +79,9 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             return not search_set.isdisjoint(search_in)
         except KeyError: return False
 
-    def has_value_in(self,prop_names:list, prop_values:list,case_sensitive=False):
-        for prop_name in prop_names:
+    def has_value_in(self,prop2values:dict,case_sensitive=False):
+        # prop2values = {propName:[values]}
+        for prop_name, prop_values in prop2values.items():
             if self.has_property(prop_name,prop_values,case_sensitive): return True
 
         return False
@@ -143,8 +144,8 @@ class PSRelation(PSObject):
 
     def load_references(self):
         if self.References: return
-        if self['Id'][0] == 216172782119007911:
-            print('')
+        #if self['Id'][0] == 216172782119007911:
+        #    print('')
         for propSet in self.PropSetToProps.values():
             my_reference_tuples = list()
             for ref_id_type in PS_ID_TYPES:
@@ -198,10 +199,13 @@ class PSRelation(PSObject):
             textref = None 
             sentence_props = dict()
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
-                if propValues[0] == 'info:pmid/16842844':
-                    print('')
+                #if propValues[0] == 'info:pmid/16842844':
+                #    print('')
                 if propId in PS_BIBLIO_PROPS:
-                    ref.update_with_list(propId, propValues)
+                    if propId == MEDLINETA:
+                        ref.update_with_list(JOURNAL, propValues)
+                    else:
+                        ref.update_with_list(propId, propValues)
                 elif propId in SENTENCE_PROPS:
                     sentence_props[propId] = propValues
                 elif propId in CLINTRIAL_PROPS:
@@ -223,16 +227,27 @@ class PSRelation(PSObject):
         self.PropSetToProps.clear() # PropSetToProps are not needed anymore. Everything is loaded into References.
 
 
-    def add_reference(self, ref:Reference):
+    def add_references(self, references:list):#list of Reference objects
         self.load_references()
-        new_ref_identifiers = set(ref.Identifiers.values())
-        relation_ref_identifiers = set(self.References.keys())
-        overlap = relation_ref_identifiers.difference(new_ref_identifiers)
-        if overlap:
-            self.References[overlap[0]]._merge(ref)
-        else:
-            for i in new_ref_identifiers:
-                self.References[i] = ref
+        for r in references:
+            was_merged = False
+            for id in PS_ID_TYPES:
+                try:
+                    self.References[r.Identifiers[id]]._merge(r)
+                    was_merged = True
+                    break
+                except KeyError:
+                    continue
+
+            if not was_merged:
+                for i in r.Identifiers.values():
+                    self.References[i] = r
+
+
+    def sort_references(self, by_property:str):
+        all_refs = list(set([x for x in self.References.values() if by_property in x.keys()]))
+        all_refs.sort(key=lambda x: x[by_property][0])
+        return all_refs
 
 
     def filter_references(self, prop_names2values:dict):
@@ -242,6 +257,7 @@ class PSRelation(PSObject):
         self.References = {k:r for k,r in self.References.items() if r in ref2keep}
         return
         #self['RelationNumberOfReferences'] will NOT be changed to keep the original number of references for relation
+
 
     def get_reference_count(self, count_abstracts=False):
         if count_abstracts:

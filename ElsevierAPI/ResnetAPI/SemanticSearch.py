@@ -8,6 +8,7 @@ import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PS_ID_TYPES
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
+from ElsevierAPI.ETM_API.etm import ETM
 
 
 class SemanticSearch (APISession): 
@@ -15,12 +16,15 @@ class SemanticSearch (APISession):
     __cntCache__='counts_cache.tsv'
     __concept_name__ = 'Concept name'
     __mapped_by__ = 'mapped_by'
+    __resnet_name__ = 'Resnet name'
     _col_name_prefix = "RefCount to "
+    __ETM_stat_prefix = '#ETM results for '
+    __ETM_ref_prefix = 'ETM refs for '
     __child_ids__ = 'Child Ids'
     __temp_id_col__ = 'entity_IDs'
     __connect_by_rels__= list()
     __rel_effect__ = list()
-    __rel_dir__ = '' # allowed values: '>', '<',''
+    __rel_dir__ = '' # relation directions: allowed values: '>', '<',''
     __only_map2types__ = list()
     __iter_size__ = 500 #controls the iteration size in sematic reference count
     RefCountPandas = pd.DataFrame()
@@ -33,7 +37,12 @@ class SemanticSearch (APISession):
         self.DumpFiles = []
 
     def need_references(self):
-        return 'Sentence' in self.relProps if self.__print_refs__ else False
+        return 'Sentence' in self.relProps if self.__print_refs__ else ''
+
+    @staticmethod
+    def apply_and_concat(dataframe:pd.DataFrame, field, func, column_names):
+        return pd.concat((dataframe,dataframe[field].apply(lambda cell: pd.Series(func(field,cell),index=column_names))),axis=1)
+
 
     def reset_pandas(self):
         score_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
@@ -102,12 +111,10 @@ class SemanticSearch (APISession):
             except KeyError:
                 return None,None,None
         
-        def apply_and_concat(dataframe:pd.DataFrame, field, func, column_names):
-            return pd.concat((dataframe,dataframe[field].apply(lambda cell: pd.Series(func(field,cell),index=column_names))),axis=1)
 
         for propName in EntityPandas.columns:
             MappedEntitiesByProp = pd.DataFrame(EntityPandas)
-            MappedEntitiesByProp = apply_and_concat(MappedEntitiesByProp,propName,get_entIDs,['Resnet name',self.__mapped_by__,self.__temp_id_col__])
+            MappedEntitiesByProp = self.apply_and_concat(MappedEntitiesByProp,propName,get_entIDs,[self.__resnet_name__,self.__mapped_by__,self.__temp_id_col__])
             MappedEntitiesByProp = MappedEntitiesByProp[MappedEntitiesByProp[self.__temp_id_col__].notnull()]
             self.RefCountPandas = self.RefCountPandas.append(MappedEntitiesByProp)
 
@@ -327,7 +334,7 @@ class SemanticSearch (APISession):
                 sep = '\t'
                 self.Graph.print_references(temp_fname,self.relProps,self.entProps,col_sep=sep)
 
-                search_entity_names = list(self.RefCountPandas['Resnet name'])
+                search_entity_names = list(self.RefCountPandas[self.__resnet_name__])
                 f = open(temp_fname,'r',encoding='utf-8')
                 with open(referencesOut, 'w',encoding='utf-8') as fout:
                     header = f.readline()
@@ -359,3 +366,30 @@ class SemanticSearch (APISession):
         except FileNotFoundError:
             print('Cache was not found! Will start processing all input files from scratch')
             return FileNotFoundError
+
+
+    
+    @staticmethod
+    #this function was not tested yet
+    def apply_and_concat2(dataframe:pd.DataFrame, concept_name, func, column_names):
+        return pd.concat((dataframe,dataframe['Name'].apply(lambda cell: pd.Series(func(cell,concept_name),index=column_names))),axis=1)
+
+    def add_ETM_score(self, APIconfig:dict, add_etm_param={}):
+        etm_df = pd.DataFrame()
+        etm_df['Name'] = self.RefCountPandas['Name']
+        etm_df[self.__resnet_name__] = self.RefCountPandas[self.__resnet_name__]
+        etm_df[self.__mapped_by__] = self.RefCountPandas[self.__mapped_by__]
+
+        def etm_info(cell_value,concept_name):
+            ethm_hit_count, ref_ids, etm_refs = ETM.etm_relevance(cell_value, concept_name, 'rel',add_etm_param,APIconfig)
+            return ethm_hit_count, ref_ids
+
+        ref_count_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
+        for col_idx, col_name in enumerate(self.RefCountPandas.columns):
+            etm_df[col_name] = self.RefCountPandas[col_name]
+            concept_name = col_name[len(self._col_name_prefix):]
+            etm_df = self.apply_and_concat2(etm_df,concept_name,etm_info,[self.__ETM_stat_prefix+concept_name,self.__ETM_ref_prefix+concept_name])
+
+        return etm_df
+            
+           

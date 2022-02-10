@@ -7,6 +7,7 @@ from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
 from ElsevierAPI.ETM_API.references import SENTENCE_PROPS
+from xml.dom import minidom
 
 class APISession(PSNetworx):
     pass
@@ -234,6 +235,7 @@ class APISession(PSNetworx):
         to_return = self._iterate_oql(oql_query,id_set, self.relProps,self.entProps)
         return to_return
 
+
     def iterate_oql2(self, oql_query:str, id_set1:set, id_set2:set):
         to_return = ResnetGraph()
         to_return = self._iterate_oql2(oql_query,id_set1,id_set2,self.relProps,self.entProps)
@@ -274,6 +276,43 @@ class APISession(PSNetworx):
             print('loaded %d members from %s' % (graph2return.number_of_nodes(),str(group_names)))
         return graph2return
 
+
+    def map_props2objs(self, propValues:list, prop_names:list,map2types=None,case_insensitive=False):
+        propval2objs,objid2propval = self.Graph.get_props2obj_dic(propValues, prop_names,case_insensitive)
+        need_db_mapping = set(propValues).difference(propval2objs.keys())
+        only_object_types = [] if map2types is None else map2types
+        self.add_ent_props(prop_names)
+
+        step = 1000
+        iteration_counter = math.ceil(len(need_db_mapping) / step)
+        print('Will use %d %s identifiers to find entities in %d iterations' % 
+             (len(need_db_mapping), ','.join(prop_names), iteration_counter))
+
+        for i in range(0, len(need_db_mapping), step):
+            propval_chunk = propValues[i:i + step]
+            query_node = OQL.get_entities_by_props(propval_chunk, prop_names, only_object_types)
+            self.process_oql(query_node)
+
+        p2obj,id2p = self.Graph.get_props2obj_dic(need_db_mapping, prop_names,case_insensitive)
+        propval2objs.update(p2obj)
+        for id,prop_vals in id2p.items():
+            try:
+                mapped_values = set(objid2propval[id])
+                mapped_values.update(map(lambda x:str(x).lower(),prop_vals))
+                objid2propval[id] = list(mapped_values)
+            except KeyError:
+                objid2propval[id] = prop_vals
+
+        return propval2objs, objid2propval
+
+
+    @staticmethod
+    def pretty_xml(xml_string:str, no_declaration = False):
+        pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
+        if no_declaration:
+            pretty_xml = pretty_xml[pretty_xml.find('\n')+1:]
+        
+        return pretty_xml
 
 
 

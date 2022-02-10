@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import xml.etree.ElementTree as et
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation
+from ElsevierAPI.ETM_API.references import PUBYEAR,PS_ID_TYPES
 
 NO_RNEF_NODE_PROPS = ['Id','URN','ObjClassId','ObjTypeId','ObjTypeName','OwnerId','DateCreated','DateModified']
 NO_RNEF_REL_PROPS = NO_RNEF_NODE_PROPS + ['RelationNumberOfReferences', '# of Total References', 'Name']
@@ -13,6 +14,13 @@ class ResnetGraph (nx.MultiDiGraph):
 
     def add_graph(self, other: "ResnetGraph"):
         self.update(other)
+
+    def add1node(self,node:PSObject):
+        self.add_nodes_from([(int(node['Id'][0]), node.items())])
+
+    def add_node_list(self,nodes:list):
+        self.add_nodes_from([(n['Id'][0], n.items()) for n in nodes])
+
       
     def get_entity_ids(self, SearchValues:list, search_by_properties:list=None):
         if search_by_properties is None: search_by_properties = ['ObjTypeName']
@@ -60,6 +68,11 @@ class ResnetGraph (nx.MultiDiGraph):
                     break
         return list(all_objects)
 
+
+    def __relations(self):
+        return list({r for n1,n2,r in self.edges.data('relation')})
+
+
     def get_relations(self, search_values:list, search_by_properties: list=None):
         if search_by_properties is None: search_by_properties = ['ObjTypeName']
         relations2return = set()
@@ -70,26 +83,29 @@ class ResnetGraph (nx.MultiDiGraph):
                     break
         return relations2return
 
-    def get_prop2obj_dic(self, search_by_property:str, filter_by_values=[]):
+
+    def get_prop2obj_dic(self, search_by_property:str, filter_by_values=[], case_insensitive=False):
         search_value2obj = dict()
         objid2search_values = dict()
         if filter_by_values:
-            lower_case_filter = list(map(lambda x: str(x).lower(), filter_by_values))
+            allowed_values = list(map(lambda x:str(x).lower(),filter_by_values)) if case_insensitive else filter_by_values
             for nodeid, n in self.nodes(data=True):
                 try:
-                    allowed_values = [x for x in n[search_by_property] if str(x).lower() in lower_case_filter]
-                    for v in allowed_values:
-                        objid2search_values[nodeid] = allowed_values
-                        try:
-                            search_value2obj[v].append(PSObject(n))
-                        except KeyError:
-                            search_value2obj[v] = [PSObject(n)]
+                    node_prop_values = list(map(lambda x:str(x).lower(),n[search_by_property])) if case_insensitive else n[search_by_property] 
+                    matched_values = [x for x in allowed_values if x in node_prop_values]
+                    if matched_values:
+                        objid2search_values[nodeid] = matched_values
+                        for v in matched_values:
+                            try:
+                                search_value2obj[v].append(PSObject(n))
+                            except KeyError:
+                                search_value2obj[v] = [PSObject(n)]
                 except KeyError: continue
         else:
             for nodeid, n in self.nodes(data=True):
                 try:
-                    all_values = n[search_by_property]
-                    objid2search_values[nodeid] = list(map(lambda x: str(x).lower(),all_values))
+                    all_values = list(map(lambda x: str(x).lower(),n[search_by_property])) if case_insensitive else n[search_by_property] 
+                    objid2search_values[nodeid] = all_values
                     for v in all_values:
                         try:
                             search_value2obj[v].append(PSObject(n))
@@ -98,6 +114,29 @@ class ResnetGraph (nx.MultiDiGraph):
                 except KeyError: continue
         return search_value2obj, objid2search_values
 
+
+    def get_props2obj_dic(self, propValues:list, prop_names:list, case_insensitive=False):
+        propval2objs = dict()
+        objid2propval = dict()
+        for prop_name in prop_names:
+            p2o, i2p = self.get_prop2obj_dic(prop_name, propValues,case_insensitive)
+            for p,objs in p2o.items():
+                try:
+                    mapped_objs = set(propval2objs[p])
+                    mapped_objs.update(objs)
+                    propval2objs[p] = list(mapped_objs)
+                except KeyError:
+                    propval2objs[p] = objs
+
+            for id,prop_vals in i2p.items():
+                try:
+                    mapped_values = set(objid2propval[id])
+                    mapped_values.update(prop_vals)
+                    objid2propval[id] = list(mapped_values)
+                except KeyError:
+                    objid2propval[id] = prop_vals
+
+        return propval2objs, objid2propval
 
 
     def _get_node(self, nodeId):
@@ -123,15 +162,66 @@ class ResnetGraph (nx.MultiDiGraph):
         return rel_set
 
 
-    def filter_references(self, prop_names2values:dict, rel_types=[]):
+    def rel4pair(self, entity1, entity2, search_property='Name', filter_rel_with:dict={}, with_children=False):
+        # both dicts must be {propName:[values]}
+        entities1 = self.get_objects([entity1],search_by_properties=[search_property])
+        entities2 = self.get_objects([entity2],search_by_properties=[search_property])
+        entity1ids = [x['Id'][0] for x in entities1]
+        entity2ids = [x['Id'][0] for x in entities2]
+        if with_children:
+            for e1 in entities1:
+                try:
+                    entity1ids = entity1ids+e1['Child Ids']
+                except KeyError:
+                    pass
+
+            for e2 in entities2:
+                try:
+                    entity2ids = entity2ids+e2['Child Ids']
+                except KeyError:
+                    pass
+
+        ids = set(entity1ids+entity2ids)
+        if filter_rel_with:
+            return [rel for regulatorID, targetID, rel in self.edges.data('relation') 
+                if regulatorID in ids and targetID in ids and rel.has_value_in(filter_rel_with)]
+        else:
+            return [rel for regulatorID, targetID, rel in self.edges.data('relation') 
+                if regulatorID in ids and targetID in ids]
+
+
+    def recent_refs(self, entity1, entity2, search_property='Name', ref_limit=5,with_children=False):
+        relations = self.rel4pair(entity1, entity2, search_property,with_children=with_children)
+        references = set()
+        for r in relations:
+            references.update(list(r.References.values()))
+
+        references = list(references)
+        references.sort(key=lambda x: x[PUBYEAR][0], reverse=True)
+        total_refs = len(references)
+        recent_refs = references[:ref_limit] if ref_limit else references
+        ref_ids = list()
+        for ref in recent_refs:
+            for id_type in PS_ID_TYPES:
+                try:
+                    identifier = ref.Identifiers[id_type]
+                    ref_ids.append(identifier)
+                    break
+                except KeyError:
+                    continue
+        
+        recent_refs_str = ';'.join(ref_ids)
+        return total_refs, recent_refs_str, recent_refs
+
+    def filter_references(self, keep_prop2values:dict, rel_types=[]):
         # prop_names2values = {prop_name:[values]}
         if rel_types:
             for regulatorID, targetID, rel in self.edges.data('relation'):        
                 if rel['ObjTypeName'][0] in rel_types:
-                    rel.filter_references(prop_names2values)
+                    rel.filter_references(keep_prop2values)
         else:
             for regulatorID, targetID, rel in self.edges.data('relation'):
-                rel.filter_references(prop_names2values)
+                rel.filter_references(keep_prop2values)
 
 
     def _relations_ids(self):
@@ -170,8 +260,9 @@ class ResnetGraph (nx.MultiDiGraph):
     def get_regulome(self, StartEntityIDs: set):
         all_trees = nx.DiGraph()
         for Id in StartEntityIDs:
-                t = nx.bfs_tree(self, Id)
-                all_trees = nx.compose(all_trees, t)
+            if not self.has_node(Id): continue
+            t = nx.bfs_tree(self, Id)
+            all_trees = nx.compose(all_trees, t)
         return all_trees
 
     def subgraph_by_relprops(self, search_values:list, in_properties:list=None):
@@ -251,14 +342,14 @@ class ResnetGraph (nx.MultiDiGraph):
                 for i in range(0, len(self[nodeId2][nodeId1])):
                     self[nodeId2][nodeId1][i]['relation'][PropertyName] = PropertyValues
 
-    def print_triples(self, fileOut, relPropNames, access_mode='w', printHeader=True):
+    def print_triples(self, fileOut, relPropNames, access_mode='w', printHeader=True, add_entities=False, as1row=False):
         with open(fileOut, access_mode, encoding='utf-8') as f:
             if printHeader:
                 header = '\t'.join(relPropNames) + '\t' + "Regulators Id" + '\t' + "Targets Id"
                 f.write(header + '\n')
 
             for regulatorID, targetID, rel in self.edges.data('relation'):
-                f.write(rel.triple2str(relPropNames))
+                f.write(rel.triple2str(relPropNames,add_entities=add_entities, as1row=as1row))
 
 
     def print_references(self, fileOut:str, relPropNames:list, entity_prop_names=[],access_mode='w',
@@ -438,7 +529,7 @@ class ResnetGraph (nx.MultiDiGraph):
     def get_att_set(prop_name:str,ps_objects:list):
         return set([i for sublist in [x[prop_name] for x in ps_objects] for i in sublist])
 
-    def read_rnef(self, rnef_file:str, new_node_id=100000, new_control_id= 1000000):
+    def read_rnef(self, rnef_file:str, new_node_id=100000, new_control_id=1000000):
         tree = et.parse(rnef_file)
         resnets = tree.findall('./batch/resnet')
         nodel_local_ids = dict()

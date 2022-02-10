@@ -119,14 +119,6 @@ class FolderContent (APISession):
         return urn2pathway
 
 
-    @staticmethod
-    def pretty_xml(xml_string:str, no_declaration = False):
-        pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
-        if no_declaration:
-            pretty_xml = pretty_xml[pretty_xml.find('\n')+1:]
-        
-        return pretty_xml
-
     def get_pathway(self, pathwayId,path_urn:str=None,path_name:str=None,
                     xml_format='RNEF',put2folder:str=None, add_props2rel:dict=None, add_props2pathway:dict=None, as_batch=True, prettify=True):
     # add_rel_props, add_pathway_props structure - {PropName:[PropValues]}
