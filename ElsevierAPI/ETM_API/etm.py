@@ -1,5 +1,5 @@
 from ElsevierAPI.ETM_API.references import DocMine
-from ElsevierAPI.ETM_API.references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE, EMAIL
+from ElsevierAPI.ETM_API.references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,PS_ID_TYPES
 from ElsevierAPI import execution_time
 import urllib.request
 import urllib.parse
@@ -8,7 +8,6 @@ import time
 import xlsxwriter
 
 class ETMjson(DocMine):
-
     @staticmethod
     def dump_fname(search_name): return search_name + '.json'
 
@@ -48,10 +47,14 @@ class ETMjson(DocMine):
                 if isinstance(abstract_secs, dict): 
                     abstract_secs = [abstract_secs]
             except KeyError:
-                return [str(abstract_secs['addressOrAlternativesOrArray']['p'])]
+                try:
+                    return [str(abstract_secs['addressOrAlternativesOrArray']['p'])]
+                except KeyError:
+                    print('Article abstract has no addressOrAlternativesOrArray', abstract_secs)
+                    return ''
         
         #at this point abstract_secs can be only list of dict
-        abstract_sentences = list() 
+        abstract_sentences = list()
         for paragraph in abstract_secs:
             try: abstract_sentences.append(str(paragraph['title'])) #some abstracts are secionalized and have titles
             except KeyError: pass
@@ -86,8 +89,10 @@ class ETMjson(DocMine):
         else:
             email = ''
         
-        if (not address[0].isalpha()) or address[0].islower():  address = address[1:].strip()
-        names = address.split(', ')
+        names = list()
+        if address:
+            if (not address[0].isalpha()) or address[0].islower():  address = address[1:].strip()
+            names = address.split(', ')    
 
         last_name_index = 0
         has_institutional_keyword = False
@@ -101,7 +106,9 @@ class ETMjson(DocMine):
         if not has_institutional_keyword and last_name_index > 0:
             print('article coresspondence %s has no institutional keyword!' % correspondence)
 
-        return names[:last_name_index+1], address, email
+        institutional_names =  names[:last_name_index+1] if names else []
+
+        return institutional_names, address, email
 
 
     @staticmethod
@@ -109,10 +116,10 @@ class ETMjson(DocMine):
         try:
             author_info = article['article']['front']['article-meta']['contribGroupOrAffOrAffAlternatives']
             if not author_info:
-                print('Article has no author info') 
+                #print('Article has no author info') 
                 return [],[]
         except KeyError:
-            print('Article has no author info')
+            #print('Article has no author info')
             return [],[]
             
         if isinstance(author_info, dict): author_info = [author_info]
@@ -125,7 +132,8 @@ class ETMjson(DocMine):
                 if not isinstance(instituts, list): instituts = [instituts]
                 for inst in instituts:
                     org_names, address, email = ETMjson.__parse_institution(inst['institution'])
-                    institutions.append((org_names[-1],address)) #use only last name of institution defining global organization
+                    if org_names:
+                        institutions.append((org_names[-1],address)) #use only last name of institution defining global organization
                 continue
             except KeyError:
                 contribOrAddressOrAff_list = item['contrib-group']['contribOrAddressOrAff']
@@ -252,69 +260,89 @@ class ETM:
     references = set() #set of DocMine objects
 
     def __set_params(self):
-        if not self.params:
-            self.params = {
-            'query':self.query,
-            'searchTarget': self.searchTarget,
-            'snip': str(self.number_snippets)+'.desc',
-            'apikey':self.api_key,
-            'limit':self.page_size
-            # 'so_d' = '2021-06-19 -' # from date inclusive
-            }
+        self.params = {
+        'query':self.query,
+        'searchTarget': self.searchTarget,
+        'snip': str(self.number_snippets)+'.desc',
+        'apikey':self.api_key,
+        'limit':self.page_size
+        }
+            
 
     def __get_param_str(self):
         return urllib.parse.urlencode(self.params)
 
     def __get_result(self):
         param_str = self.__get_param_str()
-        url_query = urllib.parse.urlencode({'mode':'AdvancedSearch','query':self.query})
-        self.url_request = 'https://demo.elseviertextmining.com/advanced?'+url_query
-        the_page = urllib.request.urlopen(self.__base_url()+param_str).read()
-        return json.loads(the_page.decode('utf-8'))
+        full_url = self.__base_url()+param_str
+        the_page = urllib.request.urlopen(full_url).read()
+        if the_page:
+            return json.loads(the_page.decode('utf-8'))
+        else:
+            return []
  
-    def __init__(self,query, search_name, APIconfig:dict, etm_dump_dir:str, etm_stat_dir):
+    def __init__(self,query, search_name, APIconfig:dict, etm_dump_dir:str, etm_stat_dir, add_params={}):
         self.url = APIconfig['ETMURL']  #ETMurl = 'https://discover.elseviertextmining.com/api/'
         self.api_key = APIconfig['ETMapikey']
         self.query = query
         self.__set_params()
+        if add_params:
+            self.params.update(add_params)
         result = self.__get_result()
-        self.hit_count = result['total-hits=']
-        print('ETM query %s returns %d documents' % (self.query, self.hit_count))
+        self.hit_count = result['total-hits='] if result else 0
+        #print('\nETM query %s returns %d documents' % (self.query, self.hit_count))
         self.search_name = search_name
         self.etm_results_dir = etm_dump_dir
         self.etm_stat_dir = etm_stat_dir
-        
+        self.references = set()
+
+
     def load_from_json(self, use_cache = True):
         dumpfile_name = self.etm_results_dir+self.search_name+'.json'
- 
+        search_again = False
         if use_cache:
             try:
                 # attepts to find json file with ETM results saved after ETM API call below
-                articles = json.load(open(dumpfile_name))
-                print('Found cache %s file. Will use it to load results' % dumpfile_name)
-                if (self.hit_count > len(articles)):
+                f = open(dumpfile_name,'r')
+                articles = json.load(f)
+                path_end = dumpfile_name.rfind('/')
+                if path_end < 0:
+                    path_end = dumpfile_name.rfind('\\')
+                fname = dumpfile_name[path_end+1:]
+                cache_path = dumpfile_name[:path_end]
+                print('Found "%s" file in "%s" cache with %d articles. Will use it to load results' % (fname,cache_path,len(articles)))
+                if (self.hit_count > len(articles)): # hit_count is 1-based index!!!
                     print('Current ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(articles)))
+                f.close()
             except FileNotFoundError:
-                #if json dumo file is not found new ETM search is initiated
-                print('Performing ETM search "%s"' % self.search_name)
-                print ('Query: %s' % self.query)
-                start = time.time()
-                articles = list()
-                for page in range(1,self.hit_count,self.page_size):
-                    self.params['start'] = page
-                    result = self.__get_result()
-                    articles += result['article-data']
-                    
-                    download_count = min(page+self.page_size,self.hit_count)
-                    print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
+                search_again = True
+                pass
 
+        if search_again or not use_cache:
+            #if json dump file is not found new ETM search is initiated
+            print('\nPerforming ETM search "%s"' % self.search_name)
+            print ('Query: %s found %d results' % (self.query,self.hit_count))
+            start = time.time()
+            articles = list()
+            for page in range(0,self.hit_count,self.page_size):
+                self.params['start'] = page
+                result = self.__get_result()
+                articles += result['article-data']
+                download_count =len(articles)
+                print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
+            
+            if use_cache:
                 with open(dumpfile_name, "w", encoding='utf-8') as dump:
                     dump.write(json.dumps(articles,indent=1))
 
+        relevance_rank = 1
         for article in articles:
             etm_ref = ETMjson(article)
+            etm_ref['Relevance rank'] = [relevance_rank]
+            relevance_rank += 1
             if hasattr(etm_ref,"Identifiers"):
                 self.references.add(etm_ref)
+
         
     def get_statistics(self, stat_prop_list):
        # stat_prop_list = [PUBYEAR,AUTHORS,INSTITUTIONS,JOURNAL]
@@ -369,7 +397,6 @@ class ETM:
         return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))
 
 
-
     def to_excel(self, stat_props:list):
         workbook = xlsxwriter.Workbook(self.etm_stat_dir+self.search_name+'.xlsx')
         for p in stat_props:
@@ -389,4 +416,66 @@ class ETM:
             row_counter += 1
 
         workbook.close()
+
+
+    @staticmethod
+    def etm_relevance(terms:list, APIconfig, add_param:dict={}):
+        # add_param controls number of best references to return. Defaults to 5
+        try: 
+            limit = add_param['limit']
+        except KeyError:
+            limit = 5
+
+        query = '{'+'};{'.join(terms)+'}'
+        params = {
+        'query':query,
+        'searchTarget': 'full_index',
+        'snip': '1.desc',
+        'apikey':APIconfig['ETMapikey'],
+        'limit': limit,
+        }
+
+        params.update(add_param)
+        baseurl = APIconfig['ETMURL']+'/search/basic?'
+  
+        articles = list()
+        param_str = urllib.parse.urlencode(params)
+        url_request = baseurl+param_str
+        the_page = urllib.request.urlopen(url_request).read()
+        if the_page:
+            result = json.loads(the_page.decode('utf-8'))
+            hit_count = result['total-hits=']
+            articles += result['article-data']
+        else:
+            hit_count = 0
+
+        if limit > 100:
+            for page in range(len(articles), limit, 100):
+                params['start'] = page
+                param_str = urllib.parse.urlencode(params)
+                page = urllib.request.urlopen(url_request).read()
+                result = json.loads(the_page.decode('utf-8'))
+                articles += result['article-data']
+
+        references = list()
+        relevance_rank = 1
+        for article in articles:
+            etm_ref = ETMjson(article)
+            etm_ref['Relevance rank'] = [relevance_rank]
+            relevance_rank += 1
+            if hasattr(etm_ref,"Identifiers"):
+                references.append(etm_ref)
+
+        ref_ids = list()
+        for ref in references:
+            for id_type in PS_ID_TYPES:
+                try:
+                    identifier = ref.Identifiers[id_type]
+                    ref_ids.append(identifier)
+                    break
+                except KeyError:
+                    continue
+        
+        best_refs_str = ';'.join(ref_ids)
+        return hit_count, best_refs_str, references
         

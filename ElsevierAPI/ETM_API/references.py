@@ -7,6 +7,7 @@ import time
 AUTHORS = 'Authors'
 INSTITUTIONS = 'Institutions'
 JOURNAL = 'Journal'
+MEDLINETA = 'MedlineTA'
 PUBYEAR = 'PubYear'
 PUBMONTH = 'PubMonth'
 PUBDAY = 'PubDay'
@@ -18,18 +19,21 @@ PATENT_APP_NUM = 'Patent Application Number'
 PATENT_GRANT_NUM = 'Patent Grant Number'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
-PS_ID_TYPES = {'PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID'}
-ETM_ID_TYPES = {'ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER'}
-PATENT_ID_TYPES = {PATENT_APP_NUM, PATENT_GRANT_NUM}
+PS_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID'] 
+#keep PS_ID_TYPES as list for efficient identifier sort.  ID types are sorted by frequency in Resnet
+ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
+PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
 CLINTRIAL_PROPS = {'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator'}
-PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,JOURNAL,'MedlineTA',TITLE,'PubMonth','PubDay'}
+JOURNAL_PROPS = {JOURNAL,'ISSN','ESSN',MEDLINETA}
+PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes'}|JOURNAL_PROPS
 BIBLIO_PROPS = set(PS_BIBLIO_PROPS)
 BIBLIO_PROPS.add(INSTITUTIONS)
-REF_ID_TYPES = PS_ID_TYPES | ETM_ID_TYPES | PATENT_ID_TYPES
+REF_ID_TYPES = PS_ID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
-SENTENCE_PROPS = {SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent'}
+SENTENCE_PROPS = {SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent','Evidence'}
 #also TextRef - used as key in Reference.Sentences
 RELATION_PROPS = {'Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
+
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences
 
