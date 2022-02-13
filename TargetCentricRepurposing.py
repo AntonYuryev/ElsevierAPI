@@ -370,8 +370,9 @@ if __name__ == "__main__":
     #rd.set_targets(['IL15'], 'Protein',to_inhibit=True)
     #rd.set_targets(['FGFR3'], 'Protein',to_inhibit=True)
     #rd.set_targets(['F2RL1'], 'Protein',to_inhibit=True)
-    rd.set_targets(['MRGPRX2'], 'Protein',to_inhibit=True)
-    rd.PageSize = 500
+    #rd.set_targets(['MRGPRX2'], 'Protein',to_inhibit=True)
+    rd.set_targets(['CNR2'], 'Protein',to_inhibit=False)
+    rd.PageSize = 1000
     rd.flush_dump_files()
 
     rd.find_target_indications()
@@ -387,7 +388,7 @@ if __name__ == "__main__":
     
     rd.init_semantic_search()
     rd.score_semantics()
-    t_n = rd.Drug_Target['Name'][0]
+    t_n = ','.join([x['Name'][0] for x in rd.Drug_Targets])
     count_file = t_n+" repurposing counts.tsv"
     ref_file = t_n+" repurposing references.tsv"
     rd.print_ref_count(count_file,referencesOut=ref_file,sep='\t')
