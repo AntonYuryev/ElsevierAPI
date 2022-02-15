@@ -7,7 +7,7 @@ class RepurposeDrug(RepurposeDrugs):
     pass
     def __init__(self, APIconfig):
         super().__init__(APIconfig)
-        self.PageSize = 500
+        #self.PageSize = 500
 
     def set_drug(self, drug_name: str, similar_drugs: list):
         self.Drug = drug_name
