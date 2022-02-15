@@ -26,7 +26,7 @@ class SemanticSearch (APISession):
     __rel_effect__ = list()
     __rel_dir__ = '' # relation directions: allowed values: '>', '<',''
     __only_map2types__ = list()
-    __iter_size__ = 500 #controls the iteration size in sematic reference count
+    __iter_size__ = 1000 #controls the iteration size in sematic reference count
     RefCountPandas = pd.DataFrame()
     relProps = list(PS_ID_TYPES) # if need_references() add here ['Name','Sentence','PubYear','Title']
     __print_refs__ = True
@@ -65,11 +65,13 @@ class SemanticSearch (APISession):
                 self.all_entity_ids = self.map_entities(EntityPandas,prop_names_in_header)
         else:
             self.all_entity_ids = self.map_entities(EntityPandas,prop_names_in_header)
-            
+
+
     def set_how2connect(self, connect_by_rels:list, rel_effect, rel_dir:str):
         self.__connect_by_rels__ = connect_by_rels
         self.__rel_effect__ = rel_effect
         self.__rel_dir__ = rel_dir
+
 
     def map_entities(self,EntityPandas:pd.DataFrame, prop_names_in_header = False):
         start_mapping_time  = time.time()
@@ -252,9 +254,10 @@ class SemanticSearch (APISession):
         return accumulate_reference, accumulate_relation
 
     def link2concept(self,ConceptName,concept_ids:list,no_mess=True, relations:ResnetGraph=None):
-        print('\nLinking input entities to \"%s\" concept with %d ontology children' % (ConceptName,len(concept_ids)))
         if (len(concept_ids) > 500 and len(self.RefCountPandas) > 500):
             print('%s concept has %d ontology children! Linking may take a while, be patient' % (ConceptName,len(concept_ids)-1))
+        else:
+            print('\nLinking input entities to \"%s\" concept which has %d ontology node(s)' % (ConceptName,len(concept_ids)))
         
         new_column = self._col_name_prefix + ConceptName
         self.RefCountPandas.insert(len(self.RefCountPandas.columns),new_column,0)
