@@ -18,6 +18,7 @@ class RepurposeDrug(RepurposeDrugs):
             self.SELECTdrug = 'SELECT Entity WHERE (Name,Alias) = {drug}'
             
         self.SELECTdrug = self.SELECTdrug.format(drug=dcp.Drug)
+        
 
 
 if __name__ == "__main__":
@@ -39,13 +40,12 @@ if __name__ == "__main__":
     found_diseases = ClinicalTrialIndictions.get_entity_ids(['Disease'])
     print('Found %d indications in %s clinical trials' % (len(found_diseases), dcp.Drug))
 
-    drug_id = dcp.Graph.get_entity_ids([dcp.Drug], search_by_properties=['Name', 'Alias'])
-
     REQUEST_NAME = 'Find {drug} all other indications'.format(drug=dcp.Drug)
     OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = negative AND NeighborOf({select_drug}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease,Virus))'
     LiteratureIndications = dcp.process_oql(OQLquery.format(select_drug=dcp.SELECTdrug), REQUEST_NAME)
     found_diseases= LiteratureIndications.get_entity_ids(['Disease'])
     print('Found %d indications reported in scientific literature for %s' % (len(found_diseases), dcp.Drug))
+    drug_ids = dcp.Graph.get_entity_ids(['SmallMol'],['ObjTypeName'])
 
     REQUEST_NAME = 'Find indications by clinical trials for {similars}'.format(similars=dcp.similar_drugs)
     select_similar_drugs = 'SELECT Entity WHERE (Name,Alias) = ({drugs})'
@@ -71,12 +71,12 @@ if __name__ == "__main__":
 
     colname = dcp.Drug + ' cliniclal trials'
     dcp.set_how2connect(['ClinicalTrial'],[],'')
-    linked_entities_count = dcp.link2concept(colname, drug_id)
+    linked_entities_count = dcp.link2concept(colname, drug_ids)
     print('%s has clinical trials for %d indications' % (dcp.Drug, linked_entities_count))
 
     colname = 'Inhibited by ' + dcp.Drug
     dcp.set_how2connect(['Regulation'],['negative'],'')
-    linked_entities_count = dcp.link2concept(colname, drug_id)
+    linked_entities_count = dcp.link2concept(colname, drug_ids)
     print('%d diseases inhibited by %s' % (linked_entities_count, dcp.Drug))
 
     colname = 'similar drugs cliniclal trials'
