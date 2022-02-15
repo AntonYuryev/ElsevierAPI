@@ -270,7 +270,7 @@ class RepurposeDrugs(SemanticSearch):
             self.set_how2connect(['Regulation'],[],'')
         else:
             self.set_how2connect(['Regulation'],[effect],'')
-        self.set_how2connect(['QuantitativeChange'],[effect],'')
+        
         linked_entities_count= self.link2concept(colname,self.target_ids)
         print('%d diseases %sly regulate %s' % (linked_entities_count,effect,t_n))
 

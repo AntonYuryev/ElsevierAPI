@@ -9,9 +9,15 @@ class RepurposeDrug(RepurposeDrugs):
         super().__init__(APIconfig)
         #self.PageSize = 500
 
-    def set_drug(self, drug_name: str, similar_drugs: list):
+    def set_drug(self, drug_name:str, similar_drugs:list, include_children=True):
         self.Drug = drug_name
         self.similar_drugs = similar_drugs
+        if include_children:
+            self.SELECTdrug = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE (Name,Alias) = (\'{drug}\')) OR (Name,Alias) = (\'{drug}\')'
+        else:
+            self.SELECTdrug = 'SELECT Entity WHERE (Name,Alias) = {drug}'
+            
+        self.SELECTdrug = self.SELECTdrug.format(drug=dcp.Drug)
 
 
 if __name__ == "__main__":
@@ -19,27 +25,25 @@ if __name__ == "__main__":
     #similars = ['osimertinib', 'gefitinib', 'brigatinib', 'zalutumumab', 'nimotuzumab', 'matuzumab'] # for 'erlotinib'/'EGFR
     similars = [] #['Infliximab', 'Etanercept', 'Golimumab', 'Certolizumab', 'Afelimomab'] # for 'Humira'/TNF
     dcp = RepurposeDrug(load_api_config())
-    dcp.set_drug('cannabinoids', similars)
-    dcp.set_targets(['CNR1', 'CNR2', 'GPR18', 'GPR55', 'GPR119'],'Protein', to_inhibit=False)
+    dcp.set_drug('CBD compounds', similars, include_children=True)
+    dcp.set_targets(['CNR1', 'CNR2', 'GPR18', 'GPR55', 'GPR119'],'Protein', to_inhibit=True, strict_mode=True)
     dcp.add_ent_props(['Alias'])
     dcp.PageSize = 1000
 
-    SELECTdrug = 'SELECT Entity WHERE (Name,Alias) = {drug}'
-    SELECTdrug = SELECTdrug.format(drug=dcp.Drug)
     dcp.flush_dump_files()
 
     # PART I: Finding all possible indications
     REQUEST_NAME = 'Find {drug} indications by clinical trials'.format(drug=dcp.Drug)
     OQLquery = 'SELECT Relation WHERE objectType = ClinicalTrial AND NeighborOf ({select_drug}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease))'
-    ClinicalTrialIndictions = dcp.process_oql(OQLquery.format(select_drug=SELECTdrug),REQUEST_NAME)
-    found_diseases= ClinicalTrialIndictions.get_entity_ids(['Disease'])
+    ClinicalTrialIndictions = dcp.process_oql(OQLquery.format(select_drug=dcp.SELECTdrug),REQUEST_NAME)
+    found_diseases = ClinicalTrialIndictions.get_entity_ids(['Disease'])
     print('Found %d indications in %s clinical trials' % (len(found_diseases), dcp.Drug))
 
     drug_id = dcp.Graph.get_entity_ids([dcp.Drug], search_by_properties=['Name', 'Alias'])
 
     REQUEST_NAME = 'Find {drug} all other indications'.format(drug=dcp.Drug)
     OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = negative AND NeighborOf({select_drug}) AND NeighborOf (SELECT Entity WHERE objectType = (Disease,Virus))'
-    LiteratureIndications = dcp.process_oql(OQLquery.format(select_drug=SELECTdrug), REQUEST_NAME)
+    LiteratureIndications = dcp.process_oql(OQLquery.format(select_drug=dcp.SELECTdrug), REQUEST_NAME)
     found_diseases= LiteratureIndications.get_entity_ids(['Disease'])
     print('Found %d indications reported in scientific literature for %s' % (len(found_diseases), dcp.Drug))
 
