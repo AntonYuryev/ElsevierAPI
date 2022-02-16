@@ -193,7 +193,7 @@ class Reference(dict):
 
         row = row[:len(row)-1] #remove last separator
         for prop_id, prop_values in self.items():
-            prop_val = ';'.join(prop_values)
+            prop_val = ';'.join(map(str,prop_values))
             if prop_id in ['Title', 'Abstract']:
                 prop_val = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_val)
             row = row + col_sep + prop_id + ':' + prop_val

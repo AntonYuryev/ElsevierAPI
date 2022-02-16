@@ -332,7 +332,11 @@ class ETM:
                 print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
             
             if use_cache:
-                with open(dumpfile_name, "w", encoding='utf-8') as dump:
+                try:
+                    dump = open(dumpfile_name, "w", encoding='utf-8')
+                    dump.write(json.dumps(articles,indent=1))
+                except FileNotFoundError:
+                    dump = open(self.search_name+'.json', "w", encoding='utf-8')
                     dump.write(json.dumps(articles,indent=1))
 
         relevance_rank = 1
