@@ -1,5 +1,4 @@
 import subprocess
-
 from textblob.blob import TextBlob
 
 USERDIR = "C:\\Users\\Administrator\\Documents\\MedScan Reader Projects\\"

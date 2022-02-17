@@ -1,11 +1,14 @@
-from ElsevierAPI.ETM_API.references import DocMine
-from ElsevierAPI.ETM_API.references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,PS_ID_TYPES
-from ElsevierAPI import execution_time
+from .references import DocMine
+from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,PS_ID_TYPES
 import urllib.request
 import urllib.parse
 import json
 import time
+from datetime import timedelta
 import xlsxwriter
+
+def execution_time(execution_start):
+    return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
 
 class ETMjson(DocMine):
     @staticmethod
@@ -178,9 +181,11 @@ class ETMjson(DocMine):
                     last_markup_end = query_end+pos_shift
                 
                     try:
-                        term_id = markup['term']['id']
-                        term_name = markup['term']['value']
-                        term_ids.add(term_id+'\t'+term_name)
+                        terms = markup['term']
+                        if isinstance(terms,dict):
+                            term_ids.add(terms['id']+'\t'+terms['value'])
+                        else: 
+                            [term_ids.add(term['id']+'\t'+term['value']) for term in terms]
                     except KeyError: continue
                 except KeyError:
                     if markup_all:
@@ -274,8 +279,8 @@ class ETM:
 
     def __get_result(self):
         param_str = self.__get_param_str()
-        full_url = self.__base_url()+param_str
-        the_page = urllib.request.urlopen(full_url).read()
+        self.url_request = self.__base_url()+param_str
+        the_page = urllib.request.urlopen(self.url_request).read()
         if the_page:
             return json.loads(the_page.decode('utf-8'))
         else:
@@ -483,3 +488,4 @@ class ETM:
         best_refs_str = ';'.join(ref_ids)
         return hit_count, best_refs_str, references
         
+
