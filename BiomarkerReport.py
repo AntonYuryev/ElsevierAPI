@@ -1,6 +1,6 @@
 from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
 from ElsevierAPI.ETM_API.references import JOURNAL_PROPS
 import pandas as pd
@@ -14,7 +14,7 @@ DISEASES = ['Disease','ClinicalParameter']
 QUANTITATIVE_BIOMARKERS = ['Protein','Complex','FunctionalClass','Cell']
 GENETIC_BIOMARKERS = ['Protein']
 SPECIFICITY = 'Promiscuity'
-SOLUBLE_BIOMARKERS_TISSUES = ['blood', 'plasma', 'serum']
+SOLUBLE_BIOMARKERS_TISSUES = ['blood','plasma','serum']
 
 #Biomarker Types:
 QUANTITATIVE = 0
