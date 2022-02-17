@@ -3,10 +3,10 @@ import math
 import networkx as nx
 import pandas as pd
 from datetime import timedelta
-from ElsevierAPI.ResnetAPI.ZeepToNetworkx import PSNetworx
-from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI.ETM_API.references import SENTENCE_PROPS
+from .ZeepToNetworkx import PSNetworx
+from .ResnetGraph import ResnetGraph
+from .PathwayStudioGOQL import OQL
+from ..ETM_API.references import SENTENCE_PROPS
 from xml.dom import minidom
 
 class APISession(PSNetworx):

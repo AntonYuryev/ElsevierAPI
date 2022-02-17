@@ -2,8 +2,8 @@ import networkx as nx
 import pandas as pd
 import os
 import xml.etree.ElementTree as et
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PSRelation
-from ElsevierAPI.ETM_API.references import PUBYEAR,PS_ID_TYPES
+from .NetworkxObjects import PSObject, PSRelation
+from ..ETM_API.references import PUBYEAR,PS_ID_TYPES
 
 NO_RNEF_NODE_PROPS = ['Id','URN','ObjClassId','ObjTypeId','ObjTypeName','OwnerId','DateCreated','DateModified']
 NO_RNEF_REL_PROPS = NO_RNEF_NODE_PROPS + ['RelationNumberOfReferences', '# of Total References', 'Name']
@@ -197,7 +197,11 @@ class ResnetGraph (nx.MultiDiGraph):
             references.update(list(r.References.values()))
 
         references = list(references)
-        references.sort(key=lambda x: x[PUBYEAR][0], reverse=True)
+        def sortkey(x):
+            t = [x[PUBYEAR][0]]
+            t = t + list(x.Identifiers.values())
+            return tuple(t)
+        references.sort(key=lambda x: sortkey(x), reverse=True)
         total_refs = len(references)
         recent_refs = references[:ref_limit] if ref_limit else references
         ref_ids = list()

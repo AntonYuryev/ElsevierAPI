@@ -4,11 +4,11 @@ import pandas as pd
 import networkx as nx
 import math
 import re
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PS_ID_TYPES
-from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
-from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
-from ElsevierAPI.ETM_API.etm import ETM
+from .PathwayStudioGOQL import OQL
+from .NetworkxObjects import PS_ID_TYPES
+from .ResnetGraph import ResnetGraph
+from .ResnetAPISession import APISession
+from ..ETM_API.etm import ETM
 
 
 class SemanticSearch (APISession): 

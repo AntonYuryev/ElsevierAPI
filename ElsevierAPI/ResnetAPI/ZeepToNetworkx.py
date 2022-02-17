@@ -1,8 +1,8 @@
 import networkx as nx
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI.ResnetAPI.PathwayStudioZeepAPI import DataModel
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,PSRelation
-from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
+from  .PathwayStudioGOQL import OQL
+from  .PathwayStudioZeepAPI import DataModel
+from  .NetworkxObjects import PSObject,PSRelation
+from  .ResnetGraph import ResnetGraph
 import math
 import time
 from datetime import timedelta
@@ -14,7 +14,6 @@ class PSNetworx(DataModel):
         self.Graph = ResnetGraph()
         self.ID2Children = dict()
 
-        
     @staticmethod
     def _zeep2psobj(zeep_objects):
         id2entity = dict()

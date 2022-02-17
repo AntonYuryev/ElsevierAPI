@@ -1,7 +1,7 @@
-from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject, PS_ID_TYPES,SENTENCE_PROPS,PS_BIBLIO_PROPS,CLINTRIAL_PROPS
-from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
-from ElsevierAPI.ResnetAPI.rnef2sbgn import rnef2sbgn_str
+from .ResnetAPISession import APISession
+from .NetworkxObjects import PSObject, PS_ID_TYPES,SENTENCE_PROPS,PS_BIBLIO_PROPS,CLINTRIAL_PROPS
+from .ResnetGraph import ResnetGraph
+from .rnef2sbgn import rnef2sbgn_str
 import xml.etree.ElementTree as et
 from xml.dom import minidom
 import time

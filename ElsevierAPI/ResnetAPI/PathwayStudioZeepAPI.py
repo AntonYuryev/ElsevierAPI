@@ -1,7 +1,7 @@
 import pandas as pd
 import logging
 import sys
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from .PathwayStudioGOQL import OQL
 
 
 def configure_logging(logger):
