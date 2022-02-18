@@ -126,7 +126,7 @@ class RepurposeDrug(TargetIndications):
         
     def fname_prefix(self):
         indics = ','.join(self.indication_types)
-        rep_pred =  'suggested,predicted ' if self.target_activate_indication else 'suggested '
+        rep_pred =  'suggested' if self.strict_mode else 'suggested,predicted '
         regulate = ' activated by ' if self.required_effect_on_indications == ACTIVATE else ' inhibited by '
         return rep_pred+indics+regulate+self.drug_name
 
