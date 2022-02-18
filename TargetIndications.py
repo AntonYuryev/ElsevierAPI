@@ -85,7 +85,7 @@ class TargetIndications(SemanticSearch):
         t_n = ','.join([x['Name'][0] for x in rd.Drug_Targets])
         indics = ','.join(self.indication_types)
         mode = ' antagoinists ' if self.target_activate_indication else ' agonists '
-        rep_pred =  'suggested,predicted ' if self.target_activate_indication else 'suggested '
+        rep_pred = 'suggested ' if self.strict_mode else 'suggested,predicted '
         return rep_pred+ indics+' for '+ t_n + mode
 
     def find_target_indications(self):
