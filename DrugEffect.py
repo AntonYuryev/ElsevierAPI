@@ -139,7 +139,7 @@ if __name__ == "__main__":
     dcp.set_drug('THC compounds', similars, INCLUDE_CHILDREN, ACTIVATE, ['CellProcess'], AGONIST)
     
     # specify here the drug targets and drug mechanism of action
-    partner_names = ['tetrahydrocannabinol','anandamide'] # specify here endogenous ligands for receptor if known
+    partner_names = ['tetrahydrocannabinol','anandamide','endocannabinoid','2-arachidonoylglycerol'] # specify here endogenous ligands for receptor if known
     # if partner_names is empty script will try finding Lgands for Receptor targets and Receptors for Ligand targets
     partner_class = 'Metabolite ligand' 
     dcp.set_targets(['CNR1'],'Protein',partner_names=partner_names,partner_class=partner_class,
