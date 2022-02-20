@@ -224,7 +224,7 @@ class PSRelation(PSObject):
             else: 
                 ref.snippets[textref] = {'Sentence':[]} #load empty dict for data consistency
 
-        self.PropSetToProps.clear() # PropSetToProps are not needed anymore. Everything is loaded into References.
+        #self.PropSetToProps.clear() # used in print_references do not clear.
 
 
     def add_references(self, references:list):#list of Reference objects
