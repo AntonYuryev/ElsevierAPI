@@ -356,6 +356,40 @@ class ResnetGraph (nx.MultiDiGraph):
                 f.write(rel.triple2str(relPropNames,add_entities=add_entities, as1row=as1row))
 
 
+    def get_ref_list(self, relPropNames:list, entity_prop_names=[], RefNumPrintLimit=0,col_sep:str='\t',single_rel_row=False):
+        references = list()
+        if not entity_prop_names:
+            for regulatorID, targetID, rel in self.edges.data('relation'):
+                reference_view_triple = str(rel.triple2str(relPropNames,as1row=single_rel_row))
+                references.append(reference_view_triple)
+        else:
+            # rel = PSRelation()
+            for regulatorID, targetID, rel in self.edges.data('relation'):
+                reg = self._get_node(regulatorID)
+                target = self._get_node(targetID)
+                reg_props_str = reg.data2str(entity_prop_names, col_sep=col_sep)
+                target_props_str = target.data2str(entity_prop_names, col_sep=col_sep)
+
+                reference_table_view = str()
+                if single_rel_row:
+                    reference_table_view = rel.to1row(relPropNames, RefNumPrintLimit=RefNumPrintLimit,
+                                                        col_sep=col_sep)
+
+                    reference_table_view = reference_table_view[0:len(reference_table_view) - 1]#remove end of line character
+                    reference_table_view = reg_props_str[0:len(reg_props_str) - 1]+col_sep+reference_table_view
+                    reference_table_view += col_sep + target_props_str
+                else:
+                    rel_props_str_list = dict(rel.to_table_dict(
+                                                relPropNames, RefNumPrintLimit=RefNumPrintLimit))
+                    
+                    for row in rel_props_str_list.values():
+                        reference_table_view += reg_props_str[:-1]
+                        reference_table_view += col_sep + col_sep.join(row) + col_sep + target_props_str[:-1]
+                        references.append(reference_table_view)
+
+            return references
+
+
     def print_references(self, fileOut:str, relPropNames:list, entity_prop_names=[],access_mode='w',
                           printHeader=True, RefNumPrintLimit=0, col_sep:str='\t', debug=False, single_rel_row=False):
         

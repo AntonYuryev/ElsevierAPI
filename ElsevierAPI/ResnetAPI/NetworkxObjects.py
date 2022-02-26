@@ -1,8 +1,7 @@
 import re
 import json
 import itertools
-from ..ETM_API.references import JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS,MEDLINETA
-
+from ..ETM_API.references import Reference,JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS,MEDLINETA
 
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
 
@@ -86,7 +85,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
         return False
     
-from ElsevierAPI.ETM_API.references import Reference
+
 class PSRelation(PSObject):
     pass
     PropSetToProps = dict() # {PropSetID:{PropID:[values]}}
@@ -224,7 +223,8 @@ class PSRelation(PSObject):
             else: 
                 ref.snippets[textref] = {'Sentence':[]} #load empty dict for data consistency
 
-        #self.PropSetToProps.clear() # used in print_references do not clear.
+        #self.PropSetToProps.clear() 
+        # # PropSetToProps is used in print_references do not clear it.
 
 
     def add_references(self, references:list):#list of Reference objects
@@ -265,6 +265,12 @@ class PSRelation(PSObject):
             return len(ref_from_abstract)
         else:        
             return len(self.References) if self.References else self['RelationNumberOfReferences'][0]
+
+    def rel_prop_str(self, sep=':'):
+        # returns string of relation properties with no references
+        to_return = str()
+        for prop_id, prop_values in self.items():
+            to_return += prop_id + sep + ','.join(prop_values)+';'
 
 
     def to_table_dict(self, columnPropNames:list, cell_sep:str=';', RefNumPrintLimit=0, add_entities=False):

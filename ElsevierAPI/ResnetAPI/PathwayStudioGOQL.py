@@ -164,7 +164,7 @@ class OQL:
         connect_to_str = " to (SELECT Entity WHERE (" + property_names + ") = (" + values + ")"
         if len(expand_by_rel_types) > 0:
             if len(expand2neighbors) > 0:
-                return "SELECT Entity WHERE objectType = (" + expand2neighbors_str + ") AND Connected by (SELECT Relation WHERE objectType= " + expand_by_rel_types_str + ")" + connect_to_str + ")"
+                return "SELECT Entity WHERE objectType = (" + expand2neighbors_str + ") AND Connected by (SELECT Relation WHERE objectType = " + expand_by_rel_types_str + ")" + connect_to_str + ")"
             else:
                 return "SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType= " + expand_by_rel_types_str + ")" + connect_to_str + ")"
         else:
