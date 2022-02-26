@@ -213,10 +213,10 @@ class BiomarkersReport(SemanticSearch):
         row_counter = 0
         ref_count_columns = [col for col in bm.RefCountPandas.columns if bm._col_name_prefix in col]
         for row in bm.RefCountPandas.index:
-            biomarker = bm.RefCountPandas.iloc[row][0]
+            biomarker = bm.RefCountPandas.loc[row][bm.RefCountPandas.columns[0]]
             for col_name in ref_count_columns:
                 disease = col_name[len(bm._col_name_prefix):]
-                refcount = bm.RefCountPandas.iloc[row][col_name]
+                refcount = bm.RefCountPandas.loc[row][col_name]
                 if refcount > 0.0000001:
                     biomarker2disease.at[row_counter,'Biomarker'] = biomarker
                     biomarker2disease.at[row_counter,'Disease'] = disease

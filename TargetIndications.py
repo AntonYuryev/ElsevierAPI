@@ -12,11 +12,17 @@ class TargetIndications(SemanticSearch):
     def __init__(self, APIconfig):
         super().__init__(APIconfig)
         self.PageSize = 1000
-        self.relProps = ['Name','RelationNumberOfReferences','Mechanism','ChangeType','BiomarkerType','QuantitativeType'] #'Sentence','PubYear','Title',
-        self.add_rel_props(PS_ID_TYPES)  
-        self.add_rel_props(['Sentence','PubYear','Title'])
+        self.add_rel_props(PS_ID_TYPES)
         self.indication_types = ['Disease','Virus']
-        self.pathway_name_must_include_target = False
+        self.pathway_name_must_include_target = True 
+        # if True only pathways depicting target signaling are considered for regulome construction
+        # if False all pathways containing both Targets and Partners will be considered
+        self.target_activate_indication = True
+        # use True when looking for Indications of Targets antagonists or for Toxicities of Targets agonists
+        # use False when looking for Indications of Targets agonists or for Toxicities of Targets antagonists
+        self.strict_mode = False
+        # use True to rank only Indications suggested in the literature
+        # use False to also predict and rank additional Indications based on target expression or genetic profiles in disease
 
 
     def _partner_class(self):
@@ -58,9 +64,10 @@ class TargetIndications(SemanticSearch):
         self.strict_mode = strict_mode
         if isinstance(to_inhibit, bool):
             self.target_activate_indication = to_inhibit
+            # defaults to False if nothing is specified
         if isinstance(indication_types,list):
             self.indication_types = indication_types
-        # defaults to Disease if nothing is specified
+        # defaults to [Disease,Virus] if nothing is specified
 
         prop_names_str, prop_values_str = OQL.get_search_strings(['Name'],target_names)
         self.add_ent_props(['Class'])
@@ -85,8 +92,32 @@ class TargetIndications(SemanticSearch):
         t_n = ','.join([x['Name'][0] for x in rd.Drug_Targets])
         indics = ','.join(self.indication_types)
         mode = ' antagoinists ' if self.target_activate_indication else ' agonists '
-        rep_pred = 'suggested ' if self.strict_mode else 'suggested,predicted '
+        rep_pred = 'suggested ' if self.strict_mode else 'suggested,predicted ' 
         return rep_pred+ indics+' for '+ t_n + mode
+
+
+    def get_GVs(self):
+        target_names = [x['Name'][0] for x in self.Drug_Targets]
+        t_n = ','.join(target_names)
+        select_targets = 'SELECT Entity WHERE id = ({target_ids})'.format(target_ids = ','.join(map(str,self.target_ids)))
+  
+        if self.strict_mode:
+            found_indicaction_ids= self.Graph.get_entity_ids(self.indication_types)
+            select_indic_oql = 'SELECT Entity WHERE id = ({ids})'.format(ids=','.join(map(str,found_indicaction_ids)))
+        else:
+            select_indic_oql = 'SELECT Entity WHERE objectType = ({indication_type})'.format(indication_type=','.join(self.indication_types))
+
+        selectGVs = 'SELECT Entity WHERE objectType = GeneticVariant AND Connected by (SELECT Relation WHERE objectType = GeneticChange) to ({select_target})'
+        selectGVs = selectGVs.format(select_target=select_targets)
+        REQUEST_NAME = 'Find indications linked to {target} genetic variants'.format(target=t_n)
+        OQLquery = 'SELECT Relation WHERE NeighborOf({select_gvs}) AND NeighborOf ({select_indications})'
+        self.GVsInDiseaseNetwork = self.process_oql(OQLquery.format(select_gvs=selectGVs,select_indications=select_indic_oql),REQUEST_NAME)
+        found_indications= self.GVsInDiseaseNetwork.get_entity_ids(self.indication_types)
+        self.GVids = self.GVsInDiseaseNetwork.get_entity_ids(['GeneticVariant'])
+        
+        print('Found %d indications genetically linked to %d Genetic Variants in %s' % 
+            (len(found_indications), len(self.GVids), t_n))
+
 
     def find_target_indications(self):
         f_t = self.find_targets_oql
@@ -111,15 +142,7 @@ class TargetIndications(SemanticSearch):
         found_indications= ActivatedInDiseaseNetwork.get_entity_ids(self.indication_types)
         print('Found %d diseases where target %s is %sly regulated' % (len(found_indications), t_n, effect))
         
-        selectGVs = 'SELECT Entity WHERE objectType = GeneticVariant AND Connected by (SELECT Relation WHERE objectType = GeneticChange) to ({select_target})'
-        selectGVs = selectGVs.format(select_target=f_t)
-        REQUEST_NAME = 'Find indications linked to {target} genetic variants'.format(target=t_n)
-        OQLquery = 'SELECT Relation WHERE NeighborOf({select_gvs}) AND NeighborOf ({select_diseases})'
-        self.GVsInDiseaseNetwork = self.process_oql(OQLquery.format(select_gvs=selectGVs,select_diseases=select_diseases_oql),REQUEST_NAME)
-        found_indications= self.GVsInDiseaseNetwork.get_entity_ids(self.indication_types)
-        found_GVs = self.GVsInDiseaseNetwork.get_entity_ids(['GeneticVariant'])
-        print('Found %d diseases genetically linked to %d Genetic Variants in %s' % 
-             (len(found_indications), len(found_GVs), t_n))
+        self.get_GVs()
 
         REQUEST_NAME = 'Find indications where {target} is biomarker'.format(target=t_n)
         OQLquery = 'SELECT Relation WHERE objectType = Biomarker AND NeighborOf({select_target}) AND NeighborOf ({select_diseases})'
@@ -231,7 +254,7 @@ class TargetIndications(SemanticSearch):
         else:
             tuple_target_oqls = dict()
             for target_name, oql_query in target_oqls.items():
-                tuple_target_oqls[(target_name)] = merged_pathways.format(select_networks=oql_query)
+                tuple_target_oqls[(target_name, '')] = merged_pathways.format(select_networks=oql_query)
 
             return tuple_target_oqls
     
@@ -239,14 +262,16 @@ class TargetIndications(SemanticSearch):
     def get_pathway_componets(self):
         #finding downstream pathway components
         oql_queries = self.pathway_oql() # separate oql_qury for each target
-        #partners_names = [p['Name'][0] for p in self.partners]
-        REQUEST_NAME = 'Find curated pathways containing {targets} and {partners}'
+        REQUEST_NAME = 'Find curated pathways containing {targets}'
         merged_pathway = ResnetGraph()
         component_names_with_regulome = set()
         for components_tuple, oql_query in oql_queries.items():
             target_name = components_tuple[0]
-            partner_name = components_tuple[1] if len(components_tuple[0])> 1 else ''
-            REQUEST_NAME = REQUEST_NAME.format(targets=target_name,partners=partner_name)
+            partner_name = components_tuple[1]
+            REQUEST_NAME = REQUEST_NAME.format(targets=target_name)
+            if partner_name:
+                REQUEST_NAME = REQUEST_NAME + ' and ' + partner_name
+
             pathway_with_target = self.process_oql(oql_query,REQUEST_NAME)
             if pathway_with_target:
                 merged_pathway.add_graph(pathway_with_target)
@@ -276,16 +301,18 @@ class TargetIndications(SemanticSearch):
 
 
     def score_GVs(self):
+        if not self.GVids: return
         t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         self.__colnameGV__ = t_n+' GVs'
-        allGVids = self.Graph.get_entity_ids(['GeneticVariant'])
         gvlinkcounter = 0
         for i in self.RefCountPandas.index:
             row_entity_ids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
-            GVneighborsId = self.GVsInDiseaseNetwork.get_neighbors(row_entity_ids, allGVids)
+            if hasattr(self,'GVsInDiseaseNetwork'):
+                GVneighborsId = self.GVsInDiseaseNetwork.get_neighbors(row_entity_ids, self.GVids)
+                
             GVscore = 0
             if len(GVneighborsId) > 0:
-                GVnames = set([n[0] for i,n in self.GVsInDiseaseNetwork.nodes.data('Name') if i in GVneighborsId])
+                GVnames = set([n[0] for i,n in self.Graph.nodes.data('Name') if i in GVneighborsId])
                 self.RefCountPandas.at[i,self.__colnameGV__] = ';'.join(GVnames)
                 gvlinkcounter += 1
                 gv_disease_subgraph = self.GVsInDiseaseNetwork.get_subgraph(row_entity_ids,GVneighborsId)
@@ -293,7 +320,7 @@ class TargetIndications(SemanticSearch):
             
             self.RefCountPandas.at[i,self._col_name_prefix+'GVs'] = GVscore
 
-        print('Found %d indications linked to %d GVs' % (gvlinkcounter, len(allGVids)))
+        print('Found %d indications linked to %d GVs' % (gvlinkcounter, len(self.GVids)))
 
 
     def score_semantics(self):
@@ -427,10 +454,11 @@ class TargetIndications(SemanticSearch):
             combined_scores.append(weighted_sum)
 
         NormalizedCount['Combined score'] = np.array(combined_scores)
-        try:
-            NormalizedCount[self.__colnameGV__] = self.RefCountPandas[self.__colnameGV__]
-        except KeyError:
-            pass
+        if hasattr(self,'__colnameGV__'):
+            try:
+                NormalizedCount[self.__colnameGV__] = self.RefCountPandas[self.__colnameGV__]
+            except KeyError:
+                pass
 
         NormalizedCount['#children'] = self.RefCountPandas[self.__temp_id_col__].apply(lambda x: len(x))
         NormalizedCount['Final score'] = NormalizedCount['Combined score']/NormalizedCount['#children']
