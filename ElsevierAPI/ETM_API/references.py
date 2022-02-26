@@ -182,7 +182,7 @@ class Reference(dict):
         return False
            
     
-    def to_str(self, id_types: list=None, col_sep='\t',sentence_props={}):
+    def to_str(self, id_types:list=None, col_sep='\t',sentence_props={}):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         row = str()
         for t in id_types:
@@ -209,12 +209,12 @@ class Reference(dict):
                 for prop_id, prop_values in dict(prop).items():
                     if prop_id in sentence_props:
                         prop_value = '.'.join(prop_values)
-                        row = row + col_sep + prop_id + ' ('+text_ref+')' + ':' + prop_value
+                        row = row + col_sep + prop_id + ' ('+text_ref+')' + ': ' + prop_value
                         has_annotation = True
                 if has_annotation:
                     sentence_with_prop = '.'.join(self.snippets[text_ref][SENTENCE])
                     sentence_with_prop = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sentence_with_prop)
-                    row = row + col_sep + text_ref+ ':' + sentence_with_prop
+                    row = row + col_sep + text_ref+ ': ' + sentence_with_prop
         return row
 
 
