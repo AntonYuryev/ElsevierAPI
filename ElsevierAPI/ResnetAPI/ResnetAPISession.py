@@ -246,7 +246,7 @@ class APISession(PSNetworx):
         if not isinstance(in_graph, ResnetGraph): in_graph = self.Graph
         return in_graph.ref2pandas(self.relProps,self.entProps,RefNumPrintLimit)
 
-    def connect_nodes(self,node_ids1:set,node_ids2:set,by_relation_type=None,with_effect=None,in_direction=None):
+    def connect_nodes(self,node_ids1:set,node_ids2:set,by_relation_type:list=None,with_effect:list=None,in_direction:str=None):
         oql_query = r'SELECT Relation WHERE '
         if isinstance(in_direction,str):
             if in_direction == '>':
