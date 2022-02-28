@@ -49,6 +49,11 @@ class RepurposeDrug(TargetIndications):
 
         # self.target_activate_indication = self.required_effect_on_indications * self.known_effect_on_targets
 
+    def __get_effect_str(self):
+        if self.required_effect_on_indications == INHIBIT: return 'negative'
+        if self.required_effect_on_indications == ACTIVATE: return 'positive'
+        return 'unknown'
+
     def needs_clinical_trial(self):
         if 'CellProcess' in self.indication_types and self.required_effect_on_indications == ACTIVATE: return True
         if 'Disease' in self.indication_types and self.required_effect_on_indications == INHIBIT: return True
@@ -134,13 +139,21 @@ class RepurposeDrug(TargetIndications):
         regulate = ' activated by ' if self.required_effect_on_indications == ACTIVATE else ' inhibited by '
         return rep_pred+indics+regulate+self.drug_name
 
+    def print_drug_indictaion_refs(self):
+        fname_prefix = dcp.fname_prefix()
+        dcp.print_references(self.drugcolname,fname_prefix + " clinical trials.tsv", ['ClinicalTrial'])
+
+        effect_str = self.__get_effect_str()
+        dcp.print_references(self.drugcolname,fname_prefix + " references.tsv", ['Regulation'],[effect_str])
+
 if __name__ == "__main__":
     global_start = time.time()
     dcp = RepurposeDrug(load_api_config())
 
     # specify here what indications to find and the type of drug
     similars = [] # names of similar drugs that have same mechanism of action (i.e. same target)
-    dcp.set_drug('cannabinoids', similars, INHIBIT, ['Disease'], AGONIST)
+    #dcp.set_drug('cannabinoids', similars, INHIBIT, ['Disease'], AGONIST)
+    dcp.set_drug('CBD compounds', similars, INHIBIT, ['Disease'], ANTAGONIST)
     
     # specify here the drug targets and drug mechanism of action
     partner_names = ['anandamide','endocannabinoid','2-arachidonoylglycerol'] # specify here endogenous ligands for receptor if known
@@ -173,7 +186,8 @@ if __name__ == "__main__":
 
     fname_prefix = dcp.fname_prefix()
     dcp.print_ref_count(fname_prefix + " counts.tsv",sep='\t')
-    dcp.print_references(dcp.drugcolname,fname_prefix + " references.tsv")
+    dcp.print_drug_indictaion_refs()
+
     NormalizedCount = dcp.normalize_counts()
     fout = fname_prefix + ' normalized report.tsv'
     NormalizedCount.to_csv(fout, sep='\t', index=False, float_format='%g')
