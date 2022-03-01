@@ -140,11 +140,14 @@ class RepurposeDrug(TargetIndications):
         return rep_pred+indics+regulate+self.drug_name
 
     def print_drug_indictaion_refs(self):
-        fname_prefix = dcp.fname_prefix()
-        dcp.print_references(self.drugcolname,fname_prefix + " clinical trials.tsv", ['ClinicalTrial'])
+        fname_out = dcp.fname_prefix()+" clinical trials.tsv"
+        dcp.print_references(self.drugcolname,fname_out, ['ClinicalTrial'],
+                            pubid_types=['NCT ID'],biblio_props=['Title','Start'],print_snippets=True)
 
         effect_str = self.__get_effect_str()
-        dcp.print_references(self.drugcolname,fname_prefix + " references.tsv", ['Regulation'],[effect_str])
+        fname_out = dcp.fname_prefix()+" references.tsv"
+        dcp.print_references(self.drugcolname,fname_out, ['Regulation'],[effect_str],
+                            pubid_types=['PMID','DOI','PII','PUI','EMBASE'],biblio_props=['Title','PubYear'],print_snippets=True)
 
 if __name__ == "__main__":
     global_start = time.time()
@@ -153,7 +156,7 @@ if __name__ == "__main__":
     # specify here what indications to find and the type of drug
     similars = [] # names of similar drugs that have same mechanism of action (i.e. same target)
     #dcp.set_drug('cannabinoids', similars, INHIBIT, ['Disease'], AGONIST)
-    dcp.set_drug('CBD compounds', similars, INHIBIT, ['Disease'], ANTAGONIST)
+    dcp.set_drug('CBD compounds', similars, ACTIVATE, ['CellProcess'], ANTAGONIST)
     
     # specify here the drug targets and drug mechanism of action
     partner_names = ['anandamide','endocannabinoid','2-arachidonoylglycerol'] # specify here endogenous ligands for receptor if known
