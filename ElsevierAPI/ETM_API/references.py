@@ -3,6 +3,7 @@ import xlsxwriter
 import re
 from datetime import timedelta
 import time
+import json
 
 AUTHORS = 'Authors'
 INSTITUTIONS = 'Institutions'
@@ -30,7 +31,8 @@ BIBLIO_PROPS = set(PS_BIBLIO_PROPS)
 BIBLIO_PROPS.add(INSTITUTIONS)
 REF_ID_TYPES = PS_ID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
-SENTENCE_PROPS = {SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent','Evidence'}
+SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent','Evidence']
+# SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.Sentences
 RELATION_PROPS = {'Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
@@ -182,7 +184,7 @@ class Reference(dict):
         return False
            
     
-    def to_str(self, id_types:list=None, col_sep='\t',sentence_props={}):
+    def to_str(self,id_types:list=None,col_sep='\t',print_snippets=False,biblio_props=[]):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         row = str()
         for t in id_types:
@@ -192,31 +194,23 @@ class Reference(dict):
                 row = row + col_sep
 
         row = row[:len(row)-1] #remove last separator
-        for prop_id, prop_values in self.items():
-            prop_val = ';'.join(map(str,prop_values))
-            if prop_id in ['Title', 'Abstract']:
-                prop_val = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_val)
-            row = row + col_sep + prop_id + ':' + prop_val
 
-        if not sentence_props: #printing only sentences
-            for text_ref, prop in self.snippets.items():
-                sntc = '.'.join(prop[SENTENCE])
-                sntc = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sntc)
-                row = row + col_sep + text_ref + ':' + sntc
-        else:
-            for text_ref, prop in self.snippets.items():
-                has_annotation = False
-                for prop_id, prop_values in dict(prop).items():
-                    if prop_id in sentence_props:
-                        prop_value = '.'.join(prop_values)
-                        row = row + col_sep + prop_id + ' ('+text_ref+')' + ': ' + prop_value
-                        has_annotation = True
-                if has_annotation:
-                    sentence_with_prop = '.'.join(self.snippets[text_ref][SENTENCE])
-                    sentence_with_prop = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sentence_with_prop)
-                    row = row + col_sep + text_ref+ ': ' + sentence_with_prop
+        for prop_id in biblio_props:
+            try:
+                prop_values_str = ';'.join(self[prop_id])
+                if prop_id in ['Title', 'Abstract']:
+                    prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_values_str)
+            except KeyError:
+                prop_values_str = ''
+            
+            row = row + col_sep + prop_values_str
+            #row = row + col_sep + prop_id + ':' + prop_values_str
+
+        if print_snippets:
+            sentence_props =  json.dumps(self.snippets)
+            row += col_sep + sentence_props
+
         return row
-
 
     def _merge(self, other):
         if isinstance(other, Reference):
