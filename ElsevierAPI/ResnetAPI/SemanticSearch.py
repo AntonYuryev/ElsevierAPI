@@ -6,7 +6,7 @@ import math
 import re
 from .PathwayStudioGOQL import OQL
 from .NetworkxObjects import PS_ID_TYPES
-from ..ETM_API.references import RELATION_PROPS
+from ..ETM_API.references import SENTENCE_PROPS
 from .ResnetGraph import ResnetGraph
 from .ResnetAPISession import APISession
 from ..ETM_API.etm import ETM
@@ -314,12 +314,15 @@ class SemanticSearch (APISession):
     def need_references(self):
         return 'Sentence' in self.relProps if self.__print_refs__ else ''
 
-    def print_references(self, column_name:str or int, fname:str, for_rel_types:list=None,with_effect:list=None,in_direction:str=None):
+    def print_references(self, column_name:str or int, fname:str, for_rel_types:list=None,with_effect:list=None,in_direction:str=None,
+                            pubid_types=[],biblio_props=[],print_snippets=False):
         old_rel_props = self.relProps
 
-        self.add_rel_props(PS_ID_TYPES)
-        reference_properties = ['PubYear','Title','Sentence']
-        self.add_rel_props(reference_properties)
+        self.add_rel_props(pubid_types)
+        self.add_rel_props(biblio_props)
+        if print_snippets:
+            self.add_rel_props(SENTENCE_PROPS)
+
         concept_ids = self.__column_ids__[column_name]
         if column_name[:len(self._col_name_prefix)] == self._col_name_prefix:
             concept_name = column_name[len(self._col_name_prefix):]
@@ -327,14 +330,29 @@ class SemanticSearch (APISession):
             concept_name = column_name
             
         with open(fname,'w',encoding='utf-8') as f:
-            sep = '\t'
+            # header
+            f.write('Concept\tEntity\t')
+            for id in pubid_types:
+                f.write(id+'\t')
+
+            biblio_header = ''
+            for propid in biblio_props:
+                biblio_header += propid+'\t'
+
+            if print_snippets:
+                biblio_header += 'Snippets\n'
+            else:
+                biblio_header[-1] = '\n'
+
+            f.write(biblio_header)
+
             for i in self.RefCountPandas.index:
                 entity_ids = list(self.RefCountPandas.loc[i][self.__temp_id_col__])
                 entity_name = self.RefCountPandas.loc[i][self.__resnet_name__]
                 links_between_graph = self.connect_nodes(concept_ids,entity_ids,for_rel_types,with_effect,in_direction)
                 references = links_between_graph.count_references()
                 for ref in references:
-                    ref_str = ref.to_str(PS_ID_TYPES, '\t',reference_properties)
+                    ref_str = ref.to_str(pubid_types,'\t',print_snippets,biblio_props)
                     f.write(concept_name+'\t'+entity_name+'\t'+ref_str+'\n')
 
             self.relProps = old_rel_props

@@ -113,7 +113,7 @@ class APISession(PSNetworx):
 
     def add_rel_props(self, add_props:list):
         self.relProps = self.relProps+[i for i in add_props if i not in self.relProps]
-        if SENTENCE_PROPS.difference(add_props) and 'TextRef' not in self.relProps:
+        if set(SENTENCE_PROPS).difference(add_props) and 'TextRef' not in self.relProps:
             self.relProps.append('TextRef')
 
     def add_ent_props(self, add_props: list):
