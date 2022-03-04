@@ -1,11 +1,11 @@
 from ElsevierAPI import open_api_session
 import pandas as pd
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 import xlsxwriter
 import urllib.parse
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 
-DATA_DIR = 'D:/Python/Quest/ETM references/'
+DATA_DIR = 'D:/Python/Quest/report tables/'
 api_config = 'path2apiconfig.json'
 api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
 ps_api = open_api_session(api_config) # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json

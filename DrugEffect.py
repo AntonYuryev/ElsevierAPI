@@ -60,6 +60,7 @@ class RepurposeDrug(TargetIndications):
         return False
 
     def find_drug_indications(self):
+        indications2return = set()
         indic_str = ','.join(self.indication_types)
         # PART I: Finding all possible indications
         if self.needs_clinical_trial():
@@ -67,6 +68,7 @@ class RepurposeDrug(TargetIndications):
             OQLquery = 'SELECT Relation WHERE objectType = ClinicalTrial AND NeighborOf ({select_drug}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_types}))'
             ClinicalTrialIndictions = self.process_oql(OQLquery.format(select_drug=self.SELECTdrug, indication_types = indic_str),REQUEST_NAME)
             found_indications = ClinicalTrialIndictions.get_entity_ids(self.indication_types)
+            indications2return.update(found_indications)
             print('Found %d indications in %s clinical trials' % (len(found_indications), self.drug_name))
 
         effect = 'negative' if self.required_effect_on_indications == INHIBIT else 'positive'
@@ -75,11 +77,14 @@ class RepurposeDrug(TargetIndications):
         oql_query = OQLquery.format(eff=effect, select_drug=self.SELECTdrug,indication_types = indic_str)
         LiteratureIndications = self.process_oql(oql_query, REQUEST_NAME)
         found_indications= LiteratureIndications.get_entity_ids(self.indication_types)
+        indications2return.update(found_indications)
         print('Found %d indications reported in scientific literature for %s' % (len(found_indications), self.drug_name))
         self.drug_ids = self.Graph.get_entity_ids(['SmallMol'],['ObjTypeName'])
+        return list(indications2return)
 
     def find_indications4similars(self):
         if not self.similar_drugs: return
+        indications2return = set()
         indic_str = ','.join(self.indication_types)
         if self.needs_clinical_trial():
             REQUEST_NAME = 'Find indications by clinical trials for {similars}'.format(similars=self.similar_drugs)
@@ -88,6 +93,7 @@ class RepurposeDrug(TargetIndications):
             OQLquery = 'SELECT Relation WHERE objectType = ClinicalTrial AND NeighborOf ({select_drugs}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_types}))'
             SimilarDrugsClinicalTrials = self.process_oql(OQLquery.format(select_drugs=select_similar_drugs, indication_types=indic_str), REQUEST_NAME)
             found_indications = SimilarDrugsClinicalTrials.get_entity_ids(self.indication_types)
+            indications2return.update(found_indications)
             print('Found %d indications in clinical trials for drugs similar to %s' % (len(found_indications), self.drug_name))
 
         effect = 'negative' if self.required_effect_on_indications == INHIBIT else 'positive'
@@ -96,7 +102,9 @@ class RepurposeDrug(TargetIndications):
         SimilarDrugsIndications = self.process_oql(OQLquery.format(eff=effect,select_drugs=select_similar_drugs,indication_types=indic_str), REQUEST_NAME)
         self.similar_drug_ids = SimilarDrugsIndications.get_entity_ids(['SmallMol'])
         found_indications = SimilarDrugsIndications.get_entity_ids(self.indication_types)
+        indications2return.update(found_indications)
         print('Found %d indications reported in scientific literature or drugs similar to %s' % (len(found_indications), self.drug_name))
+        return list(indications2return)
 
     def score_drug_semantics(self):
         colname = self.drug_name + ' cliniclal trials'
@@ -169,21 +177,23 @@ if __name__ == "__main__":
     # must be True if there are a lot of curated pathways with receptor name included into pathway name
     
     dcp.flush_dump_files()
-    dcp.find_drug_indications()
+    drug_indication_ids = dcp.find_drug_indications()
     if similars:
-        dcp.find_indications4similars()
+        indication_set = set(drug_indication_ids)
+        indication_set.update(dcp.find_indications4similars())
+        drug_indication_ids = list(indication_set)
 
     dcp.strict_mode = True
-    if not dcp.strict_mode:
-        dcp.find_target_indications()
-        dcp.indications4chem_modulators()
-        dcp.indications4partners()
-    else:
-        dcp.get_GVs()
-    
+    dcp.find_target_indications()
+    dcp.indications4chem_modulators()
+    dcp.indications4partners()
     dcp.get_pathway_componets()
 
-    dcp.init_semantic_search()
+    if dcp.strict_mode:
+        dcp.init_semantic_search(drug_indication_ids)
+    else:
+        dcp.init_semantic_search()
+        
     dcp.score_drug_semantics()
     dcp.score_semantics()
 

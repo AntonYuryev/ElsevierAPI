@@ -49,8 +49,8 @@ class BiomarkersReport(SemanticSearch):
         super().__init__(APIconfig)
         self.APIconfig = APIconfig
         self.PageSize = 500
-        self.add_rel_props(['Name','Sentence','PubYear','Title','RelationNumberOfReferences'])
-        self.add_ent_props(['Name'])
+        #self.add_rel_props(['Name','Sentence','PubYear','Start','Title','RelationNumberOfReferences'])
+        #self.add_ent_props(['Name'])
         self.biomarker_type = biomarker_type
         if biomarker_type == SOLUBLE: self.add_rel_props(['Tissue'])
         if journal_filter_fname:
@@ -66,8 +66,7 @@ class BiomarkersReport(SemanticSearch):
             mapping_prop = 'Alias'
             prop2obj = self.map_prop2entities([disease_name],mapping_prop,DISEASES,get_childs=True)
         
-        # prop2obj = {propValue:{id:psObj}}
-        if prop2obj:
+        if prop2obj: # prop2obj = {propValue:{id:psObj}}
             mapped_diseases = list(prop2obj[disease_name].values())
             self.Disease = PSObject(mapped_diseases[0])
         else:
@@ -130,6 +129,9 @@ class BiomarkersReport(SemanticSearch):
         print('Will score %d biomarkers linked to %s' % (len(BiomarkerScores),self.Disease['Name'][0]))
         self.load_pandas(BiomarkerScores,prop_names_in_header=True) #maps entities in ['Name'] column
 
+    def __input_disease_column(self):
+        return self._col_name_prefix+self.Disease['Name'][0]
+
     def semantic_search(self):
         disease_name2ids = dict()
         for disease in self.diseases:
@@ -160,10 +162,11 @@ class BiomarkersReport(SemanticSearch):
 
         self.fout_prefix = bm.Disease['Name'][0]+biomarker_descr
         if self.journal_filter:
-            self.fout_prefix  += ' from selected journals '
+            self.fout_prefix  += ' from selected journals'
         count_file = self.data_dir+self.fout_prefix+" biomarkers counts.tsv"
         ref_file = self.data_dir+self.fout_prefix+" biomarker references.tsv"
-        self.print_ref_count(count_file,referencesOut=ref_file,sep='\t')
+        self.print_ref_count(count_file,sep='\t')
+        self.print_references(self.__input_disease_column(),ref_file, for_rel_types=biomarker_rel_types)
         print ('Semantic counts for each biomarker are in %s' % count_file)
         print('References supporting semantic counts are in %s' % ref_file)
 
@@ -191,7 +194,7 @@ class BiomarkersReport(SemanticSearch):
 
         self.semantic_search()
         self.RefCountPandas.drop(columns=[self.__mapped_by__,'Resnet name'],inplace=True)
-        input_disease_col = self._col_name_prefix+self.Disease['Name'][0]
+        input_disease_col = self.__input_disease_column()
         if add_specificity:
             self.add_specificity()
             normalized_score_col = 'Normalized score'
@@ -234,31 +237,35 @@ class BiomarkersReport(SemanticSearch):
                 biomarker = biomarker2disease.loc[row]['Biomarker']
                 disease = biomarker2disease.loc[row]['Disease']
                 total_refs, ref_ids, ps_references = self.Graph.recent_refs(biomarker,disease,with_children=True)
-                biomarker2disease.at[row, 'Recent pubs'] = ref_ids
+                if ref_ids:
+                    biomarker2disease.at[row, 'Recent pubs'] = ref_ids
         elif max_etm_row:
             for i in range(0,max_etm_row):
                 biomarker = biomarker2disease.loc[i]['Biomarker']
                 disease = biomarker2disease.loc[i]['Disease']
                 search_terms = [biomarker,disease] + add2etm
-                ethm_hit_count,ref_ids,etm_refs = ETM.etm_relevance(search_terms,self.APIconfig)
-                biomarker2disease.at[i,'#ETM refs'] = int(ethm_hit_count)
-                biomarker2disease.at[i,'top ETM refs'] = ref_ids
+                etm_hit_count,ref_ids,etm_refs = ETM.etm_relevance(search_terms,self.APIconfig)
+                if ref_ids:
+                    biomarker2disease.at[i,'#ETM refs'] = int(etm_hit_count)
+                    biomarker2disease.at[i,'top ETM refs'] = ref_ids
 
         biomarker2disease['Type'] = biomarker2disease['Biomarker'].apply(lambda x: self.name2objs[x][0]['ObjTypeName'][0])
-        count_file = self.data_dir+self.fout_prefix+' biomarker-disease map.txt'
+        count_file = self.data_dir+self.fout_prefix+' biomarker-disease map.tsv'
         biomarker2disease.to_csv(count_file,sep='\t', index=False)
         print ('Semantic counts for each biomarker-disease pair are in %s' % count_file)
+
 
 
 
 if __name__ == "__main__":
     start_time = time.time()
     APIconfig = load_api_config()
-    journal_filter_fname = 'D:/Python/Quest/High-quality journals.txt'
+    journal_filter_fname = 'D:/Python/Quest/report tables/High-quality journals.txt'
     #journal_filter_fname = ''
             
-    bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
-    bm.data_dir = 'D:/Python/Quest/'
+    #bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
+    bm = BiomarkersReport(APIconfig,GENETIC)
+    bm.data_dir = 'D:/Python/Quest/report tables/'
     bm.flush_dump()
 
     calculate_specificity = False if bm.biomarker_type == GENETIC else False 
