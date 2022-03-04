@@ -5,8 +5,7 @@ import networkx as nx
 import math
 import re
 from .PathwayStudioGOQL import OQL
-from .NetworkxObjects import PS_ID_TYPES
-from ..ETM_API.references import SENTENCE_PROPS
+from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_ID_TYPES
 from .ResnetGraph import ResnetGraph
 from .ResnetAPISession import APISession
 from ..ETM_API.etm import ETM
@@ -305,45 +304,48 @@ class SemanticSearch (APISession):
 
         else: print("Concept \"%s\" has no links to entities" % (ConceptName))
         return linked_entities_counter
-    
+
+
     def flush_dump(self):
         self.flush_dump_files()
         open(self.__cntCache__, 'w').close()
         open(self.__refCache__, 'w').close()
 
-    def need_references(self):
-        return 'Sentence' in self.relProps if self.__print_refs__ else ''
 
     def print_references(self, column_name:str or int, fname:str, for_rel_types:list=None,with_effect:list=None,in_direction:str=None,
                             pubid_types=[],biblio_props=[],print_snippets=False):
-        old_rel_props = self.relProps
+        old_rel_props = self.relProps # caching current session properties
+        
+        article_identifiers = pubid_types if pubid_types else PS_ID_TYPES
+        biblio_properties = biblio_props if biblio_props else list(PS_BIBLIO_PROPS)
+        self.add_rel_props(article_identifiers)
+        self.add_rel_props(biblio_properties)
+        if print_snippets: self.add_rel_props(SENTENCE_PROPS)
 
-        self.add_rel_props(pubid_types)
-        self.add_rel_props(biblio_props)
-        if print_snippets:
-            self.add_rel_props(SENTENCE_PROPS)
-
+        if isinstance(column_name, int):
+            score_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
+            column_name = score_columns[column_name]
+            
         concept_ids = self.__column_ids__[column_name]
         if column_name[:len(self._col_name_prefix)] == self._col_name_prefix:
             concept_name = column_name[len(self._col_name_prefix):]
         else:
             concept_name = column_name
-            
+        
+        print('\nPrinting references for semantic search concept "%s"\n' % concept_name)
         with open(fname,'w',encoding='utf-8') as f:
-            # header
+            # printing header
             f.write('Concept\tEntity\t')
-            for id in pubid_types:
-                f.write(id+'\t')
+            for id in pubid_types: f.write(id+'\t')
 
             biblio_header = ''
-            for propid in biblio_props:
+            for propid in biblio_properties:
                 biblio_header += propid+'\t'
 
             if print_snippets:
                 biblio_header += 'Snippets\n'
             else:
-                biblio_header[-1] = '\n'
-
+                biblio_header = biblio_header[:-1]+'\n'
             f.write(biblio_header)
 
             for i in self.RefCountPandas.index:
@@ -352,7 +354,7 @@ class SemanticSearch (APISession):
                 links_between_graph = self.connect_nodes(concept_ids,entity_ids,for_rel_types,with_effect,in_direction)
                 references = links_between_graph.count_references()
                 for ref in references:
-                    ref_str = ref.to_str(pubid_types,'\t',print_snippets,biblio_props)
+                    ref_str = ref.to_str(pubid_types,'\t',print_snippets,biblio_properties)
                     f.write(concept_name+'\t'+entity_name+'\t'+ref_str+'\n')
 
             self.relProps = old_rel_props
@@ -376,36 +378,6 @@ class SemanticSearch (APISession):
 
         PandasToPrint.to_csv(countFile,**kwargs)
 
-        return 
-        if len(referencesOut) > 0:
-            #ref_pandas = self.to_pandas()
-            temp_fname = '__temp__.tsv'
-            sep = '\t'
-            self.Graph.print_references(temp_fname,self.relProps,self.entProps,col_sep=sep)
-
-            search_entity_names = list(self.RefCountPandas[self.__resnet_name__])
-            f = open(temp_fname,'r',encoding='utf-8')
-            with open(referencesOut, 'w',encoding='utf-8') as fout:
-                header = f.readline()
-                col_names = re.split('\t|\n',header)
-                regulator_column = col_names.index('Regulator:Name')
-                target_column = col_names.index('Target:Name')
-                fout.write('Search Entity'+'\t'+header)
-
-                for line in f.readlines():
-                    columns = re.split('\t|\n',line)
-                    search_entity = '' 
-                    if columns[regulator_column] in search_entity_names:
-                        search_entity = columns[regulator_column]
-                    elif columns[target_column] in search_entity_names:
-                        search_entity = columns[target_column]
-                    fout.write(search_entity+'\t'+line)
-            f.close()
-            os.remove(temp_fname)
-        else:
-            self.Graph.print_references(self.__refCache__,relPropNames=self.relProps,entity_prop_names=['Name'],access_mode='a')
-            print('Supporting semantic triples are saved to %s for protection or re-use' % self.__refCache__)
- 
 
     def read_cache(self):#returns last concept linked in cache
         try:

@@ -197,10 +197,17 @@ class ResnetGraph (nx.MultiDiGraph):
             references.update(list(r.References.values()))
 
         references = list(references)
-        def sortkey(x):
-            t = [x[PUBYEAR][0]]
-            t = t + list(x.Identifiers.values())
-            return tuple(t)
+
+        def sortkey(ref:dict):
+            try:
+                year = ref[PUBYEAR][0]
+            except KeyError:
+                try:
+                    year = ref['Start'][0]
+                    year = year[-4:]
+                except KeyError: year = '1812'
+            return tuple([year] + list(ref.Identifiers.values()))
+
         references.sort(key=lambda x: sortkey(x), reverse=True)
         total_refs = len(references)
         recent_refs = references[:ref_limit] if ref_limit else references
