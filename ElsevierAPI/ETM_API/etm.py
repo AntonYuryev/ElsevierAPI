@@ -1,11 +1,12 @@
 from .references import DocMine
-from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,PS_ID_TYPES
+from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES
 import urllib.request
 import urllib.parse
 import json
 import time
 from datetime import timedelta
 import xlsxwriter
+import os
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
@@ -285,6 +286,28 @@ class ETM:
             return json.loads(the_page.decode('utf-8'))
         else:
             return []
+
+    def __download(self, hit_count:int):
+        print('\nPerforming ETM search "%s"' % self.search_name)
+        print ('Query: %s found %d results' % (self.query,self.hit_count))
+        start = time.time()
+        articles = list()
+        for page in range(0,self.hit_count,self.page_size):
+            self.params['start'] = page
+            result = self.__get_result()
+            articles += result['article-data']
+            download_count =len(articles)
+            print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
+        return articles
+
+    def __dumps(self, articles:list, into_file:str):
+        try:
+            dump = open(into_file, "w", encoding='utf-8')
+            dump.write(json.dumps(articles,indent=1))
+        except FileNotFoundError:
+            # path was specified incorrectly, dumps into the current dir
+            dump = open(self.search_name+'.json', "w", encoding='utf-8')
+            dump.write(json.dumps(articles,indent=1))
  
     def __init__(self,query, search_name, APIconfig:dict, etm_dump_dir:str, etm_stat_dir, add_params={}):
         self.url = APIconfig['ETMURL']  #ETMurl = 'https://discover.elseviertextmining.com/api/'
@@ -302,47 +325,37 @@ class ETM:
         self.references = set()
 
 
-    def load_from_json(self, use_cache = True):
-        dumpfile_name = self.etm_results_dir+self.search_name+'.json'
-        search_again = False
+    def load_from_json(self,use_cache=True):
         if use_cache:
+            dumpfile_name = self.etm_results_dir+self.search_name+'.json'
             try:
                 # attepts to find json file with ETM results saved after ETM API call below
                 f = open(dumpfile_name,'r')
                 articles = json.load(f)
+                f.close()
+
                 path_end = dumpfile_name.rfind('/')
                 if path_end < 0:
                     path_end = dumpfile_name.rfind('\\')
                 fname = dumpfile_name[path_end+1:]
                 cache_path = dumpfile_name[:path_end]
                 print('Found "%s" file in "%s" cache with %d articles. Will use it to load results' % (fname,cache_path,len(articles)))
+                
                 if (self.hit_count > len(articles)): # hit_count is 1-based index!!!
-                    print('Current ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(articles)))
-                f.close()
+                    print('Today ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(articles)))
+                    file_date_modified = os.path.getctime(dumpfile_name)
+                    self.params.update({'so_d':str(file_date_modified)}) #2003-03-19
+                    result = self.__get_result()
+                    hit_count = result['total-hits='] if result else 0
+                    update_articles = self.__download(hit_count)
+                    articles = articles + update_articles
+                    self.__dumps(articles,dumpfile_name)
             except FileNotFoundError:
-                search_again = True
-                pass
-
-        if search_again or not use_cache:
-            #if json dump file is not found new ETM search is initiated
-            print('\nPerforming ETM search "%s"' % self.search_name)
-            print ('Query: %s found %d results' % (self.query,self.hit_count))
-            start = time.time()
-            articles = list()
-            for page in range(0,self.hit_count,self.page_size):
-                self.params['start'] = page
-                result = self.__get_result()
-                articles += result['article-data']
-                download_count =len(articles)
-                print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
-            
-            if use_cache:
-                try:
-                    dump = open(dumpfile_name, "w", encoding='utf-8')
-                    dump.write(json.dumps(articles,indent=1))
-                except FileNotFoundError:
-                    dump = open(self.search_name+'.json', "w", encoding='utf-8')
-                    dump.write(json.dumps(articles,indent=1))
+                #if json dump file is not found new ETM search is initiated
+                articles = self.__download(self.hit_count)
+                self.__dumps(articles,dumpfile_name)            
+        else:
+            articles = self.__download(self.hit_count)
 
         relevance_rank = 1
         for article in articles:
@@ -361,8 +374,6 @@ class ETM:
         self.term2refs = dict() # {term:{ref}}
         self.keywords2ref = dict() #{keyword:{ref}}
         for ref in self.references:
-       #     if isinstance(ref, ETMjson):
-       #         self.references.add(ref)
             for p in stat_prop_list:
                 ref.count_property(self.statistics[p], p)
 
@@ -477,7 +488,7 @@ class ETM:
 
         ref_ids = list()
         for ref in references:
-            for id_type in PS_ID_TYPES:
+            for id_type in REF_ID_TYPES:
                 try:
                     identifier = ref.Identifiers[id_type]
                     ref_ids.append(identifier)
@@ -487,5 +498,26 @@ class ETM:
         
         best_refs_str = ';'.join(ref_ids)
         return hit_count, best_refs_str, references
-        
+
+    @staticmethod
+    def count_refs(ref_counter:set, references:list):
+        ref_counter.update(references)
+        counter_refs = ref_counter.intersection(set(references))
+        for ref in counter_refs:
+            try:
+                count = ref['Citation index'][0]
+                ref['Citation index'] = [count + 1]
+            except KeyError:
+                ref['Citation index'] = [1]
+        return 
+
+    @staticmethod
+    def print_citation_index(ref_counter:set,fname:str):
+        to_sort = list(ref_counter)
+        to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
+        with open(fname, 'w', encoding='utf-8') as f:
+            for ref in to_sort:
+                ref_str = ref.get_biblio_str()
+                count = ref['Citation index'][0]
+                f.write(str(count)+'\t'+ref_str+'\n')
 

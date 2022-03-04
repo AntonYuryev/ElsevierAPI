@@ -26,7 +26,7 @@ ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
 PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
 CLINTRIAL_PROPS = {'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator'}
 JOURNAL_PROPS = {JOURNAL,'ISSN','ESSN',MEDLINETA}
-PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes'}|JOURNAL_PROPS
+PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes','Start'}|JOURNAL_PROPS # 'Start' = 'PubYear'
 BIBLIO_PROPS = set(PS_BIBLIO_PROPS)
 BIBLIO_PROPS.add(INSTITUTIONS)
 REF_ID_TYPES = PS_ID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
@@ -37,7 +37,7 @@ SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue'
 RELATION_PROPS = {'Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
 
-NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences
+NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences, titles, abstracts
 
 class Reference(dict):  
 # self{BIBLIO_PROPS[i]:[values]}; Identifiers{REF_ID_TYPES[i]:identifier}; Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}
@@ -117,17 +117,27 @@ class Reference(dict):
         except KeyError:
             self[PropId] = [PropValue]
 
+    def get_equivalent(self, ref_list:set):
+        for ref in ref_list:
+            if ref == self: return ref
+
+        return dict()
+
     def update_with_value(self, PropId, PropValue:str):
+        clean_prop = PropValue.strip(' .')
+        self_clean_props = set(map(lambda x: str(x).strip(' .'), PropValue))
         try:
-            self[PropId] = list(set(self[PropId]) | {PropValue})
+            self[PropId] = list(set(self_clean_props|{clean_prop}))
         except KeyError:
-            self[PropId] = [PropValue]
+            self[PropId] = [clean_prop]
 
     def update_with_list(self, PropId, PropValues: list):
+        clean_props = list(map(lambda x: str(x).strip(' .'), PropValues))
+        self_clean_props = list(map(lambda x: str(x).strip(' .'), PropValues))
         try:
-            self[PropId] = list(set(self[PropId] + PropValues))
+            self[PropId] = list(set(self_clean_props + clean_props))
         except KeyError:
-            self[PropId] = list(set(PropValues))
+            self[PropId] = list(set(clean_props))
 
     def add_sentence_prop(self, text_ref:str, propID:str, prop_value:str):
         try:
@@ -183,15 +193,27 @@ class Reference(dict):
 
         return False
            
+
+    def __identifiers_str(self,col_sep='\t'):
+        for i in REF_ID_TYPES:
+            try:
+                return i+':'+self.Identifiers[i]
+            except KeyError: 
+                continue
+        return 'no identifier available'
     
     def to_str(self,id_types:list=None,col_sep='\t',print_snippets=False,biblio_props=[]):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         row = str()
-        for t in id_types:
-            try:
-                row = row + t+':'+self.Identifiers[t]+col_sep
-            except KeyError:
-                row = row + col_sep
+        if isinstance(id_types,list):
+            for t in id_types:
+                try:
+                    row = row + t+':'+self.Identifiers[t]+col_sep
+                except KeyError:
+                    row = row + col_sep
+        else:
+            row = self.__identifiers_str() + col_sep
+
 
         row = row[:len(row)-1] #remove last separator
 
@@ -208,13 +230,38 @@ class Reference(dict):
 
         if print_snippets:
             sentence_props =  json.dumps(self.snippets)
+            sentence_props = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sentence_props)
             row += col_sep + sentence_props
 
         return row
 
+
+    def get_biblio_str(self):
+        try:
+            title = self[TITLE][0]
+            if title[-1] != '.': title += '.'
+        except KeyError:
+            title = 'No title available'
+        try:
+            year = str(self[PUBYEAR][0])
+        except KeyError:
+            year = 'year unknown'
+        try:
+            authors = ','.join(self[AUTHORS])
+            if authors:
+                if authors[-1] != '.': authors += '.'
+            else:
+                authors = 'unknown authors'
+        except KeyError:
+            authors = 'unknown authors'
+        return title+' ('+year+'). '+authors +' '+self.__identifiers_str()
+
+
     def _merge(self, other):
         if isinstance(other, Reference):
-            self.update(other)
+            for prop, values in other.items():
+                self.update_with_list(prop,values)
+
             self.Identifiers.update(other.Identifiers)
 
             for textref, prop2val in other.snippets.items():
@@ -370,7 +417,6 @@ class DocMine (Reference):
                 counter[v] = current_count+1
             except KeyError:
                 counter[v] = 1
-
 
     @staticmethod
     def dict2worksheet(workbook:xlsxwriter.Workbook, worksheet_name, dict2print:dict, header:list, key_col_width=50):
