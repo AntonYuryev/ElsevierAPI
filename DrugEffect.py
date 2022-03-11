@@ -16,7 +16,7 @@ PREDICT_RANK_INDICATIONS = False
 pct = '%'
 MAP2ONTOLOGY = [
                 'biological phenomena and functions concerning organ systems',
-                'cellular, subcellular and molecular biological phenomena and functions'.format(p=pct),
+                'cellular, subcellular and molecular biological phenomena and functions',
                 'behavior', 
                 'mental function'
                 ]
