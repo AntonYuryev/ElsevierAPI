@@ -13,6 +13,14 @@ RANK_SUGGESTED_INDICATIONS = True
 PREDICT_RANK_INDICATIONS = False
 # also predict indication using biology of the drug target(s)
 
+pct = '%'
+MAP2ONTOLOGY = [
+                'biological phenomena and functions concerning organ systems',
+                'cellular, subcellular and molecular biological phenomena and functions'.format(p=pct),
+                'behavior', 
+                'mental function'
+                ]
+
 class RepurposeDrug(TargetIndications):
     pass
     def __init__(self, APIconfig):
@@ -201,7 +209,9 @@ if __name__ == "__main__":
     dcp.print_ref_count(fname_prefix + " counts.tsv",sep='\t')
     dcp.print_drug_indictaion_refs()
 
-    NormalizedCount = dcp.normalize_counts()
+    ontology_map = dcp.child2parent(MAP2ONTOLOGY)
+
+    NormalizedCount = dcp.normalize_counts(ontology_map)
     fout = fname_prefix + ' normalized report.tsv'
     NormalizedCount.to_csv(fout, sep='\t', index=False, float_format='%g')
     print("Repurposing %s was done in %s" % (dcp.drug_name , dcp.execution_time(global_start)))

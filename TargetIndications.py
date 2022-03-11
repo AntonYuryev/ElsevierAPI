@@ -456,7 +456,8 @@ class TargetIndications(SemanticSearch):
             print('Linked %d indications to %s pathway components' % (linked_entities_count,t_n))
         
 
-    def normalize_counts(self):
+    def normalize_counts(self, annotate_with_ontology=dict()):
+        # annotate_with_ontology = {indication:ontology_category}
         NormalizedCount = pd.DataFrame()
         weights = pd.DataFrame()
         refcount_cols = [col for col in self.RefCountPandas.columns if 'RefCount' in col]
@@ -493,11 +494,41 @@ class TargetIndications(SemanticSearch):
         NormalizedCount = NormalizedCount.sort_values(by=['Final score'],ascending=False)
         NormalizedCount = NormalizedCount.loc[NormalizedCount['Final score'] > 0.0] # removes rows with all zeros
 
-        # use this filter only if indications linked to GVs are of interest
+        if annotate_with_ontology:
+            def get_ontology_parent(indication_name):
+                try:
+                    parents = annotate_with_ontology[indication_name]
+                    return ';'.join(parents)
+                except KeyError: return ''
+            NormalizedCount['Ontology group'] = NormalizedCount['Name'].apply(get_ontology_parent)
+
+      # use this filter only if indications linked to GVs are of interest
       #  try: NormalizedCount = NormalizedCount.loc[NormalizedCount[self.__colnameGV__].notna()]
       #  except KeyError: pass
         return weights.append(NormalizedCount)
 
+    def child2parent(self, ontology_groups:list):
+        return_dict_prop = 'Name'
+        map_by_props = ['Name']
+        to_return = dict()
+        self.add_ent_props([return_dict_prop])
+        for group_name in ontology_groups:
+            childs = self.child_graph([group_name],map_by_props)
+            children_ids = list(childs.nodes())
+            if not children_ids:
+                children_ids = self._get_obj_ids_by_props([group_name],map_by_props)
+
+            for c in children_ids:
+                child_id2propvals = self.Graph.get_properties({c},return_dict_prop)
+                propvals = list(child_id2propvals.values())[0]
+                for pval in propvals:
+                    try:
+                        to_return[pval].append(group_name)
+                    except KeyError:
+                        to_return[pval] = [group_name]
+
+        return to_return
+        
 
 if __name__ == "__main__":
     start_time = time.time()
@@ -508,7 +539,7 @@ if __name__ == "__main__":
     # if partner_names is empty script will try finding Lgands for Receptor targets and Receptors for Ligand targets 
     partner_class = 'Metabolite ligand' # use it only if partner_names not empty
     rd.indication_types = ['Disease','Virus']
-    rd.set_targets(['CNR1'], 'Protein', partner_names=partner_names, partner_class=partner_class,to_inhibit=False, strict_mode=True)
+    rd.set_targets(['GPR119'], 'Protein', partner_names=partner_names, partner_class=partner_class,to_inhibit=False, strict_mode=True)
     # strict mode ranks only indications suggetsed in the literarure without predicting new indications
     rd.pathway_name_must_include_target = True
     rd.flush_dump_files()
