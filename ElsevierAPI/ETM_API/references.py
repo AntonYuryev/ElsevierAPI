@@ -131,13 +131,11 @@ class Reference(dict):
         except KeyError:
             self[PropId] = [clean_prop]
 
-    def update_with_list(self, PropId, PropValues: list):
-        clean_props = list(map(lambda x: str(x).strip(' .'), PropValues))
-        self_clean_props = list(map(lambda x: str(x).strip(' .'), PropValues))
+    def update_with_list(self, prop_id, prop_values: list):
         try:
-            self[PropId] = list(set(self_clean_props + clean_props))
+            self[prop_id] = list(set(self[prop_id] + prop_values))
         except KeyError:
-            self[PropId] = list(set(clean_props))
+            self[prop_id] = list(set(prop_id))
 
     def add_sentence_prop(self, text_ref:str, propID:str, prop_value:str):
         try:
@@ -247,20 +245,25 @@ class Reference(dict):
         except KeyError:
             year = 'year unknown'
         try:
-            authors = ','.join(self[AUTHORS])
-            if authors:
-                if authors[-1] != '.': authors += '.'
+            authors_list = self[AUTHORS][:3]
+            authors_str = ','.join(authors_list) if authors_list else 'unknown authors.'
+            if len(self[AUTHORS]) > 3:
+                authors_str = authors_list[0]+' et al.'
             else:
-                authors = 'unknown authors'
+                if authors_str[-1] != '.': authors_str += '.'
         except KeyError:
-            authors = 'unknown authors'
-        return title+' ('+year+'). '+authors +' '+self.__identifiers_str()
+            authors_str = 'unknown authors.'
+        return title+' ('+year+'). '+authors_str+' '+self.__identifiers_str()
 
 
     def _merge(self, other):
         if isinstance(other, Reference):
             for prop, values in other.items():
-                self.update_with_list(prop,values)
+                if isinstance(values[0], str):
+                    clean_vals = [v.strip(' .') for v in values]
+                else:
+                    clean_vals = values
+                self.update_with_list(prop,clean_vals)
 
             self.Identifiers.update(other.Identifiers)
 

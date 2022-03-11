@@ -357,11 +357,10 @@ class ETM:
         else:
             articles = self.__download(self.hit_count)
 
-        relevance_rank = 1
         for article in articles:
             etm_ref = ETMjson(article)
-            etm_ref['Relevance rank'] = [relevance_rank]
-            relevance_rank += 1
+            relevance_score = float(article['score'])
+            etm_ref['Relevance rank'] = [relevance_score]
             if hasattr(etm_ref,"Identifiers"):
                 self.references.add(etm_ref)
 
@@ -478,11 +477,10 @@ class ETM:
                 articles += result['article-data']
 
         references = list()
-        relevance_rank = 1
         for article in articles:
             etm_ref = ETMjson(article)
-            etm_ref['Relevance rank'] = [relevance_rank]
-            relevance_rank += 1
+            relevance_score = float(article['score'])
+            etm_ref['Relevance rank'] = [relevance_score]
             if hasattr(etm_ref,"Identifiers"):
                 references.append(etm_ref)
 
