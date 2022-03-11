@@ -314,7 +314,11 @@ class APISession(PSNetworx):
         
         return pretty_xml
 
-
+    def child_graph(self, propValues:list, search_by_properties=[]):
+        if not search_by_properties: search_by_properties = ['Name','Alias']
+        prop_names,prop_values = OQL.get_search_strings(search_by_properties,propValues)
+        oql_query = OQL.get_childs([prop_values],[prop_names])
+        return self.load_graph_from_oql(oql_query,entity_props=self.entProps,get_links=False)
 
 
 

@@ -18,8 +18,6 @@ class SemanticSearch (APISession):
     __mapped_by__ = 'mapped_by'
     __resnet_name__ = 'Resnet name'
     _col_name_prefix = "RefCount to "
-  #  __ETM_stat_prefix = '#ETM results for '
-  #  __ETM_ref_prefix = 'ETM refs for '
     __child_ids__ = 'Child Ids'
     __temp_id_col__ = 'entity_IDs'
     __connect_by_rels__= list()

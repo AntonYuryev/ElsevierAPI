@@ -84,6 +84,13 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             if self.has_property(prop_name,prop_values,case_sensitive): return True
 
         return False
+
+    def prop_values(self, prop_name:str, sep=','):
+        try:
+            prop_values = self[prop_name]
+            return sep.join(map(str,prop_values))
+        except KeyError:
+            return ''
     
 
 class PSRelation(PSObject):

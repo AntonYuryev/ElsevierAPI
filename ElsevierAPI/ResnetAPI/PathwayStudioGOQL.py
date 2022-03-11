@@ -60,6 +60,15 @@ class OQL:
             return oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
 
     @staticmethod
+    def get_group_by_props(PropertyValues: list, SearchByProperties: list):
+        if SearchByProperties[0] in ('id', 'Id', 'ID'):
+            return "SELECT Group WHERE id = " + '(' + ','.join([str(int) for int in PropertyValues]) + ')'
+        else:
+            prop_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
+            return"SELECT Group WHERE (" + prop_names + ") = (" + values + ')'
+
+
+    @staticmethod
     def get_relations_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=[], MinRef=0):
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
             oql_query = "SELECT Relation WHERE id = " + '(' + ','.join([str(int) for int in PropertyValues]) + ')'

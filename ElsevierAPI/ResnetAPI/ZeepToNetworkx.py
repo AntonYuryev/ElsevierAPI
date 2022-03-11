@@ -153,9 +153,9 @@ class PSNetworx(DataModel):
         else:
             return set()
 
-    def _get_obj_ids_by_props(self, propValues: list, search_by_properties=None, get_childs=True,
+    def _get_obj_ids_by_props(self, propValues: list, search_by_properties=[], get_childs=True,
                              only_obj_types=[]):
-        if search_by_properties is None: search_by_properties = ['Name','Alias']
+        if not search_by_properties: search_by_properties = ['Name','Alias']
         
         query_node = OQL.get_entities_by_props(propValues, search_by_properties, only_obj_types)
         target_ids = self._obj_id_by_oql(query_node)
@@ -171,8 +171,7 @@ class PSNetworx(DataModel):
                     self.ID2Children[i] = children
                     child_ids = child_ids + children
 
-            target_ids.update(child_ids)
-            
+            target_ids.update(child_ids)         
         return target_ids
 
 
