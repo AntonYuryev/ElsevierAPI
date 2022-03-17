@@ -8,7 +8,7 @@ from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_ID_TYPES
 from .ResnetGraph import ResnetGraph
 from .ResnetAPISession import APISession
-from ..ETM_API.etm import ETM
+from ..ETM_API.etm import ETMstat
 
 
 class SemanticSearch (APISession): 
@@ -34,6 +34,7 @@ class SemanticSearch (APISession):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
         self.PageSize = 500
         self.DumpFiles = []
+        self.APIconfig = APIconfig
 
 
     @staticmethod
@@ -393,15 +394,16 @@ class SemanticSearch (APISession):
     def apply_and_concat2(dataframe:pd.DataFrame, concept_name, func, column_names):
         return pd.concat((dataframe,dataframe['Name'].apply(lambda cell: pd.Series(func(cell,concept_name),index=column_names))),axis=1)
 
-    def add_ETM_score(self, APIconfig:dict, add_etm_param={}):
+    def add_ETM_score(self, add_etm_param={}):
         etm_df = pd.DataFrame()
         etm_df['Name'] = self.RefCountPandas['Name']
         etm_df[self.__resnet_name__] = self.RefCountPandas[self.__resnet_name__]
         etm_df[self.__mapped_by__] = self.RefCountPandas[self.__mapped_by__]
+        etm_counter = ETMstat(self.APIconfig,add_param=add_etm_param)
 
         def etm_info(cell_value,concept_name):
-            ethm_hit_count, ref_ids, etm_refs = ETM.etm_relevance(cell_value, concept_name, 'rel',add_etm_param,APIconfig)
-            return ethm_hit_count, ref_ids
+            ethm_hit_count, ref_ids, etm_refs = etm_counter.relevant_articles([cell_value, concept_name])
+            return ethm_hit_count, ';'.join(ref_ids)
 
         ref_count_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
         for col_idx, col_name in enumerate(self.RefCountPandas.columns):

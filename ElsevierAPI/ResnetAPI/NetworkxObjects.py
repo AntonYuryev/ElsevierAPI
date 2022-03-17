@@ -91,6 +91,14 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             return sep.join(map(str,prop_values))
         except KeyError:
             return ''
+
+    def to_jsonld(self):
+        self_copy = dict(self)
+        self_copy['@id'] = self_copy.pop('URN')
+        self_copy['@type'] = self_copy.pop('ObjTypeName')
+        for k in self_copy.keys():
+           self_copy[str(k).lower()] = self_copy.pop(k)
+        return json.dumps(self_copy, sort_keys=True, indent=2)
     
 
 class PSRelation(PSObject):
@@ -411,6 +419,30 @@ class PSRelation(PSObject):
         strP = '{"Relation References": ' + json.dumps(self.PropSetToProps) + '}'
         strR = json.dumps(self.Nodes)
         return str1 + '\n' + strP + '\n' + strR + '\n'
+
+    def to_jsonld(self):
+        self.load_references()
+        self_copy = dict(self)
+        self_copy['@type'] = self_copy.pop('ObjTypeName')
+        for k in self_copy.keys():
+           self_copy[str(k).lower()] = self_copy.pop(k)
+
+        try:
+            id = self_copy['URN']
+        except KeyError:
+            id = self_copy['Name']
+            try:
+                mehchanism = self_copy['Mechanism']
+                id = id +':'+ mehchanism
+            except KeyError:
+                pass
+
+        self_copy['@id'] = id
+        self_copy["@context"] = {'references':{"@container" : "@list"}}
+        self_copy['references'] = [ref.to_jsonld() for ref in self.References]
+
+        return json.dumps(self_copy, sort_keys=True, indent=2)
+
 
     def _weight2ref (self, weight_by_prop_name:str, proval2weight:dict):
         try:
