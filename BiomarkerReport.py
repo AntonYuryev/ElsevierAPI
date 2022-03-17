@@ -6,7 +6,7 @@ from ElsevierAPI.ETM_API.references import JOURNAL_PROPS
 import pandas as pd
 import numpy as np
 import time
-from ElsevierAPI.ETM_API.etm import ETM
+from ElsevierAPI.ETM_API.etm import ETMstat
 
 QUANTITATIVE_BIOMARKER_RELS = ['Biomarker','StateChange','QuantitativeChange','CellExpression']
 GENETIC_BIOMARKER_RELS = ['GeneticChange']
@@ -47,7 +47,6 @@ class BiomarkersReport(SemanticSearch):
     
     def __init__(self, APIconfig, biomarker_type:int, journal_filter_fname=''):
         super().__init__(APIconfig)
-        self.APIconfig = APIconfig
         self.PageSize = 500
         #self.add_rel_props(['Name','Sentence','PubYear','Start','Title','RelationNumberOfReferences'])
         #self.add_ent_props(['Name'])
@@ -229,29 +228,32 @@ class BiomarkersReport(SemanticSearch):
 
         biomarker2disease.sort_values(by=['Rank'],ascending=False, inplace=True,ignore_index=True)
         add2etm = []
-        if self.biomarker_type == GENETIC: add2etm = ['terms for genetic variations']
-        if self.biomarker_type == SOLUBLE: add2etm = ['blood']
+        if self.biomarker_type == GENETIC: add2etm_query = ['terms for genetic variations']
+        if self.biomarker_type == SOLUBLE: add2etm_query = ['blood']
 
+        etm_counter = ETMstat(self.APIconfig)
         if self.journal_filter:
             for row in biomarker2disease.index:
                 biomarker = biomarker2disease.loc[row]['Biomarker']
                 disease = biomarker2disease.loc[row]['Disease']
                 total_refs, ref_ids, ps_references = self.Graph.recent_refs(biomarker,disease,with_children=True)
+                [etm_counter._add2counter(r) for r in ps_references]
                 if ref_ids:
                     biomarker2disease.at[row, 'Recent pubs'] = ref_ids
         elif max_etm_row:
             for i in range(0,max_etm_row):
                 biomarker = biomarker2disease.loc[i]['Biomarker']
                 disease = biomarker2disease.loc[i]['Disease']
-                search_terms = [biomarker,disease] + add2etm
-                etm_hit_count,ref_ids,etm_refs = ETM.etm_relevance(search_terms,self.APIconfig)
+                search_terms = [biomarker,disease] + add2etm_query
+                etm_hit_count,ref_ids,etm_refs = etm_counter.relevant_articles(search_terms)
                 if ref_ids:
                     biomarker2disease.at[i,'#References'] = int(etm_hit_count)
-                    biomarker2disease.at[i,'Top References'] = ref_ids
+                    biomarker2disease.at[i,'Top References'] = ';'.join(ref_ids)
 
         biomarker2disease['Type'] = biomarker2disease['Biomarker'].apply(lambda x: self.name2objs[x][0]['ObjTypeName'][0])
         count_file = self.data_dir+self.fout_prefix+' biomarker-disease map.tsv'
         biomarker2disease.to_csv(count_file,sep='\t', index=False)
+        etm_counter.print_counter(self.data_dir+'Bibliography.tsv')
         print ('Semantic counts for each biomarker-disease pair are in %s' % count_file)
 
 

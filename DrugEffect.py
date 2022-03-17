@@ -44,6 +44,11 @@ class RepurposeDrug(TargetIndications):
         # else: self.SELECTdrug = 'SELECT Entity WHERE (Name,Alias) = {drug}'
             
         self.SELECTdrug = self.SELECTdrug.format(drug=drug_name)
+        drug_graph = self.load_graph_from_oql(self.SELECTdrug,entity_props=['Connectivity'],get_links=False,add2self=False)
+        drugs = drug_graph._get_nodes()
+        drugs.sort(key=lambda x: int(x['Connectivity'][0]), reverse=True)
+        self.input_names = [x['Name'][0] for x in drugs]
+
         self.required_effect_on_indications = mode
         self.known_effect_on_targets = type
         if self.required_effect_on_indications == INHIBIT and self.known_effect_on_targets == ANTAGONIST:
@@ -155,24 +160,28 @@ class RepurposeDrug(TargetIndications):
         regulate = ' activated by ' if self.required_effect_on_indications == ACTIVATE else ' inhibited by '
         return rep_pred+indics+regulate+self.drug_name
 
-    def print_drug_indictaion_refs(self):
-        fname_out = dcp.fname_prefix()+" clinical trials.tsv"
+    def print_drug_indictaion_refs(self, data_dir:str):
+        fname_out = data_dir+dcp.fname_prefix()+" clinical trials.tsv"
+        print('Printing clinical trials')
         dcp.print_references(self.drugcolname,fname_out, ['ClinicalTrial'],
                             pubid_types=['NCT ID'],biblio_props=['Title','Start'],print_snippets=True)
 
         effect_str = self.__get_effect_str()
-        fname_out = dcp.fname_prefix()+" references.tsv"
+        fname_out = data_dir+dcp.fname_prefix()+" references.tsv"
+        print('Printing research articles')
         dcp.print_references(self.drugcolname,fname_out, ['Regulation'],[effect_str],
                             pubid_types=['PMID','DOI','PII','PUI','EMBASE'],biblio_props=['Title','PubYear'],print_snippets=True)
 
 if __name__ == "__main__":
     global_start = time.time()
     dcp = RepurposeDrug(load_api_config())
+    DATA_DIR = 'D:/Python/PMI/'
 
     # specify here what indications to find and the type of drug
     similars = [] # names of similar drugs that have same mechanism of action (i.e. same target)
     #dcp.set_drug('cannabinoids', similars, INHIBIT, ['Disease'], AGONIST)
-    dcp.set_drug('CBD compounds', similars, ACTIVATE, ['CellProcess'], ANTAGONIST)
+    input_compound = 'CBD compounds'
+    dcp.set_drug(input_compound, similars, ACTIVATE, ['CellProcess'], ANTAGONIST)
     
     # specify here the drug targets and drug mechanism of action
     partner_names = ['anandamide','endocannabinoid','2-arachidonoylglycerol'] # specify here endogenous ligands for receptor if known
@@ -206,12 +215,12 @@ if __name__ == "__main__":
     dcp.score_semantics()
 
     fname_prefix = dcp.fname_prefix()
-    dcp.print_ref_count(fname_prefix + " counts.tsv",sep='\t')
-    dcp.print_drug_indictaion_refs()
+    dcp.print_ref_count(DATA_DIR+fname_prefix + " counts.tsv",sep='\t')
+    dcp.print_drug_indictaion_refs(DATA_DIR)
 
     ontology_map = dcp.child2parent(MAP2ONTOLOGY)
 
-    NormalizedCount = dcp.normalize_counts(ontology_map)
-    fout = fname_prefix + ' normalized report.tsv'
+    NormalizedCount = dcp.normalize_counts(ontology_map,bibliography=DATA_DIR+fname_prefix+'bibliography.tsv')
+    fout = DATA_DIR+fname_prefix + ' normalized report.tsv'
     NormalizedCount.to_csv(fout, sep='\t', index=False, float_format='%g')
     print("Repurposing %s was done in %s" % (dcp.drug_name , dcp.execution_time(global_start)))

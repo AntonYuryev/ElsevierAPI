@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import time
 import networkx as nx
+from ElsevierAPI.ETM_API.etm import ETMstat
 
 class TargetIndications(SemanticSearch):
     pass
@@ -75,6 +76,7 @@ class TargetIndications(SemanticSearch):
         
         self.Drug_Targets = targets_graph._get_nodes()
         self.target_ids = [x['Id'][0] for x in self.Drug_Targets]
+        self.input_names = [x['Name'][0] for x in self.Drug_Targets]
         self.find_targets_oql = 'SELECT Entity WHERE id = ('+ ','.join(map(str,self.target_ids))+')'
         for t in self.Drug_Targets:
             try:
@@ -93,7 +95,7 @@ class TargetIndications(SemanticSearch):
         
 
     def fname_prefix(self):
-        t_n = ','.join([x['Name'][0] for x in rd.Drug_Targets])
+        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         indics = ','.join(self.indication_types)
         mode = ' antagoinists ' if self.target_activate_indication else ' agonists '
         rep_pred = 'suggested ' if self.strict_mode else 'suggested,predicted ' 
@@ -456,7 +458,7 @@ class TargetIndications(SemanticSearch):
             print('Linked %d indications to %s pathway components' % (linked_entities_count,t_n))
         
 
-    def normalize_counts(self, annotate_with_ontology=dict()):
+    def normalize_counts(self, annotate_with_ontology=dict(),bibliography=''):
         # annotate_with_ontology = {indication:ontology_category}
         NormalizedCount = pd.DataFrame()
         weights = pd.DataFrame()
@@ -502,17 +504,29 @@ class TargetIndications(SemanticSearch):
                 except KeyError: return ''
             NormalizedCount['Ontology group'] = NormalizedCount['Name'].apply(get_ontology_parent)
 
+        if bibliography:
+            etm_counter = ETMstat(self.APIconfig,limit=2)
+            refid_set = set()
+            def add_refs(indication:str):
+                for n in self.input_names:
+                    search_terms = [n,indication]
+                    hit_count,ref_ids,etm_refs = etm_counter.relevant_articles(search_terms,)
+                    refid_set.update(ref_ids)
+                return ';'.join(refid_set)
+            NormalizedCount['References'] = NormalizedCount['Name'].apply(add_refs)
+            etm_counter.print_counter(bibliography)
+
       # use this filter only if indications linked to GVs are of interest
       #  try: NormalizedCount = NormalizedCount.loc[NormalizedCount[self.__colnameGV__].notna()]
       #  except KeyError: pass
         return weights.append(NormalizedCount)
 
-    def child2parent(self, ontology_groups:list):
+    def child2parent(self, parent_ontology_groups:list):
         return_dict_prop = 'Name'
         map_by_props = ['Name']
-        to_return = dict()
+        to_return = dict() # {child_name:[ontoogy_parent_names]}
         self.add_ent_props([return_dict_prop])
-        for group_name in ontology_groups:
+        for group_name in parent_ontology_groups:
             childs = self.child_graph([group_name],map_by_props)
             children_ids = list(childs.nodes())
             if not children_ids:
@@ -528,6 +542,9 @@ class TargetIndications(SemanticSearch):
                         to_return[pval] = [group_name]
 
         return to_return
+
+   
+
         
 
 if __name__ == "__main__":
@@ -535,7 +552,7 @@ if __name__ == "__main__":
     DATA_DIR = 'D:/Python/PMI/'
     APIconfig = load_api_config()
     rd = TargetIndications(APIconfig)
-    partner_names = ['tetrahydrocannabinol','anandamide']
+    partner_names = ['anandamide','endocannabinoid','2-arachidonoylglycerol']
     # if partner_names is empty script will try finding Lgands for Receptor targets and Receptors for Ligand targets 
     partner_class = 'Metabolite ligand' # use it only if partner_names not empty
     rd.indication_types = ['Disease','Virus']
@@ -568,7 +585,7 @@ if __name__ == "__main__":
     ref_file = fname_prefix+"references.tsv"
     #rd.print_references(DATA_DIR+count_file,sep='\t')
 
-    NormalizedCount = rd.normalize_counts()
+    NormalizedCount = rd.normalize_counts(bibliography=DATA_DIR+fname_prefix+'bibliography.tsv')
     fout = fname_prefix +'normalized report.tsv'
     NormalizedCount.to_csv(DATA_DIR+fout, sep='\t', index=False,float_format='%g')
     print('Repurposing of %s was done in %s' % (fname_prefix, rd.execution_time(start_time)))
