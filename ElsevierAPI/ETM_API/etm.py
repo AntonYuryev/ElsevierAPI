@@ -1,4 +1,4 @@
-from .references import DocMine
+from .references import DocMine, Reference
 from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES
 import urllib.request
 import urllib.parse
@@ -7,6 +7,7 @@ import time
 from datetime import timedelta
 import xlsxwriter
 import os
+import math
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
@@ -245,60 +246,147 @@ class ETMjson(DocMine):
         snippet, self.term_ids, self.keywords = self.__parse_snippet(article) #term_ids = {term_id+'\t'+term_name}
         self.add_sentence_prop(text_ref, SENTENCE, snippet)
 
-
-
-class ETM:
+class ETMstat:
     url = 'https://demo.elseviertextmining.com/api'
-    api_key = str()
-    request_type = '/search/advanced'
     page_size = 100
-    def __base_url(self): return self.url+self.request_type+'?'
+    request_type = '/search/basic?'  # '/search/advanced?'
+    def __base_url(self): return self.url+self.request_type
     searchTarget = 'full_index'
     number_snippets = 1
     hit_count = 0
-    search_name = str()
-    query = str()
-    url_request = str()
     params = dict()
-    etm_results_dir = ''
-    etm_stat_dir = ''
-    statistics = dict() # {prop_name:{prop_value:count}}
-    references = set() #set of DocMine objects
+    ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
 
-    def __set_params(self):
+    def __init__(self,APIconfig:dict, limit=5, add_param=dict()):
+        self.url = APIconfig['ETMURL']
         self.params = {
-        'query':self.query,
-        'searchTarget': self.searchTarget,
-        'snip': str(self.number_snippets)+'.desc',
-        'apikey':self.api_key,
-        'limit':self.page_size
-        }
-            
+            'searchTarget': 'full_index',
+            'snip': '1.desc',
+            'apikey':APIconfig['ETMapikey'],
+            'limit': limit,
+            }
+        self.params.update(add_param)
+
+    def __limit(self): return self.params['limit']
+ 
+    def _set_query(self,query:str):
+        self.params['query'] = query
 
     def __get_param_str(self):
         return urllib.parse.urlencode(self.params)
 
-    def __get_result(self):
-        param_str = self.__get_param_str()
-        self.url_request = self.__base_url()+param_str
-        the_page = urllib.request.urlopen(self.url_request).read()
-        if the_page:
-            return json.loads(the_page.decode('utf-8'))
-        else:
-            return []
+    def _url_request(self):
+        return self.__base_url()+self.__get_param_str()
 
-    def __download(self, hit_count:int):
+    def _get_articles(self, page_start=0):
+        if page_start: self.params['start'] = page_start
+        the_page = urllib.request.urlopen(self._url_request()).read()
+        if the_page:
+            result = json.loads(the_page.decode('utf-8'))
+            return result['article-data'], result['total-hits=']
+        else:
+            return [], 0
+
+
+    def _add2counter(self, ref:Reference):
+        for id_type in REF_ID_TYPES:
+            try:
+                identifier = ref.Identifiers[id_type]
+                counter_key = id_type+':'+identifier
+                try:
+                    count_exist = self.ref_counter[counter_key][1]
+                    self.ref_counter[counter_key] = (ref, count_exist+1)  # {str(id_type+':'+identifier):(ref,count)}
+                except KeyError:
+                    self.ref_counter[counter_key] = (ref,1)
+                return identifier
+            except KeyError:
+                continue
+
+
+    def print_counter(self, fname, use_relevance=True):
+        table_rows = list()
+        for identifier, ref_count in self.ref_counter.items():
+            ref = ref_count[0]
+            refcount = ref_count[1]
+            if use_relevance:
+                score = math.ceil(float(ref['Relevance rank'][0]) * refcount)
+                first_col = 'Relevance'
+            else:
+                score = refcount
+                first_col = 'Citation index'
+
+            biblio_str, identifiers = ref.get_biblio_str()
+            table_rows.append((score,biblio_str,identifier))
+
+        table_rows.sort(key=lambda x:x[0],reverse=True)
+        with open(fname, 'w', encoding='utf-8') as f:
+            f.write(first_col+'\tCitation\tPMID or DOI\n')
+            for tup in table_rows:
+                f.write(str(tup[0])+'\t'+tup[1]+'\t'+tup[2]+'\n')
+
+
+    def relevant_articles(self, terms:list):
+        # add_param controls number of best references to return. Defaults to 5
+        query = '{'+'};{'.join(terms)+'}'
+        self._set_query(query)
+        articles = list()
+
+        articles, self.hit_count = self._get_articles()
+
+        if self.__limit() > 100:
+            for page_start in range(len(articles), self.__limit(), 100):
+                more_articles, discard = self._get_articles(page_start=page_start)
+                articles += more_articles
+
+        references = list()
+        for article in articles:
+            etm_ref = ETMjson(article)
+            relevance_score = float(article['score'])
+            etm_ref['Relevance rank'] = [relevance_score]
+            if hasattr(etm_ref,"Identifiers"):
+                references.append(etm_ref)
+
+        ref_ids = list()
+        for ref in references:
+            ref_ids.append(self._add2counter(ref))
+        
+        #best_refs_str = ';'.join(ref_ids)
+        return self.hit_count, ref_ids, references
+
+
+class ETMcache (ETMstat):
+    pass
+    #url = 'https://demo.elseviertextmining.com/api'
+    #api_key = str()
+    request_type = '/search/advanced'
+    #page_size = 100
+    #def __base_url(self): return self.url+self.request_type+'?'
+    #searchTarget = 'full_index'
+    #number_snippets = 1
+    #hit_count = 0
+    search_name = str()
+    #query = str()
+    #url_request = str()
+    #params = dict()
+    etm_results_dir = ''
+    etm_stat_dir = ''
+    statistics = dict() # {prop_name:{prop_value:count}}
+    
+    def references(self):
+        return set([x[0] for x in self.ref_counter.values()])
+
+    def __download(self):
         print('\nPerforming ETM search "%s"' % self.search_name)
         print ('Query: %s found %d results' % (self.query,self.hit_count))
         start = time.time()
         articles = list()
-        for page in range(0,self.hit_count,self.page_size):
-            self.params['start'] = page
-            result = self.__get_result()
-            articles += result['article-data']
+        for page_start in range(0,self.hit_count,self.page_size):
+            more_articles, discard = self._get_articles(page_start=page_start)
+            articles += more_articles
             download_count =len(articles)
             print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
         return articles
+
 
     def __dumps(self, articles:list, into_file:str):
         try:
@@ -310,19 +398,22 @@ class ETM:
             dump.write(json.dumps(articles,indent=1))
  
     def __init__(self,query, search_name, APIconfig:dict, etm_dump_dir:str, etm_stat_dir, add_params={}):
-        self.url = APIconfig['ETMURL']  #ETMurl = 'https://discover.elseviertextmining.com/api/'
-        self.api_key = APIconfig['ETMapikey']
-        self.query = query
-        self.__set_params()
-        if add_params:
-            self.params.update(add_params)
-        result = self.__get_result()
-        self.hit_count = result['total-hits='] if result else 0
+        super().__init__(APIconfig,add_param=add_params)
+        self.params.pop('limit')
+        #self.url = APIconfig['ETMURL']  #ETMurl = 'https://discover.elseviertextmining.com/api/'
+        #self.api_key = APIconfig['ETMapikey']
+        #self.query = query
+        #self.__set_params()
+        #if add_params:
+         #   self.params.update(add_params)
+        #result = self.__get_result()
+        articles, self.hit_count = self._get_articles()
+        #result['total-hits='] if result else 0
         #print('\nETM query %s returns %d documents' % (self.query, self.hit_count))
         self.search_name = search_name
         self.etm_results_dir = etm_dump_dir
         self.etm_stat_dir = etm_stat_dir
-        self.references = set()
+        #self.references = set()
 
 
     def load_from_json(self,use_cache=True):
@@ -345,24 +436,25 @@ class ETM:
                     print('Today ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(articles)))
                     file_date_modified = os.path.getctime(dumpfile_name)
                     self.params.update({'so_d':str(file_date_modified)}) #2003-03-19
-                    result = self.__get_result()
-                    hit_count = result['total-hits='] if result else 0
-                    update_articles = self.__download(hit_count)
+                    #result = self.__get_result()
+                    #hit_count = result['total-hits='] if result else 0
+                    update_articles = self.__download()
                     articles = articles + update_articles
                     self.__dumps(articles,dumpfile_name)
             except FileNotFoundError:
                 #if json dump file is not found new ETM search is initiated
-                articles = self.__download(self.hit_count)
+                articles = self.__download()
                 self.__dumps(articles,dumpfile_name)            
         else:
-            articles = self.__download(self.hit_count)
+            articles = self.__download()
 
         for article in articles:
             etm_ref = ETMjson(article)
             relevance_score = float(article['score'])
             etm_ref['Relevance rank'] = [relevance_score]
             if hasattr(etm_ref,"Identifiers"):
-                self.references.add(etm_ref)
+                #self.references.add(etm_ref)
+                self._add2counter(etm_ref)
 
         
     def get_statistics(self, stat_prop_list):
@@ -372,7 +464,8 @@ class ETM:
 
         self.term2refs = dict() # {term:{ref}}
         self.keywords2ref = dict() #{keyword:{ref}}
-        for ref in self.references:
+        references = self.references()
+        for ref in references:
             for p in stat_prop_list:
                 ref.count_property(self.statistics[p], p)
 
@@ -393,7 +486,8 @@ class ETM:
 
     def _org2address_stats(self):
         org2addres = dict()
-        for ref in self.references:
+        references = self.references()
+        for ref in references:
             for name, address in ref.addresses.items():
                 try:
                     exist_address = org2addres[name]
@@ -407,7 +501,6 @@ class ETM:
             org_address_couner = {org2addres[k]:v for k,v in institution_counter.items()}
             return dict(sorted(org_address_couner.items(), key=lambda item: item[1],reverse=True))
         except KeyError: return dict()
-
 
 
     @staticmethod
@@ -437,66 +530,7 @@ class ETM:
         workbook.close()
 
 
-    @staticmethod
-    def etm_relevance(terms:list, APIconfig, add_param:dict={}):
-        # add_param controls number of best references to return. Defaults to 5
-        try: 
-            limit = add_param['limit']
-        except KeyError:
-            limit = 5
-
-        query = '{'+'};{'.join(terms)+'}'
-        params = {
-        'query':query,
-        'searchTarget': 'full_index',
-        'snip': '1.desc',
-        'apikey':APIconfig['ETMapikey'],
-        'limit': limit,
-        }
-
-        params.update(add_param)
-        baseurl = APIconfig['ETMURL']+'/search/basic?'
-  
-        articles = list()
-        param_str = urllib.parse.urlencode(params)
-        url_request = baseurl+param_str
-        the_page = urllib.request.urlopen(url_request).read()
-        if the_page:
-            result = json.loads(the_page.decode('utf-8'))
-            hit_count = result['total-hits=']
-            articles += result['article-data']
-        else:
-            hit_count = 0
-
-        if limit > 100:
-            for page in range(len(articles), limit, 100):
-                params['start'] = page
-                param_str = urllib.parse.urlencode(params)
-                page = urllib.request.urlopen(url_request).read()
-                result = json.loads(the_page.decode('utf-8'))
-                articles += result['article-data']
-
-        references = list()
-        for article in articles:
-            etm_ref = ETMjson(article)
-            relevance_score = float(article['score'])
-            etm_ref['Relevance rank'] = [relevance_score]
-            if hasattr(etm_ref,"Identifiers"):
-                references.append(etm_ref)
-
-        ref_ids = list()
-        for ref in references:
-            for id_type in REF_ID_TYPES:
-                try:
-                    identifier = ref.Identifiers[id_type]
-                    ref_ids.append(identifier)
-                    break
-                except KeyError:
-                    continue
-        
-        best_refs_str = ';'.join(ref_ids)
-        return hit_count, best_refs_str, references
-
+   
     @staticmethod
     def count_refs(ref_counter:set, references:list):
         ref_counter.update(references)

@@ -253,7 +253,7 @@ class Reference(dict):
                 if authors_str[-1] != '.': authors_str += '.'
         except KeyError:
             authors_str = 'unknown authors.'
-        return title+' ('+year+'). '+authors_str+' '+self.__identifiers_str()
+        return title+' ('+year+'). '+authors_str, self.__identifiers_str()
 
 
     def _merge(self, other):
@@ -338,6 +338,31 @@ class Reference(dict):
                 self['weight'] = weight
         except KeyError:
             self['weight'] = weight
+
+
+    identifier2id = {
+                    'PMID':'https://pubmed.ncbi.nlm.nih.gov/',
+                    'DOI':'https://dx.doi.org',
+                    'PII':'https://www.sciencedirect.com/science/article/abs/pii',
+                    'EMBASE':'https://www.embase.com/records?subaction=viewrecord&id=',
+                    'NCT ID': 'https://www.clinicaltrials.gov/ct2/show/'
+                    }
+
+    def to_jsonld(self):
+        # json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+        self_copy = dict(self)
+        for k in self_copy.keys():
+           self_copy[str(k).lower()] = self_copy.pop(k)
+
+        for id_type in REF_ID_TYPES:
+            try:
+                id = self.Identifiers[id_type]
+                self_copy['@id'] = id
+                break
+            except KeyError: continue
+
+        return self_copy
+        #json.dumps(self_copy, sort_keys=True, indent=2)
 
 
 
