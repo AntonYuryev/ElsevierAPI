@@ -18,7 +18,13 @@ MAP2ONTOLOGY = [
                 'biological phenomena and functions concerning organ systems',
                 'cellular, subcellular and molecular biological phenomena and functions',
                 'behavior', 
-                'mental function'
+                'mental function',
+                'embryonal development',
+                'nervous system development',
+                'neuromodulation',
+                'neuroprotection',
+                'immune system development',
+                'cell differentiation'
                 ]
 
 class RepurposeDrug(TargetIndications):
@@ -158,7 +164,7 @@ class RepurposeDrug(TargetIndications):
         indics = ','.join(self.indication_types)
         rep_pred =  'suggested ' if self.strict_mode else 'suggested,predicted '
         regulate = ' activated by ' if self.required_effect_on_indications == ACTIVATE else ' inhibited by '
-        return rep_pred+indics+regulate+self.drug_name
+        return rep_pred+indics+regulate+self.drug_name+' '
 
     def print_drug_indictaion_refs(self, data_dir:str):
         fname_out = data_dir+dcp.fname_prefix()+" clinical trials.tsv"
@@ -180,7 +186,7 @@ if __name__ == "__main__":
     # specify here what indications to find and the type of drug
     similars = [] # names of similar drugs that have same mechanism of action (i.e. same target)
     #dcp.set_drug('cannabinoids', similars, INHIBIT, ['Disease'], AGONIST)
-    input_compound = 'CBD compounds'
+    input_compound = 'THC compounds'
     dcp.set_drug(input_compound, similars, ACTIVATE, ['CellProcess'], ANTAGONIST)
     
     # specify here the drug targets and drug mechanism of action
@@ -192,7 +198,8 @@ if __name__ == "__main__":
     # strict mode ranks only indications suggested in the literarure without predicting new indications
     dcp.pathway_name_must_include_target = True
     # must be True if there are a lot of curated pathways with receptor name included into pathway name
-    
+
+
     dcp.flush_dump_files()
     drug_indication_ids = dcp.find_drug_indications()
     if similars:
@@ -201,6 +208,7 @@ if __name__ == "__main__":
         drug_indication_ids = list(indication_set)
 
     dcp.strict_mode = True
+    
     dcp.find_target_indications()
     dcp.indications4chem_modulators()
     dcp.indications4partners()
@@ -215,12 +223,12 @@ if __name__ == "__main__":
     dcp.score_semantics()
 
     fname_prefix = dcp.fname_prefix()
-    dcp.print_ref_count(DATA_DIR+fname_prefix + " counts.tsv",sep='\t')
+    dcp.print_ref_count(DATA_DIR+fname_prefix + "counts.tsv",sep='\t')
     dcp.print_drug_indictaion_refs(DATA_DIR)
 
     ontology_map = dcp.child2parent(MAP2ONTOLOGY)
 
     NormalizedCount = dcp.normalize_counts(ontology_map,bibliography=DATA_DIR+fname_prefix+'bibliography.tsv')
-    fout = DATA_DIR+fname_prefix + ' normalized report.tsv'
+    fout = DATA_DIR+fname_prefix + 'normalized report.tsv'
     NormalizedCount.to_csv(fout, sep='\t', index=False, float_format='%g')
     print("Repurposing %s was done in %s" % (dcp.drug_name , dcp.execution_time(global_start)))

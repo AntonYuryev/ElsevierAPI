@@ -505,14 +505,19 @@ class TargetIndications(SemanticSearch):
             NormalizedCount['Ontology group'] = NormalizedCount['Name'].apply(get_ontology_parent)
 
         if bibliography:
-            etm_counter = ETMstat(self.APIconfig,limit=2)
-            refid_set = set()
+            max_ref_count = 5
+            etm_counter = ETMstat(self.APIconfig,limit=max_ref_count)
             def add_refs(indication:str):
-                for n in self.input_names:
+                refid_list = list()
+                for n in self.input_names: # sort self.input_names by connectivity for better results
                     search_terms = [n,indication]
-                    hit_count,ref_ids,etm_refs = etm_counter.relevant_articles(search_terms,)
-                    refid_set.update(ref_ids)
-                return ';'.join(refid_set)
+                    hit_count,ref_ids,etm_refs = etm_counter.relevant_articles(search_terms)
+                    [refid_list.append(r) for r in ref_ids if r not in refid_list]
+                    if len(refid_list) >= max_ref_count: 
+                        refid_list = refid_list[:max_ref_count]
+                        break
+                return ';'.join(refid_list)
+
             NormalizedCount['References'] = NormalizedCount['Name'].apply(add_refs)
             etm_counter.print_counter(bibliography)
 
@@ -522,24 +527,21 @@ class TargetIndications(SemanticSearch):
         return weights.append(NormalizedCount)
 
     def child2parent(self, parent_ontology_groups:list):
-        return_dict_prop = 'Name'
-        map_by_props = ['Name']
         to_return = dict() # {child_name:[ontoogy_parent_names]}
-        self.add_ent_props([return_dict_prop])
+        self.add_ent_props(['Name'])
         for group_name in parent_ontology_groups:
-            childs = self.child_graph([group_name],map_by_props)
+            childs = self.child_graph([group_name],['Name'])
             children_ids = list(childs.nodes())
-            if not children_ids:
-                children_ids = self._get_obj_ids_by_props([group_name],map_by_props)
 
             for c in children_ids:
-                child_id2propvals = self.Graph.get_properties({c},return_dict_prop)
-                propvals = list(child_id2propvals.values())[0]
-                for pval in propvals:
-                    try:
-                        to_return[pval].append(group_name)
-                    except KeyError:
-                        to_return[pval] = [group_name]
+                child_id2propvals = self.Graph.get_properties({c},'Name')
+                if child_id2propvals:
+                    propvals = list(child_id2propvals.values())[0]
+                    for pval in propvals:
+                        try:
+                            to_return[pval].append(group_name)
+                        except KeyError:
+                            to_return[pval] = [group_name]
 
         return to_return
 
