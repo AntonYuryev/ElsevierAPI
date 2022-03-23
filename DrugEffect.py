@@ -1,3 +1,4 @@
+from ntpath import join
 from ElsevierAPI import load_api_config
 from TargetIndications import TargetIndications
 import time
@@ -105,10 +106,11 @@ class RepurposeDrug(TargetIndications):
         if not self.similar_drugs: return
         indications2return = set()
         indic_str = ','.join(self.indication_types)
+        select_similar_drugs = 'SELECT Entity WHERE (Name,Alias) = ({drugs})'
+        select_similar_drugs = select_similar_drugs.format(drugs=','.join(self.similar_drugs))
+
         if self.needs_clinical_trial():
             REQUEST_NAME = 'Find indications by clinical trials for {similars}'.format(similars=self.similar_drugs)
-            select_similar_drugs = 'SELECT Entity WHERE (Name,Alias) = ({drugs})'
-            select_similar_drugs = select_similar_drugs.format(drugs=self.similar_drugs)
             OQLquery = 'SELECT Relation WHERE objectType = ClinicalTrial AND NeighborOf ({select_drugs}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_types}))'
             SimilarDrugsClinicalTrials = self.process_oql(OQLquery.format(select_drugs=select_similar_drugs, indication_types=indic_str), REQUEST_NAME)
             found_indications = SimilarDrugsClinicalTrials.get_entity_ids(self.indication_types)
@@ -184,10 +186,10 @@ if __name__ == "__main__":
     DATA_DIR = 'D:/Python/PMI/'
 
     # specify here what indications to find and the type of drug
-    similars = [] # names of similar drugs that have same mechanism of action (i.e. same target)
+    similars = ['methanandamide'] # names of similar drugs that have same mechanism of action (i.e. same target)
     #dcp.set_drug('cannabinoids', similars, INHIBIT, ['Disease'], AGONIST)
     input_compound = 'THC compounds'
-    dcp.set_drug(input_compound, similars, ACTIVATE, ['CellProcess'], ANTAGONIST)
+    dcp.set_drug(input_compound, similars, INHIBIT, ['CellProcess'], ANTAGONIST)
     
     # specify here the drug targets and drug mechanism of action
     partner_names = ['anandamide','endocannabinoid','2-arachidonoylglycerol'] # specify here endogenous ligands for receptor if known
