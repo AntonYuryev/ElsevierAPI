@@ -1,9 +1,15 @@
 import re
 import json
 import itertools
-from ..ETM_API.references import Reference,JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS,MEDLINETA
+from ..ETM_API.references import Reference
+from ..ETM_API.references import JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS,MEDLINETA,EFFECT
+
 
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
+REGULATORS = 'Regulators'
+TARGETS = 'Targets'
+REFCOUNT = 'RelationNumberOfReferences'
+
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def __init__(self, dic: dict):
@@ -92,14 +98,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             return ''
 
-    def to_jsonld(self):
-        self_copy = dict(self)
-        self_copy['@id'] = self_copy.pop('URN')
-        self_copy['@type'] = self_copy.pop('ObjTypeName')
-        for k in self_copy.keys():
-           self_copy[str(k).lower()] = self_copy.pop(k)
-        return json.dumps(self_copy, sort_keys=True, indent=2)
-    
+
 
 class PSRelation(PSObject):
     pass
@@ -113,12 +112,55 @@ class PSRelation(PSObject):
         self.Nodes = dict()  # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
         self.References = dict()  # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
 
+
+    def add_references(self, references:list):#list of Reference objects
+        self.load_references()
+        for r in references:
+            was_merged = False
+            for id in PS_ID_TYPES:
+                try:
+                    self.References[r.Identifiers[id]]._merge(r)
+                    was_merged = True
+                    break
+                except KeyError:
+                    continue
+
+            if not was_merged:
+                for i in r.Identifiers.values():
+                    self.References[i] = r
+
+
+    def _get_refs(self):
+        return list(set(self.References.values()))
+
+
     def copy(self, other):
         if isinstance(other, PSRelation):
             self.update(other)
             self.PropSetToProps.update(other.PropSetToProps)
             self.Nodes.update(other.Nodes)
-            self.References.update(other.References)
+            self.add_references(other._get_refs())
+
+
+    @ classmethod
+    def make_rel(cls,regulator:PSObject,target:PSObject,props:dict,refs=[],is_directional=True):
+        # props = {prop_name:[prop_values]}
+        new_rel = cls(props)
+        try:
+            effect_val = props[EFFECT]
+        except KeyError:
+            effect_val = str()
+
+        new_rel.Nodes[REGULATORS] = [(regulator['Id'][0], '0', effect_val)]
+        if is_directional:
+            new_rel.Nodes[TARGETS] = [(target['Id'][0], '1', effect_val)]
+        else:
+            new_rel.Nodes[REGULATORS].append((target['Id'][0], '0', effect_val))
+
+        new_rel.add_references(refs)
+        if REFCOUNT not in new_rel.keys():
+            new_rel[REFCOUNT] = [len(refs)]
+        return new_rel
 
     def __hash__(self):
         return self['Id'][0]
@@ -215,16 +257,17 @@ class PSRelation(PSObject):
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
                 #if propValues[0] == 'info:pmid/16842844':
                 #    print('')
-                if propId in PS_BIBLIO_PROPS:
-                    if propId == MEDLINETA:
-                        ref.update_with_list(JOURNAL, propValues)
-                    else:
-                        ref.update_with_list(propId, propValues)
+                if propId in BIBLIO_PROPS:
+                    ref.update_with_list(propId, propValues)
                 elif propId in SENTENCE_PROPS:
                     sentence_props[propId] = propValues
                 elif propId in CLINTRIAL_PROPS:
                     ref.update_with_list(propId, propValues)
                 elif propId == 'TextRef': textref = propValues[0]
+
+            try:
+                ref[JOURNAL] = ref.pop(MEDLINETA)
+            except KeyError: pass
 
             if not isinstance(textref,str): 
                 textref = ref._make_textref()
@@ -242,27 +285,17 @@ class PSRelation(PSObject):
         # # PropSetToProps is used in print_references do not clear it.
 
 
-    def add_references(self, references:list):#list of Reference objects
-        self.load_references()
-        for r in references:
-            was_merged = False
-            for id in PS_ID_TYPES:
-                try:
-                    self.References[r.Identifiers[id]]._merge(r)
-                    was_merged = True
-                    break
-                except KeyError:
-                    continue
+    def sort_references(self, by_property:str, is_numerical=True):
+        def sortkey(x):
+            try:
+                return float(x[by_property][0]) if is_numerical else str(x[by_property][0])
+            except KeyError:
+                return 0.0 if is_numerical else '0'
 
-            if not was_merged:
-                for i in r.Identifiers.values():
-                    self.References[i] = r
-
-
-    def sort_references(self, by_property:str):
-        all_refs = list(set([x for x in self.References.values() if by_property in x.keys()]))
-        all_refs.sort(key=lambda x: x[by_property][0])
+        all_refs = self._get_refs()
+        all_refs.sort(key=lambda x: sortkey(x))
         return all_refs
+
 
 
     def filter_references(self, prop_names2values:dict):
@@ -271,15 +304,22 @@ class PSRelation(PSObject):
         ref2keep = {ref for ref in all_refs if ref.has_properties(prop_names2values)}
         self.References = {k:r for k,r in self.References.items() if r in ref2keep}
         return
-        #self['RelationNumberOfReferences'] will NOT be changed to keep the original number of references for relation
+        #self[REFCOUNT] will NOT be changed to keep the original number of references for relation
 
 
     def get_reference_count(self, count_abstracts=False):
+        self.load_references()
         if count_abstracts:
             ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
             return len(ref_from_abstract)
-        else:        
-            return len(self.References) if self.References else self['RelationNumberOfReferences'][0]
+        elif self.References:
+            self[REFCOUNT] = [len(self._get_refs())]
+           
+        try: return self[REFCOUNT][0]
+        except KeyError: 
+            self[REFCOUNT] = [len(self.PropSetToProps)]
+            return self[REFCOUNT][0]
+
 
     def rel_prop_str(self, sep=':'):
         # returns string of relation properties with no references
@@ -292,7 +332,7 @@ class PSRelation(PSObject):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
         # initializing table
         col_count = len(columnPropNames) +2 if add_entities else len(columnPropNames)
-        RelationNumberOfReferences = int(self['RelationNumberOfReferences'][0])
+        RelationNumberOfReferences = int(self[REFCOUNT][0])
 
         rowCount = 1
         if RelationNumberOfReferences >= RefNumPrintLimit:
@@ -306,7 +346,7 @@ class PSRelation(PSObject):
             regulatorIDs = str()
             targetIDs = str()
             for k, v in self.Nodes.items():
-                if k == 'Regulators':
+                if k == REGULATORS:
                     regulatorIDs = ','.join(map(str, [x[0] for x in v]))
                 else:
                     targetIDs = ','.join(map(str, [x[0] for x in v]))
@@ -346,14 +386,14 @@ class PSRelation(PSObject):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
         # initializing table
         col_count = len(columnPropNames) +2 if add_entities else len(columnPropNames)
-        RelationNumberOfReferences = int(self['RelationNumberOfReferences'][0])
+        RelationNumberOfReferences = int(self[REFCOUNT][0])
 
         table = ['']*col_count
         if add_entities:
             regulatorIDs = str()
             targetIDs = str()
             for k, v in self.Nodes.items():
-                if k == 'Regulators':
+                if k == REGULATORS:
                     regulatorIDs = ','.join(map(str, [x[0] for x in v]))
                 else:
                     targetIDs = ','.join(map(str, [x[0] for x in v]))
@@ -390,24 +430,24 @@ class PSRelation(PSObject):
     def get_regulators_targets(self):
         if len(self.Nodes) > 1:
             # for directional relations
-            return [(r[0],t[0]) for r in self.Nodes['Regulators'] for t in self.Nodes['Targets']]
+            return [(r[0],t[0]) for r in self.Nodes[REGULATORS] for t in self.Nodes[TARGETS]]
         else:
             try:
                 # for non-directions relations
-                objIdList = [x[0] for x in self.Nodes['Regulators']]
+                objIdList = [x[0] for x in self.Nodes[REGULATORS]]
                 return itertools.combinations(objIdList, 2)
             except KeyError:
                 # for wiered cases
-                objIdList = [x[0] for x in self.Nodes['Targets']]
+                objIdList = [x[0] for x in self.Nodes[TARGETS]]
                 return itertools.combinations(objIdList, 2)
 
     def get_regulator_ids(self):
-        nodeIds = [x[0] for x in self.Nodes['Regulators']]
+        nodeIds = [x[0] for x in self.Nodes[REGULATORS]]
         return list(nodeIds)
 
     def get_target_ids(self):
         try:
-            nodeIds = [x[0] for x in self.Nodes['Targets']]
+            nodeIds = [x[0] for x in self.Nodes[TARGETS]]
             return list(nodeIds)
         except KeyError: return []
 
@@ -419,29 +459,6 @@ class PSRelation(PSObject):
         strP = '{"Relation References": ' + json.dumps(self.PropSetToProps) + '}'
         strR = json.dumps(self.Nodes)
         return str1 + '\n' + strP + '\n' + strR + '\n'
-
-    def to_jsonld(self):
-        self.load_references()
-        self_copy = dict(self)
-        self_copy['@type'] = self_copy.pop('ObjTypeName')
-        for k in self_copy.keys():
-           self_copy[str(k).lower()] = self_copy.pop(k)
-
-        try:
-            id = self_copy['URN']
-        except KeyError:
-            id = self_copy['Name']
-            try:
-                mehchanism = self_copy['Mechanism']
-                id = id +':'+ mehchanism
-            except KeyError:
-                pass
-
-        self_copy['@id'] = id
-        self_copy["@context"] = {'references':{"@container" : "@list"}}
-        self_copy['references'] = [ref.to_jsonld() for ref in self.References]
-
-        return json.dumps(self_copy, sort_keys=True, indent=2)
 
 
     def _weight2ref (self, weight_by_prop_name:str, proval2weight:dict):

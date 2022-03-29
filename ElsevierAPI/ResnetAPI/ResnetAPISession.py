@@ -79,7 +79,7 @@ class APISession(PSNetworx):
 
 
     def get_saved_results(self, results_names:list, get_links=True):
-        query_names = OQL.join_with_quotes(',',results_names)
+        query_names = OQL.join_with_quotes(results_names)
         oql_query = 'SELECT Result WHERE Name = ({names})'
         oql_query = oql_query.format(names=query_names)
         result_graph = self.load_graph_from_oql(oql_query,list(self.relProps),list(self.entProps),get_links=False)
@@ -267,7 +267,7 @@ class APISession(PSNetworx):
 
     def get_group_members(self, group_names:list):
         oql_query = 'SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = ({group}))'
-        groups = OQL.join_with_quotes(',', group_names)
+        groups = OQL.join_with_quotes( group_names)
         req_name = 'Find members of groups: ' + ','.join(group_names)
         graph2return = self.process_oql(oql_query.format(group=groups), request_name=req_name)
         if len(graph2return) == 0:

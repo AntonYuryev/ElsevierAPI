@@ -1,7 +1,7 @@
 import networkx as nx
 from  .PathwayStudioGOQL import OQL
 from  .PathwayStudioZeepAPI import DataModel
-from  .NetworkxObjects import PSObject,PSRelation
+from  .NetworkxObjects import PSObject,PSRelation,REGULATORS,TARGETS,EFFECT
 from  .ResnetGraph import ResnetGraph
 import math
 import time
@@ -82,26 +82,26 @@ class PSNetworx(DataModel):
             # loading connected entities from Links
             for l in zeep_relations.Links.Link:
                 rel_id = l['RelationId']
-                direction = l['Dir']
-                link = (l['EntityId'], direction, l['Effect'])
+                direction = l['Dir'] # 0:no arrow, 1:arrow to entity, -1:arrow from entity
+                link = (l['EntityId'], direction, l[EFFECT])
 
                 if direction == 1:
                     if len(new_relations[rel_id].Nodes) < 2:
-                        new_relations[rel_id].Nodes['Targets'] = [link]
+                        new_relations[rel_id].Nodes[TARGETS] = [link]
                     else:
-                        new_relations[rel_id].Nodes['Targets'].append(link)
+                        new_relations[rel_id].Nodes[TARGETS].append(link)
                 else:
-                    if len(new_relations[rel_id].Nodes) < 1:
-                        new_relations[rel_id].Nodes['Regulators'] = [link]
+                    if not len(new_relations[rel_id].Nodes):
+                        new_relations[rel_id].Nodes[REGULATORS] = [link]
                     else:
-                        new_relations[rel_id].Nodes['Regulators'].append(link)
+                        new_relations[rel_id].Nodes[REGULATORS].append(link)
 
             try:
-                new_relations[rel_id].Nodes['Targets'].sort(key=self.link_id)
+                new_relations[rel_id].Nodes[TARGETS].sort(key=self.link_id)
             except KeyError: pass
 
             try:
-                new_relations[rel_id].Nodes['Regulators'].sort(key=self.link_id)
+                new_relations[rel_id].Nodes[REGULATORS].sort(key=self.link_id)
             except KeyError: pass
             
             for rel in new_relations.values():
@@ -370,7 +370,7 @@ class PSNetworx(DataModel):
         target_types = ','.join(target_types)
         drug_prop_names, drug_prop_values = OQL.get_search_strings(DrugSearchPropertyNames, DrugProps)
         drug_query = 'Select Entity WHERE (' + drug_prop_names + ') = (' + drug_prop_values + ')'
-        pathway_query = 'SELECT Network WHERE Name = (' + OQL.join_with_quotes(',', PathwayNames) + ')'
+        pathway_query = 'SELECT Network WHERE Name = (' + OQL.join_with_quotes( PathwayNames) + ')'
         oql_query = 'SELECT Relation WHERE objectType = ({RelTypes}) AND NeighborOf upstream (SELECT Entity WHERE MemberOf ({pathways}) AND objectType = ({Target_Types})) AND NeighborOf downstream ({drug})'
 
         direct_regulations = self.load_graph_from_oql(
@@ -470,4 +470,4 @@ class PSNetworx(DataModel):
         # add_rel_props structure {PropName:[PropValues]}
         if not isinstance(in_graph,ResnetGraph): in_graph=self.Graph
         all_rnef_props = set(self.RNEFnameToPropType.keys()) #set(list(self.RNEFnameToPropType.keys())+REF_PROPS)
-        return in_graph.to_rnef(list(all_rnef_props),add_rel_props,add_pathway_props)
+        return in_graph.to_rnef(list(all_rnef_props),list(all_rnef_props),add_rel_props,add_pathway_props)

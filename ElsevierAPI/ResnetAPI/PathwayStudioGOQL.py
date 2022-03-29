@@ -3,7 +3,7 @@ NEED_QUOTES = {' ', '-', '/', '(', ')', '[', ']', '+', '#',':'}
 
 class OQL:
     @staticmethod
-    def join_with_quotes(separator, NameList: list):
+    def join_with_quotes(NameList: list,separator=','):
         to_return = str()
         for name in NameList:
             if 1 in [c in name for c in NEED_QUOTES]:
@@ -52,7 +52,7 @@ class OQL:
             oql_query = "SELECT Entity WHERE (" + prop_names + ") = (" + values + ')'
 
         if len(only_object_types) > 0:
-            object_types = OQL.join_with_quotes(',', only_object_types)
+            object_types = OQL.join_with_quotes(only_object_types)
             oql_query = oql_query + ' AND objectType = (' + object_types + ')'
 
         if MinConnectivity == 0: return oql_query
@@ -77,7 +77,7 @@ class OQL:
             oql_query = "SELECT Relation WHERE (" + prop_names + ") = (" + values + ')'
 
         if len(only_object_types) > 0:
-            object_types = OQL.join_with_quotes(',', only_object_types)
+            object_types = OQL.join_with_quotes(only_object_types)
             oql_query = oql_query + ' AND objectType = (' + object_types + ')'
 
         return oql_query if MinRef == 0 else oql_query + ' AND RelationNumberOfReferences >= ' + str(MinRef)
@@ -93,7 +93,7 @@ class OQL:
 
         search_query = ontology_query.format(entities=entity_query)
         if len(only_object_types) > 0:
-            object_types = OQL.join_with_quotes(',', only_object_types)
+            object_types = OQL.join_with_quotes(only_object_types)
             search_query = search_query + ' AND objectType = (' + object_types + ')'
 
         return search_query
@@ -102,8 +102,8 @@ class OQL:
     def expand_entity_by_id(IDlist: list, expand_by_rel_types=None, expand2neighbors=None, direction=''):
         expand2neighbors = [] if expand2neighbors is None else expand2neighbors
         expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
-        expand_by_rel_types_str = OQL.join_with_quotes(',',expand_by_rel_types)
-        expand2neighbors_str = OQL.join_with_quotes(',', expand2neighbors)
+        expand_by_rel_types_str = OQL.join_with_quotes(expand_by_rel_types)
+        expand2neighbors_str = OQL.join_with_quotes( expand2neighbors)
 
         values = ','.join([str(i) for i in IDlist])
         expand = 'Select Relation WHERE NeighborOf ' + direction + ' (SELECT Entity WHERE id = (' + values + '))'
@@ -132,8 +132,8 @@ class OQL:
                     expand2neighbors=None, direction=''):
         expand2neighbors = [] if expand2neighbors is None else expand2neighbors
         expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
-        expand2neighbors_str = OQL.join_with_quotes(',', expand2neighbors)
-        expand_by_rel_types_str = OQL.join_with_quotes(',',expand_by_rel_types)
+        expand2neighbors_str = OQL.join_with_quotes( expand2neighbors)
+        expand_by_rel_types_str = OQL.join_with_quotes(expand_by_rel_types)
 
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
             return OQL.expand_entity_by_id(PropertyValues, expand_by_rel_types, expand2neighbors, direction)
@@ -165,9 +165,9 @@ class OQL:
     def get_neighbors(PropertyValues: list, SearchByProperties: list, expand_by_rel_types=None,
                     expand2neighbors=None):
         expand2neighbors = [] if expand2neighbors is None else expand2neighbors
-        expand2neighbors_str = OQL.join_with_quotes(',', expand2neighbors)
+        expand2neighbors_str = OQL.join_with_quotes( expand2neighbors)
         expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
-        expand_by_rel_types_str = OQL.join_with_quotes(',',expand_by_rel_types)
+        expand_by_rel_types_str = OQL.join_with_quotes(expand_by_rel_types)
 
         property_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
         connect_to_str = " to (SELECT Entity WHERE (" + property_names + ") = (" + values + ")"
@@ -208,8 +208,8 @@ class OQL:
         if not isinstance(connect_by_rel_types,list): connect_by_rel_types = list()
         prop_names1, prop_values1 = OQL.get_search_strings(PropertyNameList=SearchByProperties1, PropValuesList=PropertyValues1)
         prop_names2, prop_values2 = OQL.get_search_strings(PropertyNameList=SearchByProperties2, PropValuesList=PropertyValues2)
-        object_type1 = OQL.join_with_quotes(',', EntityTypes1)
-        object_type2 = OQL.join_with_quotes(',', EntityTypes2)
+        object_type1 = OQL.join_with_quotes( EntityTypes1)
+        object_type2 = OQL.join_with_quotes( EntityTypes2)
 
         entity_query = 'SELECT Entity WHERE {entity}'
 
@@ -228,7 +228,7 @@ class OQL:
 
         oql_query = "SELECT Relation WHERE NeighborOf (" + entity1_query + ") AND NeighborOf (" + entity2_query + ")"
         if len(connect_by_rel_types) > 0:
-            rel_type_list = OQL.join_with_quotes(',', connect_by_rel_types)
+            rel_type_list = OQL.join_with_quotes( connect_by_rel_types)
             oql_query += " AND objectType = (" + rel_type_list + ")"
 
         return oql_query
@@ -248,11 +248,11 @@ class OQL:
 
         oql_query = "SELECT Relation WHERE NeighborOf {dir1} (" + entity1_query + ") AND NeighborOf {dir2} (" + entity2_query + ")"
         if len(connect_by_rel_types) > 0:
-            rel_type_list = OQL.join_with_quotes(',', connect_by_rel_types)
+            rel_type_list = OQL.join_with_quotes( connect_by_rel_types)
             oql_query = oql_query + ' AND objectType = (' + rel_type_list + ')'
 
         if len(rel_effect) > 0:
-            effect_list = OQL.join_with_quotes(',', rel_effect)
+            effect_list = OQL.join_with_quotes( rel_effect)
             oql_query = oql_query + ' AND Effect = (' + effect_list + ')'
 
         if RelDirection == '<':
@@ -272,7 +272,7 @@ class OQL:
         targets = [str(integer) for integer in TargetIDs]
         reg_ids = ",".join(regulators)
         target_ids = ",".join(targets)
-        rel_type_list = OQL.join_with_quotes(',', relation_types)
+        rel_type_list = OQL.join_with_quotes( relation_types)
         oql_query = "SELECT Relation WHERE objectType = (" + rel_type_list + ") "
         oql_query += "AND NeighborOf downstream (SELECT Entity WHERE id = (" + reg_ids + ")) "
         oql_query += "AND NeighborOf upstream (SELECT Entity WHERE id = (" + target_ids + "))"
