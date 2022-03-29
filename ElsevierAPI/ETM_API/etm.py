@@ -1,13 +1,15 @@
 from .references import DocMine, Reference
-from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES
+from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES,RELEVANCE 
 import urllib.request
 import urllib.parse
 import json
 import time
+from datetime import datetime
 from datetime import timedelta
 import xlsxwriter
 import os
 import math
+
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
@@ -232,7 +234,7 @@ class ETMjson(DocMine):
 
         self.add2section('Abstract',self.__parse_abstact(article))
         authors,institutions = self.__parse_contributors(article)
-        self[AUTHORS] = authors
+        if authors: self[AUTHORS] = authors
         self.addresses = {i[0]:i[1] for i in institutions}
         
         try:
@@ -254,9 +256,7 @@ class ETMstat:
     searchTarget = 'full_index'
     number_snippets = 1
     hit_count = 0
-    params = dict()
-    ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
-
+    
     def __init__(self,APIconfig:dict, limit=5, add_param=dict()):
         self.url = APIconfig['ETMURL']
         self.params = {
@@ -265,12 +265,19 @@ class ETMstat:
             'apikey':APIconfig['ETMapikey'],
             'limit': limit,
             }
-        self.params.update(add_param)
+        self.params.update(add_param)       
+        self.ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
 
     def __limit(self): return self.params['limit']
  
     def _set_query(self,query:str):
         self.params['query'] = query
+
+    def _query(self):
+        try:
+            return self.params['query']
+        except KeyError:
+            print('ETMstat class instance has no query specified')
 
     def __get_param_str(self):
         return urllib.parse.urlencode(self.params)
@@ -309,7 +316,7 @@ class ETMstat:
             ref = ref_count[0]
             refcount = ref_count[1]
             if use_relevance:
-                score = math.ceil(float(ref['Relevance rank'][0]) * refcount)
+                score = math.ceil(float(ref[RELEVANCE][0]) * refcount)
                 first_col = 'Relevance'
             else:
                 score = refcount
@@ -342,42 +349,39 @@ class ETMstat:
         for article in articles:
             etm_ref = ETMjson(article)
             relevance_score = float(article['score'])
-            etm_ref['Relevance rank'] = [relevance_score]
+            etm_ref[RELEVANCE] = [relevance_score]
             if hasattr(etm_ref,"Identifiers"):
                 references.append(etm_ref)
 
         ref_ids = list()
-        for ref in references:
-            ref_ids.append(self._add2counter(ref))
-        
-        #best_refs_str = ';'.join(ref_ids)
+        [ref_ids.append(self._add2counter(ref)) for ref in references]
         return self.hit_count, ref_ids, references
 
 
 class ETMcache (ETMstat):
     pass
-    #url = 'https://demo.elseviertextmining.com/api'
-    #api_key = str()
-    request_type = '/search/advanced'
-    #page_size = 100
-    #def __base_url(self): return self.url+self.request_type+'?'
-    #searchTarget = 'full_index'
-    #number_snippets = 1
-    #hit_count = 0
+    request_type = '/search/advanced?'
     search_name = str()
-    #query = str()
-    #url_request = str()
-    #params = dict()
     etm_results_dir = ''
     etm_stat_dir = ''
-    statistics = dict() # {prop_name:{prop_value:count}}
     
+    def __init__(self,query, search_name, APIconfig:dict, etm_dump_dir:str, etm_stat_dir, add_params={}):
+        super().__init__(APIconfig,add_param=add_params)
+        self.params.pop('limit')
+        self._set_query(query)
+        articles, self.hit_count = self._get_articles()
+        self.search_name = search_name
+        self.etm_results_dir = etm_dump_dir
+        self.etm_stat_dir = etm_stat_dir
+        self.statistics = dict() # {prop_name:{prop_value:count}}
+
+
     def references(self):
         return set([x[0] for x in self.ref_counter.values()])
 
     def __download(self):
         print('\nPerforming ETM search "%s"' % self.search_name)
-        print ('Query: %s found %d results' % (self.query,self.hit_count))
+        print ('Query: %s found %d results' % (self._query(),self.hit_count))
         start = time.time()
         articles = list()
         for page_start in range(0,self.hit_count,self.page_size):
@@ -397,24 +401,6 @@ class ETMcache (ETMstat):
             dump = open(self.search_name+'.json', "w", encoding='utf-8')
             dump.write(json.dumps(articles,indent=1))
  
-    def __init__(self,query, search_name, APIconfig:dict, etm_dump_dir:str, etm_stat_dir, add_params={}):
-        super().__init__(APIconfig,add_param=add_params)
-        self.params.pop('limit')
-        #self.url = APIconfig['ETMURL']  #ETMurl = 'https://discover.elseviertextmining.com/api/'
-        #self.api_key = APIconfig['ETMapikey']
-        #self.query = query
-        #self.__set_params()
-        #if add_params:
-         #   self.params.update(add_params)
-        #result = self.__get_result()
-        articles, self.hit_count = self._get_articles()
-        #result['total-hits='] if result else 0
-        #print('\nETM query %s returns %d documents' % (self.query, self.hit_count))
-        self.search_name = search_name
-        self.etm_results_dir = etm_dump_dir
-        self.etm_stat_dir = etm_stat_dir
-        #self.references = set()
-
 
     def load_from_json(self,use_cache=True):
         if use_cache:
@@ -434,26 +420,24 @@ class ETMcache (ETMstat):
                 
                 if (self.hit_count > len(articles)): # hit_count is 1-based index!!!
                     print('Today ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(articles)))
-                    file_date_modified = os.path.getctime(dumpfile_name)
-                    self.params.update({'so_d':str(file_date_modified)}) #2003-03-19
-                    #result = self.__get_result()
-                    #hit_count = result['total-hits='] if result else 0
+                    d =  datetime.strptime(time.ctime(os.path.getctime(dumpfile_name)), "%c")
+                    local_time =  d.strftime('%Y-%m-%d')
+                    self.params.update({'so_d':local_time}) #2003-03-19
                     update_articles = self.__download()
                     articles = articles + update_articles
                     self.__dumps(articles,dumpfile_name)
             except FileNotFoundError:
                 #if json dump file is not found new ETM search is initiated
                 articles = self.__download()
-                self.__dumps(articles,dumpfile_name)            
+                self.__dumps(articles,dumpfile_name)
         else:
             articles = self.__download()
 
         for article in articles:
             etm_ref = ETMjson(article)
             relevance_score = float(article['score'])
-            etm_ref['Relevance rank'] = [relevance_score]
+            etm_ref[RELEVANCE] = [relevance_score]
             if hasattr(etm_ref,"Identifiers"):
-                #self.references.add(etm_ref)
                 self._add2counter(etm_ref)
 
         

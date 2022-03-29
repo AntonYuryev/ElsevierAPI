@@ -5,6 +5,7 @@ from datetime import timedelta
 import time
 import json
 
+
 AUTHORS = 'Authors'
 INSTITUTIONS = 'Institutions'
 JOURNAL = 'Journal'
@@ -18,6 +19,8 @@ ABSTRACT = 'Abstract'
 CLAIMS = 'Claims'
 PATENT_APP_NUM = 'Patent Application Number'
 PATENT_GRANT_NUM = 'Patent Grant Number'
+EFFECT = 'Effect'
+RELEVANCE = 'Relevance'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
 PS_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID'] 
@@ -27,14 +30,13 @@ PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
 CLINTRIAL_PROPS = {'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator'}
 JOURNAL_PROPS = {JOURNAL,'ISSN','ESSN',MEDLINETA}
 PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes','Start'}|JOURNAL_PROPS # 'Start' = 'PubYear'
-BIBLIO_PROPS = set(PS_BIBLIO_PROPS)
-BIBLIO_PROPS.add(INSTITUTIONS)
+BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
 REF_ID_TYPES = PS_ID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
 SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent','Evidence']
 # SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.Sentences
-RELATION_PROPS = {'Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
+RELATION_PROPS = {EFFECT,'Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences, titles, abstracts
@@ -135,7 +137,7 @@ class Reference(dict):
         try:
             self[prop_id] = list(set(self[prop_id] + prop_values))
         except KeyError:
-            self[prop_id] = list(set(prop_id))
+            self[prop_id] = list(set(prop_values))
 
     def add_sentence_prop(self, text_ref:str, propID:str, prop_value:str):
         try:
@@ -340,32 +342,8 @@ class Reference(dict):
             self['weight'] = weight
 
 
-    identifier2id = {
-                    'PMID':'https://pubmed.ncbi.nlm.nih.gov/',
-                    'DOI':'https://dx.doi.org',
-                    'PII':'https://www.sciencedirect.com/science/article/abs/pii',
-                    'EMBASE':'https://www.embase.com/records?subaction=viewrecord&id=',
-                    'NCT ID': 'https://www.clinicaltrials.gov/ct2/show/'
-                    }
 
-    def to_jsonld(self):
-        # json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
-        self_copy = dict(self)
-        for k in self_copy.keys():
-           self_copy[str(k).lower()] = self_copy.pop(k)
-
-        for id_type in REF_ID_TYPES:
-            try:
-                id = self.Identifiers[id_type]
-                self_copy['@id'] = id
-                break
-            except KeyError: continue
-
-        return self_copy
-        #json.dumps(self_copy, sort_keys=True, indent=2)
-
-
-
+#########################################DocMine#############################################DocMine##################
 
 INSTITUTION_KEYWORDS = {'institute', 'institut', 'clinic', 'hospital', 'university', 'universitat', 'universiti', 'centre', 'center', 'inc', 'colleges',
                         'ltd','gmbh', 'school','politecnic','politecnico', 'college', 'department', 'division', 'council', 'academy','faculty', 'co', 'corp',
