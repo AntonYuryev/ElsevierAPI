@@ -1,6 +1,5 @@
-from ntpath import join
 from ElsevierAPI import load_api_config
-from TargetIndications import TargetIndications
+from TargetIndications import TargetIndications,OQL
 import time
 
 INHIBIT = 0 # indication must be inhibited by a drug
@@ -81,7 +80,7 @@ class RepurposeDrug(TargetIndications):
 
     def find_drug_indications(self):
         indications2return = set()
-        indic_str = ','.join(self.indication_types)
+        indic_str = OQL.join_with_quotes(self.indication_types)
         # PART I: Finding all possible indications
         if self.needs_clinical_trial():
             REQUEST_NAME = 'Find {drug} indications by clinical trials'.format(drug=self.drug_name)
@@ -105,9 +104,10 @@ class RepurposeDrug(TargetIndications):
     def find_indications4similars(self):
         if not self.similar_drugs: return
         indications2return = set()
-        indic_str = ','.join(self.indication_types)
+        indic_str = OQL.join_with_quotes(self.indication_types)
         select_similar_drugs = 'SELECT Entity WHERE (Name,Alias) = ({drugs})'
-        select_similar_drugs = select_similar_drugs.format(drugs=','.join(self.similar_drugs))
+        similar_drugs_str = OQL.join_with_quotes(self.similar_drugs)
+        select_similar_drugs = select_similar_drugs.format(drugs=similar_drugs_str)
 
         if self.needs_clinical_trial():
             REQUEST_NAME = 'Find indications by clinical trials for {similars}'.format(similars=self.similar_drugs)
@@ -120,7 +120,8 @@ class RepurposeDrug(TargetIndications):
         effect = 'negative' if self.required_effect_on_indications == INHIBIT else 'positive'
         REQUEST_NAME = 'Find all other indications for {similars}'.format(similars=self.similar_drugs)
         OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {eff} AND NeighborOf ({select_drugs}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_types}))'
-        SimilarDrugsIndications = self.process_oql(OQLquery.format(eff=effect,select_drugs=select_similar_drugs,indication_types=indic_str), REQUEST_NAME)
+        OQLquery = OQLquery.format(eff=effect,select_drugs=select_similar_drugs,indication_types=indic_str)
+        SimilarDrugsIndications = self.process_oql(OQLquery, REQUEST_NAME)
         self.similar_drug_ids = SimilarDrugsIndications.get_entity_ids(['SmallMol'])
         found_indications = SimilarDrugsIndications.get_entity_ids(self.indication_types)
         indications2return.update(found_indications)
@@ -163,7 +164,7 @@ class RepurposeDrug(TargetIndications):
             print('%d indications %s by %s' % (linked_entities_count, regulated, self.similar_drugs))
         
     def fname_prefix(self):
-        indics = ','.join(self.indication_types)
+        indics = OQL.join_with_quotes(self.indication_types)
         rep_pred =  'suggested ' if self.strict_mode else 'suggested,predicted '
         regulate = ' activated by ' if self.required_effect_on_indications == ACTIVATE else ' inhibited by '
         return rep_pred+indics+regulate+self.drug_name+' '
@@ -185,14 +186,19 @@ if __name__ == "__main__":
     dcp = RepurposeDrug(load_api_config())
     DATA_DIR = 'D:/Python/PMI/'
 
-    # specify here what indications to find and the type of drug
-    similars = ['methanandamide'] # names of similar drugs that have same mechanism of action (i.e. same target)
-    #dcp.set_drug('cannabinoids', similars, INHIBIT, ['Disease'], AGONIST)
-    input_compound = 'THC compounds'
-    dcp.set_drug(input_compound, similars, INHIBIT, ['CellProcess'], ANTAGONIST)
+    # specify here what indications to find and the type of drug:
+    input_compound = 'tetrahydrocannabinol'
+
+    # names of similar drugs that have same mechanism of action (i.e. same target):
+    similars = ['delta 8-THC', '9-tetrahydrocannabinol', 'THC-C4', 'cannabigerol', 'cannabinol', '11-hydroxy-delta 9-tetrahydrocannabinol'] 
     
-    # specify here the drug targets and drug mechanism of action
-    partner_names = ['anandamide','endocannabinoid','2-arachidonoylglycerol'] # specify here endogenous ligands for receptor if known
+    #dcp.set_drug('cannabinoids', similars, INHIBIT, ['Disease'], AGONIST)
+    dcp.set_drug(input_compound, similars, INHIBIT, ['CellProcess'], AGONIST)
+    
+    # specify here endogenous ligands for receptor if known:
+    partner_names = ['noladin ether', 'oleoylethanolamide', 'virodhamine', 'anandamide', '2-arachidonoylglycerol', 'N-oleoyldopamine', 'palmitoylethanolamide', 'N-arachidonoyl dopamine', 'endocannabinoid', 'N-arachidonoylglycine', 'anandamide', '2-arachidonoylglycerol', 'eicosapentaenoyl ethanolamide'] # specify here endogenous ligands for receptor if known
+     
+    
     # if partner_names is empty script will try finding Ligands for Receptor targets and Receptors for Ligand targets in the knowledge graph
     partner_class = 'Metabolite ligand' 
     dcp.set_targets(['CNR1'],'Protein',partner_names=partner_names,partner_class=partner_class,

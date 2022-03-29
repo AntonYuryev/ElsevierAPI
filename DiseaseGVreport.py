@@ -3,7 +3,8 @@ import pandas as pd
 from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 import xlsxwriter
 import urllib.parse
-from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
+import networkx as nx
+from  ElsevierAPI.ResnetAPI.ResnetRDF import ResnetGraph, ResnetRDF
 
 DATA_DIR = 'D:/Python/Quest/report tables/'
 api_config = 'path2apiconfig.json'
@@ -47,6 +48,7 @@ for col in range(0,len(header)):
     worksheet.write_string(0,col,header[col])
 
 row_counter = 1
+#disease_graph4rdf = ResnetGraph()
 for node1id, node2id, rel in disease_graph.edges.data('relation'):
     node1 = disease_graph._get_node(node1id)
     node2 = disease_graph._get_node(node2id)
@@ -63,6 +65,10 @@ for node1id, node2id, rel in disease_graph.edges.data('relation'):
     try:
         gene_names = gvid2genes[gv_node['Id'][0]]
     except KeyError: pass
+    #rel.update_with_list('Gene',gene_names)
+    #rel.load_references()
+    #disease_graph4rdf.add_triple(node1,node2,rel)
+    nx.set_node_attributes(disease_graph, {gv_node['Id'][0]:{'Gene':gene_names}})
     gene_names  = ','.join(gene_names)
     worksheet.write_string(row_counter, 1,gene_names)
     
@@ -102,6 +108,7 @@ for node1id, node2id, rel in disease_graph.edges.data('relation'):
     row_counter += 1
  
 workbook.close()
+ResnetRDF.fromResnetGraph(disease_graph).to_json(DATA_DIR+'GVs2disease.jsonld')
 table2sort = table2sort.sort_values(by=['Gene name','Disease'])
 table2sort.to_csv(DATA_DIR+'GVs2disease.tsv',sep='\t', index=False)
 

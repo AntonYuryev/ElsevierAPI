@@ -1,12 +1,14 @@
 from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
 from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,REFCOUNT
 from ElsevierAPI.ETM_API.references import JOURNAL_PROPS
+from  ElsevierAPI.ResnetAPI.ResnetRDF import ResnetGraph, ResnetRDF
 import pandas as pd
 import numpy as np
 import time
 from ElsevierAPI.ETM_API.etm import ETMstat
+
 
 QUANTITATIVE_BIOMARKER_RELS = ['Biomarker','StateChange','QuantitativeChange','CellExpression']
 GENETIC_BIOMARKER_RELS = ['GeneticChange']
@@ -165,9 +167,10 @@ class BiomarkersReport(SemanticSearch):
         count_file = self.data_dir+self.fout_prefix+" biomarkers counts.tsv"
         ref_file = self.data_dir+self.fout_prefix+" biomarker references.tsv"
         self.print_ref_count(count_file,sep='\t')
-        self.print_references(self.__input_disease_column(),ref_file, for_rel_types=biomarker_rel_types)
         print ('Semantic counts for each biomarker are in %s' % count_file)
-        print('References supporting semantic counts are in %s' % ref_file)
+        if print_references:
+            self.print_references(self.__input_disease_column(),ref_file, for_rel_types=biomarker_rel_types)
+            print('References supporting semantic counts are in %s' % ref_file)
 
 
     def biomarker_specificity(self,biomarker_ids:tuple):
@@ -210,15 +213,16 @@ class BiomarkersReport(SemanticSearch):
         self.print_ref_count(count_file,sep='\t')
         print ('Weighted semantic counts for each biomarker are in %s' % count_file)
 
-    def biomarker_disease_scores(self, max_etm_row=100):
+
+    def biomarker_disease_scores(self, max_etm_row=100)->ResnetGraph:
         biomarker2disease = pd.DataFrame()
         row_counter = 0
-        ref_count_columns = [col for col in bm.RefCountPandas.columns if bm._col_name_prefix in col]
-        for row in bm.RefCountPandas.index:
-            biomarker = bm.RefCountPandas.loc[row][bm.RefCountPandas.columns[0]]
+        ref_count_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
+        for row in self.RefCountPandas.index:
+            biomarker = self.RefCountPandas.loc[row][self.RefCountPandas.columns[0]]
             for col_name in ref_count_columns:
-                disease = col_name[len(bm._col_name_prefix):]
-                refcount = bm.RefCountPandas.loc[row][col_name]
+                disease = col_name[len(self._col_name_prefix):]
+                refcount = self.RefCountPandas.loc[row][col_name]
                 if refcount > 0.0000001:
                     biomarker2disease.at[row_counter,'Biomarker'] = biomarker
                     biomarker2disease.at[row_counter,'Disease'] = disease
@@ -227,20 +231,35 @@ class BiomarkersReport(SemanticSearch):
                     row_counter += 1
 
         biomarker2disease.sort_values(by=['Rank'],ascending=False, inplace=True,ignore_index=True)
-        add2etm = []
-        if self.biomarker_type == GENETIC: add2etm_query = ['terms for genetic variations']
-        if self.biomarker_type == SOLUBLE: add2etm_query = ['blood']
+        rel_props = {'ObjTypeName':['Biomarker']}
+        if self.biomarker_type == GENETIC:
+            add2etm_query = ['terms for genetic variations']
+            rel_props.update({'BiomarkerType':['Genetic']})
+        elif self.biomarker_type == SOLUBLE:
+            rel_props.update({'BiomarkerType':['Blood']})
+            add2etm_query = ['blood']
 
         etm_counter = ETMstat(self.APIconfig)
+        bm2dis_graph = ResnetGraph()
         if self.journal_filter:
+            sort_by_relevance = False
             for row in biomarker2disease.index:
                 biomarker = biomarker2disease.loc[row]['Biomarker']
                 disease = biomarker2disease.loc[row]['Disease']
+
                 total_refs, ref_ids, ps_references = self.Graph.recent_refs(biomarker,disease,with_children=True)
                 [etm_counter._add2counter(r) for r in ps_references]
                 if ref_ids:
                     biomarker2disease.at[row, 'Recent pubs'] = ref_ids
+
+                biomarker_objs = self.Graph.get_obj_by_prop(biomarker)
+                disease_objs = self.Graph.get_obj_by_prop(disease)
+                rel_props[REFCOUNT] = [biomarker2disease.loc[row]['Rank']]
+                [bm2dis_graph.add_triple(d,b,rel_props,ps_references) for b in biomarker_objs for d in disease_objs]
+            
+
         elif max_etm_row:
+            sort_by_relevance = True
             for i in range(0,max_etm_row):
                 biomarker = biomarker2disease.loc[i]['Biomarker']
                 disease = biomarker2disease.loc[i]['Disease']
@@ -250,23 +269,31 @@ class BiomarkersReport(SemanticSearch):
                     biomarker2disease.at[i,'#References'] = int(etm_hit_count)
                     biomarker2disease.at[i,'Top References'] = ';'.join(ref_ids)
 
+                biomarker_objs = self.Graph.get_obj_by_prop(biomarker)
+                disease_objs = self.Graph.get_obj_by_prop(disease)
+                rel_props[REFCOUNT] = [int(etm_hit_count)]
+                [bm2dis_graph.add_triple(d,b,rel_props,etm_refs) for b in biomarker_objs for d in disease_objs]  
+            
+            
         biomarker2disease['Type'] = biomarker2disease['Biomarker'].apply(lambda x: self.name2objs[x][0]['ObjTypeName'][0])
         count_file = self.data_dir+self.fout_prefix+' biomarker-disease map.tsv'
         biomarker2disease.to_csv(count_file,sep='\t', index=False)
-        etm_counter.print_counter(self.data_dir+'Bibliography.tsv')
+        etm_counter.print_counter(self.data_dir+'Bibliography.tsv',use_relevance=sort_by_relevance)
         print ('Semantic counts for each biomarker-disease pair are in %s' % count_file)
+        return bm2dis_graph
 
 
 if __name__ == "__main__":
     start_time = time.time()
     APIconfig = load_api_config()
-    #journal_filter_fname = 'D:/Python/Quest/report tables/High-quality journals.txt'
     journal_filter_fname = ''
-            
-    bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
-    #bm = BiomarkersReport(APIconfig,GENETIC)
+    #journal_filter_fname = 'D:/Python/Quest/report tables/High-quality journals.txt'
+    
+    #bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
+    bm = BiomarkersReport(APIconfig,GENETIC)
     bm.data_dir = 'D:/Python/Quest/report tables/'
     bm.flush_dump()
+    #bm.add_rel_props(['URN'])
 
     calculate_specificity = False if bm.biomarker_type == GENETIC else False 
     # change here to True to calculate biomarker specificity
@@ -281,6 +308,9 @@ if __name__ == "__main__":
     bm.drop_refcount_columns()
     bm.weighted_counts(add_specificity=calculate_specificity)
 
-    bm.biomarker_disease_scores()
+    bm2dis_graph = bm.biomarker_disease_scores()
+    #bm2dis_graph.to_jsonld(bm.data_dir+bm.fout_prefix+' biomarker-disease graph.jsonld')
+    jsonld_fname = bm.data_dir+bm.fout_prefix+' biomarker-disease graph.jsonld'
+    ResnetRDF.fromResnetGraph(bm2dis_graph).to_json(jsonld_fname)
     print('Biomarkers for %s was found in %s' % (bm.Disease['Name'][0], bm.execution_time(start_time)))
     
