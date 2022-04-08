@@ -292,7 +292,7 @@ def rnef2sbgn_str(rnef: str, classmapfile: str, language='activity flow', plot_s
     return minidom.parseString(tostring(sbgn)).toprettyxml(indent='   ')
 
 
-def do_the_job(filename_in, dir_out, language, plot_scale, classmap='Classes.xml'):
+def do_the_job(filename_in, dir_out, language, plot_scale, classmap='rnef2sbgn_map.xml'):
     rnef = parse(filename_in).getroot()
     # batch = rnef.find('batch')
     for resnet in rnef.findall('./resnet'):
