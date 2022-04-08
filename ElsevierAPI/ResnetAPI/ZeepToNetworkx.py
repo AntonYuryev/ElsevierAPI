@@ -332,20 +332,17 @@ class PSNetworx(DataModel):
                 entire_graph = nx.compose(entire_graph,iter_graph)
         return entire_graph
     
-    def get_pathway_member_ids(self, PathwayIds: list, search_pathways_by=None, only_entities=None,
+    def get_pathway_member_ids(self, pathway_ids: list, search_pathways_by=None, only_entities=None,
                                with_properties=None):
         if with_properties is None:
             with_properties = ['Name', 'Alias']
         if only_entities is None:
             only_entities = []
-        if search_pathways_by is None:
-            search_pathways_by = ['id']
 
-        if search_pathways_by[0] in ['id', 'Id', 'ID']:
-            oql_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE id = (' + ','.join(
-                [str(i) for i in PathwayIds]) + '))'
+        if search_pathways_by is None:
+            oql_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE id = (' + ','.join(list(map(str,pathway_ids))) + '))'
         else:
-            property_names, values = OQL.get_search_strings(search_pathways_by, PathwayIds)
+            property_names, values = OQL.get_search_strings(search_pathways_by, pathway_ids)
             oql_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE (' + property_names + ') = (' + values + '))'
 
         if len(only_entities) > 0:

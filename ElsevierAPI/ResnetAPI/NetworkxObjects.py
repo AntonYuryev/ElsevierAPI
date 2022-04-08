@@ -44,17 +44,24 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             self[PropId] = [PropValue]
 
-    def update_with_value(self, PropId, PropValue: str):
-        try:
-            self[PropId] = list(set(self[PropId]) | {PropValue})
-        except KeyError:
-            self[PropId] = [PropValue]
 
-    def update_with_list(self, PropId, PropValues: list):
+    def update_with_value(self, prop_id:str, new_value):
         try:
-            self[PropId] = list(set(self[PropId] + PropValues))
+            values = list(self[prop_id])
+            if new_value not in values:
+                values.append(new_value)
+                self[prop_id] = values
         except KeyError:
-            self[PropId] = list(set(PropValues))
+            self[prop_id] = [new_value]
+
+
+    def update_with_list(self, prop_id:str, new_values:list):
+        try:
+            values = list(self[prop_id])
+            [values.append(x) for x in new_values if x not in values]
+            self[prop_id] = values
+        except KeyError:
+            self[prop_id] = new_values
 
 
     def data2str(self, columnPropNames: list, col_sep='\t', cell_sep=';', endOfline='\n'):

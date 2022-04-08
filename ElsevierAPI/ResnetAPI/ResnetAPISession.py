@@ -17,7 +17,7 @@ class APISession(PSNetworx):
     PageSize = 100
     GOQLquery = str()
     __IsOn1st_page = True
-    relProps = ['Name', 'RelationNumberOfReferences']
+    relProps = ['Name','RelationNumberOfReferences','URN']
     entProps = ['Name']
     DumpFiles = ['ResnetAPIsessionDump.tsv']
     csv_delimeter = '\t'

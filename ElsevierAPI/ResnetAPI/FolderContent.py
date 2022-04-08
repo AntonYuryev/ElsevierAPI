@@ -1,5 +1,5 @@
 from .ResnetAPISession import APISession
-from .NetworkxObjects import PSObject, PS_ID_TYPES,SENTENCE_PROPS,PS_BIBLIO_PROPS,CLINTRIAL_PROPS
+from .NetworkxObjects import PSObject,PS_ID_TYPES,SENTENCE_PROPS,BIBLIO_PROPS,CLINTRIAL_PROPS
 from .ResnetGraph import ResnetGraph
 from .rnef2sbgn import rnef2sbgn_str
 import xml.etree.ElementTree as et
@@ -28,6 +28,7 @@ class FolderContent (APISession):
 
 
     def get_subfolders(self, FolderIds: list):
+        # FolderIds - list of folder IDs
         if not hasattr(self, "id2folders"): 
             self.id2folders = self.load_folder_tree()
 
@@ -39,17 +40,19 @@ class FolderContent (APISession):
                     subfolders_ids.update(folder['SubFolders']['long'])
         return subfolders_ids
 
-    def get_subfolders_recursively(self, FolderId):
-        accumulate_subfolders = {FolderId}
-        subfolders = set(self.get_subfolders([FolderId]))
-        while len(subfolders) > 0:
-            accumulate_subfolders.update(subfolders)
-            subs = set()
-            for db_id in subfolders:
-                subs.update(self.get_subfolders([db_id]))
-            subfolders = subs
 
-        return accumulate_subfolders
+    def get_subfolders_recursively(self, FolderId):
+        accumulate_subfolder_ids = {FolderId}
+        subfolder_ids = set(self.get_subfolders([FolderId]))
+        while len(subfolder_ids) > 0:
+            accumulate_subfolder_ids.update(subfolder_ids)
+            subs = set()
+            for db_id in subfolder_ids:
+                subs.update(self.get_subfolders([db_id]))
+            subfolder_ids = subs
+
+        return accumulate_subfolder_ids
+
 
     def get_subfolder_tree(self,folder_name):
         if not hasattr(self, "id2folders"): 
@@ -308,9 +311,9 @@ class FolderContent (APISession):
         if not hasattr(self,'id2groups'): self.id2groups = dict()
         if not hasattr(self,'id2results'): self.id2results = dict()
         id2objects = dict()
-        for f in FolderIds:
-            folder_name = self.id2folders[f][0]['Name']
-            zeep_objects = self.get_folder_objects_props(f, property_names)
+        for fid in FolderIds:
+            folder_name = self.id2folders[fid][0]['Name']
+            zeep_objects = self.get_folder_objects_props(fid, property_names)
             id2objs = self._zeep2psobj(zeep_objects)
             for Id, psObj in id2objs.items():
                 if psObj['ObjTypeName'][0] == 'Pathway':
@@ -432,7 +435,7 @@ class FolderContent (APISession):
     
     def content2rnef(self, top_folder_name:str,include_subfolders=True, add_props2rel:dict=None,add_pathway_props:dict=None):
 
-        self.add_rel_props(list(PS_ID_TYPES | SENTENCE_PROPS | {'TextRef'} | PS_BIBLIO_PROPS | CLINTRIAL_PROPS))
+        self.add_rel_props(list(PS_ID_TYPES | SENTENCE_PROPS | {'TextRef'} | BIBLIO_PROPS | CLINTRIAL_PROPS))
 
         if not include_subfolders:
             return self.pathways_from_folder(None,top_folder_name,add_props2rel=add_props2rel,add_pathway_props=add_pathway_props)
@@ -611,3 +614,24 @@ class FolderContent (APISession):
 
         print('Pathways not found:\n%s' % '\n'.join(missedURNs))
         print("Total download time: %s" % self.execution_time(global_start))
+
+
+    def find_pathways(self, for_entity_ids:list, in_folders:list):
+        # in_folders = [folder_names,]
+        ent_ids = list(map(str,for_entity_ids))
+        to_return = dict()
+        for folder in in_folders:
+            folder_id = self.get_folder_id(folder)
+            sub_folder_ids = self.get_subfolders_recursively(folder_id)
+            self.get_objects_from_folders(sub_folder_ids) # loads id2pathways
+            for pathway_id in self.id2pathways.keys():
+                id2psobj = self.get_pathway_member_ids([pathway_id],None,ent_ids,['id'])
+                for id, psobj in id2psobj.items():
+                    try:
+                        to_return[id].update_with_value('Pathway ID',pathway_id)
+                    except KeyError:
+                        psobj.update_with_value('Pathway ID',pathway_id)
+                        to_return[id] = psobj
+
+        return to_return
+

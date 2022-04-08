@@ -334,7 +334,7 @@ class SemanticSearch (APISession):
         print('\nPrinting references for semantic search concept "%s"\n' % concept_name)
         with open(fname,'w',encoding='utf-8') as f:
             # printing header
-            f.write('Concept\tEntity\t')
+            f.write('Concept\tEntity\tCitation index\t')
             for id in pubid_types: f.write(id+'\t')
 
             biblio_header = ''
@@ -347,16 +347,22 @@ class SemanticSearch (APISession):
                 biblio_header = biblio_header[:-1]+'\n'
             f.write(biblio_header)
 
+            ref_counter = set()
             for i in self.RefCountPandas.index:
                 entity_ids = list(self.RefCountPandas.loc[i][self.__temp_id_col__])
                 entity_name = self.RefCountPandas.loc[i][self.__resnet_name__]
-                links_between_graph = self.connect_nodes(concept_ids,entity_ids,for_rel_types,with_effect,in_direction)
-                references = links_between_graph.count_references()
-                for ref in references:
-                    ref_str = ref.to_str(pubid_types,'\t',print_snippets,biblio_properties)
-                    f.write(concept_name+'\t'+entity_name+'\t'+ref_str+'\n')
+                links_between = self.connect_nodes(concept_ids,entity_ids,for_rel_types,with_effect,in_direction)
+                references = links_between.count_references()
+                ETMstat.count_refs(ref_counter,references)
+            
+            to_sort = list(ref_counter)
+            to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
+            for ref in to_sort:
+                ref_str = ref.to_str(pubid_types,'\t',print_snippets,biblio_properties,['Citation index'])
+                f.write(concept_name+'\t'+entity_name+'\t'+ref_str+'\n')
 
             self.relProps = old_rel_props
+
 
     def print_ref_count(self, refCountsOut='', **kwargs):
         PandasToPrint = pd.DataFrame(self.RefCountPandas)    
