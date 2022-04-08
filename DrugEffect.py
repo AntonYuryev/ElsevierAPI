@@ -73,10 +73,12 @@ class RepurposeDrug(TargetIndications):
         if self.required_effect_on_indications == ACTIVATE: return 'positive'
         return 'unknown'
 
+
     def needs_clinical_trial(self):
         if 'CellProcess' in self.indication_types and self.required_effect_on_indications == ACTIVATE: return True
         if 'Disease' in self.indication_types and self.required_effect_on_indications == INHIBIT: return True
         return False
+
 
     def find_drug_indications(self):
         indications2return = set()
@@ -100,6 +102,7 @@ class RepurposeDrug(TargetIndications):
         print('Found %d indications reported in scientific literature for %s' % (len(found_indications), self.drug_name))
         self.drug_ids = self.Graph.get_entity_ids(['SmallMol'],['ObjTypeName'])
         return list(indications2return)
+
 
     def find_indications4similars(self):
         if not self.similar_drugs: return
@@ -127,6 +130,7 @@ class RepurposeDrug(TargetIndications):
         indications2return.update(found_indications)
         print('Found %d indications reported in scientific literature or drugs similar to %s' % (len(found_indications), self.drug_name))
         return list(indications2return)
+
 
     def score_drug_semantics(self):
         colname = self.drug_name + ' cliniclal trials'
@@ -163,23 +167,26 @@ class RepurposeDrug(TargetIndications):
             linked_entities_count = self.link2concept(colname, self.similar_drug_ids)
             print('%d indications %s by %s' % (linked_entities_count, regulated, self.similar_drugs))
         
+
     def fname_prefix(self):
         indics = OQL.join_with_quotes(self.indication_types)
         rep_pred =  'suggested ' if self.strict_mode else 'suggested,predicted '
         regulate = ' activated by ' if self.required_effect_on_indications == ACTIVATE else ' inhibited by '
         return rep_pred+indics+regulate+self.drug_name+' '
 
+
     def print_drug_indictaion_refs(self, data_dir:str):
         fname_out = data_dir+dcp.fname_prefix()+" clinical trials.tsv"
         print('Printing clinical trials')
-        dcp.print_references(self.drugcolname,fname_out, ['ClinicalTrial'],
+        self.print_references(self.drugcolname,fname_out, ['ClinicalTrial'],
                             pubid_types=['NCT ID'],biblio_props=['Title','Start'],print_snippets=True)
 
         effect_str = self.__get_effect_str()
         fname_out = data_dir+dcp.fname_prefix()+" references.tsv"
         print('Printing research articles')
-        dcp.print_references(self.drugcolname,fname_out, ['Regulation'],[effect_str],
+        self.print_references(self.drugcolname,fname_out, ['Regulation'],[effect_str],
                             pubid_types=['PMID','DOI','PII','PUI','EMBASE'],biblio_props=['Title','PubYear'],print_snippets=True)
+
 
 if __name__ == "__main__":
     global_start = time.time()
@@ -206,7 +213,6 @@ if __name__ == "__main__":
     # strict mode ranks only indications suggested in the literarure without predicting new indications
     dcp.pathway_name_must_include_target = True
     # must be True if there are a lot of curated pathways with receptor name included into pathway name
-
 
     dcp.flush_dump_files()
     drug_indication_ids = dcp.find_drug_indications()

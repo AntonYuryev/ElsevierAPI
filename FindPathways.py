@@ -1,49 +1,46 @@
 import sys
 import time
-from ElsevierAPI import open_api_session
+from ElsevierAPI import load_api_config
+from ElsevierAPI.ResnetAPI.FolderContent import FolderContent
 
-ps_api = open_api_session()
+ps_api = FolderContent(load_api_config())
 
-def MapEntityToPathways(EntityDict:dict(), IDtoPathways:dict(),FilterBy:list, folderName):
-    for id, pthwy in IDtoPathways.items():
+def MapEntityToPathways(FilterBy:list):
+    EntityDict = dict()
+    for id, pthwy in ps_api.id2pathways.items():
+        folder_name = ps_api.id2folders[id][0]['Name']
         if pthwy['ObjTypeName'][0] == 'Pathway':
-            PathwayName = pthwy['Name'][0]
+            pathway_name = pthwy['Name'][0]
             PathwayIds = pthwy['Id']
-            EntityDictValue = folderName + '\t' + PathwayName
+            EntityDictValue = folder_name + '\t' + pathway_name
             IdtoMembers = ps_api.get_pathway_member_ids(PathwayIds, FilterBy, InProperties=SearchByProperty)
             for ent in IdtoMembers.values():
                 EntityName = ent['Name'][0]
                 EntityURN = ent['URN'][0]
                 EntityDictKey = EntityName+'\t'+EntityURN
-                if EntityDictKey in EntityDict.keys():
+                try:
                     EntityDict[EntityDictKey].update([EntityDictValue])
-                else:
+                except KeyError:
                     EntityDict[EntityDictKey] = set([EntityDictValue])
 
-def FindPathways(FoldersWithPathways:list, EntityListFile):
-    Entities = list()
-    with open(EntityListFile) as file:
-        Entities = [line.strip() for line in file]
+    return EntityDict
 
-    for PathwayFolder in FoldersWithPathways:
-        subFolders = ps_api.get_subfolders([PathwayFolder])
-        if len(subFolders) == 0:
-            print ('Input folder has no subfolders. Will use only pathways from %s' % PathwayFolder)
+
+def FindPathways(FoldersWithPathways:list, EntityListFile:str):
+    # loading id2pathways, id2folders into ps_api
+    for folder in FoldersWithPathways:
+        folder_id = ps_api.get_folder_id(folder)
+        sub_folder_ids = ps_api.get_subfolders_recursively([folder_id])
+        if len(sub_folder_ids) == 0:
+            print ('Input folder has no subfolders. Will use only pathways from %s' % folder)
         else:
-            print('Found %d subfolders in %s' %  (len(subFolders), PathwayFolder))
+            print('Found %d subfolders in %s' %  (len(sub_folder_ids), folder))
 
-        EntityDict = dict()
-        ParentFolder = ps_api.IdToFolders[PathwayFolder][0]
-        IDtoPathways = ps_api.get_objects_from_folders([ParentFolder.Id])
-        MapEntityToPathways(EntityDict, IDtoPathways, Entities, PathwayFolder)
+        ps_api.get_objects_from_folders([sub_folder_ids])
 
-        for FolderId in subFolders:
-            subFolder = ps_api.IdToFolders[FolderId][0]
-            subFolderName = subFolder['Name']
-            allSubSubFolders = ps_api.get_subfolders_tree(FolderId)
-                
-            IDtoPathways = ps_api.get_objects_from_folders(allSubSubFolders)
-            MapEntityToPathways(EntityDict, IDtoPathways, Entities, subFolderName)
+    # making {EntityName+'\t'+EntityURN : folderName + '\t' + PathwayName}
+    Entities = [line.strip() for line in open(EntityListFile)]
+    EntityDict= MapEntityToPathways(EntityDict, Entities)
 
     return dict(sorted(EntityDict.items()))
     
@@ -70,15 +67,28 @@ if __name__ == "__main__":
 
 
     start_time = time.time()
-    sorted_dict = FindPathways(SearchPathwaysInFolders, EntityListFile)
+    entities = [line.strip() for line in open(EntityListFile)]
+    entity_ids = ps_api._get_obj_ids_by_props(entities,SearchByProperty)
+    id2psobj = ps_api.find_pathways(entity_ids,SearchPathwaysInFolders)
+    pathway_counter = set()
+    # making {EntityName+'\t'+EntityURN : folderName + '\t' + PathwayName}
     foutName = EntityListFile[:len(EntityListFile)-4]+' Pathways from '+','.join(SearchPathwaysInFolders)+'.tsv'
-    with open(foutName, 'w', encoding='utf-8') as fout:
-        for k,v in sorted_dict.items():
-            for p in v:
-                fout.write(k+'\t'+p+'\n')
+    rows = list()
+    for psobj in id2psobj.values():
+        entity_name = psobj['Name'][0]
+        entity_urn = psobj['URN'][0]
+        for pathway_id in psobj['Pathway ID']:
+            patwhay_obj = ps_api.id2pathways[pathway_id]
+            pathway_name = patwhay_obj['Name'][0]
+            pathway_counter.add(pathway_name)
+            for folder_name in patwhay_obj['Folders']:
+                rows.append(entity_name+'\t'+entity_urn+'\t'+folder_name+'\t'+pathway_name+'\n')
 
-    PathwayCounter = {x for x in v for v in sorted_dict.values()}
-    print('Found %d pathways in \"%s\" for %d entities from \"%s\"' % (len(PathwayCounter), ','.join(SearchPathwaysInFolders), len(sorted_dict), EntityListFile))
+    rows.sort()
+    with open(foutName, 'w', encoding='utf-8') as fout:
+        [fout.write(row) for row in rows]
+
+    print('Found %d pathways in \"%s\" for %d entities from \"%s\"' % (len(pathway_counter), ','.join(SearchPathwaysInFolders), len(entities), EntityListFile))
     print('Results were printed to \"%s\" in %s seconds' % (foutName,time.time() - start_time))
 
 

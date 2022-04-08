@@ -2,7 +2,7 @@ from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 import time
 from ElsevierAPI import open_api_session
 import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PS_BIBLIO_PROPS,PS_ID_TYPES
+from ElsevierAPI.ResnetAPI.NetworkxObjects import BIBLIO_PROPS,PS_ID_TYPES
 from  ElsevierAPI.ResnetAPI.rnef2sbgn import make_file_name
 import xml.etree.ElementTree as et
 from xml.dom import minidom
@@ -13,7 +13,7 @@ my_drug_list = working_dir + input_drug_list
 my_drug_list = None
 ps_api = open_api_session()
 ps_api.DumpFiles.clear()
-ps_api.add_rel_props(PS_BIBLIO_PROPS+PS_ID_TYPES+['Effect','Mechanism'])
+ps_api.add_rel_props(BIBLIO_PROPS+PS_ID_TYPES+['Effect','Mechanism'])
 ps_api.PageSize = 1000
 
 def retreive_clinical_trials(drugs_name_file=None):

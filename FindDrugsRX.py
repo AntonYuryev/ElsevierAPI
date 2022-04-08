@@ -1,5 +1,5 @@
 import time
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI import open_api_session,load_api_config
 import ElsevierAPI.ReaxysAPI.Reaxys_API as RxAPI
 import argparse

@@ -2,7 +2,7 @@ import time
 import pandas as pd
 import argparse
 import textwrap
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
 

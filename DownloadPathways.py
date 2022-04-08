@@ -1,8 +1,7 @@
-import time
 import argparse
 import textwrap
-from ElsevierAPI import load_api_config 
 from ElsevierAPI.ResnetAPI.FolderContent import FolderContent
+from ElsevierAPI import load_api_config 
 import csv
 from contextlib import redirect_stdout
 

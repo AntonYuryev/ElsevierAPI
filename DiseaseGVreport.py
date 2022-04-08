@@ -4,7 +4,7 @@ from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 import xlsxwriter
 import urllib.parse
 import networkx as nx
-from  ElsevierAPI.ResnetAPI.ResnetRDF import ResnetGraph, ResnetRDF
+from  ElsevierAPI.ResnetAPI.Resnet2rdf import ResnetGraph, ResnetRDF
 
 DATA_DIR = 'D:/Python/Quest/report tables/'
 api_config = 'path2apiconfig.json'
@@ -106,7 +106,7 @@ for node1id, node2id, rel in disease_graph.edges.data('relation'):
     table2sort.at[row_counter,ref_column_name] = ref_col_value
 
     row_counter += 1
- 
+
 workbook.close()
 ResnetRDF.fromResnetGraph(disease_graph).to_json(DATA_DIR+'GVs2disease.jsonld')
 table2sort = table2sort.sort_values(by=['Gene name','Disease'])

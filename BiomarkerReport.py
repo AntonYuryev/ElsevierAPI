@@ -3,7 +3,7 @@ from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
 from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,REFCOUNT
 from ElsevierAPI.ETM_API.references import JOURNAL_PROPS
-from  ElsevierAPI.ResnetAPI.ResnetRDF import ResnetGraph, ResnetRDF
+from  ElsevierAPI.ResnetAPI.Resnet2rdf import ResnetGraph, ResnetRDF
 import pandas as pd
 import numpy as np
 import time
@@ -47,6 +47,7 @@ class BiomarkersReport(SemanticSearch):
 
         return journal_filter
     
+
     def __init__(self, APIconfig, biomarker_type:int, journal_filter_fname=''):
         super().__init__(APIconfig)
         self.PageSize = 500
@@ -79,6 +80,7 @@ class BiomarkersReport(SemanticSearch):
         request_name = 'Find children for {disease}'.format(disease=self.Disease['Name'][0])
         disease_graph = self.process_oql(oql_query, request_name)
         self.diseases = disease_graph.get_objects(DISEASES)
+
 
     def load_graph(self, disease_ids:list):
         if self.biomarker_type == GENETIC:
@@ -123,6 +125,7 @@ class BiomarkersReport(SemanticSearch):
         if self.journal_filter:
             self.Graph.filter_references(self.journal_filter)
 
+
     def init_semantic_search (self, reset_pandas = False):
         BiomarkerNames =  [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] not in DISEASES]
         BiomarkerScores = pd.DataFrame()
@@ -130,8 +133,10 @@ class BiomarkersReport(SemanticSearch):
         print('Will score %d biomarkers linked to %s' % (len(BiomarkerScores),self.Disease['Name'][0]))
         self.load_pandas(BiomarkerScores,prop_names_in_header=True) #maps entities in ['Name'] column
 
+
     def __input_disease_column(self):
         return self._col_name_prefix+self.Disease['Name'][0]
+
 
     def semantic_search(self, print_references=True):
         disease_name2ids = dict()
@@ -293,7 +298,6 @@ if __name__ == "__main__":
     bm = BiomarkersReport(APIconfig,GENETIC)
     bm.data_dir = 'D:/Python/Quest/report tables/'
     bm.flush_dump()
-    #bm.add_rel_props(['URN'])
 
     calculate_specificity = False if bm.biomarker_type == GENETIC else False 
     # change here to True to calculate biomarker specificity

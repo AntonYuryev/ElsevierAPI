@@ -1,7 +1,7 @@
 import time
 from ElsevierAPI import open_api_session
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PS_ID_TYPES
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 
 global_start = time.time()
 
@@ -18,19 +18,19 @@ ps_api.add_ent_props(ENT_PROPs)
 # this dump file will list all proteins in the database with connectivity >0:
 ps_api.add_dump_file('Proteins from database.tsv', replace_main_dump=True)
 print('Fetching all proteins from the database')
-ProteinsOnyGraph = ps_api.process_oql("Select Entity WHERE objectType = Protein AND Connectivity > 0 AND Name LIKE 'A%'", flush_dump=True)
+ProteinsOnlyGraph = ps_api.process_oql("Select Entity WHERE objectType = Protein AND Connectivity > 0 AND Name LIKE 'A%'", flush_dump=True)
 
 
 ps_api.add_dump_file("Protein neighbors dump.tsv", replace_main_dump=True)  # dump file accumulates all data in one big file
 out_dir = 'csv'
 counter = 0
-for node_id, psObj in ProteinsOnyGraph.nodes(data=True):
+for node_id, psObj in ProteinsOnlyGraph.nodes(data=True):
     protein_name = psObj['Name'][0]
     counter += 1
     print('Finding neighbors for \"%s\", node #%d from %d total' %
-          (protein_name, counter, ProteinsOnyGraph.number_of_nodes()))
+          (protein_name, counter, ProteinsOnlyGraph.number_of_nodes()))
     
-    oql_query = GOQL.expand_entity([node_id], SearchByProperties=['id'])
+    oql_query = OQL.expand_entity([node_id], SearchByProperties=['id'])
     ProteinNeighborsGraph = ps_api.process_oql(oql_query)
     protein_neighbors_file = out_dir + '/' + protein_name + '_neighbors.csv'
     ps_api.to_csv(protein_neighbors_file)
