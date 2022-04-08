@@ -269,6 +269,9 @@ class ETMstat:
         self.ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
 
     def __limit(self): return self.params['limit']
+
+    def references(self):
+        return set([x[0] for x in self.ref_counter.values()])
  
     def _set_query(self,query:str):
         self.params['query'] = query
@@ -357,6 +360,35 @@ class ETMstat:
         [ref_ids.append(self._add2counter(ref)) for ref in references]
         return self.hit_count, ref_ids, references
 
+    @staticmethod
+    def count_refs(ref_counter:set, references:list):
+        ref_counter.update(references)
+        counter_refs = ref_counter.intersection(set(references))
+        for ref in counter_refs:
+            try:
+                count = ref['Citation index'][0]
+                ref['Citation index'] = [count + 1]
+            except KeyError:
+                ref['Citation index'] = [1]
+        return 
+
+
+    @staticmethod
+    def print_citation_index(ref_counter:set,fname:str):
+        to_sort = list(ref_counter)
+        to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
+        with open(fname, 'w', encoding='utf-8') as f:
+            for ref in to_sort:
+                ref_str = ref.get_biblio_str()
+                count = ref['Citation index'][0]
+                f.write(str(count)+'\t'+ref_str+'\n')
+
+
+    @staticmethod
+    def _sort_dict(dic:dict, sort_by_value = True, reverse = True):
+        item_idx = 1 if sort_by_value else 0
+        return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))
+
 
 class ETMcache (ETMstat):
     pass
@@ -374,10 +406,6 @@ class ETMcache (ETMstat):
         self.etm_results_dir = etm_dump_dir
         self.etm_stat_dir = etm_stat_dir
         self.statistics = dict() # {prop_name:{prop_value:count}}
-
-
-    def references(self):
-        return set([x[0] for x in self.ref_counter.values()])
 
     def __download(self):
         print('\nPerforming ETM search "%s"' % self.search_name)
@@ -487,12 +515,6 @@ class ETMcache (ETMstat):
         except KeyError: return dict()
 
 
-    @staticmethod
-    def _sort_dict(dic:dict, sort_by_value = True, reverse = True):
-        item_idx = 1 if sort_by_value else 0
-        return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))
-
-
     def to_excel(self, stat_props:list):
         workbook = xlsxwriter.Workbook(self.etm_stat_dir+self.search_name+'.xlsx')
         for p in stat_props:
@@ -512,28 +534,4 @@ class ETMcache (ETMstat):
             row_counter += 1
 
         workbook.close()
-
-
-   
-    @staticmethod
-    def count_refs(ref_counter:set, references:list):
-        ref_counter.update(references)
-        counter_refs = ref_counter.intersection(set(references))
-        for ref in counter_refs:
-            try:
-                count = ref['Citation index'][0]
-                ref['Citation index'] = [count + 1]
-            except KeyError:
-                ref['Citation index'] = [1]
-        return 
-
-    @staticmethod
-    def print_citation_index(ref_counter:set,fname:str):
-        to_sort = list(ref_counter)
-        to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
-        with open(fname, 'w', encoding='utf-8') as f:
-            for ref in to_sort:
-                ref_str = ref.get_biblio_str()
-                count = ref['Citation index'][0]
-                f.write(str(count)+'\t'+ref_str+'\n')
 

@@ -139,6 +139,7 @@ class Reference(dict):
         except KeyError:
             self[prop_id] = list(set(prop_values))
 
+
     def add_sentence_prop(self, text_ref:str, propID:str, prop_value:str):
         try:
             exist_sentence = self.snippets[text_ref]
@@ -149,6 +150,7 @@ class Reference(dict):
             self.snippets[text_ref] = exist_sentence
         except KeyError:
             self.snippets[text_ref] = {propID:[prop_value]}
+
 
     def add_sentence_props(self, text_ref:str, propID:str, prop_values:list):
         try:
@@ -202,9 +204,17 @@ class Reference(dict):
                 continue
         return 'no identifier available'
     
-    def to_str(self,id_types:list=None,col_sep='\t',print_snippets=False,biblio_props=[]):
+
+    def to_str(self,id_types:list=None,col_sep='\t',print_snippets=False,biblio_props=[],other_props=[]):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         row = str()
+        for p in other_props:
+            try:
+                prop_values_str = ';'.join(map(str,self[p]))
+                row = row + prop_values_str + col_sep
+            except KeyError:
+                row = row  + '' + col_sep
+
         if isinstance(id_types,list):
             for t in id_types:
                 try:
@@ -213,10 +223,7 @@ class Reference(dict):
                     row = row + col_sep
         else:
             row = self.__identifiers_str() + col_sep
-
-
-        row = row[:len(row)-1] #remove last separator
-
+                
         for prop_id in biblio_props:
             try:
                 prop_values_str = ';'.join(self[prop_id])
@@ -225,15 +232,15 @@ class Reference(dict):
             except KeyError:
                 prop_values_str = ''
             
-            row = row + col_sep + prop_values_str
+            row = row + prop_values_str + col_sep
             #row = row + col_sep + prop_id + ':' + prop_values_str
 
         if print_snippets:
             sentence_props =  json.dumps(self.snippets)
             sentence_props = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sentence_props)
-            row += col_sep + sentence_props
+            row = row + sentence_props + col_sep
 
-        return row
+        return row[:-1] #remove last separator
 
 
     def get_biblio_str(self):
