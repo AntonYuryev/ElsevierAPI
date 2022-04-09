@@ -7,8 +7,7 @@ import networkx as nx
 from  ElsevierAPI.ResnetAPI.Resnet2rdf import ResnetGraph, ResnetRDF
 
 DATA_DIR = 'my_dir'
-api_config = 'path2apiconfig.json'
-ps_api = open_api_session(api_config) # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json
+ps_api = open_api_session() # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json
 ps_api.add_rel_props(['PMID'])
 ps_api.PageSize = 1000
 disease_names_file = 'D:/Python/ENTELLECT_API/Data/hGraph/Focus uterine cancers from PS.txt'
