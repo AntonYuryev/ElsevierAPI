@@ -292,11 +292,11 @@ if __name__ == "__main__":
     start_time = time.time()
     APIconfig = load_api_config()
     journal_filter_fname = ''
-    #journal_filter_fname = 'D:/Python/Quest/report tables/High-quality journals.txt'
+    #journal_filter_fname = 'High-quality journals.txt'
     
     #bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
     bm = BiomarkersReport(APIconfig,GENETIC)
-    bm.data_dir = 'D:/Python/Quest/report tables/'
+    bm.data_dir = 'my_dir'
     bm.flush_dump()
 
     calculate_specificity = False if bm.biomarker_type == GENETIC else False 
