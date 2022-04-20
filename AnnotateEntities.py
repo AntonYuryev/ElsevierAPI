@@ -5,8 +5,6 @@ import textwrap
 
 
 if __name__ == "__main__":
-    EntityListFile = str()
-    link2concepts = pd.DataFrame()
     instructions = '''
                 infile - tab-delimted file with mapping values in the 1st column. Specify mapping attribute in the column header.
                 all other columns - new annotation values. Use column header to name the property
