@@ -3,13 +3,14 @@ NEED_QUOTES = {' ', '-', '/', '(', ')', '[', ']', '+', '#',':'}
 
 class OQL:
     @staticmethod
-    def join_with_quotes(NameList: list,separator=','):
+    def join_with_quotes(values:list,separator=','):
         to_return = str()
-        for name in NameList:
-            if 1 in [c in name for c in NEED_QUOTES]:
-                to_return = to_return + '\'' + name + '\'' + separator
-            else:
-                to_return = to_return + name + separator
+        for name in values:
+            if name: #property value may not be empty
+                if 1 in [c in name for c in NEED_QUOTES]:
+                    to_return = to_return + '\'' + name + '\'' + separator
+                else:
+                    to_return = to_return + name + separator
 
         return to_return[:len(to_return) - 1]
 
@@ -19,12 +20,13 @@ class OQL:
         values = str()
         unique_values_list = set(PropValuesList)
         for v in unique_values_list:
-            val = str(v)
-            val = val.replace('\'', '')
-            if 1 in [c in val for c in NEED_QUOTES]:
-                val = '\'' + val + '\''
-                some_values_have_quotes = True
-            values = values + val + ','
+            if v: #property value may not be empty
+                val = str(v)
+                val = val.replace('\'', '')
+                if 1 in [c in val for c in NEED_QUOTES]:
+                    val = '\'' + val + '\''
+                    some_values_have_quotes = True
+                values = values + val + ','
         values = values[:len(values) - 1]
 
         property_names = str()
@@ -83,10 +85,12 @@ class OQL:
         return oql_query if MinRef == 0 else oql_query + ' AND RelationNumberOfReferences >= ' + str(MinRef)
 
     @staticmethod
-    def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=[]):
+    def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=[],include_parents=False):
         ontology_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE {entities})'
+        search_by_id = False
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
             entity_query = "id = (" + ','.join([str(i) for i in PropertyValues]) + ')'
+            search_by_id = True
         else:
             prop_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
             entity_query = '(' + prop_names + ') = (' + values + ')'
@@ -95,6 +99,13 @@ class OQL:
         if len(only_object_types) > 0:
             object_types = OQL.join_with_quotes(only_object_types)
             search_query = search_query + ' AND objectType = (' + object_types + ')'
+
+        if include_parents:
+            if not search_by_id:
+                return search_query+' OR '+entity_query
+            else:
+                print('Cannot include parents into ontology query which uses database Id for searching')
+                return None
 
         return search_query
 

@@ -4,7 +4,7 @@ import networkx as nx
 import pandas as pd
 from datetime import timedelta
 from .ZeepToNetworkx import PSNetworx
-from .ResnetGraph import ResnetGraph
+from .ResnetGraph import ResnetGraph, PSObject
 from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import SENTENCE_PROPS
 from xml.dom import minidom
@@ -23,12 +23,17 @@ class APISession(PSNetworx):
     csv_delimeter = '\t'
     print_rel21row = False
     clear_graph_cache = False
+    __getLinks = True
+
+    def __set_get_links(self):
+        return self.GOQLquery[7:15] == 'Relation'
 
     def __init__(self,url, username, password):
         super().__init__(url, username, password)
         self.DumpFiles = ['ResnetAPIsessionDump.tsv']
 
     def __init_session(self):
+        self.__set_get_links()
         obj_props = self.relProps if self.__getLinks else self.entProps
         first_iteration = self.ResultPos
         zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
@@ -49,6 +54,13 @@ class APISession(PSNetworx):
                 return self._load_graph(None, zeep_data)
         else:
             return ResnetGraph()
+
+
+    def __replace_goql(self, oql_query: str):
+        self.GOQLquery = oql_query
+        self.__getLinks = self.__set_get_links()
+        self.ResultRef = None
+
 
     def clear(self):
         self.Graph.clear()
@@ -102,14 +114,6 @@ class APISession(PSNetworx):
                 (iteration, total_iterations, self.ResultSize, name[0], self.execution_time(start)))
 
         return entire_graph
-
-    def __set_get_links(self):
-        return self.GOQLquery[7:15] == 'Relation'
-
-    def __replace_goql(self, oql_query: str):
-        self.GOQLquery = oql_query
-        self.__getLinks = self.__set_get_links()
-        self.ResultRef = None
 
     def add_rel_props(self, add_props:list):
         self.relProps = self.relProps+[i for i in add_props if i not in self.relProps]
@@ -231,12 +235,14 @@ class APISession(PSNetworx):
 
 
     def iterate_oql(self, oql_query:str, id_set:set):
+        # oql_query MUST contain string placeholder called {ids}
         to_return = ResnetGraph()
         to_return = self._iterate_oql(oql_query,id_set, self.relProps,self.entProps)
         return to_return
 
 
     def iterate_oql2(self, oql_query:str, id_set1:set, id_set2:set):
+        # oql_query MUST contain 2 string placeholders called {ids1} and {ids2}
         to_return = ResnetGraph()
         to_return = self._iterate_oql2(oql_query,id_set1,id_set2,self.relProps,self.entProps)
         return to_return
@@ -280,7 +286,7 @@ class APISession(PSNetworx):
     def map_props2objs(self, propValues:list, prop_names:list,map2types=None,case_insensitive=False):
         propval2objs,objid2propval = self.Graph.get_props2obj_dic(propValues, prop_names,case_insensitive)
         need_db_mapping = set(propValues).difference(propval2objs.keys())
-        only_object_types = [] if map2types is None else map2types
+        only_object_types = [] if type(map2types) == type(None) else map2types
         self.add_ent_props(prop_names)
 
         step = 1000
@@ -311,14 +317,32 @@ class APISession(PSNetworx):
         pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
         if no_declaration:
             pretty_xml = pretty_xml[pretty_xml.find('\n')+1:]
-        
         return pretty_xml
 
-    def child_graph(self, propValues:list, search_by_properties=[]):
+
+    def graph2rnef(self,fname:str, in_graph=None):
+        if not isinstance(in_graph, ResnetGraph): in_graph = self.Graph
+        rnef_str = in_graph.to_rnef(ent_props=self.entProps,rel_props=self.relProps)
+        rnef_str = self.pretty_xml('<batch>\n'+rnef_str+'\n</batch>')
+        with open(fname, 'w', encoding='utf=8') as f:
+            f.write(rnef_str)
+
+
+    def child_graph(self, propValues:list, search_by_properties=[],include_parents=True):
         if not search_by_properties: search_by_properties = ['Name','Alias']
-        prop_names,prop_values = OQL.get_search_strings(search_by_properties,propValues)
-        oql_query = OQL.get_childs([prop_values],[prop_names])
-        return self.load_graph_from_oql(oql_query,entity_props=self.entProps,get_links=False)
+        oql_query = OQL.get_childs(propValues,search_by_properties,include_parents=include_parents)
+        request_name = 'Find ontology children'
+        old_getlinks = self.__getLinks
+        self.__getLinks = False
+        ontology_graph = self.process_oql(oql_query,request_name)
+        self.__getLinks = old_getlinks
+        print('Found %d ontology children' % len(ontology_graph))
+        return ontology_graph
+
+    
+
+
+        
 
 
 

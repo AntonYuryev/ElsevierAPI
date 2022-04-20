@@ -2,7 +2,8 @@ import re
 import json
 import itertools
 from ..ETM_API.references import Reference
-from ..ETM_API.references import JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS,MEDLINETA,EFFECT
+from ..ETM_API.references import JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
+from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR
 
 
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
@@ -78,7 +79,11 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         return table_row[0:len(table_row) - 1] + endOfline
 
 
-    def has_property(self,prop_name,prop_values:list,case_sensitive=False):
+    def has_property(self, prop_name:str):
+        return prop_name in self.keys()
+
+
+    def is_annotated(self,prop_name,prop_values:list,case_sensitive=False):
         try:
             if case_sensitive or prop_name in {'Id','id','ID'}:
                 search_in = self[prop_name]
@@ -91,10 +96,11 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             return not search_set.isdisjoint(search_in)
         except KeyError: return False
 
+
     def has_value_in(self,prop2values:dict,case_sensitive=False):
         # prop2values = {propName:[values]}
         for prop_name, prop_values in prop2values.items():
-            if self.has_property(prop_name,prop_values,case_sensitive): return True
+            if self.is_annotated(prop_name,prop_values,case_sensitive): return True
 
         return False
 
@@ -483,3 +489,20 @@ class PSRelation(PSObject):
                 for ref in self.References:
                     ref.set_weight(0.0)
 
+    def recent_refs(self,ref_limit=5):
+        def sortkey(ref:dict):
+            try:
+                year = ref[PUBYEAR][0]
+            except KeyError:
+                try:
+                    year = ref['Start'][0]
+                    year = year[-4:]
+                except KeyError: year = '1812'
+            return tuple([year] + list(ref.Identifiers.values()))
+        
+        references = self._get_refs()
+        references.sort(key=lambda x: sortkey(x), reverse=True)
+        if ref_limit == 0:
+            return references
+        else:
+            return references[:ref_limit]

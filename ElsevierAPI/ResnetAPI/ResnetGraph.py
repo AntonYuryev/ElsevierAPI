@@ -31,7 +31,7 @@ class ResnetGraph (nx.MultiDiGraph):
         except KeyError:
             regulators, targets = self.find_nodes(rel)
             reg_names = ','.join([r['Name'][0] for r in regulators])
-            targ_names = ','.join([r['Name'][0] for r in targets])
+            targ_names = ','.join([t['Name'][0] for t in targets])
             arrow = '--->'
             try:
                 effect = rel[EFFECT]
@@ -110,6 +110,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
     def annotate_nodes(self, with_new_prop:str, map2prop:str, using_map:dict):
         # using_map = {map2prop_value:[with_prop_value]}
+        annotation_counter = 0
         for i, node in self.nodes(data=True):
             try:
                 map_by_values = node[map2prop]
@@ -117,12 +118,15 @@ class ResnetGraph (nx.MultiDiGraph):
                 for v in map_by_values:
                     try:
                         add_value = using_map[v]
-                        annotate_with_values.update(add_value)
+                        annotate_with_values.add(add_value)
                     except KeyError: continue
 
                 if annotate_with_values:
-                    assert (with_new_prop not in node.keys())
-                    nx.set_node_attributes(self, {node['Id'][0]:{with_new_prop:list(annotate_with_values)}})
+                    try:
+                        merged_annotation = set(node[with_new_prop]) | annotate_with_values
+                        nx.set_node_attributes(self, {node['Id'][0]:{with_new_prop:list(merged_annotation)}})
+                    except KeyError:
+                        nx.set_node_attributes(self, {node['Id'][0]:{with_new_prop:list(annotate_with_values)}})
             except KeyError: continue
 
         return
@@ -133,7 +137,7 @@ class ResnetGraph (nx.MultiDiGraph):
         all_ids = set()
         for i, node in self.nodes(data=True):
             for propName in search_by_properties:
-                if PSObject(node).has_property(propName, SearchValues):
+                if PSObject(node).is_annotated(propName, SearchValues):
                     all_ids.add(i)
                     break
         return list(all_ids)
@@ -175,7 +179,6 @@ class ResnetGraph (nx.MultiDiGraph):
         else:
             return [PSObject(ddict) for id,ddict in self.nodes(data=True) if id in node_ids]
 
-
     def get_obj_by_prop(self,prop_value:str, prop_name='Name'): # use this function to find object by Name
         obj_ids = [i for i,o in self.nodes(data=True) if prop_value in o[prop_name]]
         return self._get_nodes(obj_ids)
@@ -187,7 +190,7 @@ class ResnetGraph (nx.MultiDiGraph):
         for i, node in self.nodes(data=True):
             for propName in search_by_properties:
                 ps_obj = PSObject(node)
-                if ps_obj.has_property(propName, SearchValues):
+                if ps_obj.is_annotated(propName, SearchValues):
                     all_objects.add(ps_obj)
                     break
         return list(all_objects)

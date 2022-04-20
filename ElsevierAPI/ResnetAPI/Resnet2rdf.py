@@ -15,7 +15,7 @@ QB,RDF,RDFS,SDO,SH,SKOS,SOSA,SSN,TIME,VANN,VOID,XSD
 REFID2PREFIX = {'PMID':'pubmed', 'DOI':'doi', 'PII':'pii', 'EMBASE':'embase', 
                 'NCT ID':'clintrial', 'PUI':'embase'}
 REL_PROPS4RDF = ['BiomarkerType','ChangeType','Mechanism','PubTypes']
-SAMEAS2PREFIX = {'LOING ID':'loinc', 'hGraph ID':'edm'}
+SAMEAS2PREFIX = {'LOINC ID':'loinc', 'hGraph ID':'edm'}
 
 
 class ResnetRDF(rdf.Graph):
@@ -42,6 +42,9 @@ class ResnetRDF(rdf.Graph):
 
     def __resnet_uri(self,term):
         return self.make_uri('resnet',term)
+
+    def __edm_uri(self,term):
+        return self.make_uri('edm',term)
     
 
     def urn2uri(self,node:PSObject):
@@ -123,9 +126,10 @@ class ResnetRDF(rdf.Graph):
 
 
     def __obj_uri(self, obj:PSObject): 
-        resnet_uri = self.__resnet_uri(obj['URN'][0])
-        obj.update_with_value('URI',resnet_uri)
-        return obj['URI'][0]
+        try:
+            return rdf.Literal(self.__edm_uri(obj['EDM ID'][0]))
+        except KeyError:
+            return self.__resnet_uri(obj['URN'][0])
 
 
     def __rel_uri(self, rel:PSRelation,resnet:ResnetGraph): 
@@ -154,7 +158,6 @@ class ResnetRDF(rdf.Graph):
         except KeyError: return
 
 
- 
     def obj_sameas(self,for_obj:PSObject):
         obj_uri = self.__obj_uri(for_obj)
         urnuri = self.urn2uri(for_obj)
@@ -174,7 +177,8 @@ class ResnetRDF(rdf.Graph):
         obj_uri = self.obj_sameas(node)
         self.add_obj_prop('ObjTypeName',node,rdf.RDF.type,self.context['resnet'])
         self.add_obj_prop('Name',node,self.context['schema']['name'])
-        self.add_obj_prop('Gene',node,self.__resnet_uri('gene'),self.context['resnet']) 
+        self.add_obj_prop('Gene',node,self.__resnet_uri('gene'),self.context['resnet'])
+        self.add_obj_prop('Treshhold',node,self.__resnet_uri('treshhold'),self.context['resnet']) 
         return obj_uri
         
 
@@ -267,6 +271,11 @@ class ResnetRDF(rdf.Graph):
         
 
         if rel_type == 'FunctionalAssociation':
+            if targets:
+                disease_name = ','.join([x['Name'][0] for x in regulators])
+                risk_factor = ','.join([x['Name'][0] for x in targets])
+                return risk_factor+' is risk factor for '+disease_name
+
             if regulators[0]['ObjTypeName'][0] == 'Disease': 
                 disease_name = regulators[0]['Name'][0]
                 gv_name = regulators[1]['Name'][0]

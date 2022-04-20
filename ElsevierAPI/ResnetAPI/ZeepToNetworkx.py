@@ -120,7 +120,7 @@ class PSNetworx(DataModel):
 
         return new_graph
 
-    def load_graph_from_oql(self, oql_query: str, relation_props: list=None, entity_props: list=None, get_links=True, add2self=True):
+    def load_graph_from_oql(self, oql_query:str, relation_props:list=None, entity_props:list=None, get_links=True, add2self=True):
         
         if isinstance(entity_props,(list, set)):
             entity_props = set(['Name']+list(entity_props)) if entity_props else set()
@@ -144,6 +144,7 @@ class PSNetworx(DataModel):
         else:
             zeep_objects = self.get_data(oql_query, list(entity_props), getLinks=False)
             return self._load_graph(None, zeep_objects,add2self)
+
 
     def _obj_id_by_oql(self, oql_query: str):
         zeep_entities = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)

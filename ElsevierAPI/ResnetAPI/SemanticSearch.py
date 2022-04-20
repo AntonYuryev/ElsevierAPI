@@ -170,7 +170,7 @@ class SemanticSearch (APISession):
                 try:
                     child_ids = lazy_child_dict[lazy_key]
                 except KeyError:
-                    query_ontology = OQL.get_childs(psobj_id, ['Id'], only_object_types)
+                    query_ontology = OQL.get_childs(psobj_id, ['Id'], only_object_types,include_parents=False)
                     zeep_entities = self.get_data(query_ontology, ent_props, getLinks=False)
                     if type(zeep_entities) != type(None):
                         has_childs += 1
