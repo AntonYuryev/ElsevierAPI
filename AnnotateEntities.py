@@ -20,7 +20,6 @@ if __name__ == "__main__":
 
     ps_api = open_api_session()
     ps_api.add_ent_props([mapping_property])
-    ps_api.PageSize = 1000
 
     ps_api.map_props2objs(map2attributes,[mapping_property])
 
