@@ -32,7 +32,7 @@ if __name__ == "__main__":
     ps_api.add_ent_props(annotation_cols)
     rnef_file = str(args.infile)[:-3]+'rnef'
     ps_api.graph2rnef(rnef_file)
-    print('Annotation is %s file' % rnef_file)
+    print('Annotation is in %s file' % rnef_file)
 #import rnef_file into Pathway Studio to annotate proteins in the database
 
 
