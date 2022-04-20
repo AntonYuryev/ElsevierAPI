@@ -19,8 +19,6 @@ if __name__ == "__main__":
     map2attributes = list(annotation_pd[mapping_property])
 
     ps_api = open_api_session()
-    ps_api.add_ent_props([mapping_property])
-
     ps_api.map_props2objs(map2attributes,[mapping_property])
 
     annotation_cols = annotation_pd.columns[1:]
