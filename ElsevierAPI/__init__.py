@@ -1,5 +1,7 @@
 import json
-from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
+from .ResnetAPI.ResnetAPISession import APISession
+from .ResnetAPI.NetworkxObjects import PSObject, PSRelation
+from .ResnetAPI.ResnetGraph import ResnetGraph
 from datetime import timedelta
 import time
 
@@ -7,10 +9,11 @@ config_dir = './ElsevierAPI/'
 apiconfig = 'APIconfig.json'
 default_apiconfig = config_dir + apiconfig
 
-def load_api_config(api_config_file=None):# file with your API keys and API URLs
-    if not isinstance(api_config_file,str):
+def load_api_config(api_config_file=''):# file with your API keys and API URLs
+    if not api_config_file:
         print('No API config file was specified\nWill use default %s instead'% default_apiconfig)
         api_config_file = default_apiconfig
+        
     try:
         return dict(json.load(open(api_config_file)))
     except FileNotFoundError:
@@ -22,7 +25,7 @@ def load_api_config(api_config_file=None):# file with your API keys and API URLs
             print('No working API server was specified!!! Goodbye')
             return None
 
-def open_api_session(api_config_file=None) -> APISession:
+def open_api_session(api_config_file='') -> APISession:
     APIconfig = load_api_config(api_config_file)
     return APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
 
