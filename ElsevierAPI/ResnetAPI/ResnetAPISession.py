@@ -230,8 +230,9 @@ class APISession(PSNetworx):
             ppi_graph.size(), self.execution_time(start_time)))
         return ppi_graph
 
-    def get_network_graph(self, InteractorIdList:set, connect_by_rel_types:list=None):
-        return self.get_network(InteractorIdList,connect_by_rel_types, self.relProps,self.entProps)
+
+    def get_network_graph(self, for_interactor_ids:set, connect_by_rel_types:list=None):
+        return self.get_network(for_interactor_ids,connect_by_rel_types, self.relProps,self.entProps)
 
 
     def iterate_oql(self, oql_query:str, id_set:set):
@@ -283,23 +284,26 @@ class APISession(PSNetworx):
         return graph2return
 
 
-    def map_props2objs(self, propValues:list, prop_names:list,map2types=None,case_insensitive=False):
-        propval2objs,objid2propval = self.Graph.get_props2obj_dic(propValues, prop_names,case_insensitive)
-        need_db_mapping = set(propValues).difference(propval2objs.keys())
-        only_object_types = [] if type(map2types) == type(None) else map2types
-        self.add_ent_props(prop_names)
+    def map_props2objs(self, using_values:list, in_properties:list,map2types=[],case_insensitive=False):
+        propval2objs,objid2propval = self.Graph.get_props2obj_dic(using_values, in_properties,case_insensitive)
+        need_db_mapping = set(using_values).difference(propval2objs.keys())
+        self.add_ent_props(in_properties)
 
         step = 1000
         iteration_counter = math.ceil(len(need_db_mapping) / step)
         print('Will use %d %s identifiers to find entities in %d iterations' % 
-             (len(need_db_mapping), ','.join(prop_names), iteration_counter))
+             (len(need_db_mapping), ','.join(in_properties), iteration_counter))
 
         for i in range(0, len(need_db_mapping), step):
-            propval_chunk = propValues[i:i + step]
-            query_node = OQL.get_entities_by_props(propval_chunk, prop_names, only_object_types)
-            self.process_oql(query_node)
+            last = i + step
+            propval_chunk = using_values[i:last]
+            query_node = OQL.get_entities_by_props(propval_chunk,in_properties,map2types)
+            request_name = 'Mapping {start}-{end} values out of {total}'
+            end = min(last,len(using_values))
+            request_name = request_name.format(start=str(i), end=str(end), total = len(using_values))
+            self.process_oql(query_node,request_name)
 
-        p2obj,id2p = self.Graph.get_props2obj_dic(need_db_mapping, prop_names,case_insensitive)
+        p2obj,id2p = self.Graph.get_props2obj_dic(need_db_mapping,in_properties,case_insensitive)
         propval2objs.update(p2obj)
         for id,prop_vals in id2p.items():
             try:
@@ -309,6 +313,8 @@ class APISession(PSNetworx):
             except KeyError:
                 objid2propval[id] = prop_vals
 
+        print("%d entities were mapped to %d attributes in %s properties" % 
+                (len(objid2propval), len(using_values),','.join(in_properties)))
         return propval2objs, objid2propval
 
 
