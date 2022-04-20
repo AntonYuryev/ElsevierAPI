@@ -530,7 +530,7 @@ class TargetIndications(SemanticSearch):
         to_return = dict() # {child_name:[ontoogy_parent_names]}
         self.add_ent_props(['Name'])
         for group_name in parent_ontology_groups:
-            childs = self.child_graph([group_name],['Name'])
+            childs = self.child_graph([group_name],['Name'],include_parents=False)
             children_ids = list(childs.nodes())
 
             for c in children_ids:

@@ -1,6 +1,6 @@
 ﻿import time
 import networkx as nx
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as GOQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI import open_api_session
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import nx2neo4j
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import REL_PROPs, ENT_PROP_Neo4j
@@ -25,14 +25,14 @@ ps_api.add_ent_props(ENT_PROP_Neo4j)
 print("Finding GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDiseaseSNPs, replace_main_dump=True)
 ps_api.process_oql(
-    GOQL.expand_entity(PropertyValues=SearchEntitiesBy, SearchByProperties=['Name', 'Alias'], expand_by_rel_types=[],
+    OQL.expand_entity(PropertyValues=SearchEntitiesBy, SearchByProperties=['Name', 'Alias'], expand_by_rel_types=[],
                        expand2neighbors=['GeneticVariant']))
 
 SNPIds = list(set(ps_api.Graph.get_entity_ids(['GeneticVariant'])))
 print("Finding Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDiseaseProteins, replace_main_dump=True)
 ps_api.process_oql(
-    GOQL.expand_entity(PropertyValues=SNPIds, SearchByProperties=['id'], expand_by_rel_types=['GeneticChange'],
+    OQL.expand_entity(PropertyValues=SNPIds, SearchByProperties=['id'], expand_by_rel_types=['GeneticChange'],
                        expand2neighbors=['Protein']), flush_dump=True)
 
 foutDiseasePPI = myDir + "\\PPIs between genes linked to " + InputDiseaseNames + '.tsv'
@@ -57,7 +57,7 @@ DiseaseProteins = set(ps_api.Graph.get_entity_ids(['Protein']))
 print("Finding Drugs for Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDrugsForDiseaseProteins, replace_main_dump=True)
 start_time = time.time()
-ps_api.process_oql(GOQL.get_drugs(for_targets_with_ids=list(DiseaseProteins)), flush_dump=True)
+ps_api.process_oql(OQL.get_drugs(for_targets_with_ids=list(DiseaseProteins)), flush_dump=True)
 DrugCount = set([x for x, y in ps_api.Graph.nodes(data=True) if
                  ((ps_api.Graph.out_degree(x) > 0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))])
 FoundTargets = set(
@@ -71,7 +71,7 @@ ProteinNoDrugs = DiseaseProteins.difference(FoundTargets)
 if len(ProteinNoDrugs) > 0:
     start_time = time.time()
     print('Searching for RMC compounds binding to %d proteins that do not bind any drugs' % len(ProteinNoDrugs))
-    ps_api.process_oql(GOQL.get_reaxys_substances(ForTargetsIDlist=list(ProteinNoDrugs)))
+    ps_api.process_oql(OQL.get_reaxys_substances(ForTargetsIDlist=list(ProteinNoDrugs)))
     execution_time = ps_api.execution_time(start_time)
     DrugCompoundCount = set([x for x, y in ps_api.Graph.nodes(data=True) if
                              ((ps_api.Graph.out_degree(x) > 0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))])

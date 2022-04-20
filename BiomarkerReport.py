@@ -2,13 +2,14 @@ from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
 from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject,REFCOUNT
-from ElsevierAPI.ETM_API.references import JOURNAL_PROPS
+from ElsevierAPI.ETM_API.references import JOURNAL_PROPS, JOURNAL
 from  ElsevierAPI.ResnetAPI.Resnet2rdf import ResnetGraph, ResnetRDF
 import pandas as pd
 import numpy as np
 import time
 from ElsevierAPI.ETM_API.etm import ETMstat
 
+DISEASE_NAME = 'diabetes mellitus'
 
 QUANTITATIVE_BIOMARKER_RELS = ['Biomarker','StateChange','QuantitativeChange','CellExpression']
 GENETIC_BIOMARKER_RELS = ['GeneticChange']
@@ -30,11 +31,13 @@ class BiomarkersReport(SemanticSearch):
     data_dir = ''
 
     @staticmethod
-    def read_journal_list(fname:str):
+    def read_journal_list(fname:str, default_config=True):
         journal_filter = dict()
+        header = [JOURNAL,JOURNAL,'ISSN','ESSN'] #default configuration
         with open(fname,'r') as f:
             line = f.readline().strip()
-            header = line.split('\t') #header must contain one of: Journal,ISSN,ESSN
+            if not default_config:
+                header = line.split('\t') #header must contain one of: Journal,ISSN,ESSN
             line = f.readline().strip()
             while line:
                 row = line.split('\t')
@@ -79,7 +82,7 @@ class BiomarkersReport(SemanticSearch):
         oql_query = 'SELECT Entity WHERE id = ({ids})'.format(ids=','.join(map(str,disease_ids)))
         request_name = 'Find children for {disease}'.format(disease=self.Disease['Name'][0])
         disease_graph = self.process_oql(oql_query, request_name)
-        self.diseases = disease_graph.get_objects(DISEASES)
+        self.diseases = disease_graph.get_objects(SearchValues=DISEASES)
 
 
     def load_graph(self, disease_ids:list):
@@ -124,6 +127,7 @@ class BiomarkersReport(SemanticSearch):
 
         if self.journal_filter:
             self.Graph.filter_references(self.journal_filter)
+            # journal_filter = {prop_name:[values]}
 
 
     def init_semantic_search (self, reset_pandas = False):
@@ -148,9 +152,7 @@ class BiomarkersReport(SemanticSearch):
         if self.biomarker_type == GENETIC:
             biomarker_rel_types = QUANTITATIVE_BIOMARKER_RELS + GENETIC_BIOMARKER_RELS
         else:
-            biomarker_rel_types = QUANTITATIVE_BIOMARKER_RELS
-
-            biomarker_rel_types.append('Regulation')
+            biomarker_rel_types = QUANTITATIVE_BIOMARKER_RELS + ['Regulation']
 
         for disease in self.diseases:
             dis_name = disease['Name'][0]
@@ -279,30 +281,30 @@ class BiomarkersReport(SemanticSearch):
                 rel_props[REFCOUNT] = [int(etm_hit_count)]
                 [bm2dis_graph.add_triple(d,b,rel_props,etm_refs) for b in biomarker_objs for d in disease_objs]  
             
-            
         biomarker2disease['Type'] = biomarker2disease['Biomarker'].apply(lambda x: self.name2objs[x][0]['ObjTypeName'][0])
         count_file = self.data_dir+self.fout_prefix+' biomarker-disease map.tsv'
         biomarker2disease.to_csv(count_file,sep='\t', index=False)
-        etm_counter.print_counter(self.data_dir+'Bibliography.tsv',use_relevance=sort_by_relevance)
+        etm_counter.print_counter(self.data_dir+self.fout_prefix+' biomarkers bibliography.tsv',use_relevance=sort_by_relevance)
         print ('Semantic counts for each biomarker-disease pair are in %s' % count_file)
         return bm2dis_graph
 
 
 if __name__ == "__main__":
     start_time = time.time()
-    APIconfig = load_api_config()
+    api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTevajson'
+    APIconfig = load_api_config(api_config)
     journal_filter_fname = ''
-    #journal_filter_fname = 'High-quality journals.txt'
+    #journal_filter_fname = 'D:/Python/Quest/report tables/'+DISEASE_NAME+'/'+DISEASE_NAME+' high-quality journals.txt'
     
-    #bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
-    bm = BiomarkersReport(APIconfig,GENETIC)
-    bm.data_dir = 'my_dir'
+    bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
+    #bm = BiomarkersReport(APIconfig,GENETIC)
+    bm.data_dir = 'D:/Python/Quest/report tables/'+DISEASE_NAME+'/'
     bm.flush_dump()
 
     calculate_specificity = False if bm.biomarker_type == GENETIC else False 
     # change here to True to calculate biomarker specificity
     # there is no scientific rational to calculate biomarker specificity for genetic biomarkers
-    bm.find_diseases('Uterine neoplasm')
+    bm.find_diseases(DISEASE_NAME) #'Uterine neoplasm'
     
     disease_ids = [y['Id'][0] for x,y in bm.Graph.nodes(data=True) if y['ObjTypeName'][0] in DISEASES]
     bm.load_graph(disease_ids)

@@ -1,10 +1,9 @@
 from ElsevierAPI import open_api_session
 import pandas as pd
 import os
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PROTEIN_TYPES
 import time
-
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 
 
@@ -14,6 +13,7 @@ COMMON_METABOLITES={'H2O','PPi', 'ATP','ADP','AMP','Pi','GDP','GTP','NADP+','NAD
 
 start_time = time.time()
 excel_file_name = 'my_metabolites.xlsx'
+excel_file_name = 'D:/Python/MDACC/211109_LipidData_MinhNguyen.xlsx'
 input_excel = pd.read_excel(excel_file_name)
 metabolite_column = 1
 #metabolites names or aliases must be in the first column in Excel file.
@@ -23,6 +23,7 @@ input_metabolite_names = []
 
 # ps_api retreives data from the database and loads it into APISession.Graph derived from Networkx:MultiDiGraph
 api_config = 'path2apiconfig.json'
+api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
 ps_api = open_api_session(api_config) # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json
 ps_api.add_ent_props(['Alias']) # need to retreive aliases from the database in case input metabolites are found by Alias
 ps_api.PageSize = 10000
@@ -61,7 +62,7 @@ with open(temp_report_file, 'w', encoding='utf-8') as f:
         if regulatorID in metabolite_ids:
             target = reactions_graph._get_node(targetID)
             if target['ObjTypeName'][0] == 'SmallMol' and target['Name'][0] not in COMMON_METABOLITES:
-                enzyme_objects = reactions_graph.find_regulators(for_relation=reaction,filter_by=PROTEIN_TYPES)# enzymes are always regulators in ChemicalReaction
+                enzyme_objects, products = reactions_graph.find_nodes(for_relation=reaction,filter_by=PROTEIN_TYPES)# enzymes are always regulators in ChemicalReaction
                 gene_names = ps_api.get_children_props(for_psobjs=enzyme_objects,prop_name='Name')
                 gene_names = ','.join(gene_names)
                 
@@ -75,7 +76,7 @@ with open(temp_report_file, 'w', encoding='utf-8') as f:
         elif targetID in metabolite_ids:
             regulator = reactions_graph._get_node(regulatorID)
             if regulator['ObjTypeName'][0] == 'SmallMol' and regulator['Name'][0] not in COMMON_METABOLITES:
-                enzyme_objects = reactions_graph.find_regulators(for_relation=reaction,filter_by=PROTEIN_TYPES)
+                enzyme_objects, products = reactions_graph.find_nodes(for_relation=reaction,filter_by=PROTEIN_TYPES)
                 gene_names = ps_api.get_children_props(enzyme_objects,'Name')
                 gene_names = ','.join(gene_names)
 
