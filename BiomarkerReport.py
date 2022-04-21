@@ -291,8 +291,7 @@ class BiomarkersReport(SemanticSearch):
 
 if __name__ == "__main__":
     start_time = time.time()
-    api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTevajson'
-    APIconfig = load_api_config(api_config)
+    APIconfig = load_api_config()
     journal_filter_fname = ''
     #journal_filter_fname = 'D:/Python/Quest/report tables/'+DISEASE_NAME+'/'+DISEASE_NAME+' high-quality journals.txt'
     
