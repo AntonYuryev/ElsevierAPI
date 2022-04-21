@@ -9,7 +9,8 @@ import numpy as np
 import time
 from ElsevierAPI.ETM_API.etm import ETMstat
 
-DISEASE_NAME = 'diabetes mellitus'
+DISEASE_NAME = 'fibrosis'
+DATA_DIR = 'D:/Python/PMI/' #D:/Python/Quest/report tables/'+DISEASE_NAME+'/'
 
 QUANTITATIVE_BIOMARKER_RELS = ['Biomarker','StateChange','QuantitativeChange','CellExpression']
 GENETIC_BIOMARKER_RELS = ['GeneticChange']
@@ -24,11 +25,12 @@ QUANTITATIVE = 0
 GENETIC = 1
 SOLUBLE = 2
 
-class BiomarkersReport(SemanticSearch):
+class BiomarkerReport(SemanticSearch):
     pass
     biomarker_type = 0
     journal_filter = dict()
     data_dir = ''
+    disease_ontology_categoty = list()
 
     @staticmethod
     def read_journal_list(fname:str, default_config=True):
@@ -180,43 +182,65 @@ class BiomarkersReport(SemanticSearch):
             print('References supporting semantic counts are in %s' % ref_file)
 
 
-    def biomarker_specificity(self,biomarker_ids:tuple):
+    def biomarker_specificity(self,biomarker_ids:tuple, disease_ids=[]):
         #biomarker specificity can be calculated only for quantitative biomarkers
-        oql_query = 'SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType = ({rel_types})) to (SELECT Entity WHERE id = ({id}))'
-        oql_query = oql_query.format(rel_types=','.join(QUANTITATIVE_BIOMARKER_RELS), id=','.join(map(str,list(biomarker_ids))))
+        rel_type_str = ','.join(QUANTITATIVE_BIOMARKER_RELS)
+        biomarker_ids_str = ','.join(map(str,list(biomarker_ids)))
+        if disease_ids:
+            oql_query = 'SELECT Entity WHERE id = ({diseases}) AND Connected by (SELECT Relation WHERE objectType = ({rel_types})) to (SELECT Entity WHERE id = ({biomarkers}))'
+            disease_ids_str = ','.join(map(str,list(disease_ids)))
+            oql_query = oql_query.format(diseases=disease_ids_str, rel_types=rel_type_str, biomarkers=biomarker_ids_str)
+        else:
+            oql_query = 'SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType = ({rel_types})) to (SELECT Entity WHERE id = ({biomarkers}))'
+            oql_query = oql_query.format(rel_types=rel_type_str, id=biomarker_ids_str)
+        
+        oql_query = oql_query.format(diseases=disease_ids_str, rel_types=rel_type_str, biomarkers=biomarker_ids_str)
         disease_count = self.get_result_size(oql_query)
         return disease_count
 
 
     def add_specificity(self):
         biomarker_count = len(self.RefCountPandas.index)
+        message = 'Finding biomarker specificity for {bc} biomarkers'.format(bc=str(biomarker_count))
+        disease_ids = list()
+        self.specificity_name = SPECIFICITY
+        if self.disease_ontology_categoty:
+            diseases4specificity = ','.join(self.disease_ontology_categoty)
+            message = message + ' for {d}'.format(d=diseases4specificity)
+            limit2disease_graph = self.child_graph(self.disease_ontology_categoty,['Name','Alias'])
+            disease_ids = list(limit2disease_graph)
+            self.specificity_name += ' for '+diseases4specificity
+
         print('Finding biomarker specificity for %d biomarkers' % biomarker_count)
+
         start_specificity = time.time()
-        self.RefCountPandas[SPECIFICITY] = self.RefCountPandas[self.__temp_id_col__].apply(lambda x: self.biomarker_specificity(x))
+        self.RefCountPandas[self.specificity_name] = self.RefCountPandas[self.__temp_id_col__].apply(lambda x: self.biomarker_specificity(x,disease_ids))
         print ('Specificity for %d biomarkers was found in %s' %(biomarker_count, self.execution_time(start_specificity)))
 
  
-    def weighted_counts(self, add_specificity=False):
+    def weighted_counts(self, add_specificity4 = None):
         self.weight_prop = 'ObjTypeName'
         self.weight_dict = {'Biomarker':1.0,'StateChange':0.5,'QuantitativeChange':0.5,'GeneticChange':0.5,'CellExpression':0.5,'Regulation':0.25}
         self.__print_refs__ = False
-
+        
         self.semantic_search()
         self.RefCountPandas.drop(columns=[self.__mapped_by__,'Resnet name'],inplace=True)
         input_disease_col = self.__input_disease_column()
-        if add_specificity:
+        if isinstance(add_specificity4,list):
+            self.disease_ontology_categoty = add_specificity4
             self.add_specificity()
             normalized_score_col = 'Normalized score'
-            self.RefCountPandas[normalized_score_col] = self.RefCountPandas[input_disease_col]/self.RefCountPandas[SPECIFICITY]
+            self.RefCountPandas[normalized_score_col] = self.RefCountPandas[input_disease_col]/self.RefCountPandas[self.specificity_name]
             self.RefCountPandas = self.RefCountPandas.sort_values(by=[normalized_score_col],ascending=False)
             self.RefCountPandas.insert(2, normalized_score_col, self.RefCountPandas.pop(normalized_score_col))
             self.RefCountPandas.insert(3, input_disease_col, self.RefCountPandas.pop(input_disease_col))
-            self.RefCountPandas.insert(4, SPECIFICITY, self.RefCountPandas.pop(SPECIFICITY))
+            self.RefCountPandas.insert(4, self.specificity_name, self.RefCountPandas.pop(self.specificity_name))
+            count_file = self.data_dir+self.fout_prefix+" biomarkers normalized weighted scores.tsv"
         else:
             self.RefCountPandas = self.RefCountPandas.sort_values(by=[input_disease_col],ascending=False)
             self.RefCountPandas.insert(2, input_disease_col, self.RefCountPandas.pop(input_disease_col))
+            count_file = self.fout_prefix+" biomarkers weighted scores.tsv"
         
-        count_file = self.data_dir+self.fout_prefix+" biomarkers normalized weighted scores.tsv" if calculate_specificity else self.fout_prefix+" biomarkers weighted scores.tsv"
         self.print_ref_count(count_file,sep='\t')
         print ('Weighted semantic counts for each biomarker are in %s' % count_file)
 
@@ -291,16 +315,17 @@ class BiomarkersReport(SemanticSearch):
 
 if __name__ == "__main__":
     start_time = time.time()
-    APIconfig = load_api_config()
+    api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTevajson'
+    APIconfig = load_api_config(api_config)
     journal_filter_fname = ''
     #journal_filter_fname = 'D:/Python/Quest/report tables/'+DISEASE_NAME+'/'+DISEASE_NAME+' high-quality journals.txt'
     
-    bm = BiomarkersReport(APIconfig,SOLUBLE,journal_filter_fname)
-    #bm = BiomarkersReport(APIconfig,GENETIC)
-    bm.data_dir = 'D:/Python/Quest/report tables/'+DISEASE_NAME+'/'
+    bm = BiomarkerReport(APIconfig,SOLUBLE,journal_filter_fname)
+    #bm = BiomarkerReport(APIconfig,GENETIC)
+    bm.data_dir = DATA_DIR
     bm.flush_dump()
 
-    calculate_specificity = False if bm.biomarker_type == GENETIC else False 
+    add_specificity4diseases = None if bm.biomarker_type == GENETIC else ['respiratory disease']  #None 
     # change here to True to calculate biomarker specificity
     # there is no scientific rational to calculate biomarker specificity for genetic biomarkers
     bm.find_diseases(DISEASE_NAME) #'Uterine neoplasm'
@@ -311,10 +336,9 @@ if __name__ == "__main__":
     bm.semantic_search(print_references=False)
     
     bm.drop_refcount_columns()
-    bm.weighted_counts(add_specificity=calculate_specificity)
+    bm.weighted_counts(add_specificity4=add_specificity4diseases)
 
     bm2dis_graph = bm.biomarker_disease_scores()
-    #bm2dis_graph.to_jsonld(bm.data_dir+bm.fout_prefix+' biomarker-disease graph.jsonld')
     jsonld_fname = bm.data_dir+bm.fout_prefix+' biomarker-disease graph.jsonld'
     ResnetRDF.fromResnetGraph(bm2dis_graph).to_json(jsonld_fname)
     print('Biomarkers for %s was found in %s' % (bm.Disease['Name'][0], bm.execution_time(start_time)))
