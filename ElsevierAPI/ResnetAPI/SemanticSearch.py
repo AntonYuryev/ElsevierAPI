@@ -381,7 +381,14 @@ class SemanticSearch (APISession):
         if 'sep' not in kwargs:
             kwargs['sep'] = self.csv_delimeter
 
-        PandasToPrint.to_csv(countFile,**kwargs)
+        if 'float_format' not in kwargs:
+            kwargs['float_format'] = '%g'
+
+        try:
+            PandasToPrint.to_csv(countFile,**kwargs)
+        except FileNotFoundError:
+            fname = countFile[countFile.rfind('/')+1:]
+            PandasToPrint.to_csv(fname,**kwargs)
 
 
     def read_cache(self):#returns last concept linked in cache

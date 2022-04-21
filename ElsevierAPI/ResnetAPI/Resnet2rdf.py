@@ -178,7 +178,7 @@ class ResnetRDF(rdf.Graph):
         self.add_obj_prop('ObjTypeName',node,rdf.RDF.type,self.context['resnet'])
         self.add_obj_prop('Name',node,self.context['schema']['name'])
         self.add_obj_prop('Gene',node,self.__resnet_uri('gene'),self.context['resnet'])
-        self.add_obj_prop('Treshhold',node,self.__resnet_uri('treshhold'),self.context['resnet']) 
+        self.add_obj_prop('Threshold',node,self.__resnet_uri('threshold'),self.context['resnet']) 
         return obj_uri
         
 

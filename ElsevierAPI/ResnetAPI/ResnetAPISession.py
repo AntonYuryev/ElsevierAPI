@@ -338,10 +338,7 @@ class APISession(PSNetworx):
         if not search_by_properties: search_by_properties = ['Name','Alias']
         oql_query = OQL.get_childs(propValues,search_by_properties,include_parents=include_parents)
         request_name = 'Find ontology children'
-        old_getlinks = self.__getLinks
-        self.__getLinks = False
         ontology_graph = self.process_oql(oql_query,request_name)
-        self.__getLinks = old_getlinks
         print('Found %d ontology children' % len(ontology_graph))
         return ontology_graph
 
