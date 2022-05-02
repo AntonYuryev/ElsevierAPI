@@ -9,7 +9,6 @@ from ElsevierAPI.ETM_API.references import PUBYEAR
 
 DATA_DIR = 'D:/Python/Quest/report tables/'
 api_config = str()
-api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
 ps_api = open_api_session(api_config) # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json
 ps_api.add_rel_props(['PMID',PUBYEAR])
 ps_api.PageSize = 1000
