@@ -30,6 +30,6 @@ if __name__ == "__main__":
     rnef_file = str(args.infile)[:-3]+'rnef'
     ps_api.graph2rnef(rnef_file)
     print('Entity annotation is in %s file' % rnef_file)
-#import rnef_file into Pathway Studio to annotate proteins in the database
+#import rnef_file into Pathway Studio to annotate entities in the database
 
 
