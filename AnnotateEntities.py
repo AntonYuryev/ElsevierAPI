@@ -18,8 +18,7 @@ if __name__ == "__main__":
     mapping_property = annotation_pd.columns[0]
     map2attributes = list(annotation_pd[mapping_property])
 
-    api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigLanzaTech.json'
-    ps_api = open_api_session(api_config)
+    ps_api = open_api_session()
     ps_api.map_props2objs(map2attributes,[mapping_property])
 
     annotation_cols = annotation_pd.columns[1:]
