@@ -28,7 +28,7 @@ ps_api.process_oql(
     OQL.expand_entity(PropertyValues=SearchEntitiesBy, SearchByProperties=['Name', 'Alias'], expand_by_rel_types=[],
                        expand2neighbors=['GeneticVariant']))
 
-SNPIds = list(set(ps_api.Graph.get_entity_ids(['GeneticVariant'])))
+SNPIds = ps_api.Graph.get_entity_ids(['GeneticVariant'])
 print("Finding Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDiseaseProteins, replace_main_dump=True)
 ps_api.process_oql(
@@ -38,7 +38,6 @@ ps_api.process_oql(
 foutDiseasePPI = myDir + "\\PPIs between genes linked to " + InputDiseaseNames + '.tsv'
 PPIgraph = ps_api.get_ppi_graph(foutDiseasePPI)
 # calculating centrality
-
 
 degree_cent = nx.degree_centrality(PPIgraph)
 sorted_centrality = sorted(degree_cent.items(), key=lambda kv: kv[1], reverse=True)

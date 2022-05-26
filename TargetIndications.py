@@ -1,6 +1,6 @@
 from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
-from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch, PS_ID_TYPES
+from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch, PS_ID_TYPES,SENTENCE_PROPS
 from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 import pandas as pd
 import numpy as np
@@ -8,12 +8,14 @@ import time
 import networkx as nx
 from ElsevierAPI.ETM_API.etm import ETMstat
 
+
 class TargetIndications(SemanticSearch):
     pass
-    def __init__(self, APIconfig):
+    def __init__(self, APIconfig, params={}):
         super().__init__(APIconfig)
-        self.PageSize = 1000
-        self.add_rel_props(PS_ID_TYPES)
+        #self.PageSize = 1000
+        #self.add_rel_props(PS_ID_TYPES)
+
         self.indication_types = ['Disease','Virus']
         self.pathway_name_must_include_target = True 
         # if True only pathways depicting target signaling are considered for regulome construction
@@ -24,7 +26,22 @@ class TargetIndications(SemanticSearch):
         self.strict_mode = False
         # if strict mode algorithm only ranks indications suggetsed in the literarure without predicting new indications
         # if not strict mode algorithm also predicts and rank additional indications based on target expression or genetic profiles in disease
-        self.target_class = ''
+        
+        if params: self.param = dict(params)
+        else:
+            self.param = {'partner_names':[],
+    # if partner_names is empty script will try finding Ligands for Receptor targets and Receptors for Ligand targets
+                 'partner_class':'', # use it only if partner_names not empty
+                 'indication_types': [], #['Disease','Virus']
+                 'target_names':[],
+                 'target_type':'',
+                 'to_inhibit':True,
+                 'pathway_name_must_include_target':True,
+                 'strict_mode':True,
+                 'data_dir':''
+                }
+        
+    def _target_names(self): return ','.join([x['Name'][0] for x in self.Drug_Targets])
 
     def _partner_class(self):
         #finding effect for complementary receptor or ligands
@@ -43,7 +60,7 @@ class TargetIndications(SemanticSearch):
             partners_graph = nx.compose(partners_graph,secreted_partners)
 
         self.partners_ids = partners_graph.get_entity_ids(['Protein'])
-        target_names = ','.join([x['Name'][0] for x in self.Drug_Targets])
+        target_names = self._target_names()
         partners_str = ','.join(n['Name'][0] for n in partners_graph._get_nodes())
         print ('Found %s %ss as partners for %s'%(partners_str, self.partner_class,target_names))
         return self.Graph._get_nodes(self.partners_ids)
@@ -51,7 +68,7 @@ class TargetIndications(SemanticSearch):
 
     def set_partners(self, partner_names:list, partner_class:str):
         # use it when receptor partners are metabolites and therfore cannot be found by select_partners()
-        partners_str = ','.join(partner_names)
+        partners_str = OQL.join_with_quotes(partner_names)
         SELECTpartners = 'SELECT Entity WHERE Name = ({partner_names})'.format(partner_names=partners_str)
         partners_graph = self.process_oql(SELECTpartners)
         self.partners = partners_graph._get_nodes()
@@ -60,7 +77,17 @@ class TargetIndications(SemanticSearch):
         self.find_partners_oql = 'SELECT Entity WHERE id = ('+ ','.join(map(str,self.partners_ids))+')'
 
         
-    def set_targets(self, target_names:list, target_objtype:str, partner_names=[],partner_class='',to_inhibit=None, strict_mode=False, indication_types=None):
+    def set_targets(self):
+        target_names =  list(self.param['target_names'])
+        try:
+            target_objtype = str(self.param['target_objtype'])
+        except KeyError: target_objtype = 'Protein'
+        partner_names=list(self.param['partner_names'])
+        partner_class=str(self.param['partner_class'])
+        to_inhibit=bool(self.param['to_inhibit'])
+        strict_mode=bool(self.param['strict_mode'])
+        indication_types=list(self.param['indication_types'])
+
         self.strict_mode = strict_mode
         if isinstance(to_inhibit, bool):
             self.target_activate_indication = to_inhibit
@@ -95,11 +122,10 @@ class TargetIndications(SemanticSearch):
         
 
     def fname_prefix(self):
-        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
         indics = ','.join(self.indication_types)
         mode = ' antagoinists ' if self.target_activate_indication else ' agonists '
         rep_pred = 'suggested ' if self.strict_mode else 'suggested,predicted ' 
-        return rep_pred+ indics+' for '+ t_n + mode
+        return rep_pred+ indics+' for '+ self._target_names() + mode
 
 
     def GVindications(self):
@@ -117,22 +143,25 @@ class TargetIndications(SemanticSearch):
         
         print('Found %d indications genetically linked to %d Genetic Variants in %s' % 
             (len(found_indications), len(self.GVids), t_n))
+        
+        self.target_indications4strictmode.update(found_indications)
         return found_indications
 
 
     def find_target_indications(self):
         f_t = self.find_targets_oql
-        target_names = [x['Name'][0] for x in self.Drug_Targets]
-        t_n = ','.join(target_names)
+        t_n = self._target_names()
         indications2return = set()
         effect = 'positive' if self.target_activate_indication else 'negative'
         REQUEST_NAME = 'Find indications {effect}ly modulated by {target}'.format(effect=effect, target=t_n)
         select_indications = 'SELECT Entity WHERE objectType = ({indication_type})'.format(indication_type=','.join(self.indication_types))
         OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {effect} AND NeighborOf({select_target}) AND NeighborOf ({indications})'      
         ModulatedByTargetNetwork = self.process_oql(OQLquery.format(select_target=f_t, effect = effect, indications=select_indications),REQUEST_NAME)
-        found_indications = ModulatedByTargetNetwork.get_entity_ids(self.indication_types)
-        indications2return.update(found_indications)
-        print('Found %d diseases %sly regulated by target %s' % (len(found_indications),effect,t_n))
+        found_indication_ids = ModulatedByTargetNetwork.get_entity_ids(self.indication_types)
+        self.target_indications4strictmode = set(found_indication_ids)
+        indications2return.update(found_indication_ids)
+        
+        print('Found %d diseases %sly regulated by target %s' % (len(found_indication_ids),effect,t_n))
         
         REQUEST_NAME = 'Find indications {effect}ly regulating {target}'.format(effect=effect, target=t_n)
         OQLquery = 'SELECT Relation WHERE objectType = QuantitativeChange AND Effect = {effect} AND NeighborOf ({select_target}) AND NeighborOf ({indications})'  
@@ -150,8 +179,13 @@ class TargetIndications(SemanticSearch):
 
         indications2return.update(self.GVindications())
 
+
         if self.strict_mode:
-            self.select_indications = 'SELECT Entity WHERE id = ({ids})'.format(ids=','.join(map(str,indications2return)))
+            if hasattr(self, 'drug_indications4strictmode'):
+                self.indications4strictmode = set(self.drug_indications4strictmode).intersection(self.target_indications4strictmode)
+            else:
+                self.indications4strictmode = self.target_indications4strictmode
+            self.select_indications = 'SELECT Entity WHERE id = ({ids})'.format(ids=','.join(map(str,self.indications4strictmode)))
         else:
             self.select_indications = 'SELECT Entity WHERE objectType = ({indication_type})'.format(indication_type=','.join(self.indication_types))
 
@@ -160,7 +194,7 @@ class TargetIndications(SemanticSearch):
 
     def indications4chem_modulators(self, linked_to_target_by=['DirectRegulation']):
         f_t = self.find_targets_oql
-        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
+        t_n = self._target_names()
         effect = 'negative'if self.target_activate_indication else 'positive'
         
         REQUEST_NAME = 'Find substances {effect}ly regulating {target}'.format(effect=effect,target=t_n)
@@ -183,7 +217,7 @@ class TargetIndications(SemanticSearch):
     def counterindications4chem_antimodulators(self,liked_to_target_by=['DirectRegulation']):
         # liked_to_target_by can be relaxed to (DirectRegulation,Regulation,Expression,MolTransport)
         f_t = self.find_targets_oql
-        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
+        t_n = self._target_names()
         opposite_effect = 'positive' if self.target_activate_indication else 'negative'
         REQUEST_NAME = 'Find substances {effect}ly regulating {target}'.format(effect=opposite_effect,target=t_n)
         OQLquery = 'SELECT Relation WHERE objectType = {rel_type} and Effect = {effect} AND NeighborOf ({select_target}) AND NeighborOf (SELECT Entity WHERE objectType = SmallMol AND Connectivity > 1)'     
@@ -202,7 +236,7 @@ class TargetIndications(SemanticSearch):
 
      
     def indications4partners(self):
-        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
+        t_n = self._target_names()
         effect = 'positive' if self.target_activate_indication else 'negative'
         REQUEST_NAME = 'Find indications for {partner}s of {targets} '.format(targets=t_n,partner=self.partner_class.lower())
         OQLquery = 'SELECT Relation WHERE objectType = (Regulation,QuantitativeChange) AND Effect = {effect} AND NeighborOf ({select_partners}) AND NeighborOf ({select_indications})'
@@ -215,7 +249,7 @@ class TargetIndications(SemanticSearch):
 
 
     def indications4cells_secreting_target(self):
-        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
+        t_n = self._target_names()
         if self.target_class == 'Ligand':
             REQUEST_NAME = 'Find indications linked to cells secreting the {target}'.format(target=t_n)
             OQLquery = 'SELECT Relation WHERE objectType = (CellExpression,MolTransport) AND NeighborOf ({select_targets}) AND NeighborOf (SELECT Entity WHERE objectType = Cell)'
@@ -299,24 +333,35 @@ class TargetIndications(SemanticSearch):
         else: return ResnetGraph()
 
 
-    def init_semantic_search(self, indications_ids:list=None):
+    def init_semantic_search(self):
         print('\n\nInitializing semantic search')
-        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
-        if isinstance(indications_ids, list):
+        t_n = self._target_names()
+        if self.strict_mode:
             # provide indications_ids list for strict_mode
-            IndicationNames = [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['Id'][0] in indications_ids]
+            if not hasattr(self, 'indications4strictmode'):
+                self.indications4strictmode = self.target_indications4strictmode
+
+            IndicationNames = [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['Id'][0] in self.indications4strictmode]
+            if not IndicationNames:
+                print ('No indications found for %s' % t_n)
+                return False
         else:
             IndicationNames = [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] in self.indication_types]
-        IndicationScores = pd.DataFrame()
-        IndicationScores['Name'] = np.array(IndicationNames)
-        print('Will score %d indications linked to %s' % (len(IndicationScores),t_n))
-        self.load_pandas(IndicationScores,prop_names_in_header=True,map2type=self.indication_types)
-        self.add_rel_props(PS_ID_TYPES)
-
+        
+        if IndicationNames:
+            indication2score = pd.DataFrame()
+            indication2score['Name'] = np.array(IndicationNames)
+            print('Will score %d indications linked to %s' % (len(indication2score),t_n))
+            self.load_pandas(indication2score,prop_names_in_header=True,map2type=self.indication_types)
+            self.add_rel_props(PS_ID_TYPES)
+            return True
+        else:
+            return False
+        
 
     def score_GVs(self):
         if not self.GVids: return
-        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
+        t_n = self._target_names()
         self.__colnameGV__ = t_n+' GVs'
         gvlinkcounter = 0
         for i in self.RefCountPandas.index:
@@ -381,7 +426,7 @@ class TargetIndications(SemanticSearch):
 
 
     def score_semantics(self):
-        t_n = ','.join([x['Name'][0] for x in self.Drug_Targets])
+        t_n = self._target_names()
         #references supporting target modulation of indication
         if self.target_activate_indication:
             effect = 'positive'
@@ -456,13 +501,15 @@ class TargetIndications(SemanticSearch):
 
             linked_entities_count = self.link2concept(colname,list(self.PathwayComponentsIDs))
             print('Linked %d indications to %s pathway components' % (linked_entities_count,t_n))
-        
 
-    def normalize_counts(self, annotate_with_ontology=dict(),bibliography=''):
+        self.make_count_pd()
+        return
+
+    def normalize_counts(self, annotate_with_ontology=dict(),bibliography=True):
         # annotate_with_ontology = {indication:ontology_category}
         NormalizedCount = pd.DataFrame()
         weights = pd.DataFrame()
-        refcount_cols = [col for col in self.RefCountPandas.columns if 'RefCount' in col]
+        refcount_cols = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
         number_of_weights = len(refcount_cols)
         
         NormalizedCount['Name'] = self.RefCountPandas['Name']
@@ -475,7 +522,7 @@ class TargetIndications(SemanticSearch):
             weights.at[0,col] = column_weight
             weight_index += 1
      
-        #calculating cumulative score     
+        #calculating cumulative score  
         combined_scores = list()
         for i in NormalizedCount.index:
             scores_row = NormalizedCount.loc[[i]]
@@ -504,6 +551,7 @@ class TargetIndications(SemanticSearch):
                 except KeyError: return ''
             NormalizedCount['Ontology group'] = NormalizedCount['Name'].apply(get_ontology_parent)
 
+        #fprefix = self.fname_prefix()
         if bibliography:
             max_ref_count = 5
             etm_counter = ETMstat(self.APIconfig,limit=max_ref_count)
@@ -519,12 +567,30 @@ class TargetIndications(SemanticSearch):
                 return ';'.join(refid_list)
 
             NormalizedCount['References'] = NormalizedCount['Name'].apply(add_refs)
-            etm_counter.print_counter(bibliography)
+            biblio_pd = etm_counter.counter2pd()
 
       # use this filter only if indications linked to GVs are of interest
       #  try: NormalizedCount = NormalizedCount.loc[NormalizedCount[self.__colnameGV__].notna()]
       #  except KeyError: pass
-        return weights.append(NormalizedCount)
+
+        counts_pd = self.report_pandas[0]
+        NormalizedCount = weights.append(NormalizedCount,ignore_index=True)
+        weigths_header = list(NormalizedCount.iloc[0].replace(np.nan, 0))
+        NormalizedCount.loc[0] = weigths_header
+        NormalizedCount.name = 'normalized'
+        self.raw_data = list([counts_pd,NormalizedCount])
+
+        normalized_counts_pd = self.merge_counts2norm(counts_pd,NormalizedCount)
+        normalized_counts_pd.loc[0] = weigths_header
+        # merge_counts2norm blanks out weigths_header because counts_pd does not have it
+
+        normalized_counts_pd.name = 'ranked_counts'
+        self.report_pandas = [normalized_counts_pd]
+
+        if bibliography:
+            biblio_pd.name = 'bibliography'
+            self.report_pandas.append(biblio_pd)
+        
 
     def child2parent(self, parent_ontology_groups:list):
         to_return = dict() # {child_name:[ontoogy_parent_names]}
@@ -545,52 +611,126 @@ class TargetIndications(SemanticSearch):
 
         return to_return
 
-   
 
+    def other_effects(self):
+        old_rel_props = self.relProps
+        self.add_rel_props(SENTENCE_PROPS+['Title','PubYear'])
+        t_n = self._target_names()
+        REQUEST_NAME = 'Find indications modulated by {target} with unknown effect'.format(target=t_n)
+        select_indications = 'SELECT Entity WHERE objectType = ({indication_type})'.format(indication_type=','.join(self.indication_types))
+        OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = unknown AND NeighborOf({select_target}) AND NeighborOf ({indications})'
+        to_return = self.process_oql(OQLquery.format(select_target=self.find_targets_oql, indications=select_indications),REQUEST_NAME)
+        self.relProps = old_rel_props
+        return to_return
+
+
+    def rn2pd(self, ModulatedNetwork:ResnetGraph, by_entity:str):
+        ref_pd = pd.DataFrame(columns=['Indication','Entity','#Reference','PMID','DOI','Title','PubYear','Snippet'])
+        for n1,n2,rel in ModulatedNetwork.edges.data('relation'):
+            node1 = ModulatedNetwork._get_node(n1)
+            node2 = ModulatedNetwork._get_node(n2)
+            indication = node1 if node1['ObjTypeName'][0] in self.indication_types else node2
+
+            ref_counter = set()
+            links_between = self.connect_nodes([n1],[n2])
+            references = links_between.count_references()
+            ETMstat.count_refs(ref_counter,references)
+            #refs come from Resnet without Relevance 
         
+            for ref in list(ref_counter):
+                ref_list = ref.to_list(id_types=['PMID','DOI'],
+                                print_snippets=True,biblio_props=['Title','PubYear']) #other_props=['Citation index']
+                row = [indication['Name'][0],by_entity,len(references)]+ref_list
+                ref_pd.loc[len(ref_pd.index)] = row
+        
+        ref_pd.sort_values(by=['#Reference','Indication','PMID','DOI'],ascending=False, inplace=True)
+        ref_pd.name = 'possibilities'
+        
+        return ref_pd
+
+
+    def _worksheet_prefix(self):
+        indications = ','.join(self.indication_types)
+        act = 'Act.' if self.target_activate_indication else 'Inh.'
+        return act+indications+'.'
+
+
+    def add_prefix2df(self):
+        for df in self.report_pandas:
+            df.name = ws_prefix+df.name[:30]
+
+
+    def make_report(self):
+        start_time = time.time()
+        self.data_dir = self.param ['data_dir']
+        
+        self.set_targets()
+        # strict mode ranks only indications suggetsed in the literarure without predicting new indications
+        self.pathway_name_must_include_target = self.param ['pathway_name_must_include_target']
+        self.flush_dump_files()
+
+        self.find_target_indications()
+        self.get_pathway_componets()
+
+        if self.target_class != 'Ligand':
+        # if target is Ligand use indications4chem_modulators only if its antibody drugs have relations in Resnet
+            self.indications4chem_modulators()
+            self.counterindications4chem_antimodulators()
+
+        self.indications4partners()
+        self.indications4cells_secreting_target() #will work only if target is Ligand
+        
+        self.init_semantic_search()
+        self.score_semantics()
+
+        self.normalize_counts(bibliography=True)
+        print('Repurposing of %s was done in %s' % (self.fname_prefix(), self.execution_time(start_time)))
+
 
 if __name__ == "__main__":
-    start_time = time.time()
-    DATA_DIR = 'D:/Python/PMI/'
     APIconfig = load_api_config()
-    rd = TargetIndications(APIconfig)
-    partner_names = ['anandamide','endocannabinoid','2-arachidonoylglycerol']
-    # if partner_names is empty script will try finding Lgands for Receptor targets and Receptors for Ligand targets 
-    partner_class = 'Metabolite ligand' # use it only if partner_names not empty
-    rd.indication_types = ['Disease','Virus']
-    rd.set_targets(['GPR119'], 'Protein', partner_names=partner_names, partner_class=partner_class,to_inhibit=False, strict_mode=True)
-    # strict mode ranks only indications suggetsed in the literarure without predicting new indications
-    rd.pathway_name_must_include_target = True
-    rd.flush_dump_files()
+    parameters = {'partner_names':['anandamide','endocannabinoid','2-arachidonoylglycerol'],
+    # if partner_names is empty script will try finding Lgands for Receptor targets and Receptors for Ligand targets
+                 'partner_class':'Metabolite ligand', # use it only if partner_names not empty
+                 'indication_types': ['CellProcess'], #['Disease','Virus']
+                 'target_names':['GPR18'],
+                 'target_type':'Protein',
+                 'to_inhibit':True,
+                 'pathway_name_must_include_target':True,
+                 'strict_mode':True,
+                 'data_dir':'D:/Python/PMI/'
+    }
 
-    target_indications_ids = rd.find_target_indications()
-    rd.get_pathway_componets()
+    targets = ['GPR18','GPR119','GPR55','CNR2','CNR1']
+    indications = ['CellProcess','Disease']
 
-    if rd.target_class != 'Ligand':
-    # if target is Ligand use indications4chem_modulators only if its antibody drugs have relations in Resnet
-        rd.indications4chem_modulators() 
-        rd.counterindications4chem_antimodulators()
+    path = parameters['data_dir']
 
-    rd.indications4partners()
-    rd.indications4cells_secreting_target() #will work only if target is Ligand
-    
-    if rd.strict_mode:
-        rd.init_semantic_search(target_indications_ids)
-    else:
-        rd.init_semantic_search()
-        
-    rd.score_semantics()
-    fname_prefix = rd.fname_prefix()
+    for target in targets:
+        parameters['target_names'] = [target]
+        target_report = pd.ExcelWriter(path+target+'.xlsx', engine='xlsxwriter')
+        raw_data_cache = pd.ExcelWriter(path+target+'raw_data.xlsx', engine='xlsxwriter')
 
-    count_file = fname_prefix +"counts.tsv"
-    rd.print_ref_count(DATA_DIR+count_file,sep='\t')
-    ref_file = fname_prefix+"references.tsv"
-    #rd.print_references(DATA_DIR+count_file,sep='\t')
+        for indication in indications:
+            parameters['indication_types'] = [indication]
+            parameters['to_inhibit'] = True
+            rd = TargetIndications(APIconfig,parameters)
+            rd.make_report()
+            rd.add2writer(target_report,rd._worksheet_prefix())
+            rd.addraw2writer(raw_data_cache,rd._worksheet_prefix())
 
-    NormalizedCount = rd.normalize_counts(bibliography=DATA_DIR+fname_prefix+'bibliography.tsv')
-    fout = fname_prefix +'normalized report.tsv'
-    NormalizedCount.to_csv(DATA_DIR+fout, sep='\t', index=False,float_format='%g')
-    print('Repurposing of %s was done in %s' % (fname_prefix, rd.execution_time(start_time)))
-    print ('Ranked indications are in %s' % fout)
-    print ('Semantic counts for each indication are in %s' % count_file)
-    print('References supporting semantic counts are in %s' % ref_file)
+            parameters['to_inhibit'] = False
+            rd = TargetIndications(APIconfig,parameters)
+            rd.make_report()
+            ws_prefix = rd._worksheet_prefix()
+            rd.add2writer(target_report,rd._worksheet_prefix())
+            rd.addraw2writer(raw_data_cache,rd._worksheet_prefix())
+
+            other_indications = rd.rn2pd(rd.other_effects(), rd._target_names())
+            other_indications.to_excel(target_report, sheet_name='Possbl.'+indication, index=False)
+
+        target_report.save()
+        raw_data_cache.save()
+
+
+            

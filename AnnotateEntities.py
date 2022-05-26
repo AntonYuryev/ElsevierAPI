@@ -18,18 +18,19 @@ if __name__ == "__main__":
     mapping_property = annotation_pd.columns[0]
     map2attributes = list(annotation_pd[mapping_property])
 
-    ps_api = open_api_session()
+    api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigLanzaTech.json'
+    ps_api = open_api_session(api_config)
     ps_api.map_props2objs(map2attributes,[mapping_property])
 
     annotation_cols = annotation_pd.columns[1:]
-    for col in annotation_cols:
-        map_dict = pd.Series(annotation_pd[col].values,index=annotation_pd[mapping_property]).to_dict()
-        ps_api.Graph.annotate_nodes(col,mapping_property,map_dict)
+    for col_name in annotation_cols:
+        map_dict = pd.Series(annotation_pd[col_name].values,index=annotation_pd[mapping_property]).to_dict()
+        ps_api.Graph.annotate_nodes(with_new_prop=col_name,map2prop=mapping_property,using_map=map_dict)
 
     ps_api.add_ent_props(annotation_cols)
     rnef_file = str(args.infile)[:-3]+'rnef'
     ps_api.graph2rnef(rnef_file)
     print('Entity annotation is in %s file' % rnef_file)
-#import rnef_file into Pathway Studio to annotate entities in the database
+#import rnef_file into Pathway Studio to annotate proteins in the database
 
 
