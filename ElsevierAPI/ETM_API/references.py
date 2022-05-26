@@ -21,6 +21,10 @@ PATENT_APP_NUM = 'Patent Application Number'
 PATENT_GRANT_NUM = 'Patent Grant Number'
 EFFECT = 'Effect'
 RELEVANCE = 'Relevance'
+LOINCID = 'LOINC ID'
+THRESHOLD = 'Threshold'
+hGRAPHID = 'hGraph ID'
+EDMID = 'EDM ID'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
 PS_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID'] 
@@ -33,7 +37,8 @@ PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes','Start'}
 BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
 REF_ID_TYPES = PS_ID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
-SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent','Evidence']
+PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent']
+SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence']
 # SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.Sentences
 RELATION_PROPS = {EFFECT,'Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
@@ -112,6 +117,12 @@ class Reference(dict):
                     return self.Identifiers[id_type] == other.Identifiers[id_type]
                 except KeyError:
                     continue
+
+    def get_doc_id(self):
+        for id_type in REF_ID_TYPES:
+            try:
+                return id_type, self.Identifiers[id_type]
+            except KeyError: continue
     
     def append_property(self, PropId, PropValue):
         try:
@@ -171,11 +182,12 @@ class Reference(dict):
             for prop, values in prop2values.items():
                 try:
                     match_values = set(prop_names2values[prop])
-                    # assumes match_values are in lowercase for case insensitive search
                     if case_sensitive:
                         search_set = values
                     else:
+                        match_values =set(map(lambda x: x.lower(),match_values))
                         search_set = set(map(lambda x: x.lower(),values))
+
                     if not match_values.isdisjoint(search_set): 
                         return True
                     else: continue
@@ -187,25 +199,73 @@ class Reference(dict):
                 if case_sensitive:
                     search_set = values
                 else:
+                    match_values =set(map(lambda x: x.lower(),match_values))
                     search_set = set(map(lambda x: x.lower(),values))
+
                 if not match_values.isdisjoint(search_set): 
                     return True
                 else: continue
             except KeyError: continue
 
         return False
-           
 
-    def __identifiers_str(self,col_sep='\t'):
+
+    def _identifier(self):
         for i in REF_ID_TYPES:
             try:
-                return i+':'+self.Identifiers[i]
+                return i,self.Identifiers[i]
             except KeyError: 
                 continue
-        return 'no identifier available'
+        return '',''
+
+
+    def _identifiers_str(self):
+        id_type, identifier = self._identifier()
+        return id_type  +':'+identifier
     
 
+    def to_list(self,id_types:list=None,print_snippets=False,biblio_props=[],other_props=[]):
+        row = list()
+        id_types = id_types if isinstance(id_types,list) else ['PMID']
+        for p in other_props:
+            try:
+                prop_values_str = ';'.join(map(str,self[p]))
+                row.append(prop_values_str)
+            except KeyError:
+                row.append('')
+
+        if isinstance(id_types,list):
+            for t in id_types:
+                try:
+                    row.append(t+':'+self.Identifiers[t])
+                except KeyError:
+                    row.append('')
+        else:
+            row.append(self._identifiers_str())
+                
+        for prop_id in biblio_props:
+            try:
+                prop_values_str = ';'.join(self[prop_id])
+                if prop_id in ['Title', 'Abstract']:
+                    prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_values_str)
+            except KeyError:
+                prop_values_str = ''
+            
+            row.append(prop_values_str)
+            #row = row + col_sep + prop_id + ':' + prop_values_str
+
+        if print_snippets:
+            sentence_props =  json.dumps(self.snippets)
+            sentence_props = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sentence_props)
+            row.append(sentence_props)
+
+        return row
+
+
     def to_str(self,id_types:list=None,col_sep='\t',print_snippets=False,biblio_props=[],other_props=[]):
+        row = self.to_list(id_types,print_snippets,biblio_props,other_props)
+        return col_sep.join(row)
+
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         row = str()
         for p in other_props:
@@ -222,7 +282,7 @@ class Reference(dict):
                 except KeyError:
                     row = row + col_sep
         else:
-            row = self.__identifiers_str() + col_sep
+            row = self._identifiers_str() + col_sep
                 
         for prop_id in biblio_props:
             try:
@@ -243,7 +303,10 @@ class Reference(dict):
         return row[:-1] #remove last separator
 
 
-    def get_biblio_str(self):
+    def get_biblio_tuple(self):
+        """
+        Returns title+' ('+pubyear+'). '+authors, identifier_type,identifier 
+        """
         try:
             title = self[TITLE][0]
             if title[-1] != '.': title += '.'
@@ -262,8 +325,14 @@ class Reference(dict):
                 if authors_str[-1] != '.': authors_str += '.'
         except KeyError:
             authors_str = 'unknown authors.'
-        return title+' ('+year+'). '+authors_str, self.__identifiers_str()
+        
+        identifier_tup = self._identifier()
+        return title+' ('+year+'). '+authors_str, identifier_tup[0],identifier_tup[1]
 
+    
+    def get_biblio_str(self, sep='\t'):
+        biblio, id_type,identifier = self.get_biblio_tuple()
+        return biblio+sep+id_type+':'+identifier
 
     def _merge(self, other):
         if isinstance(other, Reference):
@@ -281,6 +350,7 @@ class Reference(dict):
                     self.add_sentence_props(textref,prop,values)
             self.addresses.update(other.addresses)
 
+
     def is_from_abstract(self):
         for textref in self.snippets.keys():
             try:
@@ -288,6 +358,7 @@ class Reference(dict):
             except ValueError:
                 continue
         return False
+
 
     def _make_standard_textref(self):
         try:
@@ -342,11 +413,35 @@ class Reference(dict):
 
     def set_weight(self, weight:float):
         try:
-            w = self['weight']
+            w = float(self['weight'][0])
             if w < weight:
-                self['weight'] = weight
+                self['weight'] = [weight]
         except KeyError:
-            self['weight'] = weight
+            self['weight'] = [weight]
+
+    def get_weight(self):
+        try:
+            return self['weight'][0]
+        except KeyError:
+            return 0.0
+
+
+    def _year(self):
+        try:
+            return self[PUBYEAR][0]
+        except KeyError:
+            try:
+                year = self['Start'][0] # Clinical trials case
+                return year[-4:]
+            except KeyError: return '1812' # No PubYear case
+
+    def _sort_key(self, by_property, is_numerical=True):
+        if by_property == PUBYEAR: return self._year()
+        else:
+            try:
+                return float(self[by_property][0]) if is_numerical else str(self[by_property][0])
+            except KeyError:
+                return 0.0 if is_numerical else '0'
 
 
 

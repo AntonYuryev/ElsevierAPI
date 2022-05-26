@@ -4,17 +4,20 @@ import urllib.request
 import urllib.parse
 import json
 import time
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime,timedelta
 import xlsxwriter
 import os
 import math
+from ..ScopusAPI.scopus import Scopus
+import pandas as pd
 
+SCOPUS_AUTHORIDS = 'scopusAuthors'
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
 
 class ETMjson(DocMine):
+
     @staticmethod
     def dump_fname(search_name): return search_name + '.json'
 
@@ -119,20 +122,23 @@ class ETMjson(DocMine):
 
 
     @staticmethod
-    def __parse_contributors(article:dict):
+    def __parse_contributors(article:dict, scopus_api=None):
         try:
             author_info = article['article']['front']['article-meta']['contribGroupOrAffOrAffAlternatives']
             if not author_info:
                 #print('Article has no author info') 
-                return [],[]
+                return [],[],[]
         except KeyError:
             #print('Article has no author info')
-            return [],[]
+            return [],[],[]
             
         if isinstance(author_info, dict): author_info = [author_info]
 
         authors = list()
         institutions = list()
+        scopus_infos = list()
+        org_names = list()
+
         for item in author_info:
             try:
                 instituts = item['aff']['content']
@@ -148,20 +154,30 @@ class ETMjson(DocMine):
 
                 au_name = ''
                 for author in contribOrAddressOrAff_list:
+                    au1stname = str()
                     try:
-                        au_name = author['contrib']['contribIdOrAnonymousOrCollab']['name']['given-names']['content']
+                        au1stname = author['contrib']['contribIdOrAnonymousOrCollab']['name']['given-names']['content']
                     except KeyError:
                         try:
-                            au_name = author['contrib']['contribIdOrAnonymousOrCollab']['name']['given-names']['initials']+'.'
+                            au1stname = author['contrib']['contribIdOrAnonymousOrCollab']['name']['given-names']['initials']+'.'
                         except KeyError: pass
 
                     try:
                         au_surname = author['contrib']['contribIdOrAnonymousOrCollab']['name']['surname']
-                        au_name = au_surname + ' ' + au_name  
+                        au_name = au_surname + ' ' + au1stname if au1stname else au_surname
                         authors.append(str(au_name).title())
+
+                        if isinstance(scopus_api,Scopus):
+                            scopus_info = scopus_api.get_author_id(au_surname,au1stname,org_names)
+                        else:
+                            scopus_info = []
+
+                        if scopus_info:
+                            scopus_infos.append(scopus_info)
+
                     except KeyError: continue
 
-        return authors, institutions #authors: list(str), institutions: list([orname,address])
+        return authors, institutions, scopus_infos #authors: list(str), institutions: list([orname,address])
 
     @staticmethod
     def __parse_snippet(article:dict, markup_all=False):
@@ -212,8 +228,10 @@ class ETMjson(DocMine):
                 return '', set(), set()
 
 
-    def __init__(self, article:dict): 
+    def __init__(self, article:dict,scopus_api=None): 
         is_article, article_ids = self.__parse_ids(article)
+        if isinstance(scopus_api,Scopus): 
+            self.scopusInfo = dict()
         if not is_article: 
             return None
         else:
@@ -233,10 +251,12 @@ class ETMjson(DocMine):
         except KeyError: pass
 
         self.add2section('Abstract',self.__parse_abstact(article))
-        authors,institutions = self.__parse_contributors(article)
+        authors,institutions,scopus_infos = self.__parse_contributors(article,scopus_api)
         if authors: self[AUTHORS] = authors
         self.addresses = {i[0]:i[1] for i in institutions}
-        
+        if scopus_infos: 
+            self[SCOPUS_AUTHORIDS] = [i[0] for i in scopus_infos]
+            self.scopusInfo.update({i[0]:i for i in scopus_infos})
         try:
             journal = article['article']['front']['journal-meta']['journal-title-group']['journal-title']
             journal = ','.join(journal.values())
@@ -248,7 +268,11 @@ class ETMjson(DocMine):
         snippet, self.term_ids, self.keywords = self.__parse_snippet(article) #term_ids = {term_id+'\t'+term_name}
         self.add_sentence_prop(text_ref, SENTENCE, snippet)
 
+
 class ETMstat:
+    """
+    self.ref_counter = {str(id_type+':'+identifier):(ref,count)}
+    """
     url = 'https://demo.elseviertextmining.com/api'
     page_size = 100
     request_type = '/search/basic?'  # '/search/advanced?'
@@ -264,6 +288,7 @@ class ETMstat:
             'snip': '1.desc',
             'apikey':APIconfig['ETMapikey'],
             'limit': limit,
+            'so_p':'ffb~' # excluding NIH reporter
             }
         self.params.update(add_param)       
         self.ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
@@ -297,7 +322,6 @@ class ETMstat:
         else:
             return [], 0
 
-
     def _add2counter(self, ref:Reference):
         for id_type in REF_ID_TYPES:
             try:
@@ -305,39 +329,44 @@ class ETMstat:
                 counter_key = id_type+':'+identifier
                 try:
                     count_exist = self.ref_counter[counter_key][1]
-                    self.ref_counter[counter_key] = (ref, count_exist+1)  # {str(id_type+':'+identifier):(ref,count)}
+                    self.ref_counter[counter_key] = (ref, count_exist+1)  
+                    # {str(id_type+':'+identifier):(ref,count)}
                 except KeyError:
                     self.ref_counter[counter_key] = (ref,1)
-                return identifier
+                return id_type,identifier
             except KeyError:
                 continue
 
 
-    def print_counter(self, fname, use_relevance=True):
+    def counter2pd(self, use_relevance=True):
         table_rows = list()
+        first_col = RELEVANCE if use_relevance else 'Citation index'
         for identifier, ref_count in self.ref_counter.items():
             ref = ref_count[0]
             refcount = ref_count[1]
-            if use_relevance:
-                score = math.ceil(float(ref[RELEVANCE][0]) * refcount)
-                first_col = 'Relevance'
-            else:
-                score = refcount
-                first_col = 'Citation index'
+            score = math.ceil(float(ref[RELEVANCE][0]) * refcount) if use_relevance else refcount         
+ 
+            biblio_str, id_type, identifier = ref.get_biblio_tuple()
+            table_rows.append((score,biblio_str,id_type,identifier))
 
-            biblio_str, identifiers = ref.get_biblio_str()
-            table_rows.append((score,biblio_str,identifier))
-
+        return_pd = pd.DataFrame(columns=[first_col,'Citation','Identifier type','Identifier'])
         table_rows.sort(key=lambda x:x[0],reverse=True)
-        with open(fname, 'w', encoding='utf-8') as f:
-            f.write(first_col+'\tCitation\tPMID or DOI\n')
-            for tup in table_rows:
-                f.write(str(tup[0])+'\t'+tup[1]+'\t'+tup[2]+'\n')
+        for tup in table_rows:
+            #f.write(str(tup[0])+'\t'+tup[1]+'\t'+tup[2]+'\n')
+            return_pd.loc[len(return_pd.index)] = list(tup)
 
+        return return_pd
+
+    
+    def __make_query(self,terms:list):
+        if self.request_type == '/search/basic?':
+            return ';'.join(terms)
+        else:
+            return '{'+'};{'.join(terms)+'}'
 
     def relevant_articles(self, terms:list):
         # add_param controls number of best references to return. Defaults to 5
-        query = '{'+'};{'.join(terms)+'}'
+        query = self.__make_query(terms)
         self._set_query(query)
         articles = list()
 
@@ -356,9 +385,16 @@ class ETMstat:
             if hasattr(etm_ref,"Identifiers"):
                 references.append(etm_ref)
 
-        ref_ids = list()
-        [ref_ids.append(self._add2counter(ref)) for ref in references]
+        ref_ids = dict()
+        for ref in references:
+            id_type, identifier = self._add2counter(ref)
+            try:
+                ref_ids[id_type].append(identifier)
+            except KeyError:
+                ref_ids[id_type] = [identifier]
+
         return self.hit_count, ref_ids, references
+
 
     @staticmethod
     def count_refs(ref_counter:set, references:list):
@@ -370,34 +406,64 @@ class ETMstat:
                 ref['Citation index'] = [count + 1]
             except KeyError:
                 ref['Citation index'] = [1]
-        return 
+        return
 
 
     @staticmethod
-    def print_citation_index(ref_counter:set,fname:str):
+    def refcounter2tsv(fname:str, ref_counter:set, use_relevance=False,include_idtype=False):
         to_sort = list(ref_counter)
-        to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
-        with open(fname, 'w', encoding='utf-8') as f:
+        if use_relevance:
             for ref in to_sort:
-                ref_str = ref.get_biblio_str()
-                count = ref['Citation index'][0]
-                f.write(str(count)+'\t'+ref_str+'\n')
+                try:
+                    relevance_index = float(ref['Citation index'][0])*float(ref[RELEVANCE][0])
+                except KeyError: relevance_index = 0.0
+                ref['Relevance index'] = [float(relevance_index)]
+            to_sort.sort(key=lambda x: x['Relevance index'][0], reverse=True)
+            with open(fname, 'w', encoding='utf-8') as f:
+                f.write('Relevance\tCitation\tPMID or DOI\n')
+                for ref in to_sort:
+                    biblio_tup = ref.get_biblio_tuple()
+                    if not biblio_tup[2]: 
+                        continue
+                    if include_idtype:
+                        biblio_str = biblio_tup[0]+'\t'+biblio_tup[1]+':'+biblio_tup[2]
+                    else:
+                        biblio_str = biblio_tup[0]+'\t'+biblio_tup[2]
+
+                    f.write(str(ref['Relevance index'][0])+'\t'+biblio_str+'\n')
+        else:        
+            to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
+            with open(fname, 'w', encoding='utf-8') as f:
+                f.write('Citation index\tCitation\tPMID or DOI\n')
+                for ref in to_sort:
+                    if not biblio_tup[2]: 
+                        continue #to remove reference with no ID type
+                    biblio_tup = ref.get_biblio_tuple()
+                    if include_idtype:
+                        biblio_str = biblio_tup[0]+'\t'+biblio_tup[1]+':'+biblio_tup[2]
+                    else:
+                        biblio_str = biblio_tup[0]+'\t'+biblio_tup[2]
+                    f.write(str(ref['Citation index'][0])+'\t'+biblio_str+'\n')[1]
 
 
     @staticmethod
     def _sort_dict(dic:dict, sort_by_value = True, reverse = True):
         item_idx = 1 if sort_by_value else 0
-        return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))
+        return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))           
 
+        
 
 class ETMcache (ETMstat):
+    """
+    self.statistics = {prop_name:{prop_value:count}}
+    """
     pass
     request_type = '/search/advanced?'
     search_name = str()
     etm_results_dir = ''
     etm_stat_dir = ''
     
-    def __init__(self,query, search_name, APIconfig:dict, etm_dump_dir:str, etm_stat_dir, add_params={}):
+    def __init__(self,query,search_name,APIconfig:dict, etm_dump_dir:str, etm_stat_dir, add_params={}):
         super().__init__(APIconfig,add_param=add_params)
         self.params.pop('limit')
         self._set_query(query)
@@ -406,6 +472,14 @@ class ETMcache (ETMstat):
         self.etm_results_dir = etm_dump_dir
         self.etm_stat_dir = etm_stat_dir
         self.statistics = dict() # {prop_name:{prop_value:count}}
+        self.scopusAPI = None
+
+
+    def set_stat_props(self,stat_props:list):
+        for p in stat_props:
+            if p == AUTHORS: p = SCOPUS_AUTHORIDS
+            self.statistics[p] = dict()
+        
 
     def __download(self):
         print('\nPerforming ETM search "%s"' % self.search_name)
@@ -462,7 +536,7 @@ class ETMcache (ETMstat):
             articles = self.__download()
 
         for article in articles:
-            etm_ref = ETMjson(article)
+            etm_ref = ETMjson(article,self.scopusAPI)
             relevance_score = float(article['score'])
             etm_ref[RELEVANCE] = [relevance_score]
             if hasattr(etm_ref,"Identifiers"):
@@ -470,12 +544,9 @@ class ETMcache (ETMstat):
 
         
     def get_statistics(self, stat_prop_list):
-       # stat_prop_list = [PUBYEAR,AUTHORS,INSTITUTIONS,JOURNAL]
-        for p in stat_prop_list:
-            self.statistics[p] = dict()
-
         self.term2refs = dict() # {term:{ref}}
         self.keywords2ref = dict() #{keyword:{ref}}
+        self.scopusid2name = dict()
         references = self.references()
         for ref in references:
             for p in stat_prop_list:
@@ -494,6 +565,9 @@ class ETMcache (ETMstat):
                         self.term2refs[k].add(ref)
                     except KeyError:
                         self.term2refs[k] = {ref}
+
+            if hasattr(ref,'scopusInfo'):
+                self.scopusid2name.update({k:v[1]+' '+v[2] for k,v in dict(ref.scopusInfo).items()})
 
 
     def _org2address_stats(self):
@@ -516,6 +590,15 @@ class ETMcache (ETMstat):
 
 
     def to_excel(self, stat_props:list):
+        if self.scopusid2name:
+            replaceid4name = dict()
+            scopus_stats = dict(self.statistics[SCOPUS_AUTHORIDS])
+            for k,v in scopus_stats.items():
+                au_name = self.scopusid2name[k]
+                replaceid4name[au_name] = v
+            
+            self.statistics[SCOPUS_AUTHORIDS] = replaceid4name
+                
         workbook = xlsxwriter.Workbook(self.etm_stat_dir+self.search_name+'.xlsx')
         for p in stat_props:
             try:

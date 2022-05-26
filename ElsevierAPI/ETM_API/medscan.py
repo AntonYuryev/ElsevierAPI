@@ -29,7 +29,7 @@ class MedScan:
     def __init__(self,license,org_name = 'Mammal'):
         self.organism = org_name
         self.license = license
-        self.objnames = self.__load_objnames()
+        self.objnames = self._load_objnames()
 
     def markup_sentence(self,sentence:str):
         locscan = 'D:\\MEDSCAN\\DevStandard10.bin\\Standard.bin\\locscan'
@@ -53,7 +53,10 @@ class MedScan:
             markup += complete_markup[sentence_start:concept_scan_markup_pos]+ ' '
         return markup.strip()
 
-    def __load_objnames(self):
+    def _load_objnames(self):
+        """
+        Returns {msid:name}
+        """
         to_return = dict()
         with open(MEDSCANDIR+'xfdata\\'+self.organism+'.ObjectNames.tab', 'r', encoding='utf-8') as f:
             line = f.readline()
