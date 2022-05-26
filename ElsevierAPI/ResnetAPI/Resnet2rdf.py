@@ -1,7 +1,7 @@
 import rdflib as rdf
 from .ResnetGraph import ResnetGraph
 from .NetworkxObjects import PSObject,PSRelation,REFCOUNT
-from ..ETM_API.references import Reference,PS_ID_TYPES,RELEVANCE,TITLE,PUBYEAR,JOURNAL
+from ..ETM_API.references import Reference,PS_ID_TYPES,RELEVANCE,TITLE,PUBYEAR,JOURNAL,LOINCID,THRESHOLD, hGRAPHID,EDMID
 import json
 from pyld import jsonld
 from urllib.parse import quote
@@ -15,7 +15,7 @@ QB,RDF,RDFS,SDO,SH,SKOS,SOSA,SSN,TIME,VANN,VOID,XSD
 REFID2PREFIX = {'PMID':'pubmed', 'DOI':'doi', 'PII':'pii', 'EMBASE':'embase', 
                 'NCT ID':'clintrial', 'PUI':'embase'}
 REL_PROPS4RDF = ['BiomarkerType','ChangeType','Mechanism','PubTypes']
-SAMEAS2PREFIX = {'LOINC ID':'loinc', 'hGraph ID':'edm'}
+SAMEAS2PREFIX = {LOINCID:'loinc', hGRAPHID:'edm', EDMID:'edm'}
 
 
 class ResnetRDF(rdf.Graph):
@@ -127,7 +127,7 @@ class ResnetRDF(rdf.Graph):
 
     def __obj_uri(self, obj:PSObject): 
         try:
-            return rdf.Literal(self.__edm_uri(obj['EDM ID'][0]))
+            return self.__edm_uri(obj['EDM ID'][0])#rdf.Literal(self.__edm_uri(obj['EDM ID'][0]))
         except KeyError:
             return self.__resnet_uri(obj['URN'][0])
 
@@ -158,6 +158,21 @@ class ResnetRDF(rdf.Graph):
         except KeyError: return
 
 
+    def add_maf(self, gv:PSObject):
+        obj_uri = self.__obj_uri(gv)
+        gv_name = gv['Name'][0]
+        try:
+            for allele2freq in gv['Minor allele frequencies']:
+                sep_pos = str(allele2freq).find('-',1)
+                allele = allele2freq[:sep_pos]
+                freq = float(allele2freq[sep_pos+1:])
+                allele_uri = self.make_uri('dbsnp',gv_name+'-'+allele)
+                self.add((obj_uri, self.make_uri('dbsnp','allele'), allele_uri))
+                self.add((allele_uri, self.make_uri('dbsnp','MAF'), rdf.Literal(freq, datatype=rdf.XSD.float)))
+                return
+        except KeyError: return
+
+
     def obj_sameas(self,for_obj:PSObject):
         obj_uri = self.__obj_uri(for_obj)
         urnuri = self.urn2uri(for_obj)
@@ -178,7 +193,8 @@ class ResnetRDF(rdf.Graph):
         self.add_obj_prop('ObjTypeName',node,rdf.RDF.type,self.context['resnet'])
         self.add_obj_prop('Name',node,self.context['schema']['name'])
         self.add_obj_prop('Gene',node,self.__resnet_uri('gene'),self.context['resnet'])
-        self.add_obj_prop('Threshold',node,self.__resnet_uri('threshold'),self.context['resnet']) 
+        self.add_obj_prop(THRESHOLD,node,self.__resnet_uri('threshold'),self.context['resnet'])
+        self.add_maf(node)
         return obj_uri
         
 

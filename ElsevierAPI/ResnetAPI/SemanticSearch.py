@@ -1,15 +1,15 @@
-import os
 import time
-import pandas as pd
 import networkx as nx
 import math
-import re
 from .PathwayStudioGOQL import OQL
-from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_ID_TYPES
+from ..ETM_API.references import PS_SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_ID_TYPES
 from .ResnetGraph import ResnetGraph
 from .ResnetAPISession import APISession
 from ..ETM_API.etm import ETMstat
+import pandas as pd
+from ..pandas.panda_tricks import df
 
+COUNTS = 'counts'
 
 class SemanticSearch (APISession): 
     __refCache__='reference_cache.tsv'
@@ -20,28 +20,26 @@ class SemanticSearch (APISession):
     _col_name_prefix = "RefCount to "
     __child_ids__ = 'Child Ids'
     __temp_id_col__ = 'entity_IDs'
-    __connect_by_rels__= list()
-    __rel_effect__ = list()
     __rel_dir__ = '' # relation directions: allowed values: '>', '<',''
-    __only_map2types__ = list()
     __iter_size__ = 1000 #controls the iteration size in sematic reference count
-    RefCountPandas = pd.DataFrame()
-    relProps = list(PS_ID_TYPES) # if need_references() add here ['Name','Sentence','PubYear','Title']
     __print_refs__ = True
-    __column_ids__ = dict()
-
+    data_dir = ''
+    
     def __init__(self, APIconfig):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
-        self.PageSize = 500
+        self.PageSize = 1000
         self.DumpFiles = []
         self.APIconfig = APIconfig
+        self.report_pandas=dict()
+        self.raw_data = dict()
+        self.RefCountPandas = df()
+        self.relProps = list(PS_ID_TYPES) # if need_references() add here ['Name','Sentence','PubYear','Title']
+        self.__column_ids__ = dict()
+        self.__only_map2types__ = list()
+        self.__connect_by_rels__= list()
+        self.__rel_effect__ = list()
 
-
-    @staticmethod
-    def apply_and_concat(dataframe:pd.DataFrame, field, func, column_names):
-        return pd.concat((dataframe,dataframe[field].apply(lambda cell: pd.Series(func(field,cell),index=column_names))),axis=1)
-
-
+    
     def reset_pandas(self):
         score_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
         for col in score_columns:
@@ -54,7 +52,7 @@ class SemanticSearch (APISession):
         self.RefCountPandas.drop(columns=ref_count_columns, inplace=True) #defaults to deleting rows, column must be specified
         print('%d refcount columns were dropped' % len(ref_count_columns))
 
-    def load_pandas(self, EntityPandas:pd.DataFrame,prop_names_in_header, use_cache=False, map2type = None ):
+    def load_pandas(self, EntityPandas:df,prop_names_in_header, use_cache=False, map2type = None ):
         self.__only_map2types__ = map2type if isinstance(map2type,list) else []
         if use_cache:
             try: self.read_cache()
@@ -71,7 +69,7 @@ class SemanticSearch (APISession):
         self.__rel_dir__ = rel_dir
 
 
-    def map_entities(self,EntityPandas:pd.DataFrame, prop_names_in_header = False):
+    def map_entities(self,EntityPandas:df, prop_names_in_header = False):
         start_mapping_time  = time.time()
         if not prop_names_in_header:
             print('Entity infile does not have header with property names:\nwill use 1st column for mapping as Name and then as Alias')
@@ -81,7 +79,7 @@ class SemanticSearch (APISession):
         
         map2types = self.__only_map2types__
         PropName2Prop2EntityID = dict()
-        RemainToMap = pd.DataFrame(EntityPandas)
+        RemainToMap = df(EntityPandas)
         mapped_count = 0
         for propName in EntityPandas.columns:
             identifiers = list(map(str,list(RemainToMap[propName])))
@@ -113,8 +111,8 @@ class SemanticSearch (APISession):
         
 
         for propName in EntityPandas.columns:
-            MappedEntitiesByProp = pd.DataFrame(EntityPandas)
-            MappedEntitiesByProp = self.apply_and_concat(MappedEntitiesByProp,propName,get_entIDs,[self.__resnet_name__,self.__mapped_by__,self.__temp_id_col__])
+            MappedEntitiesByProp = df(EntityPandas)
+            MappedEntitiesByProp = df.apply_and_concat(MappedEntitiesByProp,propName,get_entIDs,[self.__resnet_name__,self.__mapped_by__,self.__temp_id_col__])
             MappedEntitiesByProp = MappedEntitiesByProp[MappedEntitiesByProp[self.__temp_id_col__].notnull()]
             self.RefCountPandas = self.RefCountPandas.append(MappedEntitiesByProp)
 
@@ -123,8 +121,10 @@ class SemanticSearch (APISession):
               (len(self.RefCountPandas), len(EntityPandas.index), ex_time))
 
         entity_id_tuples = self.RefCountPandas[self.__temp_id_col__].tolist()
-        set_list = [set(x) for x in entity_id_tuples]
-        return list(set.union(*set_list))
+        if entity_id_tuples:
+            set_list = [set(x) for x in entity_id_tuples]
+            return list(set.union(*set_list))
+        return list()
 
 
     def map_prop2entities(self, propValues:list, propName:str,map2types=None, get_childs=False, MinConnectivity=1):
@@ -261,7 +261,7 @@ class SemanticSearch (APISession):
         self.__column_ids__[new_column] = concept_ids
         self.RefCountPandas.insert(len(self.RefCountPandas.columns),new_column,0)
         if hasattr(self,'weight_prop'):
-            self.RefCountPandas[new_column] = pd.to_numeric(self.RefCountPandas[new_column], downcast="float")
+            self.RefCountPandas[new_column] = df(pd.to_numeric(self.RefCountPandas[new_column], downcast="float"))
 
         effecStr = ','.join(self.__rel_effect__) if len(self.__rel_effect__)>0 else 'all'
         relTypeStr = ','.join(self.__connect_by_rels__) if len(self.__connect_by_rels__)>0 else 'all'
@@ -285,7 +285,7 @@ class SemanticSearch (APISession):
                 idx_entity_ids = list(self.RefCountPandas.at[idx,self.__temp_id_col__])
                 if hasattr(self,'weight_prop'):
                     references = relations.count_references_between(idx_entity_ids, concept_ids,self.weight_prop,self.weight_dict)
-                    ref_weights = [r['weight'] for r in references]
+                    ref_weights = [r.get_weight() for r in references]
                     weighted_count = float(sum(ref_weights))
                     self.RefCountPandas.at[idx,new_column] = weighted_count
                 else:
@@ -297,7 +297,7 @@ class SemanticSearch (APISession):
                     linked_entities_counter += 1
             
             exec_time = self.execution_time(start_time)
-            self.print_ref_count() #prints cache files for temp storage to handle network interruptions
+             #prints cache files for temp storage to handle network interruptions
             print("Concept \"%s\" is linked to %d entities by %s relations of type \"%s\" supported by %d references with effect \"%s\" in %s" %
                  (ConceptName, linked_entities_counter, relations.number_of_edges(), relTypeStr, len(ref_sum), effecStr, exec_time))
 
@@ -311,15 +311,26 @@ class SemanticSearch (APISession):
         open(self.__refCache__, 'w').close()
 
 
-    def print_references(self, column_name:str or int, fname:str, for_rel_types:list=None,with_effect:list=None,in_direction:str=None,
-                            pubid_types=[],biblio_props=[],print_snippets=False):
+    def add2report(self,table:df):
+        self.report_pandas[table.name] = table
+
+    def add2raw(self,table:df):
+        self.raw_data[table.name] = table
+
+    def refs2pd(self, column_name:str or int, for_rel_types:list=None,with_effect:list=None,in_direction:str=None,
+                            pubid_types:list=[],biblio_props:list=[],print_snippets=False):
+        """
+        input - column name from self.RefCountPandas
+        prints references from Pathway Studio sorted by "Citation Index" - occurence of referenc in entire column
+        """
+        
         old_rel_props = self.relProps # caching current session properties
         
         article_identifiers = pubid_types if pubid_types else PS_ID_TYPES
         biblio_properties = biblio_props if biblio_props else list(PS_BIBLIO_PROPS)
         self.add_rel_props(article_identifiers)
         self.add_rel_props(biblio_properties)
-        if print_snippets: self.add_rel_props(SENTENCE_PROPS)
+        if print_snippets: self.add_rel_props(PS_SENTENCE_PROPS)
 
         if isinstance(column_name, int):
             score_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
@@ -332,63 +343,88 @@ class SemanticSearch (APISession):
             concept_name = column_name
         
         print('\nPrinting references for semantic search concept "%s"\n' % concept_name)
-        with open(fname,'w',encoding='utf-8') as f:
-            # printing header
-            f.write('Concept\tEntity\tCitation index\t')
-            for id in pubid_types: f.write(id+'\t')
+        #making header
+        header = ['Concept','Entity','Citation index']
+        header += pubid_types
+        header += biblio_properties
+        if print_snippets:
+            header.append('Snippets')
+        
+        ref_pd = df(columns=header)
+        ref_pd.name='Snippets'
+        ref_counter = set()
+        for i in self.RefCountPandas.index:
+            entity_ids = list(self.RefCountPandas.loc[i][self.__temp_id_col__])
+            entity_name = self.RefCountPandas.loc[i][self.__resnet_name__]
+            links_between = self.connect_nodes(concept_ids,entity_ids,for_rel_types,with_effect,in_direction)
+            references = links_between.count_references()
+            ETMstat.count_refs(ref_counter,references)
+        
+        to_sort = list(ref_counter)
+        to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
+        for ref in to_sort:
+            ref_list = ref.to_list(pubid_types,print_snippets,biblio_properties,['Citation index'])
+            row = [concept_name,entity_name] + ref_list
+            ref_pd.loc[len(ref_pd.index)] = row
 
-            biblio_header = ''
-            for propid in biblio_properties:
-                biblio_header += propid+'\t'
-
-            if print_snippets:
-                biblio_header += 'Snippets\n'
-            else:
-                biblio_header = biblio_header[:-1]+'\n'
-            f.write(biblio_header)
-
-            ref_counter = set()
-            for i in self.RefCountPandas.index:
-                entity_ids = list(self.RefCountPandas.loc[i][self.__temp_id_col__])
-                entity_name = self.RefCountPandas.loc[i][self.__resnet_name__]
-                links_between = self.connect_nodes(concept_ids,entity_ids,for_rel_types,with_effect,in_direction)
-                references = links_between.count_references()
-                ETMstat.count_refs(ref_counter,references)
-            
-            to_sort = list(ref_counter)
-            to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
-            for ref in to_sort:
-                ref_str = ref.to_str(pubid_types,'\t',print_snippets,biblio_properties,['Citation index'])
-                f.write(concept_name+'\t'+entity_name+'\t'+ref_str+'\n')
-
-            self.relProps = old_rel_props
+        self.relProps = old_rel_props
+        #self.report_pandas[ref_pd.name]= ref_pd
+        print( 'Created "%s" table supporting semantic counts' % ref_pd.name)
+        if print_snippets:
+            print( '"%s" table includes snippets' % ref_pd.name)
+        return ref_pd
 
 
-    def print_ref_count(self, refCountsOut='', **kwargs):
-        PandasToPrint = pd.DataFrame(self.RefCountPandas)    
-  
-        if len(refCountsOut) > 0:
-            countFile = refCountsOut
-            PandasToPrint = PandasToPrint.drop(self.__temp_id_col__,axis=1)
-            PandasToPrint = PandasToPrint.loc[(PandasToPrint!=0).any(axis=1)] # removes rows with all zeros
-        else:
-            print('Data is saved data to %s for protection or re-use' % self.__cntCache__)
-            countFile = self.__cntCache__
+    def make_count_pd(self,debug=False,pd_name=COUNTS):
+        pandas2print = df(self.RefCountPandas) 
+        if not debug:
+            pandas2print = pandas2print.drop(self.__temp_id_col__,axis=1)
+            pandas2print = pandas2print.loc[(pandas2print!=0).any(axis=1)] # removes rows with all zeros
+        
+        pandas2print.name = pd_name
+        #self.report_pandas[pd_name]= (pandas2print)
+        print ('Created "%s" table' % pandas2print.name)
+        return pandas2print
 
-        if 'index' not in kwargs:
-            kwargs['index'] = False
 
-        if 'sep' not in kwargs:
-            kwargs['sep'] = self.csv_delimeter
+    def add2writer(self, writer:pd.ExcelWriter, ws_prefix=''):
+        for report_df in self.report_pandas.values():
+            sh_name = ws_prefix+report_df.name
+            df2print = df(report_df)
+            df2print.format_vertical_headers()
+            df2print.to_excel(writer, sheet_name=sh_name[:30], index=False)
 
-        if 'float_format' not in kwargs:
-            kwargs['float_format'] = '%g'
 
-        try:
-            PandasToPrint.to_csv(countFile,**kwargs)
-        except FileNotFoundError:
-            fname = countFile[countFile.rfind('/')+1:]
-            PandasToPrint.to_csv(fname,**kwargs)
+    def addraw2writer(self, writer:pd.ExcelWriter, ws_prefix=''):
+        if hasattr(self,'raw_data'):
+            for rawdf in self.raw_data.values():
+                sh_name = ws_prefix+rawdf.name
+                df2print = df(rawdf)
+                df2print.format_vertical_headers()
+                df2print.to_excel(writer, sheet_name=sh_name[:30], index=False)
+        
+
+    def print_report(self, xslx_file:str, ws_prefix=''):
+        writer = pd.ExcelWriter(xslx_file, engine='xlsxwriter')
+        self.add2writer(writer,ws_prefix)
+        writer.save()
+
+
+    @staticmethod
+    def merge_counts2norm(counts_pd:df, normalized_pd:df):
+        assert(counts_pd.name == COUNTS)
+        merged_pd = df(normalized_pd)
+        common_columns = set(merged_pd.columns).intersection(set(counts_pd.columns))
+        for col in common_columns:
+            merge_dict = pd.Series(counts_pd[col].values,index=counts_pd['Name']).to_dict()
+            merged_pd[col] = merged_pd["Name"].map(merge_dict)
+        return merged_pd
+
+
+    def print_rawdata(self, xslx_file:str, ws_prefix=''):
+        writer = pd.ExcelWriter(xslx_file, engine='xlsxwriter')
+        self.addraw2writer(writer,ws_prefix)
+        writer.save()
 
 
     def read_cache(self):#returns last concept linked in cache
@@ -400,15 +436,9 @@ class SemanticSearch (APISession):
             print('Cache was not found! Will start processing all input files from scratch')
             return FileNotFoundError
 
-
-    
-    @staticmethod
-    #this function was not tested yet
-    def apply_and_concat2(dataframe:pd.DataFrame, concept_name, func, column_names):
-        return pd.concat((dataframe,dataframe['Name'].apply(lambda cell: pd.Series(func(cell,concept_name),index=column_names))),axis=1)
-
+   
     def add_ETM_score(self, add_etm_param={}):
-        etm_df = pd.DataFrame()
+        etm_df = df()
         etm_df['Name'] = self.RefCountPandas['Name']
         etm_df[self.__resnet_name__] = self.RefCountPandas[self.__resnet_name__]
         etm_df[self.__mapped_by__] = self.RefCountPandas[self.__mapped_by__]
@@ -422,7 +452,7 @@ class SemanticSearch (APISession):
         for col_idx, col_name in enumerate(self.RefCountPandas.columns):
             etm_df[col_name] = self.RefCountPandas[col_name]
             concept_name = col_name[len(self._col_name_prefix):]
-            etm_df = self.apply_and_concat2(etm_df,concept_name,etm_info,[self.__ETM_stat_prefix+concept_name,self.__ETM_ref_prefix+concept_name])
+            etm_df = apply_and_concat2(etm_df,concept_name,etm_info,[self.__ETM_stat_prefix+concept_name,self.__ETM_ref_prefix+concept_name])
 
         return etm_df
             

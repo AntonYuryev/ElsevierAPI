@@ -1,6 +1,8 @@
 import re
 import json
 import itertools
+import pickle
+
 from ..ETM_API.references import Reference
 from ..ETM_API.references import JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
 from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR
@@ -10,10 +12,15 @@ PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
 REGULATORS = 'Regulators'
 TARGETS = 'Targets'
 REFCOUNT = 'RelationNumberOfReferences'
+CHILDS = 'Child Ids'
+
+#enums for objectypes to avoid misspeling
+GENETICVARIANT = 'GeneticVariant'
+FUNC_ASSOC = 'FunctionalAssociation'
 
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
-    def __init__(self, dic: dict):
+    def __init__(self, dic=dict()):
         super().__init__(dic)
 
     @staticmethod
@@ -111,6 +118,28 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             return ''
 
+    def merge(self,with_other):
+        if isinstance(with_other,PSObject):
+            for k, vlist in with_other.items():
+                self.update_with_list(k,vlist)
+
+
+    def dump(self,to_file:str):
+        with open(to_file+'.pickle', "wb") as outfile:
+            # "wb" argument opens the file in binary mode
+            pickle.dump(self, outfile)
+
+
+    @classmethod
+    def load(cls,from_file:str):
+        dump_name = from_file+'.pickle'
+        try:
+            f = open(dump_name, "rb") 
+            o = cls(pickle.load(f))
+            f.close()
+            return o
+        except FileNotFoundError:
+            raise FileNotFoundError
 
 
 class PSRelation(PSObject):
@@ -119,7 +148,7 @@ class PSRelation(PSObject):
     Nodes = dict() # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
     References = dict() # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
 
-    def __init__(self, dic:dict):
+    def __init__(self, dic=dict()):
         super().__init__(dic)
         self.PropSetToProps = dict()  # {PropSetID:{PropID:[values]}}
         self.Nodes = dict()  # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
@@ -143,13 +172,20 @@ class PSRelation(PSObject):
                     self.References[i] = r
 
 
-    def _get_refs(self):
-        return list(set(self.References.values()))
+    def _get_refs(self, only_with_id_type='', sort_by=PUBYEAR,reverse=True, ref_limit=0):
+        all_refs = list(set(self.References.values()))
+        if only_with_id_type:
+            filter_refs = [ref for ref in all_refs if only_with_id_type in ref.Identifiers.keys()]
+            filter_refs.sort(key=lambda r: r._sort_key(sort_by), reverse=reverse)
+            return filter_refs[:ref_limit] if ref_limit else filter_refs
+        else:
+            all_refs.sort(key=lambda r: r._sort_key(sort_by), reverse=reverse)
+            return  all_refs[:ref_limit] if ref_limit else all_refs
 
 
     def copy(self, other):
         if isinstance(other, PSRelation):
-            self.update(other)
+            self.merge(other)
             self.PropSetToProps.update(other.PropSetToProps)
             self.Nodes.update(other.Nodes)
             self.add_references(other._get_refs())
@@ -179,7 +215,7 @@ class PSRelation(PSObject):
         return self['Id'][0]
 
 
-    def __props2str(self, prop_id, cell_sep: str =';'):
+    def _props2str(self, prop_id, cell_sep:str =';'):
         try:
             return cell_sep.join(map(str, self[prop_id]))
         except KeyError:
@@ -298,18 +334,6 @@ class PSRelation(PSObject):
         # # PropSetToProps is used in print_references do not clear it.
 
 
-    def sort_references(self, by_property:str, is_numerical=True):
-        def sortkey(x):
-            try:
-                return float(x[by_property][0]) if is_numerical else str(x[by_property][0])
-            except KeyError:
-                return 0.0 if is_numerical else '0'
-
-        all_refs = self._get_refs()
-        all_refs.sort(key=lambda x: sortkey(x))
-        return all_refs
-
-
 
     def filter_references(self, prop_names2values:dict):
         # prop_names2values = {prop_name:[values]}
@@ -322,16 +346,14 @@ class PSRelation(PSObject):
 
     def get_reference_count(self, count_abstracts=False):
         self.load_references()
+        self[REFCOUNT] = [len(self._get_refs())]
+
         if count_abstracts:
             ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
             return len(ref_from_abstract)
-        elif self.References:
-            self[REFCOUNT] = [len(self._get_refs())]
-           
-        try: return self[REFCOUNT][0]
-        except KeyError: 
-            self[REFCOUNT] = [len(self.PropSetToProps)]
+        else:
             return self[REFCOUNT][0]
+
 
 
     def rel_prop_str(self, sep=':'):
@@ -372,7 +394,7 @@ class PSRelation(PSObject):
             propId = columnPropNames[col]
             if propId in self.keys(): # filling columns with relation properties
                 for row in range(0, rowCount):
-                    propValue = self.__props2str(propId)
+                    propValue = self._props2str(propId)
                     table[row][col] = propValue
             elif RelationNumberOfReferences >= RefNumPrintLimit: #filling columns with reference properties
                 row = 0
@@ -399,7 +421,7 @@ class PSRelation(PSObject):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
         # initializing table
         col_count = len(columnPropNames) +2 if add_entities else len(columnPropNames)
-        RelationNumberOfReferences = int(self[REFCOUNT][0])
+        RelationNumberOfReferences = self.get_reference_count()
 
         table = ['']*col_count
         if add_entities:
@@ -417,7 +439,7 @@ class PSRelation(PSObject):
         for col in range(len(columnPropNames)):
             propId = columnPropNames[col]
             if propId in self.keys(): # filling columns with relation properties
-                propValues = self.__props2str(propId)
+                propValues = self._props2str(propId)
                 table[col] = propValues.replace(cell_sep, ' ')
             elif RelationNumberOfReferences >= RefNumPrintLimit: #filling columns with reference properties
                 for propList in self.PropSetToProps.values():
@@ -438,7 +460,7 @@ class PSRelation(PSObject):
         if as1row:
             return self.to1row(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
         else: 
-            return  self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
+            return self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
 
     def get_regulators_targets(self):
         if len(self.Nodes) > 1:
@@ -489,20 +511,4 @@ class PSRelation(PSObject):
                 for ref in self.References:
                     ref.set_weight(0.0)
 
-    def recent_refs(self,ref_limit=5):
-        def sortkey(ref:dict):
-            try:
-                year = ref[PUBYEAR][0]
-            except KeyError:
-                try:
-                    year = ref['Start'][0]
-                    year = year[-4:]
-                except KeyError: year = '1812'
-            return tuple([year] + list(ref.Identifiers.values()))
-        
-        references = self._get_refs()
-        references.sort(key=lambda x: sortkey(x), reverse=True)
-        if ref_limit == 0:
-            return references
-        else:
-            return references[:ref_limit]
+    

@@ -120,6 +120,7 @@ class PSNetworx(DataModel):
 
         return new_graph
 
+
     def load_graph_from_oql(self, oql_query:str, relation_props:list=None, entity_props:list=None, get_links=True, add2self=True):
         
         if isinstance(entity_props,(list, set)):
@@ -153,6 +154,7 @@ class PSNetworx(DataModel):
             return obj_ids
         else:
             return set()
+
 
     def _get_obj_ids_by_props(self, propValues: list, search_by_properties=[], get_childs=True,
                              only_obj_types=[]):
@@ -201,6 +203,7 @@ class PSNetworx(DataModel):
             children_props = [prop for x in children_prop_lists for prop in x]
                   
         return list(set(psobjs_props + children_props))
+
 
 
     def find_drugs(self, for_targets_with_ids: list, REL_PROPS: list, ENTITY_PROPS: list):

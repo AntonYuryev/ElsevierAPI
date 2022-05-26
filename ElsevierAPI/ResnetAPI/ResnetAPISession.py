@@ -4,7 +4,7 @@ import networkx as nx
 import pandas as pd
 from datetime import timedelta
 from .ZeepToNetworkx import PSNetworx
-from .ResnetGraph import ResnetGraph, PSObject
+from .ResnetGraph import ResnetGraph,PSObject,PSRelation, CHILDS
 from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import SENTENCE_PROPS
 from xml.dom import minidom
@@ -219,6 +219,7 @@ class APISession(PSNetworx):
         self.__IsOn1st_page = True
         return entire_graph
 
+
     def get_ppi_graph(self, fout):
         # Build PPI network between proteins
         graph_proteins = self.Graph.get_entity_ids(['Protein'])
@@ -337,10 +338,69 @@ class APISession(PSNetworx):
     def child_graph(self, propValues:list, search_by_properties=[],include_parents=True):
         if not search_by_properties: search_by_properties = ['Name','Alias']
         oql_query = OQL.get_childs(propValues,search_by_properties,include_parents=include_parents)
-        request_name = 'Find ontology children'
+        request_name = 'Find ontology children for {}'.format(','.join(propValues))
         ontology_graph = self.process_oql(oql_query,request_name)
         print('Found %d ontology children' % len(ontology_graph))
         return ontology_graph
+
+
+    def load_children(self,in_graph=ResnetGraph(),for_parent_ids=[],add_new_nodes=False):
+        # slower than child_graph but annotates each parent with CHILDS
+        graph_registry = [in_graph, self.Graph] #need to pass as pointers because graph is modified
+        index = 0 if in_graph else 1
+
+        annotate_parent_ids = set(for_parent_ids) if for_parent_ids else set(graph_registry[index])
+        self.get_children(annotate_parent_ids)
+
+        if add_new_nodes:
+            [graph_registry[index].add_node_property(parent_id,CHILDS,self.ID2Children[parent_id]) for parent_id in annotate_parent_ids]
+        else:
+            for parent_id in annotate_parent_ids:
+                all_child_ids = set(self.ID2Children[parent_id])
+                graph_child_ids = all_child_ids.intersection(set(graph_registry[index]))
+                graph_registry[index].add_node_property(parent_id,CHILDS,list(graph_child_ids))
+
+
+
+    def add_members(self, members:list, to_parent:PSObject):
+        #members - list of PSObjects
+        ontology_graph = ResnetGraph()
+        parent_id = to_parent['Id'][0]
+        ontology_graph.add1node(to_parent)
+        ontology_graph.add_node_list(members)
+        for m in members:
+            child_id = m['Id'][0]
+            rel = PSRelation({'ObjTypeName':['MemberOf'],'Relationship':['is-a'],'Ontology':['Pathway Studio Ontology']})
+            rel.Nodes['Regulators'] = [(child_id,0,0)]
+            rel.Nodes['Targets'] = [(parent_id,1,0)]
+            rel.append_property('Id',child_id)
+            rel.append_property('URN', str(child_id)+'0') #fake URN
+            ontology_graph.add_edge(child_id,parent_id,relation=rel)
+
+        self.add_rel_props(['Relationship','Ontology'])
+        #self.add_graph(ontology_graph)
+        return ontology_graph
+
+
+    def add_parents(self, to_graph=ResnetGraph(), for_child_ids=[], depth=1):
+        if not for_child_ids:
+            if to_graph:
+                for_child_ids = list(to_graph)
+            else:
+                for_child_ids = list(self.Graph)
+
+        get_parent_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') inRange {steps} over (SELECT OntologicalNode WHERE id = ({ids}))'
+        oql_query = get_parent_query.format(steps=str(depth),ids=','.join(map(str,for_child_ids)))
+        request_name = 'Find parents of {count} nodes with depth {d}'.format(count = str(len(for_child_ids)), d=str(depth))
+        parent_graph = self.process_oql(oql_query,request_name)
+
+        if to_graph:
+            to_graph.add_graph(parent_graph)
+            self.load_children(to_graph,for_parent_ids=list(parent_graph))
+            return to_graph._get_node(list(parent_graph))
+        else:
+            self.load_children(for_parent_ids=list(parent_graph))
+            return self.Graph._get_nodes(list(parent_graph))
 
     
 
