@@ -284,21 +284,21 @@ class RepurposeDrug(TargetIndications):
 
 if __name__ == "__main__":
     APIconfig = load_api_config()
-    parameters = {#  specify here what indications to find and the type of drug: 
-                'input_compound' : 'cannabidiol',#'2-arachidonoylglycerol', #'anandamide', # , '9-tetrahydrocannabinol'
-                'similars' : ['cannabidivarin', 'Cannabidiolic acid', 'Cannabielsoin'],#['noladin ether'],
-                #['oleoylethanolamide','virodhamine','N-oleoyldopamine','palmitoylethanolamide','N-arachidonoyl dopamine','N-arachidonoylglycine','eicosapentaenoyl ethanolamide'],
-                #'input_compound' : 'tetrahydrocannabinol', 
-                #'similars' : ['delta 8-THC', '9-tetrahydrocannabinol', 'THC-C4','tetrahydrocannabinolic acid', '11-hydroxy-delta 9-tetrahydrocannabinol'],
-                # names of similar drugs that have same mechanism of action (i.e. same target):
-                'drug_effect': INHIBIT,
+    parameters = {# specify here what indications to find and the type of drug: 
+                'input_compound' : 'cannabidiol',
+                'similars' : ['cannabidivarin', 'Cannabidiolic acid', 'Cannabielsoin'],
+                # 'similars' lists similar drugs that have same mechanism of action (i.e. same target(s))
+                'drug_effect': INHIBIT, # desired drug effect on indication. 
+                 # INHIBIT for Disease to find drig indications,
+                 # ACTIVATE for Disease to find toxicities and side-effects
                 'mode_of_action': ANTAGONIST,
                 'partner_class':'Metabolite ligand', # use it only if partner_names not empty
                 'indication_types': ['CellProcess'], #['Disease','Virus']
-                'target_names':['GPR18'],
-                'target_type':'Protein',
-                'to_inhibit':True,
-                'pathway_name_must_include_target':True,
+                'target_names':[], # script uses all targets in this list to find relations supporting drug indication. 
+                # to find indications linked only to single target this list must contain only one target name  
+                'target_type':'Protein', # used to speed up queries to knowldeg graph does not impact output report
+                'to_inhibit':True, # 'to_inhibit' specifies drug effect on targets in 'target_names'. It is calculated by set_drug() and is initialized to True here
+                'pathway_name_must_include_target':True, 
                 'strict_mode':RANK_SUGGESTED_INDICATIONS, #PREDICT_RANK_INDICATIONS#
                 'data_dir':'D:/Python/PMI/',
                 'partner_names':['endocannabinoid','anandamide','2-arachidonoylglycerol']
@@ -308,7 +308,7 @@ if __name__ == "__main__":
                 }
 
     targets = ['CNR1','CNR2','GPR55','GPR119','GPR18']
-    indications = ['CellProcess','Disease']
+    #indications = ['CellProcess','Disease']
     path = parameters['data_dir']
     target_report = pd.ExcelWriter(path+parameters['input_compound']+'.xlsx', engine='xlsxwriter')
     raw_data_cache = pd.ExcelWriter(path+parameters['input_compound']+'raw_data.xlsx', engine='xlsxwriter')
@@ -350,4 +350,4 @@ if __name__ == "__main__":
     other_indications.to_excel(target_report, sheet_name='Possbl.CellProcess', index=False)
 
     target_report.save()
-    raw_data_cache.save()
+    raw_data_cache.save() 
