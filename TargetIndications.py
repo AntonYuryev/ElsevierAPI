@@ -1,21 +1,25 @@
 from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
-from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch, PS_ID_TYPES,SENTENCE_PROPS
+from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch
+from ElsevierAPI.ResnetAPI.SemanticSearch import PS_ID_TYPES,PS_SENTENCE_PROPS,COUNTS,BIBLIOGRAPHY,CHILDREN_COUNT,RANK
 from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
-import pandas as pd
+from ElsevierAPI.pandas.panda_tricks import df, pd
 import numpy as np
 import time
 import networkx as nx
 from ElsevierAPI.ETM_API.etm import ETMstat
+
+RANK_SUGGESTED_INDICATIONS = True 
+# in RANK_SUGGESTED_INDICATIONS mode only indications suggested in the lietarure are ranked by amount of supporting evidence
+PREDICT_RANK_INDICATIONS = False
+# mode also predicts and ranks indications from diseases having input target as biomarker
+
 
 
 class TargetIndications(SemanticSearch):
     pass
     def __init__(self, APIconfig, params={}):
         super().__init__(APIconfig)
-        #self.PageSize = 1000
-        #self.add_rel_props(PS_ID_TYPES)
-
         self.indication_types = ['Disease','Virus']
         self.pathway_name_must_include_target = True 
         # if True only pathways depicting target signaling are considered for regulome construction
@@ -32,7 +36,7 @@ class TargetIndications(SemanticSearch):
             self.param = {'partner_names':[],
     # if partner_names is empty script will try finding Ligands for Receptor targets and Receptors for Ligand targets
                  'partner_class':'', # use it only if partner_names not empty
-                 'indication_types': [], #['Disease','Virus']
+                 'indication_types': [], #['Disease','Virus','CellProcess']
                  'target_names':[],
                  'target_type':'',
                  'to_inhibit':True,
@@ -40,6 +44,8 @@ class TargetIndications(SemanticSearch):
                  'strict_mode':True,
                  'data_dir':''
                 }
+
+        self.child2parent = dict() # child2parent = {indication:parent_ontology_category}
         
     def _target_names(self): return ','.join([x['Name'][0] for x in self.Drug_Targets])
 
@@ -103,7 +109,11 @@ class TargetIndications(SemanticSearch):
         
         self.Drug_Targets = targets_graph._get_nodes()
         self.target_ids = [x['Id'][0] for x in self.Drug_Targets]
-        self.input_names = [x['Name'][0] for x in self.Drug_Targets]
+
+        if not hasattr(self,'input_names'): #input names are used for finding references in ETM.
+        # RepurposeDrug has it own 'input_names'
+            self.input_names = [x['Name'][0] for x in self.Drug_Targets]
+
         self.find_targets_oql = 'SELECT Entity WHERE id = ('+ ','.join(map(str,self.target_ids))+')'
         for t in self.Drug_Targets:
             try:
@@ -148,6 +158,10 @@ class TargetIndications(SemanticSearch):
         return found_indications
 
 
+    def set_strictmode_indications(self):
+        self.indications4strictmode = self.target_indications4strictmode
+
+
     def find_target_indications(self):
         f_t = self.find_targets_oql
         t_n = self._target_names()
@@ -179,12 +193,8 @@ class TargetIndications(SemanticSearch):
 
         indications2return.update(self.GVindications())
 
-
         if self.strict_mode:
-            if hasattr(self, 'drug_indications4strictmode'):
-                self.indications4strictmode = set(self.drug_indications4strictmode).intersection(self.target_indications4strictmode)
-            else:
-                self.indications4strictmode = self.target_indications4strictmode
+            self.set_strictmode_indications()
             self.select_indications = 'SELECT Entity WHERE id = ({ids})'.format(ids=','.join(map(str,self.indications4strictmode)))
         else:
             self.select_indications = 'SELECT Entity WHERE objectType = ({indication_type})'.format(indication_type=','.join(self.indication_types))
@@ -337,19 +347,15 @@ class TargetIndications(SemanticSearch):
         print('\n\nInitializing semantic search')
         t_n = self._target_names()
         if self.strict_mode:
-            # provide indications_ids list for strict_mode
-            if not hasattr(self, 'indications4strictmode'):
-                self.indications4strictmode = self.target_indications4strictmode
-
             IndicationNames = [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['Id'][0] in self.indications4strictmode]
             if not IndicationNames:
-                print ('No indications found for %s' % t_n)
+                print ('No indications found for %s in strict mode' % t_n)
                 return False
         else:
             IndicationNames = [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] in self.indication_types]
         
         if IndicationNames:
-            indication2score = pd.DataFrame()
+            indication2score = df()
             indication2score['Name'] = np.array(IndicationNames)
             print('Will score %d indications linked to %s' % (len(indication2score),t_n))
             self.load_pandas(indication2score,prop_names_in_header=True,map2type=self.indication_types)
@@ -502,119 +508,129 @@ class TargetIndications(SemanticSearch):
             linked_entities_count = self.link2concept(colname,list(self.PathwayComponentsIDs))
             print('Linked %d indications to %s pathway components' % (linked_entities_count,t_n))
 
-        self.make_count_pd()
+        counts_pd = self.make_count_pd()
+        counts_pd.name = COUNTS
+        self.add2raw(counts_pd)
         return
 
-    def normalize_counts(self, annotate_with_ontology=dict(),bibliography=True):
-        # annotate_with_ontology = {indication:ontology_category}
-        NormalizedCount = pd.DataFrame()
-        weights = pd.DataFrame()
+    def normalize_counts(self,bibliography=True):
+        normalized_count_pd = df()
+        weights = df()
         refcount_cols = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
         number_of_weights = len(refcount_cols)
         
-        NormalizedCount['Name'] = self.RefCountPandas['Name']
+        normalized_count_pd['Name'] = self.RefCountPandas['Name']
         weights.at[0,'Name'] = 'WEIGHTS:'
         weight_index = 0
         for col in refcount_cols:
             col_max = self.RefCountPandas[col].max()
-            NormalizedCount[col] = self.RefCountPandas[col]/col_max if col_max > 0 else 0.0
+            normalized_count_pd[col] = self.RefCountPandas[col]/col_max if col_max > 0 else 0.0
             column_weight = (number_of_weights-weight_index)/number_of_weights
             weights.at[0,col] = column_weight
             weight_index += 1
      
         #calculating cumulative score  
         combined_scores = list()
-        for i in NormalizedCount.index:
-            scores_row = NormalizedCount.loc[[i]]
+        for i in normalized_count_pd.index:
+            scores_row = normalized_count_pd.loc[[i]]
             weighted_sum = 0.0
             for col in refcount_cols:
                 weighted_sum = weighted_sum + scores_row[col]*weights.at[0,col]
             combined_scores.append(weighted_sum)
 
-        NormalizedCount['Combined score'] = np.array(combined_scores)
+        normalized_count_pd['Combined score'] = np.array(combined_scores)
         if hasattr(self,'__colnameGV__'):
             try:
-                NormalizedCount[self.__colnameGV__] = self.RefCountPandas[self.__colnameGV__]
+                normalized_count_pd[self.__colnameGV__] = self.RefCountPandas[self.__colnameGV__]
             except KeyError:
                 pass
 
-        NormalizedCount['#children'] = self.RefCountPandas[self.__temp_id_col__].apply(lambda x: len(x))
-        NormalizedCount['Final score'] = NormalizedCount['Combined score']/NormalizedCount['#children']
-        NormalizedCount = NormalizedCount.sort_values(by=['Final score'],ascending=False)
-        NormalizedCount = NormalizedCount.loc[NormalizedCount['Final score'] > 0.0] # removes rows with all zeros
+        normalized_count_pd[CHILDREN_COUNT] = self.RefCountPandas[self.__temp_id_col__].apply(lambda x: len(x))
+        normalized_count_pd[RANK] = normalized_count_pd['Combined score']/normalized_count_pd[CHILDREN_COUNT]
+        normalized_count_pd = normalized_count_pd.sort_values(by=[RANK],ascending=False)
+        normalized_count_pd = normalized_count_pd.loc[normalized_count_pd[RANK] > 0.0] # removes rows with all zeros
+        normalized_count_pd['Combined score'] = normalized_count_pd['Combined score'].map(lambda x: '%2.3f' % x)
+        normalized_count_pd[RANK] = normalized_count_pd[RANK].map(lambda x: '%2.3f' % x)
 
-        if annotate_with_ontology:
+        if self.child2parent:
             def get_ontology_parent(indication_name):
                 try:
-                    parents = annotate_with_ontology[indication_name]
+                    parents = self.child2parent[indication_name]
                     return ';'.join(parents)
                 except KeyError: return ''
-            NormalizedCount['Ontology group'] = NormalizedCount['Name'].apply(get_ontology_parent)
+            normalized_count_pd['Ontology group'] = normalized_count_pd['Name'].apply(get_ontology_parent)
+
 
         #fprefix = self.fname_prefix()
         if bibliography:
             max_ref_count = 5
             etm_counter = ETMstat(self.APIconfig,limit=max_ref_count)
             def add_refs(indication:str):
-                refid_list = list()
-                for n in self.input_names: # sort self.input_names by connectivity for better results
-                    search_terms = [n,indication]
+                refid_list = list() # list will be sorted by relevance
+                for drug_or_target in self.input_names:
+                    search_terms = [drug_or_target,indication]
                     hit_count,ref_ids,etm_refs = etm_counter.relevant_articles(search_terms)
-                    [refid_list.append(r) for r in ref_ids if r not in refid_list]
+                    for id_type,identifiers in ref_ids.items():
+                        for identifier in identifiers:
+                            if identifier not in refid_list:
+                                refid_list.append(identifier)
+
                     if len(refid_list) >= max_ref_count: 
                         refid_list = refid_list[:max_ref_count]
                         break
                 return ';'.join(refid_list)
 
-            NormalizedCount['References'] = NormalizedCount['Name'].apply(add_refs)
+            normalized_count_pd['References'] = normalized_count_pd['Name'].apply(add_refs)
             biblio_pd = etm_counter.counter2pd()
+            
 
       # use this filter only if indications linked to GVs are of interest
-      #  try: NormalizedCount = NormalizedCount.loc[NormalizedCount[self.__colnameGV__].notna()]
+      #  try: normalized_count_pd = normalized_count_pd.loc[normalized_count_pd[self.__colnameGV__].notna()]
       #  except KeyError: pass
 
-        counts_pd = self.report_pandas[0]
-        NormalizedCount = weights.append(NormalizedCount,ignore_index=True)
-        weigths_header = list(NormalizedCount.iloc[0].replace(np.nan, 0))
-        NormalizedCount.loc[0] = weigths_header
-        NormalizedCount.name = 'normalized'
-        self.raw_data = list([counts_pd,NormalizedCount])
+        counts_pd = self.raw_data[COUNTS]
+        for i in range(1,len(weights.columns)):
+            col = weights.columns[i]
+            weight = weights.loc[0,col]
+            if weight > 0.0:
+                weights.loc[0,col] = '{:,.4f}'.format(weight)
 
-        normalized_counts_pd = self.merge_counts2norm(counts_pd,NormalizedCount)
-        normalized_counts_pd.loc[0] = weigths_header
+        normalized_count_pd = weights.append(normalized_count_pd,ignore_index=True)
+        weigths_header = list(normalized_count_pd.iloc[0].replace(np.nan, ''))
+        normalized_count_pd.loc[0] = weigths_header
+        normalized_count_pd.name = 'normalized'
+        self.add2raw(normalized_count_pd)
+
+        ranked_counts_pd = self.merge_counts2norm(counts_pd,normalized_count_pd)
+        ranked_counts_pd.loc[0] = weigths_header
         # merge_counts2norm blanks out weigths_header because counts_pd does not have it
 
-        normalized_counts_pd.name = 'ranked_counts'
-        self.report_pandas = [normalized_counts_pd]
+        ranked_counts_pd.name = 'ranked_counts'
+        self.add2report(ranked_counts_pd)
 
         if bibliography:
-            biblio_pd.name = 'bibliography'
-            self.report_pandas.append(biblio_pd)
+            biblio_pd.name = BIBLIOGRAPHY
+            self.add2report(biblio_pd)
         
 
-    def child2parent(self, parent_ontology_groups:list):
-        to_return = dict() # {child_name:[ontoogy_parent_names]}
+    def load_ontology(self, parent_ontology_groups:list):
+        """
+        loads self.child2parent = {child_name:[ontology_parent_names]}
+        """
         self.add_ent_props(['Name'])
         for group_name in parent_ontology_groups:
             childs = self.child_graph([group_name],['Name'],include_parents=False)
-            children_ids = list(childs.nodes())
-
-            for c in children_ids:
-                child_id2propvals = self.Graph.get_properties({c},'Name')
-                if child_id2propvals:
-                    propvals = list(child_id2propvals.values())[0]
-                    for pval in propvals:
-                        try:
-                            to_return[pval].append(group_name)
-                        except KeyError:
-                            to_return[pval] = [group_name]
-
-        return to_return
+            for id, child in self.Graph.nodes(data=True):
+                child_name = child['Name'][0]
+                try:
+                    self.child2parent[child_name].append(group_name)
+                except KeyError:
+                    self.child2parent[child_name] = [group_name]
 
 
     def other_effects(self):
         old_rel_props = self.relProps
-        self.add_rel_props(SENTENCE_PROPS+['Title','PubYear'])
+        self.add_rel_props(PS_SENTENCE_PROPS+['Title','PubYear'])
         t_n = self._target_names()
         REQUEST_NAME = 'Find indications modulated by {target} with unknown effect'.format(target=t_n)
         select_indications = 'SELECT Entity WHERE objectType = ({indication_type})'.format(indication_type=','.join(self.indication_types))
@@ -625,7 +641,9 @@ class TargetIndications(SemanticSearch):
 
 
     def rn2pd(self, ModulatedNetwork:ResnetGraph, by_entity:str):
-        ref_pd = pd.DataFrame(columns=['Indication','Entity','#Reference','PMID','DOI','Title','PubYear','Snippet'])
+        old_rel_props = self.relProps
+        self.add_rel_props(PS_SENTENCE_PROPS+['Title','PubYear'])
+        ref_pd = df(columns=['Indication','Entity','#Reference','PMID','DOI','Title','PubYear','Snippet'])
         for n1,n2,rel in ModulatedNetwork.edges.data('relation'):
             node1 = ModulatedNetwork._get_node(n1)
             node2 = ModulatedNetwork._get_node(n2)
@@ -646,6 +664,7 @@ class TargetIndications(SemanticSearch):
         ref_pd.sort_values(by=['#Reference','Indication','PMID','DOI'],ascending=False, inplace=True)
         ref_pd.name = 'possibilities'
         
+        self.relProps = old_rel_props
         return ref_pd
 
 
@@ -653,11 +672,6 @@ class TargetIndications(SemanticSearch):
         indications = ','.join(self.indication_types)
         act = 'Act.' if self.target_activate_indication else 'Inh.'
         return act+indications+'.'
-
-
-    def add_prefix2df(self):
-        for df in self.report_pandas:
-            df.name = ws_prefix+df.name[:30]
 
 
     def make_report(self):
@@ -688,6 +702,36 @@ class TargetIndications(SemanticSearch):
 
 
 if __name__ == "__main__":
+    instructions = """
+        'indication_types' - required combination of Disease or CellProcess or Virus or Pathogen 
+        'target_names' - required. script uses all targets in 'target_names' to find or rank indications. 
+                To find indications linked only to single target 'target_names' must contain only one target name
+        'target_type' - optional. Does not influence ranking and used for GOQL query optimization
+        'to_inhibit' - required. Specifies how targets fro 'target_names' are modulated (by a drug). 
+                    if True target should be inhibited by a drug
+                    if False target should be activated by a drug
+        'partner_names' - optional. explicit list of endogenous ligands for drug targets. 
+                If 'partner_names' is not specified script attempts to find endogenous ligands with object type = Protein. 
+                Use 'partner_names' when endogenous ligands for targets in 'target_names' are metabolites
+        'partner_class' - required if 'partner_names' is specified
+                'partner_class' is used for report headers and messaging. It can be any string e.g. 'Metabolite ligands'
+        'strict_mode' - required. must be RANK_SUGGESTED_INDICATIONS or PREDICT_RANK_INDICATIONS:
+                RANK_SUGGESTED_INDICATIONS - ranks only indications that exist in the knowledge graph for input targets,
+                i.e. indications suggeted for input targets in the literature
+                PREDICT_RANK_INDICATIONS additionaly ranks indication predicted for input targets. Predictions are made from:
+                    - indications that have input targets as clinical biomarkers
+        'pathway_name_must_include_target' - specifies how to construct downstream signaling pathways for targets from 'target_names'
+                if False all curated pathways containg at least one target from 'target_names' will be used. 
+                set 'pathway_name_must_include_target' to True for targets contained in many curated pathways to increase speed and specificity
+        'data_dir' - output directory for report. 
+                Report is Excel wokbook containing:
+                    - reference count supporting various ways (=scores) each indication is linked to targets in 'target_names'
+                    - no more than five most relevant references linking targets in 'target_names' and indication
+                    - ranking of each indication
+                    - high level parent ontology category from MAP2ONTOLOGY for each indication
+                    - possible indications that could not be ranked due to missing effect sign in a link to targets in 'target_names'
+     """
+
     APIconfig = load_api_config()
     parameters = {'partner_names':['anandamide','endocannabinoid','2-arachidonoylglycerol'],
     # if partner_names is empty script will try finding Lgands for Receptor targets and Receptors for Ligand targets

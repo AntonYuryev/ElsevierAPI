@@ -1,7 +1,6 @@
 from ElsevierAPI import load_api_config
-from TargetIndications import TargetIndications,OQL,SENTENCE_PROPS
+from TargetIndications import TargetIndications,OQL, PS_SENTENCE_PROPS, df,pd
 import time
-import pandas as pd
 
 INHIBIT = 0 # indication must be inhibited by a drug
 ACTIVATE = 1 # indication must be activated by a drug
@@ -12,7 +11,7 @@ AGONIST = 1 # drug activates its targets
 RANK_SUGGESTED_INDICATIONS = True 
 # RANK_SUGGESTED_INDICATIONS indications suggested in the lietarure are ranked by amount of supporting evidence
 PREDICT_RANK_INDICATIONS = False
-# also predict indication using biology of the drug target(s)
+# also predict indication using biology of the drug target and known indocations for similars(s)
 
 pct = '%'
 DISEASE_MAP2ONTOLOGY = [
@@ -77,7 +76,7 @@ class RepurposeDrug(TargetIndications):
         super().__init__(APIconfig,params)
         self.PageSize = 1000
 
-    #VVdrug_name:str, similar_drugs:list, mode=INHIBIT, indication_types=None, type=ANTAGONIST
+
     def set_drug(self):   
         self.SELECTdrug = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE (Name,Alias) = (\'{drug}\')) OR (Name,Alias) = (\'{drug}\')'
         self.SELECTdrug = self.SELECTdrug.format(drug=self.param['input_compound'] )
@@ -87,7 +86,6 @@ class RepurposeDrug(TargetIndications):
         drugs.sort(key=lambda x: int(x['Connectivity'][0]), reverse=True)
         self.input_names = [x['Name'][0] for x in drugs]
 
-        #self.required_effect_on_indications = self.param['']
         if self.param['drug_effect'] == INHIBIT and self.param['mode_of_action'] == ANTAGONIST:
             self.param['to_inhibit'] = True #most often case for drugs and their disease indications
         elif self.param['drug_effect'] == ACTIVATE and self.param['mode_of_action'] == ANTAGONIST:
@@ -218,7 +216,7 @@ class RepurposeDrug(TargetIndications):
 
        # ct_pd.to_excel(self.excel_writer, sheet_name='Clin. Trials', index=False)
         ct_pd.name ='clin. trials'
-        self.report_pandas.append(ct_pd)
+        self.add2report(ct_pd)
 
         effect_str = self.__get_effect_str()
         #fname_out = self.data_dir+self.fname_prefix()+" references.tsv"
@@ -227,7 +225,7 @@ class RepurposeDrug(TargetIndications):
                             pubid_types=['PMID','DOI'],biblio_props=['Title','PubYear'],print_snippets=True)
 
         research_ref_pd.name ='articles'
-        self.report_pandas.append(research_ref_pd)
+        self.add2report(research_ref_pd)
         #research_ref_pd.to_excel(self.excel_writer, sheet_name='Snippets', index=False)
 
     def set_strictmode_indications(self):
@@ -239,18 +237,57 @@ class RepurposeDrug(TargetIndications):
         ef = 'Act.' if self.param['drug_effect'] == ACTIVATE else 'Inh.'
         return ef+indications+'-'+targets
 
-    def make_report(self, map2ontology:list):
-        global_start = time.time()
+    def load_drug_indications(self):
+        self.flush_dump_files()
+        start_time = time.time()
+        self.set_drug() 
+        self.find_drug_indications()
+        self.find_indications4similars()
+        print("Drug indications were loaded in %s" % self.execution_time(start_time))
+
+
+    def load_target_indications(self,targets:list):
+        start_time = time.time()
+        self.param['target_names'] = targets
+        self.set_targets()
+
+        self.find_target_indications()
+        self.indications4chem_modulators()
+        self.indications4partners()
+        self.get_pathway_componets()
+
+      #  if self.param['strict_mode']: 
+      #      self.set_strictmode_indications()
+        print("Target indications were loaded in %s" % self.execution_time(start_time))
+
+
+    def perform_semantic_search(self):
+        start_time = time.time()
+        if self.init_semantic_search():
+            self.score_drug_semantics()
+            self.score_semantics()
+
+            self.normalize_counts(bibliography=True)
+            trgts = ','.join(self.param['target_names'])
+            print("%s repurposing using %s as targets was done in %s" % 
+                (self.param['input_compound'],trgts,self.execution_time(start_time)))
+            return True
+        else:
+            return False
+
+
+    def make_report(self):
+        start_time = time.time()
 
         self.set_drug() 
         # if partner_names is empty script will try finding Ligands for Receptor targets and Receptors for Ligand targets in the knowledge graph
-        self.set_targets()
-        # strict mode ranks only indications suggested in the literarure without predicting new indications
-   
-        self.flush_dump_files()
         self.find_drug_indications()
         self.find_indications4similars()
-        
+
+        self.set_targets()
+        # strict mode ranks only indications suggested in the literarure without predicting new indications
+        self.flush_dump_files()
+
         self.find_target_indications()
         self.indications4chem_modulators()
         self.indications4partners()
@@ -262,92 +299,142 @@ class RepurposeDrug(TargetIndications):
         if self.init_semantic_search():
             self.score_drug_semantics()
             self.score_semantics()
-            ontology_map = self.child2parent(map2ontology)
-            self.normalize_counts(ontology_map,bibliography=True)
-            print("Repurposing %s was done in %s" % (self.param['input_compound'],self.execution_time(global_start)))
+
+            self.normalize_counts(bibliography=True)
+            trgts = ','.join(self.param['target_names'])
+            print("%s repurposing using %s as targets was done in %s" % 
+                (self.param['input_compound'],trgts,self.execution_time(start_time)))
             return True
         else:
             return False
 
 
     def other_effects(self):
-        old_rel_props = self.relProps
-        self.add_rel_props(SENTENCE_PROPS+['Title','PubYear'])
         drug = self.param['input_compound']
-        REQUEST_NAME = 'Find indications modulated by {} with unknown effect'.format(drug)
-        select_indications = 'SELECT Entity WHERE objectType = ({})'.format(','.join(self.param['indication_types']))
+        indication_str = ','.join(self.param['indication_types'])
+        REQUEST_NAME = 'Find {inds} modulated by {drug} with unknown effect'.format(inds=indication_str,drug=drug)
+        select_indications = 'SELECT Entity WHERE objectType = ({})'.format(indication_str)
         OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = unknown AND NeighborOf({select_target}) AND NeighborOf ({indications})'
-        to_return = self.process_oql(OQLquery.format(select_target=self.SELECTdrug, indications=select_indications),REQUEST_NAME)
-        self.relProps = old_rel_props
+        OQLquery = OQLquery.format(select_target=self.SELECTdrug, indications=select_indications)
+        to_return = self.process_oql(OQLquery,REQUEST_NAME)
         return to_return
+
+    def _clear_(self):
+        self.clear()
+        self.RefCountPandas = df()
                                            
 
 if __name__ == "__main__":
+    instructions = """
+        'input_compound' - required name of the drug for repurposing
+        'similars'  - optional list of similar drugs that have same mechanism of action (i.e. same target(s))
+        'indication_types' - required combination of Disease or CellProcess or Virus or Pathogen 
+        'drug_effect' - required drug effect on indication: 
+                INHIBIT  for Disease to find drig indications,
+                ACTIVATE for Disease to find toxicities and side-effects
+                INHIBIT  for CellProcess to find cell processes inhibited by input_compound or similars
+                ACTIVATE for CellProcess to find cell processes activated by input_compound or similars
+        'target_names' - optional. script uses all targets in 'target_names' to find or rank indications. 
+                To find indications linked only to single target 'target_names' must contain only one target name
+        'mode_of_action' - required if 'target_names' is specified. specifies effect of input_compound on target(s): AGONIST or ANTAGONIST
+        'target_type' - optional. Does not influence ranking and used for GOQL query optimization
+        'to_inhibit' - internal parameter calculated by set_drug(). Specifies drug effect on targets in 'target_names' 
+        'partner_names' - optional. explicit list of endogenous ligands for drug targets. 
+                If 'partner_names' is not specified script attempts to find endogenous ligands with object type = Protein. 
+                Use 'partner_names' when endogenous ligands for targets in 'target_names' are metabolites
+        'partner_class' - required if 'partner_names' is specified
+                'partner_class' is used for report headers and messaging. It can be any string e.g. 'Metabolite ligands'
+        'strict_mode' - required. must be RANK_SUGGESTED_INDICATIONS or PREDICT_RANK_INDICATIONS:
+                RANK_SUGGESTED_INDICATIONS - ranks only indications that exist in knowledge graph for 'input_compound' and 'similars',
+                i.e. indications suggested for 'input_compound' or 'smilars' in the literature
+                if 'target_names' is specified only indications that exist for both 'input_compound' and 'target_names' are ranked
+                PREDICT_RANK_INDICATIONS additionaly ranks indication predicted for 'input_compound'. Predictions are made from:
+                    - indications suggested for drugs in 'similars'
+                    - idications linked to drug targets from 'target_names'
+        'pathway_name_must_include_target' - specifies how to construct downstream signaling pathways for targets from 'target_names'
+                if False all curated pathways containg at least one target from 'target_names' will be used. 
+                set 'pathway_name_must_include_target' to True for targets contained in many curated pathways to increase speed and specificity
+        'data_dir' - output directory for report. 
+                Report is Excel wokbook containing:
+                    - reference count supporting various ways (=scores) each indication is linked to input_compound
+                    - no more than five most relevant references linking input_compound and indication
+                    - ranking of each indication
+                    - high level parent ontology category from MAP2ONTOLOGY for each indication
+                    - possible indications that could not be ranked due to missing effect sign in a link to 'input_compound'
+     """
+
+    global_start = time.time()
     APIconfig = load_api_config()
-    parameters = {# specify here what indications to find and the type of drug: 
-                'input_compound' : 'cannabidiol',
-                'similars' : ['cannabidivarin', 'Cannabidiolic acid', 'Cannabielsoin'],
-                # 'similars' lists similar drugs that have same mechanism of action (i.e. same target(s))
-                'drug_effect': INHIBIT, # desired drug effect on indication. 
-                 # INHIBIT for Disease to find drig indications,
-                 # ACTIVATE for Disease to find toxicities and side-effects
-                'mode_of_action': ANTAGONIST,
-                'partner_class':'Metabolite ligand', # use it only if partner_names not empty
+    parameters = {
+                #'input_compound' : 'cannabidiol',#'2-arachidonoylglycerol', #'anandamide', # , '9-tetrahydrocannabinol'
+                #'similars' : ['cannabidivarin', 'Cannabidiolic acid', 'Cannabielsoin'],
+                'input_compound' : 'tetrahydrocannabinol', 
+                'similars' : ['delta 8-THC', '9-tetrahydrocannabinol', 'THC-C4','tetrahydrocannabinolic acid', '11-hydroxy-delta 9-tetrahydrocannabinol'],
                 'indication_types': ['CellProcess'], #['Disease','Virus']
-                'target_names':[], # script uses all targets in this list to find relations supporting drug indication. 
-                # to find indications linked only to single target this list must contain only one target name  
-                'target_type':'Protein', # used to speed up queries to knowldeg graph does not impact output report
-                'to_inhibit':True, # 'to_inhibit' specifies drug effect on targets in 'target_names'. It is calculated by set_drug() and is initialized to True here
-                'pathway_name_must_include_target':True, 
-                'strict_mode':RANK_SUGGESTED_INDICATIONS, #PREDICT_RANK_INDICATIONS#
-                'data_dir':'D:/Python/PMI/',
-                'partner_names':['endocannabinoid','anandamide','2-arachidonoylglycerol']
-                #'oleoylethanolamide','virodhamine','N-oleoyldopamine','palmitoylethanolamide','N-arachidonoyl dopamine','N-arachidonoylglycine','eicosapentaenoyl ethanolamide'
-                # 'noladin ether','2-arachidonoylglycerol'
-                # specify here endogenous ligands for receptor if known
+                'drug_effect': INHIBIT,
+                'mode_of_action': ANTAGONIST,
+                'target_names':[],
+                'target_type':'Protein',
+                'to_inhibit':True,
+                'partner_names':['endocannabinoid','anandamide','2-arachidonoylglycerol','oleoylethanolamide','virodhamine',
+                                'N-oleoyldopamine','palmitoylethanolamide','N-arachidonoyl dopamine','N-arachidonoylglycine',
+                                'eicosapentaenoyl ethanolamide','noladin ether'],
+                'partner_class':'Metabolite ligand', # use it only if partner_names not empty
+                'strict_mode':RANK_SUGGESTED_INDICATIONS, # PREDICT_RANK_INDICATIONS #
+                'pathway_name_must_include_target':True,
+                'data_dir':'D:/Python/PMI/'
                 }
 
-    targets = ['CNR1','CNR2','GPR55','GPR119','GPR18']
-    #indications = ['CellProcess','Disease']
-    path = parameters['data_dir']
-    target_report = pd.ExcelWriter(path+parameters['input_compound']+'.xlsx', engine='xlsxwriter')
-    raw_data_cache = pd.ExcelWriter(path+parameters['input_compound']+'raw_data.xlsx', engine='xlsxwriter')
-
-    for target in targets:
-        parameters['target_names'] = [target]
-        parameters['indication_types'] = ['Disease']
-        parameters['drug_effect'] = INHIBIT
-        dcp = RepurposeDrug(APIconfig,parameters)
-        if dcp.make_report(DISEASE_MAP2ONTOLOGY):
-            dcp.add2writer(target_report,dcp._worksheet_prefix())
-            dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
-
-        parameters['target_names'] = [target]
-        parameters['indication_types'] = ['CellProcess']
-        parameters['drug_effect'] = INHIBIT
-        dcp = RepurposeDrug(APIconfig,parameters)
-        if dcp.make_report(CELLPROCESS_MAP2ONTOLOGY):
-            dcp.add2writer(target_report,dcp._worksheet_prefix())
-            dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
-
-        parameters['target_names'] = [target]
-        parameters['indication_types'] = ['CellProcess']
-        parameters['drug_effect'] = ACTIVATE
-        dcp = RepurposeDrug(APIconfig,parameters)
-        if dcp.make_report(CELLPROCESS_MAP2ONTOLOGY):
-            dcp.add2writer(target_report,dcp._worksheet_prefix())
-            dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
-
-
+    targets = ['CNR1','CNR2','GPR55','GPR119','GPR18'] #['GPR18'] #
+    report_name = parameters['data_dir']+parameters['input_compound']
+    target_report = pd.ExcelWriter(report_name+' effects,indications.xlsx', engine='xlsxwriter')
+    raw_data_cache = pd.ExcelWriter(report_name+'_raw_data.xlsx', engine='xlsxwriter')
+    
     dcp = RepurposeDrug(APIconfig,parameters)
-    dcp.set_drug()
-    parameters['indication_types'] = ['Disease']
+    dcp.load_ontology(DISEASE_MAP2ONTOLOGY+CELLPROCESS_MAP2ONTOLOGY)
+    dcp.param['mode_of_action'] = AGONIST #for THC; ANTAGONIST #for CBD; 
+
+    # to find disease indications
+    dcp.param['drug_effect'] = INHIBIT
+    dcp.param['indication_types'] = ['Disease']
+    dcp.load_drug_indications()
+    for target in targets:
+         dcp.load_target_indications([target])
+         if dcp.perform_semantic_search():
+            dcp.add2writer(target_report,dcp._worksheet_prefix())
+            dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
+            dcp._clear_()
+
+    # to find biological processes inhibited by input compound
+    dcp.param['indication_types'] = ['CellProcess']
+    dcp.load_drug_indications()
+    for target in targets:
+        dcp.load_target_indications([target])
+        if dcp.perform_semantic_search():
+            dcp.add2writer(target_report,dcp._worksheet_prefix())
+            dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
+            dcp._clear_()
+
+    # to find biological processes activated by input compound
+    dcp.param['drug_effect'] = ACTIVATE
+    dcp.load_drug_indications()
+    for target in targets:
+        dcp.load_target_indications([target])
+        if dcp.perform_semantic_search():
+            dcp.add2writer(target_report,dcp._worksheet_prefix())
+            dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
+            dcp._clear_()
+
+    #dcp.set_drug()
+    other_processes = dcp.rn2pd(dcp.other_effects(),dcp.param['input_compound'])
+    other_processes.to_excel(target_report, sheet_name='Possbl.CellProcess', index=False)
+    #dcp._clear_()
+
+    dcp.param['indication_types'] = ['Disease']
     other_indications = dcp.rn2pd(dcp.other_effects(),dcp.param['input_compound'])
     other_indications.to_excel(target_report, sheet_name='Possbl.Diseases', index=False)
-
-    parameters['indication_types'] = ['CellProcess']
-    other_indications = dcp.rn2pd(dcp.other_effects(),dcp.param['input_compound'])
-    other_indications.to_excel(target_report, sheet_name='Possbl.CellProcess', index=False)
+    #dcp._clear_()
 
     target_report.save()
-    raw_data_cache.save() 
+    raw_data_cache.save()
+    print('Report was generated in %s' % dcp.execution_time(global_start))
