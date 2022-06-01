@@ -336,8 +336,11 @@ class PSNetworx(DataModel):
                 entire_graph = nx.compose(entire_graph,iter_graph)
         return entire_graph
     
-    def get_pathway_member_ids(self, pathway_ids: list, search_pathways_by=None, only_entities=None,
+    def get_pathway_members(self, pathway_ids: list, search_pathways_by=None, only_entities=None,
                                with_properties=None):
+        """
+        returns id2psobj {id:PSObject} of entities from pathways found by 'search_pathways_by' or from 'pathway_ids'
+        """
         if with_properties is None:
             with_properties = ['Name', 'Alias']
         if only_entities is None:
@@ -358,6 +361,7 @@ class PSNetworx(DataModel):
 
         zeep_objects = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
         return self._zeep2psobj(zeep_objects)
+
 
     def find_targets_in_pathways(self, DrugProps: list, DrugSearchPropertyNames: list, PathwayNames: list,
                                  relation_types=None, target_types=None):

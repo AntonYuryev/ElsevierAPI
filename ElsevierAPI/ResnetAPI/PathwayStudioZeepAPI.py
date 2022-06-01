@@ -152,7 +152,7 @@ class DataModel:
                 result = self.SOAPclient.service.OQLSearch(OQLquery, result_param)
                 return result
             except exceptions.Fault: continue
-
+     
 
     def result_get_data(self, result_param):
         result = self.SOAPclient.service.ResultGetData(result_param)
@@ -265,7 +265,8 @@ class DataModel:
         result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
         return str(result['Attachment'].decode('utf-8')) if 'Attachment' in result and result['Attachment'] is not None else ''
 
-    def get_data(self, OQLrequest, retrieve_props: list=None, getLinks=True):
+
+    def get_data(self, OQLrequest, retrieve_props:list=None, getLinks=True):
         retrieve_props = ['Name', 'RelationNumberOfReferences'] if retrieve_props is None else retrieve_props
 
         rp = self.create_result_param(retrieve_props)
@@ -479,7 +480,84 @@ class DataModel:
         self.SOAPclient.service.ResultRelease(result.ResultRef)
         return experiment_id, result
 
+    @staticmethod
+    def write_soap_response(fout, soap_response):
+        with open(fout, "w", encoding='utf-8') as f:
+            f.write(soap_response)
 
-def write_soap_response(fout, soap_response):
-    with open(fout, "w", encoding='utf-8') as f:
-        f.write(soap_response)
+
+    def create_GenRelNetsParameters(self, experiment_id:int, sample_id=0, 
+                            expand_by_reltypes=[], expand2types=[], find_regulators=True):
+            gnr_param = self.SOAPclient.get_type('ns0:GenRelNetsParameters')
+            if find_regulators:
+                fwd_reltypes = expand_by_reltypes
+                fwd_targtypes = expand2types
+                rvrs_reltypes = []
+                rvrs_targtypes = []
+            else:
+                fwd_reltypes = []
+                fwd_targtypes = []
+                rvrs_reltypes = expand_by_reltypes
+                rvrs_targtypes = expand2types
+
+            gnr = gnr_param(
+                    ExperimentID = experiment_id,
+                    RatioSample = sample_id,
+                    Mode = 1, # 1-SNEA; 3-BDEN; 4-GSEA
+                    ForwardTypes = {'long':fwd_reltypes}, #for SNEA only
+                    ForwardTypes_size = len(fwd_reltypes),
+                    ReverseTypes = {'long':rvrs_reltypes}, #for SNEA only
+                    ReverseTypes_size = len(rvrs_reltypes),
+                    ForwardEntityTypes = {'long':fwd_targtypes}, #for SNEA only
+                    ForwardEntityTypes_size = len(fwd_targtypes),
+                    ReverseEntityTypes = {'long':rvrs_targtypes}, #for SNEA only
+                    ReverseEntityTypes_size = len(rvrs_targtypes),
+                    IsFindGroups = False, #obsolete
+                    CutoffNumber = 100, #Cut-off by number of generated/found networks
+                    MinPValue = 0.0,
+                    MaxPValue = 0.5,
+                    IsMetabolomicsMode = False,
+                    IsIncludeOnlyMeasuredTargets = True, #for SNEA only
+                    Folders = {'long':[0]}, #List of folders
+                    Folders_size = 1,
+                    Granularity = 0.1, # for BDEN
+                    Targets = {'string':['']},   #AOQL queries specifying targets. for GSEA only.
+                    Targets_size = 100,
+                    Algorithm = 0, #for GSEA only: 0 - Mann-Whitney U-Test; 1 - Kolmogorov-Smirnov
+                    Permute = 0, # for Kolmogorov-Smirnov GSEA only: 0 - permute genes, 1 - permute samples
+                    NumberOfPermutations = 100, # for Kolmogorov-Smirnov GSEA only
+                    EnrichmentStatistics = 0, # for Kolmogorov-Smirnov GSEA only: 0 - classic, 1 - weighted
+                    ExpandContainers = False, # for GSEA only
+                    UseMask = False,  #Use probe mask stored in the experiment
+                    AnalyzePValues = False,  # calculate FDR?
+                    UseConcordance  = True,
+                    UnknownEffectBehavior = 0,
+                    ActivationScoreUnknownEffectBehavior = 0, # for activation score in SNEA 
+                    ChangeThreshold = 2.0 # for activation score in SNEA 
+            )
+            return gnr
+
+
+    def get_experiment(self,experiment_id:int):
+        from zeep import exceptions
+        for i in range (0,3):
+            try:
+                result = self.SOAPclient.service.GetExperiment(experiment_id)
+                return result
+            except exceptions.Fault: continue
+
+
+    def start_relevant_networks(self,experiment_id:int, sample_id=0, 
+                            expand_by_reltypes=[], expand2types=[], find_regulators=True):
+
+        grn_prams = self.create_GenRelNetsParameters(experiment_id,sample_id,expand_by_reltypes,expand2types,find_regulators)
+        result = self.SOAPclient.service.StartGenerateRelevantNetworks(grn_prams)
+        """
+        result['State']:
+                0 - waiting
+                1 - running
+                2 - finished
+                3 - killed
+        """
+        
+        return result

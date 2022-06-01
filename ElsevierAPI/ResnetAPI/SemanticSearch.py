@@ -10,6 +10,9 @@ import pandas as pd
 from ..pandas.panda_tricks import df
 
 COUNTS = 'counts'
+BIBLIOGRAPHY = 'bibliography'
+CHILDREN_COUNT = '# of children'
+RANK = 'Rank'
 
 class SemanticSearch (APISession): 
     __refCache__='reference_cache.tsv'
@@ -251,7 +254,8 @@ class SemanticSearch (APISession):
 
         return accumulate_reference, accumulate_relation
 
-    def link2concept(self,ConceptName,concept_ids:list,no_mess=True, relations:ResnetGraph=None):
+
+    def link2concept(self,ConceptName,concept_ids:list,no_mess=True, relations=ResnetGraph()):
         if (len(concept_ids) > 500 and len(self.RefCountPandas) > 500):
             print('%s concept has %d ontology children! Linking may take a while, be patient' % (ConceptName,len(concept_ids)-1))
         else:
@@ -268,7 +272,7 @@ class SemanticSearch (APISession):
 
         linked_entities_counter = 0
         start_time  = time.time()
-        if not isinstance(relations,ResnetGraph):
+        if not relations:
             relations = self.semantic_refcount_by_ids(concept_ids, self.all_entity_ids,no_mess)
         if relations.size() > 0:
             for regulatorID, targetID, rel in relations.edges.data('relation'):
@@ -387,12 +391,12 @@ class SemanticSearch (APISession):
         return pandas2print
 
 
-    def add2writer(self, writer:pd.ExcelWriter, ws_prefix=''):
-        for report_df in self.report_pandas.values():
-            sh_name = ws_prefix+report_df.name
+    def add2writer(self, writer:pd.ExcelWriter, ws_prefix='',float_format='%2.3f'):
+        for ws_name, report_df in self.report_pandas.items():
+            sh_name = ws_prefix+'_'+ws_name
             df2print = df(report_df)
-            df2print.format_vertical_headers()
-            df2print.to_excel(writer, sheet_name=sh_name[:30], index=False)
+            vertical_header = False if ws_name == BIBLIOGRAPHY else True
+            df2print.df2excel(writer, sheet_name=sh_name[:30],vertical_header=vertical_header)
 
 
     def addraw2writer(self, writer:pd.ExcelWriter, ws_prefix=''):
@@ -400,8 +404,8 @@ class SemanticSearch (APISession):
             for rawdf in self.raw_data.values():
                 sh_name = ws_prefix+rawdf.name
                 df2print = df(rawdf)
-                df2print.format_vertical_headers()
-                df2print.to_excel(writer, sheet_name=sh_name[:30], index=False)
+                #df2print.format_vertical_headers()
+                df2print.df2excel(writer, sheet_name=sh_name[:30])
         
 
     def print_report(self, xslx_file:str, ws_prefix=''):
@@ -452,7 +456,7 @@ class SemanticSearch (APISession):
         for col_idx, col_name in enumerate(self.RefCountPandas.columns):
             etm_df[col_name] = self.RefCountPandas[col_name]
             concept_name = col_name[len(self._col_name_prefix):]
-            etm_df = apply_and_concat2(etm_df,concept_name,etm_info,[self.__ETM_stat_prefix+concept_name,self.__ETM_ref_prefix+concept_name])
+            etm_df = etm_df.apply_and_concat2(concept_name,etm_info,[self.__ETM_stat_prefix+concept_name,self.__ETM_ref_prefix+concept_name])
 
         return etm_df
             

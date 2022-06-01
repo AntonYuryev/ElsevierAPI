@@ -42,6 +42,9 @@ class FolderContent (APISession):
 
 
     def get_subfolders_recursively(self, FolderId):
+        """
+        returns {subfolders_ids+parent_folder_id}
+        """
         accumulate_subfolder_ids = {FolderId}
         subfolder_ids = set(self.get_subfolders([FolderId]))
         while len(subfolder_ids) > 0:
@@ -81,6 +84,7 @@ class FolderContent (APISession):
             p2c = p2c_iter
 
         return child2parent, dict(parent2child)
+
 
     def load_containers(self, property_names=None):
         if property_names is None: property_names = ['Name']
@@ -617,7 +621,11 @@ class FolderContent (APISession):
 
 
     def find_pathways(self, for_entity_ids:list, in_folders:list):
-        # in_folders = [folder_names,]
+        """
+        returns {entity_id:PSObject},  where PSObject has 'Pathway ID' property
+        also loads self.id2pathways = {pathway_id:PSObject}.
+        where PSObject['ObjTypeName'] == 'Pathway' with 'Folders' property
+        """
         ent_ids = list(map(str,for_entity_ids))
         to_return = dict()
         for folder in in_folders:
@@ -625,7 +633,7 @@ class FolderContent (APISession):
             sub_folder_ids = self.get_subfolders_recursively(folder_id)
             self.get_objects_from_folders(sub_folder_ids) # loads id2pathways
             for pathway_id in self.id2pathways.keys():
-                id2psobj = self.get_pathway_member_ids([pathway_id],None,ent_ids,['id'])
+                id2psobj = self.get_pathway_members([pathway_id],None,ent_ids,['id'])
                 for id, psobj in id2psobj.items():
                     try:
                         to_return[id].update_with_value('Pathway ID',pathway_id)
@@ -634,4 +642,3 @@ class FolderContent (APISession):
                         to_return[id] = psobj
 
         return to_return
-

@@ -9,6 +9,7 @@ from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import SENTENCE_PROPS
 from xml.dom import minidom
 
+
 class APISession(PSNetworx):
     pass
     ResultRef = None
@@ -402,7 +403,41 @@ class APISession(PSNetworx):
             self.load_children(for_parent_ids=list(parent_graph))
             return self.Graph._get_nodes(list(parent_graph))
 
-    
+
+    def expression_regulators(self,experiment_name:str):
+        oql_query = 'SELECT Experiment WHERE Name = \'{}\''.format(experiment_name)
+        zeep_objs = self.get_data(oql_query)
+        rel_type_ids = [v['Id'] for k,v in self.IdtoObjectType.items() if k in ['Expression','PromoterBinding']]
+        epand2type_ids = [v['Id'] for k,v in self.IdtoObjectType.items() if k in ['Protein','FunctionalClass','Complex']]
+
+        results = list()
+        for exp in zeep_objs.Objects.ObjectRef:
+            experiment_id = exp['Id']
+            experiment = self.get_experiment(experiment_id)
+            sample_count = 0
+            for sample in experiment.SampleDefinitions.SampleDefinition:
+                sample_count +=1
+                sample_name = sample['Name']
+                sample_type = sample['Type']
+                if sample_type == 1:
+                    """
+                    Sample type: 
+                        0 - Signal, 
+                        1 - Ratio 
+                    """
+                    sample_subtype = sample['Subtype']
+                    if sample_subtype == 2:
+                        """
+                        sample subtype: 
+                            0 - Unknown,
+                            1 - Bare, 
+                            2 - Log 
+                        """
+                        result = self.start_relevant_networks(experiment_id,sample_count,rel_type_ids,epand2type_ids)
+                        results.append(result)
+                sample_count +=1
+
+
 
 
         
@@ -411,4 +446,4 @@ class APISession(PSNetworx):
 
         
 
-    
+
