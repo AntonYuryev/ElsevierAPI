@@ -366,10 +366,10 @@ if __name__ == "__main__":
     global_start = time.time()
     APIconfig = load_api_config()
     parameters = {
-                #'input_compound' : 'cannabidiol',#'2-arachidonoylglycerol', #'anandamide', # , '9-tetrahydrocannabinol'
-                #'similars' : ['cannabidivarin', 'Cannabidiolic acid', 'Cannabielsoin'],
-                'input_compound' : 'tetrahydrocannabinol', 
-                'similars' : ['delta 8-THC', '9-tetrahydrocannabinol', 'THC-C4','tetrahydrocannabinolic acid', '11-hydroxy-delta 9-tetrahydrocannabinol'],
+                'input_compound' : 'cannabidiol',#'2-arachidonoylglycerol', #'anandamide', # , '9-tetrahydrocannabinol'
+                'similars' : ['cannabidivarin', 'Cannabidiolic acid', 'Cannabielsoin'],
+                #'input_compound' : 'tetrahydrocannabinol', 
+                #'similars' : ['delta 8-THC', '9-tetrahydrocannabinol', 'THC-C4','tetrahydrocannabinolic acid', '11-hydroxy-delta 9-tetrahydrocannabinol'],
                 'indication_types': ['CellProcess'], #['Disease','Virus']
                 'drug_effect': INHIBIT,
                 'mode_of_action': ANTAGONIST,
