@@ -362,10 +362,19 @@ class ETMstat:
         if self.request_type == '/search/basic?':
             return ';'.join(terms)
         else:
-            return '{'+'};{'.join(terms)+'}'
+            return '{'+'};{'.join(terms)+'}' # for advanced search
 
     def relevant_articles(self, terms:list):
-        # add_param controls number of best references to return. Defaults to 5
+        """
+        Returns most relevant references identified by ETM basic search using input terms.
+        Number of returned references is controled by ETMstat.params['limit'] parameter.
+        Return tuple contains:
+            [0] hit_count - TOTAL number of reference found by ETM basic search 
+            [1] ref_ids = {id_type:[identifiers]}; len(ref_ids) == ETMstat.params['limit'] 
+            id_type is from [PMID, DOI, 'PII', 'PUI', 'EMBASE','NCT ID']
+            [2] references = [ref] list of Reference objects sorted by ETM relevance. len(references) == ETMstat.params['limit'] 
+            Relevance score is stored in ref['Relevance']
+        """
         query = self.__make_query(terms)
         self._set_query(query)
         articles = list()

@@ -237,7 +237,8 @@ class Reference(dict):
         if isinstance(id_types,list):
             for t in id_types:
                 try:
-                    row.append(t+':'+self.Identifiers[t])
+                    #row.append(t+':'+self.Identifiers[t])
+                    row.append(self.Identifiers[t])
                 except KeyError:
                     row.append('')
         else:
