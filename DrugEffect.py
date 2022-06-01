@@ -392,7 +392,7 @@ if __name__ == "__main__":
     
     dcp = RepurposeDrug(APIconfig,parameters)
     dcp.load_ontology(DISEASE_MAP2ONTOLOGY+CELLPROCESS_MAP2ONTOLOGY)
-    dcp.param['mode_of_action'] = AGONIST #for THC; ANTAGONIST #for CBD; 
+    dcp.param['mode_of_action'] = ANTAGONIST #for THC; ANTAGONIST #for CBD; 
 
     # to find disease indications
     dcp.param['drug_effect'] = INHIBIT
