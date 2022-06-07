@@ -1,0 +1,1213 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<batch>
+<resnet>
+   <nodes>
+      <node local_id="urn:agi-llid:3458" urn="urn:agi-llid:3458">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="IFNG"/>
+      </node>
+      <node local_id="urn:agi-llid:55792" urn="urn:agi-llid:55792">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ZNFX1"/>
+      </node>
+      <node local_id="urn:agi-llid:3570" urn="urn:agi-llid:3570">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="IL6R"/>
+      </node>
+      <node local_id="urn:agi-llid:5396" urn="urn:agi-llid:5396">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="PRRX1"/>
+      </node>
+      <node local_id="urn:agi-gocomplex:0005577" urn="urn:agi-gocomplex:0005577">
+         <attr name="NodeType" value="Complex"/>
+         <attr name="Name" value="fibrinogen"/>
+      </node>
+      <node local_id="urn:agi-llid:406952" urn="urn:agi-llid:406952">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="MIR17"/>
+      </node>
+      <node local_id="urn:agi-llid:3673" urn="urn:agi-llid:3673">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ITGA2"/>
+      </node>
+      <node local_id="urn:agi-llid:8600" urn="urn:agi-llid:8600">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="TNFSF11"/>
+      </node>
+      <node local_id="urn:agi-llid:574447" urn="urn:agi-llid:574447">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="MIR146B"/>
+      </node>
+      <node local_id="urn:agi-llid:4323" urn="urn:agi-llid:4323">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="MMP14"/>
+      </node>
+      <node local_id="urn:agi-llid:7424" urn="urn:agi-llid:7424">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="VEGFC"/>
+      </node>
+      <node local_id="urn:agi-llid:5179" urn="urn:agi-llid:5179">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="PENK"/>
+      </node>
+      <node local_id="urn:agi-llid:4087" urn="urn:agi-llid:4087">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="SMAD2"/>
+      </node>
+      <node local_id="urn:agi-llid:7057" urn="urn:agi-llid:7057">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="THBS1"/>
+      </node>
+      <node local_id="urn:agi-llid:2214" urn="urn:agi-llid:2214">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="FCGR3A"/>
+      </node>
+      <node local_id="urn:agi-llid:5919" urn="urn:agi-llid:5919">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="RARRES2"/>
+      </node>
+      <node local_id="urn:agi-llid:4804" urn="urn:agi-llid:4804">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="NGFR"/>
+      </node>
+      <node local_id="urn:agi-llid:1042" urn="urn:agi-llid:1042">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="SLC22A5"/>
+      </node>
+      <node local_id="urn:agi-llid:66004" urn="urn:agi-llid:66004">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="LYNX1"/>
+      </node>
+      <node local_id="urn:agi-llid:317" urn="urn:agi-llid:317">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="APAF1"/>
+      </node>
+      <node local_id="urn:agi-llid:10370" urn="urn:agi-llid:10370">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="CITED2"/>
+      </node>
+      <node local_id="urn:agi-llid:1221" urn="urn:agi-llid:1221">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="SCN5A"/>
+      </node>
+      <node local_id="urn:agi-llid:133" urn="urn:agi-llid:133">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ADM"/>
+      </node>
+      <node local_id="urn:agi-llid:9075" urn="urn:agi-llid:9075">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="CLDN2"/>
+      </node>
+      <node local_id="urn:agi-llid:6688" urn="urn:agi-llid:6688">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="SPI1"/>
+      </node>
+      <node local_id="urn:agi-llid:5467" urn="urn:agi-llid:5467">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="PPARD"/>
+      </node>
+      <node local_id="urn:agi-llid:8714" urn="urn:agi-llid:8714">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ABCC3"/>
+      </node>
+      <node local_id="urn:agi-llid:387129" urn="urn:agi-llid:387129">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="NPSR1"/>
+      </node>
+      <node local_id="urn:agi-complex:polysome" urn="urn:agi-complex:polysome">
+         <attr name="NodeType" value="Complex"/>
+         <attr name="Name" value="polysome"/>
+      </node>
+      <node local_id="urn:agi-llid:5206" urn="urn:agi-llid:5206">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ABCB11"/>
+      </node>
+      <node local_id="urn:agi-llid:4012" urn="urn:agi-llid:4012">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="LNPEP"/>
+      </node>
+      <node local_id="urn:agi-llid:407014" urn="urn:agi-llid:407014">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="MIR25"/>
+      </node>
+      <node local_id="urn:agi-llid:397" urn="urn:agi-llid:397">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ARHGDIB"/>
+      </node>
+      <node local_id="urn:agi-llid:721" urn="urn:agi-llid:721">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="C4B"/>
+      </node>
+      <node local_id="urn:agi-go:0004982" urn="urn:agi-go:0004982">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="formyl peptide receptors"/>
+      </node>
+      <node local_id="urn:agi-llid:6591" urn="urn:agi-llid:6591">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="SNAI2"/>
+      </node>
+      <node local_id="urn:agi-llid:180" urn="urn:agi-llid:180">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="AGRN"/>
+      </node>
+      <node local_id="urn:agi-llid:7026" urn="urn:agi-llid:7026">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="NR2F2"/>
+      </node>
+      <node local_id="urn:agi-llid:3854" urn="urn:agi-llid:3854">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="KRT6B"/>
+      </node>
+      <node local_id="urn:agi-llid:9525" urn="urn:agi-llid:9525">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="VPS4B"/>
+      </node>
+      <node local_id="urn:agi-llid:1908" urn="urn:agi-llid:1908">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="EDN3"/>
+      </node>
+      <node local_id="urn:agi-llid:3196" urn="urn:agi-llid:3196">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="TLX2"/>
+      </node>
+      <node local_id="urn:agi-llid:406884" urn="urn:agi-llid:406884">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="MIRLET7B"/>
+      </node>
+      <node local_id="urn:agi-llid:57651" urn="urn:agi-llid:57651">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ALPK1"/>
+      </node>
+      <node local_id="urn:agi-llid:883" urn="urn:agi-llid:883">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="KYAT1"/>
+      </node>
+      <node local_id="urn:agi-llid:153020" urn="urn:agi-llid:153020">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="RASGEF1B"/>
+      </node>
+      <node local_id="urn:agi-llid:2635" urn="urn:agi-llid:2635">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="GBP3"/>
+      </node>
+      <node local_id="urn:agi-llid:384" urn="urn:agi-llid:384">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ARG2"/>
+      </node>
+      <node local_id="urn:agi-llid:1439" urn="urn:agi-llid:1439">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="CSF2RB"/>
+      </node>
+      <node local_id="urn:agi-llid:4193" urn="urn:agi-llid:4193">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="MDM2"/>
+      </node>
+      <node local_id="urn:agi-llid:3921" urn="urn:agi-llid:3921">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="RPSA"/>
+      </node>
+      <node local_id="urn:agi-go:0005055" urn="urn:agi-go:0005055">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="laminin receptor"/>
+      </node>
+      <node local_id="urn:agi-llid:3485" urn="urn:agi-llid:3485">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="IGFBP2"/>
+      </node>
+      <node local_id="urn:agi-llid:7336" urn="urn:agi-llid:7336">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="UBE2V2"/>
+      </node>
+      <node local_id="urn:agi-llid:5346" urn="urn:agi-llid:5346">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="PLIN1"/>
+      </node>
+      <node local_id="urn:agi-gocomplex:0005894" urn="urn:agi-gocomplex:0005894">
+         <attr name="NodeType" value="Complex"/>
+         <attr name="Name" value="IL3R"/>
+      </node>
+      <node local_id="urn:agi-llid:9170" urn="urn:agi-llid:9170">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="LPAR2"/>
+      </node>
+      <node local_id="urn:agi-protfc:histocompatibility%20antigen" urn="urn:agi-protfc:histocompatibility%20antigen">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="histocompatibility antigen"/>
+      </node>
+      <node local_id="urn:agi-llid:1830" urn="urn:agi-llid:1830">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="DSG3"/>
+      </node>
+      <node local_id="urn:agi-llid:4916" urn="urn:agi-llid:4916">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="NTRK3"/>
+      </node>
+      <node local_id="urn:agi-llid:8751" urn="urn:agi-llid:8751">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ADAM15"/>
+      </node>
+      <node local_id="urn:agi-llid:10626" urn="urn:agi-llid:10626">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="TRIM16"/>
+      </node>
+      <node local_id="urn:agi-llid:79602" urn="urn:agi-llid:79602">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ADIPOR2"/>
+      </node>
+      <node local_id="urn:agi-enz:2.3.1.26" urn="urn:agi-enz:2.3.1.26">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="sterol O-acyltransferase"/>
+      </node>
+      <node local_id="urn:agi-llid:3991" urn="urn:agi-llid:3991">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="LIPE"/>
+      </node>
+      <node local_id="urn:agi-protfc:beta-defensin" urn="urn:agi-protfc:beta-defensin">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="beta-defensin"/>
+      </node>
+      <node local_id="urn:agi-llid:6934" urn="urn:agi-llid:6934">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="TCF7L2"/>
+      </node>
+      <node local_id="urn:agi-llid:80328" urn="urn:agi-llid:80328">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ULBP2"/>
+      </node>
+      <node local_id="urn:agi-llid:10533" urn="urn:agi-llid:10533">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ATG7"/>
+      </node>
+      <node local_id="urn:agi-llid:3816" urn="urn:agi-llid:3816">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="KLK1"/>
+      </node>
+      <node local_id="urn:agi-llid:10487" urn="urn:agi-llid:10487">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="CAP1"/>
+      </node>
+      <node local_id="urn:agi-complex:IL31R" urn="urn:agi-complex:IL31R">
+         <attr name="NodeType" value="Complex"/>
+         <attr name="Name" value="IL31R"/>
+      </node>
+      <node local_id="urn:agi-protfc:hemoglobin" urn="urn:agi-protfc:hemoglobin">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="hemoglobin"/>
+      </node>
+      <node local_id="urn:agi-llid:2302" urn="urn:agi-llid:2302">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="FOXJ1"/>
+      </node>
+      <node local_id="urn:agi-llid:3687" urn="urn:agi-llid:3687">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ITGAX"/>
+      </node>
+      <node local_id="urn:agi-llid:8772" urn="urn:agi-llid:8772">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="FADD"/>
+      </node>
+      <node local_id="urn:agi-llid:10502" urn="urn:agi-llid:10502">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="SEMA6A"/>
+      </node>
+      <node local_id="urn:agi-llid:114614" urn="urn:agi-llid:114614">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="MIR155HG"/>
+      </node>
+      <node local_id="urn:agi-llid:107181291" urn="urn:agi-llid:107181291">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="PYDC5"/>
+      </node>
+      <node local_id="urn:agi-llid:6275" urn="urn:agi-llid:6275">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="S100A4"/>
+      </node>
+      <node local_id="urn:agi-llid:5099" urn="urn:agi-llid:5099">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="PCDH7"/>
+      </node>
+      <node local_id="urn:agi-llid:53840" urn="urn:agi-llid:53840">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="TRIM34"/>
+      </node>
+      <node local_id="urn:agi-llid:6359" urn="urn:agi-llid:6359">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="CCL15"/>
+      </node>
+      <node local_id="urn:agi-llid:58" urn="urn:agi-llid:58">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ACTA1"/>
+      </node>
+      <node local_id="urn:agi-llid:6484" urn="urn:agi-llid:6484">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ST3GAL4"/>
+      </node>
+      <node local_id="urn:agi-llid:1317" urn="urn:agi-llid:1317">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="SLC31A1"/>
+      </node>
+      <node local_id="urn:agi-llid:8808" urn="urn:agi-llid:8808">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="IL1RL2"/>
+      </node>
+      <node local_id="urn:agi-llid:335" urn="urn:agi-llid:335">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="APOA1"/>
+      </node>
+      <node local_id="urn:agi-protfc:neurotrophic%20factor" urn="urn:agi-protfc:neurotrophic%20factor">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="neurotrophic factor"/>
+      </node>
+      <node local_id="urn:agi-go:0004918" urn="urn:agi-go:0004918">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="IL8R"/>
+      </node>
+      <node local_id="urn:agi-llid:26125" urn="urn:agi-llid:26125">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ACE2"/>
+      </node>
+      <node local_id="urn:agi-llid:57007" urn="urn:agi-llid:57007">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ACKR3"/>
+      </node>
+      <node local_id="urn:agi-enz:4.1.1.32" urn="urn:agi-enz:4.1.1.32">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="phosphoenolpyruvate carboxykinase (GTP)"/>
+      </node>
+      <node local_id="urn:agi-llid:6366" urn="urn:agi-llid:6366">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="CCL21"/>
+      </node>
+      <node local_id="urn:agi-llid:3821" urn="urn:agi-llid:3821">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="KLRC1"/>
+      </node>
+      <node local_id="urn:agi-llid:1634" urn="urn:agi-llid:1634">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="DCN"/>
+      </node>
+      <node local_id="urn:agi-llid:17065" urn="urn:agi-llid:17065">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="m_Ly6a"/>
+      </node>
+      <node local_id="urn:agi-go:0004699" urn="urn:agi-go:0004699">
+         <attr name="NodeType" value="FunctionalClass"/>
+         <attr name="Name" value="calcium-independent protein kinase C"/>
+      </node>
+      <node local_id="urn:agi-llid:847" urn="urn:agi-llid:847">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="CAT"/>
+      </node>
+      <node local_id="urn:agi-llid:2532" urn="urn:agi-llid:2532">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="ACKR1"/>
+      </node>
+      <node local_id="urn:agi-llid:8809" urn="urn:agi-llid:8809">
+         <attr name="NodeType" value="Protein"/>
+         <attr name="Name" value="IL18R1"/>
+      </node>
+   </nodes>
+   <controls>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:55792:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:55792"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:55792:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3570">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3570"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3570"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="5"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5396:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:5396"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5396:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-gocomplex:0005577:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-gocomplex:0005577"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-gocomplex:0005577:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:406952">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:406952"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:406952"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="4"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3673:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3673"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3673:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8600">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:8600"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8600"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="15"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:574447">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:574447"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:574447"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="4"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4323:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:4323"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4323:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="5"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:7424">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:7424"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:7424"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="6"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5179">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:5179"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5179"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4087">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:4087"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4087"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="6"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:7057">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:7057"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:7057"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="7"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:2214:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:2214"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:2214:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="8"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5919:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:5919"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5919:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="3"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4804">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:4804"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4804"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="4"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:1042:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:1042"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:1042:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="3"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:66004:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:66004"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:66004:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:317:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:317"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:317:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:10370:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:10370"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:10370:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:1221:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:1221"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:1221:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:133:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:133"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:133:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="19"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:9075">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:9075"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:9075"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="12"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6688:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:6688"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6688:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="10"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5467:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:5467"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5467:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="9"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8714:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:8714"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8714:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:387129:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:387129"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:387129:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-complex:polysome:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-complex:polysome"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-complex:polysome:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5206:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:5206"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5206:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4012:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:4012"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4012:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:407014:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:407014"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:407014:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:397:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:397"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:397:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:721">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:721"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:721"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-go:0004982:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-go:0004982"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-go:0004982:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6591">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:6591"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6591"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:180:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:180"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:180:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:7026:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:7026"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:7026:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3854">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3854"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3854"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:9525:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:9525"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:9525:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:1908:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:1908"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:1908:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:3196:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3196"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:3196:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:406884:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:406884"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:406884:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:57651:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:57651"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:57651:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:883:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:883"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:883:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="4"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:153020:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:153020"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:153020:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:2635:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:2635"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:2635:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:384:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:384"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:384:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="6"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:1439:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:1439"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:1439:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4193">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:4193"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4193"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3921:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3921"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3921:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-go:0005055:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-go:0005055"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-go:0005055:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="5"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3485:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3485"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3485:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:7336:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:7336"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:7336:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5346:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:5346"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5346:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-gocomplex:0005894:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-gocomplex:0005894"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-gocomplex:0005894:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:9170:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:9170"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:9170:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="3"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-protfc:histocompatibility%20antigen:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-protfc:histocompatibility%20antigen"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-protfc:histocompatibility%20antigen:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="10"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:1830:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:1830"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:1830:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4916:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:4916"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:4916:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8751">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:8751"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8751"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:10626:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:10626"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:10626:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:79602">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:79602"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:79602"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-enz:2.3.1.26:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-enz:2.3.1.26"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-enz:2.3.1.26:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3991:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3991"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3991:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-protfc:beta-defensin">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-protfc:beta-defensin"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-protfc:beta-defensin"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6934">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:6934"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6934"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:80328:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:80328"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:80328:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:10533:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:10533"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:10533:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="3"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3816:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3816"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3816:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:10487:in-out:urn:agi-llid:3458:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:10487"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:10487:in-out:urn:agi-llid:3458:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-complex:IL31R:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-complex:IL31R"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-complex:IL31R:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="5"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-protfc:hemoglobin">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-protfc:hemoglobin"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-protfc:hemoglobin"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:2302:in-out:urn:agi-llid:3458:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:2302"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:2302:in-out:urn:agi-llid:3458:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3687:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3687"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3687:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="5"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8772:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:8772"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8772:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="8"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:10502:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:10502"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:10502:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:114614:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:114614"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:114614:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:107181291:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:107181291"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:107181291:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6275:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:6275"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6275:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="4"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5099:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:5099"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:5099:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:53840:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:53840"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:53840:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6359">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:6359"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6359"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="3"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:58:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:58"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:58:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6484:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:6484"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6484:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:1317:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:1317"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:1317:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="5"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8808:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:8808"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8808:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:335:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:335"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:335:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-protfc:neurotrophic%20factor:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-protfc:neurotrophic%20factor"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-protfc:neurotrophic%20factor:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="6"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-go:0004918:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-go:0004918"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-go:0004918:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:26125:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:26125"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:26125:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="15"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:57007:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:57007"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:57007:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="4"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-enz:4.1.1.32:in-out:urn:agi-llid:3458:negative">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-enz:4.1.1.32"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-enz:4.1.1.32:in-out:urn:agi-llid:3458:negative"/>
+         <attr name="Effect" value="negative"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6366">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:6366"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:6366"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="5"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3821">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:3821"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:3821"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="5"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:1634:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:1634"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:1634:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:17065:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:17065"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:17065:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="10"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-go:0004699:in-out:urn:agi-llid:3458">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-go:0004699"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-go:0004699:in-out:urn:agi-llid:3458"/>
+         <attr name="Effect" value="unknown"/>
+         <attr name="RelationNumberOfReferences" value="1"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:847:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:847"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:847:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="9"/>
+      </control>
+      <control local_id="urn:agi-Expression:out:urn:agi-llid:2532:in-out:urn:agi-llid:3458:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:2532"/>
+         <attr name="URN" value="urn:agi-Expression:out:urn:agi-llid:2532:in-out:urn:agi-llid:3458:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="2"/>
+      </control>
+      <control local_id="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8809:positive">
+         <attr name="ControlType" value="Expression"/>
+         <link type="in" ref="urn:agi-llid:3458"/>
+         <link type="out" ref="urn:agi-llid:8809"/>
+         <attr name="URN" value="urn:agi-Expression:in-out:urn:agi-llid:3458:out:urn:agi-llid:8809:positive"/>
+         <attr name="Effect" value="positive"/>
+         <attr name="RelationNumberOfReferences" value="8"/>
+      </control>
+   </controls>
+</resnet>
+</batch>
