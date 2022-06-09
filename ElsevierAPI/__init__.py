@@ -25,6 +25,7 @@ def load_api_config(api_config_file=''):# file with your API keys and API URLs
             print('No working API server was specified!!! Goodbye')
             return None
 
+
 def open_api_session(api_config_file='') -> APISession:
     APIconfig = load_api_config(api_config_file)
     return APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
