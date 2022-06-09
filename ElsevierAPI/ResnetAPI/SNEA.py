@@ -188,21 +188,3 @@ class SNEA(APISession):
                         cond_format=cond_format,for_columns='C:C')
         writer.save()
         print('Scored regulators are in %s file' % fout)
-
-
-    def test_run(self, fast=True):
-        #from ElsevierAPI import load_api_config
-        #expname = 'PNOC003vsGSE120046'
-        #snea = SNEA(load_api_config(),expname)
-
-        no_outliers_samples = list()
-        for i in range(1,33):
-            no_outliers_samples.append(i-1)
-        no_outliers_samples.pop(14)
-        no_outliers_samples.pop(8)
-        no_outliers_samples.pop(0)
-
-        test_samples = [2,3]
-        input = test_samples if fast else no_outliers_samples
-        self.expression_regulators(sample_ids=input)
-        self.report()
