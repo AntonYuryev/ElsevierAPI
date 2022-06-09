@@ -6,4 +6,3 @@ APIcofig = ''
 snea = SNEA(load_api_config(APIcofig),'Drug pipeline testing')
 snea.expression_regulators()
 snea.report()
-#snea.test_run(fast=False)
