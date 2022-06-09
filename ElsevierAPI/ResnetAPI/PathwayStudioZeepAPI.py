@@ -2,6 +2,7 @@ import pandas as pd
 import logging
 import sys
 from .PathwayStudioGOQL import OQL
+from ..pandas.panda_tricks import df
 
 
 def configure_logging(logger):
@@ -12,6 +13,7 @@ def configure_logging(logger):
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     return logger
+
 
 class DataModel:
     def __init__(self, url, username, password):
@@ -303,6 +305,7 @@ class DataModel:
 
         return obj_props
 
+
     def init_session(self, OQLrequest, PageSize: int, property_names=None, getLinks=True):
         property_names = ['Name'] if property_names is None else property_names
 
@@ -538,7 +541,7 @@ class DataModel:
             return gnr
 
 
-    def get_experiment(self,experiment_id:int):
+    def __experiment_samples(self,experiment_id:int):
         from zeep import exceptions
         for i in range (0,3):
             try:
@@ -547,17 +550,42 @@ class DataModel:
             except exceptions.Fault: continue
 
 
-    def start_relevant_networks(self,experiment_id:int, sample_id=0, 
-                            expand_by_reltypes=[], expand2types=[], find_regulators=True):
+    def __get_experiment_urns(self,experiment_id:int, experiment_size:int):
+        """
+        returns set of gene URNs mapped in experiment
+        """
+        results = self.SOAPclient.service.GetExperimentRowAttributes(experiment_id, [], 0, experiment_size)
+        urns = [a['EntityURN'] for a in results]
+        return urns
 
-        grn_prams = self.create_GenRelNetsParameters(experiment_id,sample_id,expand_by_reltypes,expand2types,find_regulators)
-        result = self.SOAPclient.service.StartGenerateRelevantNetworks(grn_prams)
+
+    def _fetch_experiment_data(self, experiment_name:str, only_log_ratio_samples=True):
         """
-        result['State']:
-                0 - waiting
-                1 - running
-                2 - finished
-                3 - killed
+        returns zeep objects for experiment, samples, urns, values
         """
+        oql_query = 'SELECT Experiment WHERE Name = \'{}\''.format(experiment_name)
+        experiment_zobj = self.get_data(oql_query)
         
-        return result
+        if type(experiment_zobj) == type(None):
+            print('No experiment with name "%s" exist in database' % experiment_name)
+            return
+        elif len(experiment_zobj.Objects.ObjectRef) > 1:
+                print('!Experiment has duplicate names!  Only first experiment will be used')
+
+        experiment_id = experiment_zobj.Objects.ObjectRef[0]['Id']
+        experiment = self.__experiment_samples(experiment_id)
+        experiment_urns = self.__get_experiment_urns(experiment_id, experiment.RowsCount)
+        
+        sample_values = list()
+        sample_id = 0
+        if only_log_ratio_samples:
+            for sample in experiment.SampleDefinitions.SampleDefinition:
+                if sample['Type'] == 1 and sample['Subtype'] == 2:
+                    sample_values.append(self.SOAPclient.service.GetExperimentValues(experiment_id,sample_id, 0, len(experiment_urns)))
+                sample_id += 1
+        else:
+            for sample in experiment.SampleDefinitions.SampleDefinition:
+                sample_values.append(self.SOAPclient.service.GetExperimentValues(experiment_id,sample_id, 0, len(experiment_urns)))
+                sample_id += 1
+  
+        return experiment, experiment_urns, sample_values

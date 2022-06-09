@@ -149,7 +149,7 @@ class FolderContent (APISession):
 
         pathway_graph = self.get_pathway_components([pathwayId],'id',retrieve_rel_properties=set(self.relProps),
                                                     retrieve_ent_properties=set(self.entProps))
-        pathway_graph.count_references()
+        pathway_graph.load_references()
 
         graph_xml = self.to_rnef(pathway_graph,add_props2rel,add_props2pathway)
         import xml.etree.ElementTree as et
@@ -269,7 +269,7 @@ class FolderContent (APISession):
 
         result_name = result['Name'][0]
         result_graph = self.get_saved_results(result['Name'])
-        result_graph.count_references()
+        result_graph.load_references()
         rnef_xml = et.fromstring(self.to_rnef(result_graph,add_props2rel,add_props2pathway))
         rnef_xml.set('name', result['Name'][0])
         rnef_xml.set('type', 'Pathway')

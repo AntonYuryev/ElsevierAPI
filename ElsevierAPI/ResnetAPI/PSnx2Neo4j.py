@@ -116,5 +116,5 @@ class nx2neo4j:
         print('Importing Resnet data into local Neo4j')
         #app = nx2neo4j(uriNeo4j, userNeo4j, pswdNeo4j)
         self.load_nodes(resnet)
-        resnet.Graph.count_references()
+        resnet.Graph.load_references()
         self.load_relations(resnet)

@@ -28,6 +28,7 @@ class SemanticSearch (APISession):
     __print_refs__ = True
     data_dir = ''
     
+    
     def __init__(self, APIconfig):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
         self.PageSize = 1000
@@ -288,12 +289,12 @@ class SemanticSearch (APISession):
             for idx in self.RefCountPandas.index:
                 idx_entity_ids = list(self.RefCountPandas.at[idx,self.__temp_id_col__])
                 if hasattr(self,'weight_prop'):
-                    references = relations.count_references_between(idx_entity_ids, concept_ids,self.weight_prop,self.weight_dict)
+                    references = relations.load_references_between(idx_entity_ids, concept_ids,self.weight_prop,self.weight_dict)
                     ref_weights = [r.get_weight() for r in references]
                     weighted_count = float(sum(ref_weights))
                     self.RefCountPandas.at[idx,new_column] = weighted_count
                 else:
-                    references = relations.count_references_between(idx_entity_ids, concept_ids)
+                    references = relations.load_references_between(idx_entity_ids, concept_ids)
                     self.RefCountPandas.at[idx,new_column] = len(references)
 
                 if len(references) > 0:
@@ -361,7 +362,7 @@ class SemanticSearch (APISession):
             entity_ids = list(self.RefCountPandas.loc[i][self.__temp_id_col__])
             entity_name = self.RefCountPandas.loc[i][self.__resnet_name__]
             links_between = self.connect_nodes(concept_ids,entity_ids,for_rel_types,with_effect,in_direction)
-            references = links_between.count_references()
+            references = links_between.load_references()
             ETMstat.count_refs(ref_counter,references)
         
         to_sort = list(ref_counter)

@@ -89,6 +89,8 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def has_property(self, prop_name:str):
         return prop_name in self.keys()
 
+    def has_propeties(self,prop_names:set):
+        return not prop_names.isdisjoint(set(self.keys()))
 
     def is_annotated(self,prop_name,prop_values:list,case_sensitive=False):
         try:
@@ -123,7 +125,6 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             for k, vlist in with_other.items():
                 self.update_with_list(k,vlist)
 
-
     def dump(self,to_file:str):
         with open(to_file+'.pickle', "wb") as outfile:
             # "wb" argument opens the file in binary mode
@@ -145,7 +146,8 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 class PSRelation(PSObject):
     pass
     PropSetToProps = dict() # {PropSetID:{PropID:[values]}}
-    Nodes = dict() # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
+    Nodes = dict() # {"Regulators':[(entityID, 0, effect)], "Targets':[(entityID, 1, effect)]}
+    # where 0,1 direction of linktype
     References = dict() # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
 
     def __init__(self, dic=dict()):
@@ -214,6 +216,8 @@ class PSRelation(PSObject):
     def __hash__(self):
         return self['Id'][0]
 
+    def is_directional(self):
+        return len(self.Nodes) == 2
 
     def _props2str(self, prop_id, cell_sep:str =';'):
         try:
@@ -334,7 +338,6 @@ class PSRelation(PSObject):
         # # PropSetToProps is used in print_references do not clear it.
 
 
-
     def filter_references(self, prop_names2values:dict):
         # prop_names2values = {prop_name:[values]}
         all_refs = set(self.References.values())
@@ -346,14 +349,23 @@ class PSRelation(PSObject):
 
     def get_reference_count(self, count_abstracts=False):
         self.load_references()
-        self[REFCOUNT] = [len(self._get_refs())]
-
-        if count_abstracts:
-            ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
-            return len(ref_from_abstract)
+        if self.References:
+            ref_count = len(self._get_refs())
+            self[REFCOUNT] = [ref_count]
+            if count_abstracts:
+                ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
+                return len(ref_from_abstract)
+            return ref_count
+        elif len(self[REFCOUNT]) > 0:
+            # case when REFCOUNT was loaded from RNEF dump that did not contain references
+            # e.g. for loading network from __pscache__
+            refcount2merge = list(map(int,self[REFCOUNT]))
+            max_refcount = max(refcount2merge)
+            self[REFCOUNT] = [max_refcount]
+            return max_refcount
         else:
-            return self[REFCOUNT][0]
-
+            self[REFCOUNT] = [0]
+            return 0
 
 
     def rel_prop_str(self, sep=':'):

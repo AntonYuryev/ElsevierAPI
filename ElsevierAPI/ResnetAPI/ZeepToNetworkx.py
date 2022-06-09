@@ -192,7 +192,11 @@ class PSNetworx(DataModel):
 
         return list(child_ids)
 
+
     def get_children_props(self, for_psobjs:list, prop_name:str):
+        """
+        finds children of for_psobjs and then returns their annotation by prop_name together with for_psobjs annotation
+        """
         psobjs_prop_lists = [x[prop_name] for x in for_psobjs] 
         psobjs_props = [prop for x in psobjs_prop_lists for prop in x]
         children_props = list()
@@ -203,7 +207,6 @@ class PSNetworx(DataModel):
             children_props = [prop for x in children_prop_lists for prop in x]
                   
         return list(set(psobjs_props + children_props))
-
 
 
     def find_drugs(self, for_targets_with_ids: list, REL_PROPS: list, ENTITY_PROPS: list):
@@ -217,6 +220,7 @@ class PSNetworx(DataModel):
         else:
             return ResnetGraph()
 
+
     def find_reaxys_substances(self, ForTargetsIDlist: list, REL_PROPS: list, ENTITY_PROPS: list):
         oql_query = OQL.get_reaxys_substances(ForTargetsIDlist)
         zeep_relations = self.get_data(oql_query, REL_PROPS)
@@ -226,6 +230,7 @@ class PSNetworx(DataModel):
             return self._load_graph(zeep_relations, zeep_objects)
         else:
             return ResnetGraph()
+
 
     def connect_entities(self, PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list,
                          PropertyValues2: list, SearchByProperties2: list, EntityTypes2: list,
@@ -247,6 +252,7 @@ class PSNetworx(DataModel):
             return self._load_graph(zeep_relations, zeep_objects)
         else:
             return ResnetGraph()
+
 
     def get_ppi(self, InteractorIdList:set, REL_PROPS:list, ENTITY_PROPS:list):
         splitter = list() #holds lists of ids splits 
@@ -274,6 +280,7 @@ class PSNetworx(DataModel):
             s += 1
 
         return ppi_keeper
+
 
     def get_network(self, InteractorIdList:set, connect_by_rel_types:list=None, REL_PROPS:list=None, ENTITY_PROPS:list=None):
         splitter = list() #holds lists of ids splits 
