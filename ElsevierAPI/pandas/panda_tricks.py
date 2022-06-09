@@ -1,5 +1,8 @@
 import pandas as pd
+import numpy as np
+import seaborn as sns
 from pandas import DataFrame as df
+from pandas import ExcelWriter as ExcelWriter
 import rdfpandas
 from ..ResnetAPI.ResnetGraph import PSObject
 
@@ -10,16 +13,6 @@ class df(pd.DataFrame):
         if kwargs:
             p = pd.DataFrame(**kwargs)
         super(df,self).__init__(p)
-
-    def format_vertical_headers(self):
-        """Display a dataframe with vertical column headers"""
-        styles = [dict(selector="th", props=[('width', '40px')]),
-                dict(selector="th.col_heading",
-                    props=[("writing-mode", "vertical-rl"),
-                            ('transform', 'rotateZ(180deg)'), 
-                            ('height', '290px'),
-                            ('vertical-align', 'top')])]
-        return (self.fillna('').style.set_table_styles(styles))
 
 
     def pandas2rdf(self, remap:dict):
@@ -36,6 +29,10 @@ class df(pd.DataFrame):
     def apply_and_concat2(self, concept_name, func, column_names):
             return pd.concat((self,self['Name'].apply(lambda cell: pd.Series(func(cell,concept_name),index=column_names))),axis=1)
 
+    @classmethod 
+    def from_dict(cls, dic:dict):
+        new_pd = cls(pd.DataFrame.from_dict(dic))
+        return new_pd
 
     @classmethod
     def dict2pd(cls,dic:dict, key_colname:str, value_colname:str)->pd.DataFrame:
@@ -105,8 +102,12 @@ class df(pd.DataFrame):
             jsonout.write(self.to_json(None,indent=2, orient='index'))
 
 
-    def df2excel(self, writer:pd.ExcelWriter,sheet_name:str, index=False, vertical_header=False):
-        self.to_excel(writer, sheet_name=sheet_name, startrow=1, header=False, index=index)
+    def df2excel(self, writer:ExcelWriter,sheet_name:str, vertical_header=False, 
+                cond_format=dict(),for_columns='A:A'):
+        """
+        for_columns = A:C
+        """
+        self.to_excel(writer, sheet_name=sheet_name, startrow=1, header=False, index=False, float_format='%g')
         workbook  = writer.book
         worksheet = writer.sheets[sheet_name]
 
@@ -129,7 +130,21 @@ class df(pd.DataFrame):
         for col_num, value in enumerate(self.columns.values):
             worksheet.write(0, col_num, value,format)
 
+        if cond_format:
+            first_col = for_columns[0]
+            last_col = for_columns[2]
+            last_row = len(self)
+            area = first_col+'2:'+last_col+str(last_row+1)
+            worksheet.conditional_format(area, cond_format)
 
         
-
+    def format_vertical_headers(self):
+        """Display a dataframe with vertical column headers"""
+        styles = [dict(selector="th", props=[('width', '40px')]),
+                dict(selector="th.col_heading",
+                    props=[("writing-mode", "vertical-rl"),
+                            ('transform', 'rotateZ(180deg)'), 
+                            ('height', '290px'),
+                            ('vertical-align', 'top')])]
+        return (self.fillna('').style.set_table_styles(styles))
 
