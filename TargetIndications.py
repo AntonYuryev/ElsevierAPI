@@ -381,7 +381,7 @@ class TargetIndications(SemanticSearch):
                 self.RefCountPandas.at[i,self.__colnameGV__] = ';'.join(GVnames)
                 gvlinkcounter += 1
                 gv_disease_subgraph = self.GVsInDiseaseNetwork.get_subgraph(row_entity_ids,GVneighborsId)
-                GVscore = len(gv_disease_subgraph.count_references())
+                GVscore = len(gv_disease_subgraph.load_references())
             
             self.RefCountPandas.at[i,self._col_name_prefix+'GVs'] = GVscore
 
@@ -651,7 +651,7 @@ class TargetIndications(SemanticSearch):
 
             ref_counter = set()
             links_between = self.connect_nodes([n1],[n2])
-            references = links_between.count_references()
+            references = links_between.load_references()
             ETMstat.count_refs(ref_counter,references)
             #refs come from Resnet without Relevance 
         

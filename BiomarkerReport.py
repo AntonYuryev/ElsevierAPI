@@ -127,13 +127,13 @@ class BiomarkerReport(SemanticSearch):
         oql_query = OQL.connect_ids(biomarker_ids,disease_ids,['Regulation'])
         self.process_oql(oql_query, 'Find Regulation between biomarkers and diseases')
 
-        self.Graph.count_references()
+        self.Graph.load_references()
 
         if self.biomarker_type == SOLUBLE:
-            self.Graph.filter_references({'Tissue':SOLUBLE_BIOMARKERS_TISSUES},QUANTITATIVE_BIOMARKER_RELS)
+            self.Graph = self.Graph.filter_references({'Tissue':SOLUBLE_BIOMARKERS_TISSUES},QUANTITATIVE_BIOMARKER_RELS)
 
         if self.journal_filter:
-            self.Graph.filter_references(self.journal_filter)
+            self.Graph = self.Graph.filter_references(self.journal_filter)
             # journal_filter = {prop_name:[values]}
 
 

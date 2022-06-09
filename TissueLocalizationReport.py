@@ -82,7 +82,7 @@ class TissueLocalization(APISession):
         anatomy_branch_ids = anatomy_obj[CHILDS]+anatomy_obj['Id']
 
         relation_graph = self.Graph.get_neighbors_graph(set(anatomy_branch_ids))
-        references = relation_graph.count_references()
+        references = relation_graph.load_references()
         ref_count = len(references)
         self.report.loc[len(self.report)] = [obj_name,ref_count,sub_organ_str,tissue_str,cell_str,cell_line_str]
         self.printed_ids.update(anatomy_branch_ids)
@@ -116,6 +116,7 @@ class TissueLocalization(APISession):
             parent_organs = self.__get_parents(orphan_ids,depth)
 
         return new_parents
+
 
     def print_report(self, to_file:str):
         self.report.sort_values(by=['#References'],ascending=False, inplace=True)

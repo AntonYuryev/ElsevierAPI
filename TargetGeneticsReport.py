@@ -53,7 +53,7 @@ class TargetGenetics(APISession):
         for disease in self.Graph.get_objects(['Disease']):
             disease_name = disease['Name'][0]
             disease_neighborhood = self.Graph.get_neighbors_graph(set(disease['Id']))
-            references = list(disease_neighborhood.count_references())
+            references = list(disease_neighborhood.load_references())
             references.sort(lambda x: int(x[PUBYEAR][0]), reverse=True)
             # references can be from GeneticChange or FunctionalAssociation
             refcount = len(references)

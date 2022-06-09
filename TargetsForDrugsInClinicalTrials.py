@@ -62,7 +62,7 @@ for drug in drug_with_targets:
     drug_target_indication.add_graph(completed_trials.get_neighbors_graph({drug}))
     drug_target_indication.add_graph(drug_targets.get_neighbors_graph({drug}))
     drug_target_indication.add_graph(targets_indications)
-    drug_target_indication.count_references()
+    drug_target_indication.load_references()
     if not output_all_targets:
         targets_without_indications = set([x for x, y in drug_target_indication.nodes(data=True) if
                         ((drug_target_indication.degree(x) == 1) & 

@@ -30,7 +30,7 @@ for pair in OMIMpairs:
             rel[OmimProp] = [pair[0]+' ---> '+gene]
 
 
-ps_api.Graph.count_references()
+ps_api.Graph.load_references()
 
 fileOut = OMIMpairsFile[:len(OMIMpairsFile)-4] + ' references.tsv'
 REL_PROPS.append(OmimProp)

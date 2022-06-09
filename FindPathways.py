@@ -13,7 +13,7 @@ def MapEntityToPathways(FilterBy:list):
             pathway_name = pthwy['Name'][0]
             PathwayIds = pthwy['Id']
             EntityDictValue = folder_name + '\t' + pathway_name
-            IdtoMembers = ps_api.get_pathway_member_ids(PathwayIds, FilterBy, InProperties=SearchByProperty)
+            IdtoMembers = ps_api.get_pathway_members(PathwayIds, FilterBy, InProperties=SearchByProperty)
             for ent in IdtoMembers.values():
                 EntityName = ent['Name'][0]
                 EntityURN = ent['URN'][0]

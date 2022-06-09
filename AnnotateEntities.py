@@ -25,7 +25,7 @@ if __name__ == "__main__":
     annotation_cols = annotation_pd.columns[1:]
     for col_name in annotation_cols:
         map_dict = pd.Series(annotation_pd[col_name].values,index=annotation_pd[mapping_property]).to_dict()
-        ps_api.Graph.annotate_nodes(with_new_prop=col_name,map2prop=mapping_property,using_map=map_dict)
+        ps_api.Graph.add_node_annotation(with_new_prop=col_name,map2prop=mapping_property,using_map=map_dict)
 
     ps_api.add_ent_props(annotation_cols)
     rnef_file = str(args.infile)[:-3]+'rnef'

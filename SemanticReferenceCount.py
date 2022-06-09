@@ -139,7 +139,9 @@ if __name__ == "__main__":
     print("%d entities in file %s were mapped linked to %d concepts from %s in %s" % 
          (len(EntityPandas), EntityListFile, concepts_in_file, args.targets_file, exec_time))
 
-    countsOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount.tsv'
-    refOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv' if args.dump_references else ''
-    search.print_ref_count(countsOutFile,refOutFile)
-
+    countsOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount' #.tsv'
+    #refOutFile = EntityListFile[:len(EntityListFile)-4]+'+SemanticReferences.tsv' if args.dump_references else ''
+    #search.print_ref_count(countsOutFile,refOutFile)
+    search.add2report(search.make_count_pd())
+    search.add2report(search.refs2pd())
+    search.print_report(countsOutFile+'.xlsx')
