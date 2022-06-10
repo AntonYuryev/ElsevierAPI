@@ -44,6 +44,7 @@ class SNEA(APISession):
         get_proteins = 'SELECT Entity WHERE objectType = (Protein,FunctionalClass,Complex)'
         oql_query = 'SELECT Relation WHERE objectType = (Expression,PromoterBinding) AND NeighborOf upstream ({n1}) AND NeighborOf downstream ({n2})'
         oql_query = oql_query.format(n1=get_proteins, n2=get_proteins)
+        #oql_query = 'SELECT Relation WHERE objectType = Metabolization' # for testing
         self.process_oql(oql_query, 'Fetching protein expression network')
         self.Graph = self.Graph.make_simple()
         self.graph2rnef(cache_path+network_name+'.rnef')
@@ -187,3 +188,21 @@ class SNEA(APISession):
                         cond_format=cond_format,for_columns='C:C')
         writer.save()
         print('Scored regulators are in %s file' % fout)
+
+
+    def test_run(self, fast=True):
+        #from ElsevierAPI import load_api_config
+        #expname = 'PNOC003vsGSE120046'
+        #snea = SNEA(load_api_config(),expname)
+
+        no_outliers_samples = list()
+        for i in range(1,33):
+            no_outliers_samples.append(i-1)
+        no_outliers_samples.pop(14)
+        no_outliers_samples.pop(8)
+        no_outliers_samples.pop(0)
+
+        test_samples = [2,3]
+        input = test_samples if fast else no_outliers_samples
+        self.expression_regulators(sample_ids=input)
+        self.report()
