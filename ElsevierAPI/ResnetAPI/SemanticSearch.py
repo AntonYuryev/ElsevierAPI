@@ -316,11 +316,13 @@ class SemanticSearch (APISession):
         open(self.__refCache__, 'w').close()
 
 
-    def add2report(self,table:df):
-        self.report_pandas[table.name] = table
+    def add2report(self,table:pd.DataFrame):
+        df_from_pd = df.make_df(table)
+        self.report_pandas[table.name] = df_from_pd
 
-    def add2raw(self,table:df):
-        self.raw_data[table.name] = table
+    def add2raw(self,table:pd.DataFrame):
+        df_from_pd = df.make_df(table)
+        self.raw_data[table.name] = df_from_pd
 
     def refs2pd(self, column_name:str or int, for_rel_types:list=None,with_effect:list=None,in_direction:str=None,
                             pubid_types:list=[],biblio_props:list=[],print_snippets=False):
@@ -395,19 +397,15 @@ class SemanticSearch (APISession):
     def add2writer(self, writer:pd.ExcelWriter, ws_prefix='',float_format='%2.3f'):
         for ws_name, report_df in self.report_pandas.items():
             sh_name = ws_prefix+'_'+ws_name
-            df2print = df(report_df)
             vertical_header = False if ws_name == BIBLIOGRAPHY else True
-            df2print.df2excel(writer, sheet_name=sh_name[:30],vertical_header=vertical_header)
+            report_df.df2excel(writer, sheet_name=sh_name[:30],vertical_header=vertical_header)
 
 
     def addraw2writer(self, writer:pd.ExcelWriter, ws_prefix=''):
         if hasattr(self,'raw_data'):
             for rawdf in self.raw_data.values():
                 sh_name = ws_prefix+rawdf.name
-                df2print = df(rawdf)
-                #df2print.format_vertical_headers()
-                df2print.df2excel(writer, sheet_name=sh_name[:30])
-        
+                rawdf.df2excel(writer, sheet_name=sh_name[:30],vertical_header=True)
 
     def print_report(self, xslx_file:str, ws_prefix=''):
         writer = pd.ExcelWriter(xslx_file, engine='xlsxwriter')

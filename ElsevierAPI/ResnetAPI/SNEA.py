@@ -44,6 +44,7 @@ class SNEA(APISession):
         get_proteins = 'SELECT Entity WHERE objectType = (Protein,FunctionalClass,Complex)'
         oql_query = 'SELECT Relation WHERE objectType = (Expression,PromoterBinding) AND NeighborOf upstream ({n1}) AND NeighborOf downstream ({n2})'
         oql_query = oql_query.format(n1=get_proteins, n2=get_proteins)
+        #oql_query = 'SELECT Relation WHERE objectType = Metabolization' # for testing
         self.process_oql(oql_query, 'Fetching protein expression network')
         self.Graph = self.Graph.make_simple()
         self.graph2rnef(cache_path+network_name+'.rnef')

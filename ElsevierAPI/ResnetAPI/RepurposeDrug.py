@@ -40,15 +40,6 @@ class RepurposeDrug(TargetIndications):
         return 'unknown'
 
 
-    def _get_report_name(self):
-        report_name = self.param['data_dir']+self.param['input_compound']
-        if self.strict_mode == True:
-            report_name += ' suggested indications'
-        else:
-            report_name += ' predicted indications'
-        return report_name
-
-
     def needs_clinical_trial(self):
         if 'CellProcess' in self.param['indication_types'] and self.param['drug_effect'] == ACTIVATE: return True
         if 'Disease' in self.param['indication_types'] and self.param['drug_effect'] == INHIBIT: return True
@@ -270,4 +261,10 @@ class RepurposeDrug(TargetIndications):
     def clear(self):
         super().clear()
         self.RefCountPandas = df()
-                                           
+  
+
+    def _get_report_name(self):
+        indics = ','.join(self.param['indication_types'])
+        effect = ' inhibited by ' if self.param['drug_effect'] == ANTAGONIST else ' activated by '
+        rep_pred = 'suggested ' if self.param['strict_mode'] == RANK_SUGGESTED_INDICATIONS else 'suggested,predicted ' 
+        return self.param['data_dir']+rep_pred+ indics+'s'+effect+ self.param['input_compound']

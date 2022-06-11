@@ -103,7 +103,7 @@ class ResnetGraph (nx.MultiDiGraph):
         self.add_nodes([regulator,target])
 
         if isinstance(rel_props,PSRelation):
-            self.add_rel(regulator, target, rel_props)
+            self.add_rel(rel_props)
             return
         else:
             rel = PSRelation.make_rel(regulator,target,rel_props,refs,is_directional)

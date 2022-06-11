@@ -54,14 +54,6 @@ class TargetIndications(SemanticSearch):
         elif self.target_class == 'Receptor': self.partner_class = "Ligand"
         else: self.target_class = NotImplemented
 
-    def _get_report_name(self):
-        report_name = self.param['data_dir']+','.join(self.param['target_names'])
-        if self.strict_mode:
-            report_name += ' suggested indications'
-        else:
-            report_name += ' predicted indications'
-        return report_name
-
 
     def select_partners(self):
         self._partner_class()
@@ -138,11 +130,11 @@ class TargetIndications(SemanticSearch):
             else: self.find_partners_oql = ''
         
 
-    def fname_prefix(self):
+    def _get_report_name(self):
         indics = ','.join(self.indication_types)
-        mode = ' antagoinists ' if self.target_activate_indication else ' agonists '
+        mode = ' antagonists' if self.target_activate_indication else ' agonists'
         rep_pred = 'suggested ' if self.strict_mode else 'suggested,predicted ' 
-        return rep_pred+ indics+' for '+ self._target_names() + mode
+        return self.param['data_dir']+rep_pred+ indics+' for '+ self._target_names() + mode
 
 
     def GVindications(self):
@@ -468,7 +460,7 @@ class TargetIndications(SemanticSearch):
         colname = t_n + ' is Biomarker'
         self.set_how2connect(['Biomarker'],[],'')
         linked_entities_count = self.link2concept(colname,self.target_ids)
-        print('Linkd %d indications where %s is biomarker' % (linked_entities_count,t_n))
+        print('Linked %d indications where %s is biomarker' % (linked_entities_count,t_n))
 
         self.score_GVs()
 
