@@ -9,11 +9,15 @@ from ..ResnetAPI.ResnetGraph import PSObject
 
 class df(pd.DataFrame):
     pass
-    def __init__(self, p=pd.DataFrame(),**kwargs):
-        if kwargs:
-            p = pd.DataFrame(**kwargs)
-        super(df,self).__init__(p)
+    def __init__(self, *args, **kwargs):
+        pd.DataFrame.__init__(self, *args, **kwargs)
+        self.name = ''
 
+    @classmethod
+    def make_df(cls, p = pd.DataFrame):
+        newdf = cls(p.copy())
+        newdf.name = p.name
+        return newdf
 
     def pandas2rdf(self, remap:dict):
         rdf_pandas = pd.DataFrame(self)
