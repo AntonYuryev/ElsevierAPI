@@ -27,7 +27,7 @@ hGRAPHID = 'hGraph ID'
 EDMID = 'EDM ID'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
-PS_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID'] 
+PS_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID']
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
 ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
 PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
