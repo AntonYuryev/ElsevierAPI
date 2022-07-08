@@ -12,7 +12,6 @@ import xml.etree.ElementTree as ET
 
 
 api_config = str()
-#api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
 ps_api = open_api_session(api_config) # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json
 ps_api.add_rel_props(['PMID',PUBYEAR])
 ps_api.PageSize = 1000
@@ -96,9 +95,8 @@ def minor_allele(rsids:list):
 DATA_DIR = 'D:/Python/Quest/raw/'
 
 if __name__ == "__main__":
-    disease_name = 'Hepatitis'#'diabetes mellitus' #'uterine cancer'# 
+    disease_name = 'Hepatitis'
     disease_dir = DATA_DIR+disease_name+'/'
-    #disease_urns = read_disease_urns('D:/Python/ENTELLECT_API/Data/hGraph/Focus uterine cancers from PS.txt')
     disease_urns = get_disease_childs(disease_name)
 
     oql_query = OQL.expand_entity(disease_urns,['URN'], expand2neighbors=['GeneticVariant'])
