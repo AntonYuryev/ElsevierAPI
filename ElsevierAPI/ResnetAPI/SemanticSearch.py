@@ -396,15 +396,15 @@ class SemanticSearch (APISession):
 
     def add2writer(self, writer:pd.ExcelWriter, ws_prefix='',float_format='%2.3f'):
         for ws_name, report_df in self.report_pandas.items():
-            sh_name = ws_prefix+'_'+ws_name
+            sh_name = ws_prefix+'_'+ws_name if ws_prefix else ws_name
             vertical_header = False if ws_name == BIBLIOGRAPHY else True
             report_df.df2excel(writer, sheet_name=sh_name[:30],vertical_header=vertical_header)
 
 
     def addraw2writer(self, writer:pd.ExcelWriter, ws_prefix=''):
         if hasattr(self,'raw_data'):
-            for rawdf in self.raw_data.values():
-                sh_name = ws_prefix+rawdf.name
+            for ws_name, rawdf in self.raw_data.items():
+                sh_name = ws_prefix+'_'+ws_name if ws_prefix else ws_name
                 rawdf.df2excel(writer, sheet_name=sh_name[:30],vertical_header=True)
 
     def print_report(self, xslx_file:str, ws_prefix=''):
