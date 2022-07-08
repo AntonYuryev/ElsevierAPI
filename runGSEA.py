@@ -26,21 +26,12 @@ if __name__ == "__main__":
     make_ps_name(gsea_exp)
     gsea_exp['ObjTypeName'] = ['SmallMol']
 
-    APIcofig = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
+    APIcofig = ''
     gsea = GSEA(load_api_config(APIcofig))
     mapped_exp = gsea.map_experiment(gsea_exp)
 
     folders_with_target_pathways = ['TG triglyceride metabolism']
     min_overlap = 3
-    #['Globosides metabolism','Sphingomyelins metabolism']
-    #['Sphingolipids metabolism']
-    #['PE-PC-PS cycle']
-    #['Plasmalogen biosynthesis']
-    #['PE metabolism']
-    #['CL cardiolipin metabolism']
-    #['PAF biosynthesis']#['PS metabolism (FA->DG->PC)'] 
-    #['TG triglyceride metabolism']
-    # #['Test'] # #['Neutral and Phospholipids metabolism'] # 
     gsea.entProps=['Name'] # for download speed
     gsea.load_pathways(folders_with_target_pathways,mapped_exp.urns(),min_overlap=min_overlap)
     
