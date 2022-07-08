@@ -48,6 +48,7 @@
     <entity rnef="Tissue" sbgn="unspecified entity" />
     <entity rnef="Treatment" sbgn="unspecified entity" />
     <entity rnef="Virus" sbgn="biological activity" />
+    <entity rnef="MedicalProcedure" sbgn="unspecified entity" />
     <!-- Relations -->
     <relation rnef="Binding" effect="default" sbgn="unknown influence" />
     <relation rnef="Paralog" effect="default" sbgn="unknown influence" />
@@ -91,6 +92,8 @@
     <relation rnef="StateChange" effect="default" sbgn="unknown influence" />
     <relation rnef="StateChange" effect="negative" sbgn="negative influence" />
     <relation rnef="StateChange" effect="positive" sbgn="positive influence" />
+    <relation rnef="Requires" effect="default" sbgn="positive influence" />
+    <relation rnef="Measures" effect="default" sbgn="unknown influence" />
   </classmap>
   <classmap language="entity relationship">
     <!--
