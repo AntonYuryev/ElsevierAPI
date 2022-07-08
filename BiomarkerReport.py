@@ -8,9 +8,6 @@ import numpy as np
 import time
 from ElsevierAPI.ETM_API.etm import ETMstat
 
-DISEASE_NAME = 'diabetes mellitus'   #'fibrosis'
-DATA_DIR = 'D:/Python/Quest/raw/'+DISEASE_NAME+'/'
-#DATA_DIR = 'D:/Python/PMI/' 
 
 QUANTITATIVE_BIOMARKER_RELS = ['Biomarker','StateChange','QuantitativeChange','CellExpression']
 GENETIC_BIOMARKER_RELS = ['GeneticChange']
@@ -315,6 +312,7 @@ class BiomarkerReport(SemanticSearch):
                 rel_props[REFCOUNT] = [biomarker2disease.loc[row]['Rank']]
                 [bm2dis_graph.add_triple(d,b,rel_props,ps_references) for b in biomarker_objs for d in disease_objs]
             
+            #biomarker2disease.dropna(subset=['Recent PMIDs','Recent DOIs'],inplace=True, how='all')
 
         elif max_etm_row:
             use_relevance = True
@@ -350,12 +348,17 @@ class BiomarkerReport(SemanticSearch):
 
 
     def report_prefix(self):
-        biomarker_descr = ' quatitative' 
+        biomarker_descr = ' quantitative' 
         if bm.biomarker_type == GENETIC: biomarker_descr = ' genetic'
         if bm.biomarker_type == SOLUBLE: biomarker_descr = ' soluble'
 
         f_prefix = self.Disease['Name'][0]+biomarker_descr
         return f_prefix+' from selected journals' if self.journal_filter else f_prefix
+
+
+DISEASE_NAME = 'Hepatitis'#'diabetes mellitus'   #'fibrosis'
+DATA_DIR = 'D:/Python/Quest/raw/'+DISEASE_NAME+'/'
+#DATA_DIR = 'D:/Python/PMI/' 
 
 if __name__ == "__main__":
     start_time = time.time()
@@ -363,10 +366,10 @@ if __name__ == "__main__":
     #api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTeva.json'
     APIconfig = load_api_config(api_config)
     journal_filter_fname = ''
-    #journal_filter_fname = 'D:/Python/Quest/raw/'+DISEASE_NAME+'/'+DISEASE_NAME+' high-quality journals.txt'
+    journal_filter_fname = 'D:/Python/Quest/raw/'+DISEASE_NAME+'/'+DISEASE_NAME+' high-quality journals.txt'
     
-    #bm = BiomarkerReport(APIconfig,SOLUBLE,journal_filter_fname)
-    bm = BiomarkerReport(APIconfig,GENETIC)
+    bm = BiomarkerReport(APIconfig,SOLUBLE,journal_filter_fname)
+    #bm = BiomarkerReport(APIconfig,GENETIC)
     bm.data_dir = DATA_DIR
     bm.flush_dump()
 

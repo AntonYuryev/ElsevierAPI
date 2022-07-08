@@ -10,9 +10,9 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 
-DATA_DIR = 'D:/Python/Quest/report tables/'
+
 api_config = str()
-api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
+#api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
 ps_api = open_api_session(api_config) # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json
 ps_api.add_rel_props(['PMID',PUBYEAR])
 ps_api.PageSize = 1000
@@ -31,7 +31,7 @@ def get_disease_childs(disease_name:str):
 
 
 def map_gvid2genes(disease2gvs:ResnetGraph):
-    gv_ids = disease2gvs.get_entity_ids(['GeneticVariant'])
+    gv_ids = disease2gvs.get_node_ids(['GeneticVariant'])
     prot2gvs_graph = ResnetGraph()
     print ('Finding genes for %d genetic variants' % len(gv_ids))
     number_of_iterations = int(len(gv_ids)/1000)+1
@@ -93,8 +93,10 @@ def minor_allele(rsids:list):
 
     return snp2allele2freq
 
+DATA_DIR = 'D:/Python/Quest/raw/'
+
 if __name__ == "__main__":
-    disease_name = 'diabetes mellitus' #'uterine cancer'# 
+    disease_name = 'Hepatitis'#'diabetes mellitus' #'uterine cancer'# 
     disease_dir = DATA_DIR+disease_name+'/'
     #disease_urns = read_disease_urns('D:/Python/ENTELLECT_API/Data/hGraph/Focus uterine cancers from PS.txt')
     disease_urns = get_disease_childs(disease_name)
@@ -149,7 +151,7 @@ if __name__ == "__main__":
 
 
             refcount = rel.get_reference_count()
-            last_refs = rel.recent_refs(5)
+            last_refs = rel._get_refs(ref_limit=5)
             rel_pmids = [x.get_doc_id()[1] for x in last_refs]
             ids_str = ','.join(rel_pmids)
             
