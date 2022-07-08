@@ -19,6 +19,30 @@ class df(pd.DataFrame):
         newdf.name = p.name
         return newdf
 
+
+    @classmethod
+    def read(cls, fname:str, worksheet='', **kwargs):
+        extension = fname[fname.rfind('.')+1:]
+        if extension == 'xlsx':
+            try:
+                _df = pd.read_excel(fname,sheet_name=worksheet, **kwargs)
+                return df(_df)
+            except FileNotFoundError: 
+                raise FileNotFoundError
+        elif extension in ('tsv','txt'):
+            try:
+                _df = pd.read_csv(fname,sep='\t', **kwargs)
+                return df(_df)
+            except FileNotFoundError:
+                raise FileNotFoundError
+        elif extension == ('csv'):
+            try:
+                _df = pd.read_csv(fname,sep=',', **kwargs)
+                return df(_df)
+            except FileNotFoundError:
+                raise FileNotFoundError
+
+
     def pandas2rdf(self, remap:dict):
         rdf_pandas = pd.DataFrame(self)
         for c in rdf_pandas.columns:
@@ -107,7 +131,7 @@ class df(pd.DataFrame):
 
 
     def df2excel(self, writer:ExcelWriter,sheet_name:str, vertical_header=False, 
-                cond_format=dict(),for_columns='A:A'):
+                cond_format=dict(),for_areas=['A:A']):
         """
         for_columns = A:C
         """
@@ -135,11 +159,12 @@ class df(pd.DataFrame):
             worksheet.write(0, col_num, value,format)
 
         if cond_format:
-            first_col = for_columns[0]
-            last_col = for_columns[2]
-            last_row = len(self)
-            area = first_col+'2:'+last_col+str(last_row+1)
-            worksheet.conditional_format(area, cond_format)
+            for area in for_areas:
+                first_col = area[0]
+                last_col = area[2]
+                last_row = len(self)
+                area = first_col+'2:'+last_col+str(last_row+1)
+                worksheet.conditional_format(area, cond_format)
 
         
     def format_vertical_headers(self):
@@ -151,4 +176,11 @@ class df(pd.DataFrame):
                             ('height', '290px'),
                             ('vertical-align', 'top')])]
         return (self.fillna('').style.set_table_styles(styles))
+
+
+    def clean(self):
+        clean_pd = self.fillna('')
+        clean_pd = clean_pd.dropna(how='all',subset=None)
+        clean_pd = clean_pd.drop_duplicates()
+        return df(clean_pd)
 
