@@ -10,7 +10,7 @@ from datetime import timedelta
 class PSNetworx(DataModel):
     def __init__(self, url, username, password):
         super().__init__(url, username, password)
-        self.IDtoRelation = dict()  # {relID:PSRelation} needs to be - Resnet relations may not be binary
+        self.id2relation = dict()  # {relID:{node_id1,node_id2,PSRelation}} needs to be - Resnet relations may not be binary
         self.Graph = ResnetGraph()
         self.ID2Children = dict()
 
@@ -50,8 +50,8 @@ class PSNetworx(DataModel):
         id2entity = self._zeep2psobj(zeep_objects)
         new_graph.add_nodes_from([(k, v.items()) for k, v in id2entity.items()])
 
+        new_relations = dict()
         if type(zeep_relations) != type(None):
-            new_relations = dict()
             for rel in zeep_relations.Objects.ObjectRef:
                 ps_rel = PSRelation.from_zeep(rel)
                 rel_id = rel['Id']
@@ -110,13 +110,13 @@ class PSNetworx(DataModel):
                     try:
                         ref_count = rel['RelationNumberOfReferences'][0]
                     except KeyError: ref_count = 0
-                    new_graph.add_edge(pair[0], pair[1], relation=rel, weight=float(ref_count))
-                    # print (newGraph.get_edge_data(pair[0], pair[1]))
 
-            self.IDtoRelation.update(new_relations)  # must be kept since Resnet relation may not be binary
+                    rel_dict = {'relation':rel,'weight':float(ref_count),'key':new_graph.rel_urn(rel)}
+                    new_graph.add_edges_from([(pair[0], pair[1], rel_dict)])
 
         if add2self:
             self.Graph = nx.compose(self.Graph,new_graph)
+            self.id2relation.update(new_relations)
 
         return new_graph
 
@@ -343,6 +343,7 @@ class PSNetworx(DataModel):
                 entire_graph = nx.compose(entire_graph,iter_graph)
         return entire_graph
     
+    
     def get_pathway_members(self, pathway_ids: list, search_pathways_by=None, only_entities=None,
                                with_properties=None):
         """
@@ -437,8 +438,11 @@ class PSNetworx(DataModel):
                 return ResnetGraph()
 
 
-    def get_pathway_components(self, prop_vals: list, search_by_property: str, retrieve_rel_properties:set=set(), retrieve_ent_properties:set=set()):
-
+    def get_pathway_components(self, by_pathway_props:list, in_prop_type:str, retrieve_rel_properties:set=set(), retrieve_ent_properties:set=set()):
+        """
+        returns ResnetGraph containing graphs merged from all pathways found\n
+        with by_pathway_props+in_prop_type
+        """
         ent_props = retrieve_ent_properties
         ent_props.add('Name')
 
@@ -446,40 +450,35 @@ class PSNetworx(DataModel):
         rel_props.update(['Name','RelationNumberOfReferences'])
          
         rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
-        accumulate_pathways = ResnetGraph()
-        for pathway_prop in prop_vals:
+        subgraph_relation_ids = set()
+        for pathway_prop in by_pathway_props:
+            loaded_node_ids = set(self.Graph.nodes())
+            loaded_relation_ids = set(self.Graph._relations_ids())
 
-            rel_q = rel_query.format(propName=search_by_property,pathway=pathway_prop)
-            pathway_relations_ids_only = self.load_graph_from_oql(rel_q, relation_props=[],get_links=True,add2self=False)
-            new_relations = pathway_relations_ids_only.subtract(self.Graph)
-            exist_relations = self.Graph.intersect(pathway_relations_ids_only)
-            # must subtract from self.Graph to keep references
+            rel_q = rel_query.format(propName=in_prop_type,pathway=pathway_prop)
+            pathway_id_only_graph = self.load_graph_from_oql(rel_q, relation_props=[],get_links=True,add2self=False)
+            pathway_relation_ids = set(pathway_id_only_graph._relations_ids())
+            subgraph_relation_ids.update(pathway_relation_ids)
+            new_relation_ids = pathway_relation_ids.difference(loaded_relation_ids)
     
-            if new_relations:
-                new_relation_ids = new_relations._relations_ids()
+            if new_relation_ids:
                 oql_query = OQL.get_relations_by_props(list(new_relation_ids),['id'])
-                new_relations = self.load_graph_from_oql(oql_query,relation_props=list(rel_props))
-
-            pathway_relations = nx.compose(exist_relations,new_relations)
-            
-            exist_node_ids = set(exist_relations)
-            if exist_node_ids:
-                existing_nodes_str = ','.join(map(str,exist_node_ids))
-                ent_q = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = {pathway}) AND NOT (id = ({exist_nodes}))'
-                ent_q = ent_q.format(propName=search_by_property,pathway=pathway_prop,exist_nodes=existing_nodes_str)
-            else:
-                ent_q = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
-                ent_q = ent_q.format(propName=search_by_property,pathway=pathway_prop)
-
-            pathway_nodes = self.load_graph_from_oql(ent_q,entity_props=list(ent_props), get_links=False)
-            pathway_graph = nx.compose(pathway_nodes, pathway_relations)
-            accumulate_pathways = nx.compose(accumulate_pathways,pathway_graph)
-
-        return accumulate_pathways
+                new_relation_graph = self.load_graph_from_oql(oql_query,relation_props=list(rel_props))
+                # new_relation_graph is now fully loaded with desired rel_props
+                # still need desired props for new nodes that did not exist in self.Graph
+                new_nodes_ids = set(new_relation_graph.nodes()).difference(loaded_node_ids)
+                entity_query = OQL.get_objects(list(new_nodes_ids))
+                pathway_nodes = self.load_graph_from_oql(entity_query,entity_props=list(ent_props), get_links=False)
+        
+        rels4subgraph = [rel for i,rel in self.id2relation.items() if i in subgraph_relation_ids]
+        return_subgraph = self.Graph.subgraph_by_rel_ids(rels4subgraph)
+        return return_subgraph
 
 
     def to_rnef(self, in_graph=None,add_rel_props:dict=None,add_pathway_props:dict=None):
-        # add_rel_props structure {PropName:[PropValues]}
+        """
+        # add_rel_props = {PropName:[PropValues]}
+        """
         if not isinstance(in_graph,ResnetGraph): in_graph=self.Graph
-        all_rnef_props = set(self.RNEFnameToPropType.keys()) #set(list(self.RNEFnameToPropType.keys())+REF_PROPS)
+        all_rnef_props = set(self.RNEFnameToPropType.keys())
         return in_graph.to_rnef(list(all_rnef_props),list(all_rnef_props),add_rel_props,add_pathway_props)

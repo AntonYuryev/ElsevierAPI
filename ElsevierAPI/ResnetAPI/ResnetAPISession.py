@@ -5,9 +5,13 @@ from datetime import timedelta
 from .ZeepToNetworkx import PSNetworx
 from .ResnetGraph import ResnetGraph,PSObject,PSRelation,CHILDS,REFCOUNT
 from .PathwayStudioGOQL import OQL
+from .Zeep2Experiment import Experiment,Sample
 from ..ETM_API.references import SENTENCE_PROPS
 from xml.dom import minidom
 from ..pandas.panda_tricks import df
+import glob
+from pathlib import Path
+import os
 
 
 class APISession(PSNetworx):
@@ -26,6 +30,7 @@ class APISession(PSNetworx):
     clear_graph_cache = False
     __getLinks = True
     APIconfig = dict()
+    data_dir = ''
 
     def __init__(self,url, username, password):
         super().__init__(url, username, password)
@@ -70,7 +75,7 @@ class APISession(PSNetworx):
             self.DumpFiles = []
         self.DumpFiles.append(dump_fname)
 
-#########################   PROCESSING, RETRIEVAL   ##################################
+#########################  PAGE BY PAGE PROCESSING, RETRIEVAL   ##################################
     def __init_session(self):
         self.__set_get_links()
         obj_props = self.relProps if self.__getLinks else self.entProps
@@ -230,7 +235,7 @@ class APISession(PSNetworx):
 
 
 
-########################### GET RETRIEVE GET RETRIEVE GET  ################################################
+###########################GET GET RETRIEVE GET RETRIEVE GET GET ################################################
     def get_saved_results(self, results_names:list, get_links=True):
         query_names = OQL.join_with_quotes(results_names)
         oql_query = 'SELECT Result WHERE Name = ({names})'
@@ -262,7 +267,7 @@ class APISession(PSNetworx):
         print('Retrieving PPI network for %d proteins' % (len(graph_proteins)))
         start_time = time.time()
         ppi_graph = self.get_ppi(graph_proteins, self.relProps, self.entProps)
-        self.to_csv(fout, in_graph=ppi_graph)
+        self.to_csv(self.data_dir+fout, in_graph=ppi_graph)
         print("PPI network with %d relations was retrieved in %s ---" % (
             ppi_graph.size(), self.execution_time(start_time)))
         return ppi_graph
@@ -305,6 +310,12 @@ class APISession(PSNetworx):
 
 
     def map_props2objs(self, using_values:list, in_properties:list,map2types=[],case_insensitive=False):
+        """
+        returns:
+            propval2objs = {prop_value:[PSObject]}
+            objid2propval = {node_id:[prop_values]}
+        where prop_value is from 'using_values'
+        """
         propval2objs,objid2propval = self.Graph.get_props2obj_dic(using_values, in_properties,case_insensitive)
         need_db_mapping = set(using_values).difference(propval2objs.keys())
         self.add_ent_props(in_properties)
@@ -437,13 +448,13 @@ class APISession(PSNetworx):
         if not in_graph: in_graph = self.Graph
         relation_count = in_graph.number_of_edges()
         print('Dumping graph with %d edges and %d nodes into %s file' % 
-                (relation_count,in_graph.number_of_nodes(),fname) )
+                (relation_count,in_graph.number_of_nodes(),self.data_dir+fname) )
         
         resnets_cnt = math.ceil(relation_count/resnet_size)
         print('%s cache file will have %d <resnet> sections with %d relations' % 
-                (fname, resnets_cnt, resnet_size))
+                (self.data_dir+fname, resnets_cnt, resnet_size))
 
-        with open(fname, 'w', encoding='utf=8') as f:
+        with open(self.data_dir+fname, 'w', encoding='utf=8') as f:
             resnet = ResnetGraph()
             f.write('<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\n<batch>\n')
             for regulatorID, targetID, e in in_graph.edges(data='relation'):
@@ -458,6 +469,139 @@ class APISession(PSNetworx):
             rnef_str = self.pretty_xml(rnef_str,no_declaration=True)
             f.write(rnef_str)
             f.write('</batch>')
+
+
+    @staticmethod
+    def __make_file_name(folder_or_object_name: str):
+        new_str = list(folder_or_object_name)
+        for i in range(0, len(new_str)):
+            if new_str[i] in {'>', '<', '|','/'}:
+                new_str[i] = '-'
+            if new_str[i] in {':'}:
+                new_str[i] = '_'
+        return "".join(new_str)
+
+
+    def find_folder(self, folder_name:str):
+        folder_name_ = self.__make_file_name(folder_name)
+        longest_path = str()
+        for dirpath, dirnames, filenames in os.walk(self.data_dir):
+            for dirname in dirnames:
+                if dirname == folder_name_:
+                    if len(dirpath+dirname)+1 > len(longest_path):
+                        longest_path = dirpath+'/'+dirname +'/'
+
+        return longest_path
+
+
+    def dump_path(self, of_folder:str, in2parent_folder=''):
+        # finding directory
+        my_dir = self.find_folder(of_folder)
+        if not my_dir:
+            if in2parent_folder:
+                parent_dir = self.find_folder(in2parent_folder)
+                if parent_dir:
+                    my_dir = parent_dir+self.__make_file_name(of_folder)+'/'
+                    os.mkdir(my_dir) 
+                else:
+                    my_dir = self.data_dir+self.__make_file_name(in2parent_folder)+'/'+self.__make_file_name(of_folder)+'/'
+                    os.mkdir(my_dir)
+            else:
+                my_dir = self.data_dir+self.__make_file_name(of_folder)+'/'
+                os.mkdir(my_dir)
+
+        return my_dir
+
+
+    def count_files(self, in_folder:str,in2parent_folder='', with_extension='rnef'):
+        folder_path = self.dump_path(in_folder,in2parent_folder)
+        listing = glob.glob(folder_path+'*.' + with_extension)
+        if listing:
+            return folder_path,len(listing)
+        else:
+            return folder_path,1
+
+    def dump_base(self,of_folder:str):
+        return 'content of '+ APISession.__make_file_name(of_folder)+'_'
+
+    def dumpfile(self,of_folder:str,in2parent_folder='',new=False):
+        folder_path,file_count = self.count_files(of_folder,in2parent_folder)
+        if new:
+            file_count += 1
+        return folder_path + self.dump_base(of_folder)+str(file_count)+'.rnef'
+
+    def dump_rnef(self,rnef_xml:str,to_folder='',in2parent_folder='',max_rnef_size=100000000,can_close=True):
+        write2 = self.dumpfile(to_folder,in2parent_folder)
+        if Path(write2).exists():
+            f = open(write2,'a',encoding='utf-8')
+            f.write(rnef_xml)
+            file_size = os.path.getsize(write2)
+            if file_size > max_rnef_size and can_close:
+                f.write('</batch>')
+                f.close()
+
+                new_write2 = self.dumpfile(to_folder,in2parent_folder,new=True)
+                f = open(new_write2,'w',encoding='utf-8')
+                f.write('<batch>\n')
+            f.close()
+        else:
+            with open(write2,'w',encoding='utf-8') as f:
+                f.write('<batch>\n'+rnef_xml)
+
+
+    def close_rnef_dump(self,to_folder='',in2parent_folder=''):
+        last_dump_file = self.dumpfile(to_folder,in2parent_folder)
+        f = open(last_dump_file,'a',encoding='utf-8')
+        f.write('</batch>')
+        f.close()
+
+
+    
+    #####################   EXPERIMENT EXPERIMENT EXPERIMENT EXPERIMENT ###########################
+    def map_experiment(self, exp:Experiment):
+        identifier_name = exp.identifier_name()
+        identifier_names = identifier_name.split(',')
+        identifiers = exp.list_identifiers()
+        map2objtypes = exp['ObjTypeName']
+        identifier2objs, objid2prop = self.map_props2objs(identifiers,identifier_names,map2objtypes)
+
+        unmapped_identifiers = set(identifiers).difference(set(identifier2objs.keys()))
+        print('Following experiment identifiers were not mapped:\n%s' % '\n'.join(unmapped_identifiers))
+
+        identifiers_columns = exp.identifiers.columns.to_list()
+        mapped_entities_pd = df(columns = [identifier_name,'URN'])
+        row = 0
+        for i, psobj_list in identifier2objs.items():
+            for psobj in psobj_list:
+                mapped_entities_pd.at[row,identifier_name] = i
+                mapped_entities_pd.at[row,'URN'] = psobj['URN'][0]
+                row += 1
+        
+        samples_pd = exp.samples2pd()
+        new_data = mapped_entities_pd.merge(samples_pd,'outer', on=identifier_name)
+        new_data = new_data.drop('URN_y', axis=1)
+        new_data.rename(columns={'URN_x':'URN'},inplace=True)
+        mapped_exp = Experiment(exp)
+        mapped_exp.identifiers = new_data[identifiers_columns]
+
+        column_counter = len(identifiers_columns)
+        for sample in exp.get_samples():
+            mapped_sample = Sample(sample)
+            mapped_sample.data['value'] = samples_pd.iloc[:,column_counter]
+            if sample.has_pvalue():
+                column_counter += 1
+                mapped_sample.data['pvalue'] = samples_pd.iloc[:,column_counter]
+            mapped_exp._add_sample(mapped_sample)
+
+        print('%d out of %d entities were mapped in %s'%
+                (len(identifier2objs), len(exp.identifiers),exp.name()))
+
+        return mapped_exp
+
+
+            
+
+             
 
 
     

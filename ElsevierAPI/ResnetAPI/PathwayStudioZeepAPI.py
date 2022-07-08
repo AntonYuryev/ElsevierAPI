@@ -3,6 +3,7 @@ import logging
 import sys
 from .PathwayStudioGOQL import OQL
 from ..pandas.panda_tricks import df
+from zeep import exceptions
 
 
 def configure_logging(logger):
@@ -81,17 +82,14 @@ class DataModel:
         return self.__object_types_by_class_id(1)
 
     def load_folder_tree(self):
+        """
+        returns {folder_id:folder}
+        """
         folders = self.SOAPclient.service.GetFoldersTree(0)
         id2folders = dict()
         for folder in folders:
             folder_id = folder['Id']
-            folder_name = folder['Name']
-            id2folders[folder_id] = [folder]
-            # different folders may have the same name:
-            if folder_name in id2folders.keys():
-                id2folders[folder_name].append(folder)
-            else:
-                id2folders[folder_name] = [folder]
+            id2folders[folder_id] = folder
         
         return id2folders
 
@@ -262,11 +260,19 @@ class DataModel:
 
         return obj_props
 
-    def get_layout(self, PathwayId):
-        # GetObjectAttachment = self.SOAPclient.get_type('ns0:GetObjectAttachment')
-        result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
-        return str(result['Attachment'].decode('utf-8')) if 'Attachment' in result and result['Attachment'] is not None else ''
 
+    def get_layout(self, PathwayId):
+        for i in range (0,5):
+            try:
+                result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
+                if 'Attachment' in result and result['Attachment'] is not None:
+                    return str(result['Attachment'].decode('utf-8')) 
+                else: 
+                    return ''
+            except exceptions.Fault: continue
+
+        result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
+        
 
     def get_data(self, OQLrequest, retrieve_props:list=None, getLinks=True):
         retrieve_props = ['Name', 'RelationNumberOfReferences'] if retrieve_props is None else retrieve_props
@@ -277,10 +283,11 @@ class DataModel:
         rp.GetLinks = getLinks
         # setting objectType name
         obj_props = self.oql_response(OQLrequest, rp)
+        if type(obj_props) == type(None):
+            return None
         if type(obj_props.Objects) == type(None):
             # print('Your SOAP response is empty! Check your OQL query and try again\n')
             return None
-
         if len(obj_props.Objects.ObjectRef) == 0:
             return None
 
@@ -542,7 +549,6 @@ class DataModel:
 
 
     def __experiment_samples(self,experiment_id:int):
-        from zeep import exceptions
         for i in range (0,3):
             try:
                 result = self.SOAPclient.service.GetExperiment(experiment_id)
@@ -550,13 +556,16 @@ class DataModel:
             except exceptions.Fault: continue
 
 
-    def __get_experiment_urns(self,experiment_id:int, experiment_size:int):
+    def __get_experiment_identifiers(self,experiment_id:int, experiment_size:int):
         """
-        returns set of gene URNs mapped in experiment
+        returns dataframe of identifiers for Experiment
         """
         results = self.SOAPclient.service.GetExperimentRowAttributes(experiment_id, [], 0, experiment_size)
         urns = [a['EntityURN'] for a in results]
-        return urns
+        ids = [a['OriginalGeneID'] for a in results]
+        assert(len(urns) == len(ids))
+        identifiers = df.from_dict({'OriginalGeneID':ids,'URN':urns})
+        return identifiers
 
 
     def _fetch_experiment_data(self, experiment_name:str, only_log_ratio_samples=True):
@@ -574,18 +583,18 @@ class DataModel:
 
         experiment_id = experiment_zobj.Objects.ObjectRef[0]['Id']
         experiment = self.__experiment_samples(experiment_id)
-        experiment_urns = self.__get_experiment_urns(experiment_id, experiment.RowsCount)
+        experiment_identifiers = self.__get_experiment_identifiers(experiment_id, experiment.RowsCount)
         
         sample_values = list()
         sample_id = 0
         if only_log_ratio_samples:
             for sample in experiment.SampleDefinitions.SampleDefinition:
                 if sample['Type'] == 1 and sample['Subtype'] == 2:
-                    sample_values.append(self.SOAPclient.service.GetExperimentValues(experiment_id,sample_id, 0, len(experiment_urns)))
+                    sample_values.append(self.SOAPclient.service.GetExperimentValues(experiment_id,sample_id, 0, len(experiment_identifiers)))
                 sample_id += 1
         else:
             for sample in experiment.SampleDefinitions.SampleDefinition:
-                sample_values.append(self.SOAPclient.service.GetExperimentValues(experiment_id,sample_id, 0, len(experiment_urns)))
+                sample_values.append(self.SOAPclient.service.GetExperimentValues(experiment_id,sample_id, 0, len(experiment_identifiers)))
                 sample_id += 1
   
-        return experiment, experiment_urns, sample_values
+        return experiment, experiment_identifiers, sample_values

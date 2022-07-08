@@ -239,7 +239,13 @@ def compile_sbgn(scene, classmap):
         effect = scene['glyphs'][_id]['label']
         if effect not in ['negative', 'positive']:
             effect = 'default'
-        arc.attrib['class'] = classmap['controls'][scene['glyphs'][_id]['class']][effect]
+        sc_class = scene['glyphs'][_id]['class']
+        try:
+            arc.attrib['class'] = classmap['controls'][sc_class][effect]
+        except KeyError:
+            print('!!!Relation "%s" with effect %s is not specified in rnef2sbgn_map.xml!!!' % (sc_class,effect))
+            continue
+
         participants = [(participant_id, scene['arcs'][_id][participant_id]['endpoint']) for participant_id in
                         scene['arcs'][_id]]
         participants.sort(key=lambda x: x[1])
@@ -282,19 +288,28 @@ def make_file_name(pathwayName: str):
     for i in range(0, len(new_str)):
         if new_str[i] in {'>', '<', '|','/'}:
             new_str[i] = '-'
+        if new_str[i] in {':'}:
+            new_str[i] = '_'
     return "".join(new_str)
 
 
-def rnef2sbgn_str(rnef: str, classmapfile: str, language='activity flow', plot_scale=30):
+def rnef2sbgn_str(rnef:str, classmapfile='ElsevierAPI/ResnetAPI/sbgn/rnef2sbgn_map.xml', language='activity flow', plot_scale=30):
+    #pretty_rnef = minidom.parseString(rnef).toprettyxml(indent='   ')
     scene = read_scene(rnef, plot_scale)
     classmap = read_classmap(classmapfile, language)
     sbgn = compile_sbgn(scene, classmap)
     return minidom.parseString(tostring(sbgn)).toprettyxml(indent='   ')
 
 
-def do_the_job(filename_in, dir_out, language, plot_scale, classmap='rnef2sbgn_map.xml'):
+def to_sbgn_file(rnef:str, fname:str, outdir:str):
+    sbgn_xml = rnef2sbgn_str(rnef)
+    fout_name = make_file_name(fname)
+    with open(outdir+fout_name+'.sbgn', 'w', encoding='utf-8') as f:
+        f.write(sbgn_xml)
+
+
+def do_the_job(filename_in, dir_out, language, plot_scale, classmap='sbgn/rnef2sbgn_map.xml'):
     rnef = parse(filename_in).getroot()
-    # batch = rnef.find('batch')
     for resnet in rnef.findall('./resnet'):
         try:
             pathway_name = str(resnet.attrib['name'])

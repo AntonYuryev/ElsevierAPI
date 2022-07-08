@@ -52,6 +52,29 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             self[PropId] = [PropValue]
 
+    def name(self):
+        try:
+            return self['Name'][0]
+        except KeyError:
+            raise KeyError
+
+    def urn(self):
+        try:
+            return self['URN'][0]
+        except KeyError:
+            raise KeyError
+
+    def id(self):
+        try:
+            return self['Id'][0]
+        except KeyError:
+            raise KeyError
+
+    def objtype(self):
+        try:
+            return self['ObjTypeName'][0]
+        except KeyError:
+            raise KeyError
 
     def update_with_value(self, prop_id:str, new_value):
         try:
@@ -73,7 +96,6 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
 
     def data2str(self, columnPropNames: list, col_sep='\t', cell_sep=';', endOfline='\n'):
-        # assumes all properties in columnPropNames were fetched from Database otherwise will crash
         table_row = str()
         for propName in columnPropNames:
             try:
@@ -522,5 +544,17 @@ class PSRelation(PSObject):
         except KeyError:
                 for ref in self.References:
                     ref.set_weight(0.0)
+
+    def effect_sign(self): 
+        try:
+            eff = self['Effect'][0]
+            if eff == 'positive':
+                return 1
+            elif eff == 'negative':
+                return -1
+            else: 
+                return 0
+        except KeyError: 
+            return 0
 
     

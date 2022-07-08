@@ -45,7 +45,8 @@ class TargetIndications(SemanticSearch):
         self.child2parent = dict() # child2parent = {indication:parent_ontology_category}
         
 
-    def _target_names(self): return ','.join([x['Name'][0] for x in self.Drug_Targets])
+    def _target_names(self): 
+        return ','.join(self.param['target_names'])
 
 
     def _partner_class(self):
@@ -134,7 +135,7 @@ class TargetIndications(SemanticSearch):
         indics = ','.join(self.indication_types)
         mode = ' antagonists' if self.target_activate_indication else ' agonists'
         rep_pred = 'suggested ' if self.strict_mode else 'suggested,predicted ' 
-        return self.param['data_dir']+rep_pred+ indics+' for '+ self._target_names() + mode
+        return str(self.param['data_dir']+rep_pred+ indics+' for '+ self._target_names() + mode)
 
 
     def GVindications(self):
@@ -698,4 +699,4 @@ class TargetIndications(SemanticSearch):
         self.score_semantics()
 
         self.normalize_counts(bibliography=self.param['add_bibliography'])
-        print('Repurposing of %s was done in %s' % (self.fname_prefix(), self.execution_time(start_time)))
+        print('Repurposing of %s was done in %s' % (self._get_report_name(), self.execution_time(start_time)))

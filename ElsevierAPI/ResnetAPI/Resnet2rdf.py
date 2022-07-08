@@ -74,7 +74,7 @@ class ResnetRDF(rdf.Graph):
         if urn[8:19]  == 'gocellproc:': return self.make_uri('go',urn[19:])
         
         return ''
-        return rdf.URIRef('http://www.google.com/'+quote(node['Name'][0]))
+        #return rdf.URIRef('http://www.google.com/'+quote(node['Name'][0]))
 
 
     def add_reference(self,ref:Reference, to_rel_uri:str):
@@ -83,7 +83,8 @@ class ResnetRDF(rdf.Graph):
             try:
                 id_value = ref.Identifiers[i]
                 ref_uri =  self.make_uri(REFID2PREFIX[i], id_value)
-                ref_rel_uri = to_rel_uri+':'+i+':'+id_value
+                ref_rel_uri = to_rel_uri+':'+i.replace(' ','_')+':'+id_value
+                # uri cannot have whitespaces
                 was_added = True
                 break
             except KeyError: continue
@@ -310,6 +311,14 @@ class ResnetRDF(rdf.Graph):
             json_dict = json.loads(byte_str.decode("utf-8"))
             json_compacted = jsonld.compact(json_dict, ctx)
             json.dump(json_compacted, f, indent=2, sort_keys=True,ensure_ascii=False)
+
+
+    def to_jsons(self,format="json-ld"):
+        ctx = self.get_context()
+        byte_str = self.serialize(format=format,context=ctx,encoding='utf-8')
+        json_dict = json.loads(byte_str.decode("utf-8"))
+        json_compacted = jsonld.compact(json_dict, ctx)
+        return json.dumps(json_compacted, indent=2, sort_keys=True,ensure_ascii=False)
 
 
     @classmethod
