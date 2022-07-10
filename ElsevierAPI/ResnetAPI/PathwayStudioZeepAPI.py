@@ -1,6 +1,7 @@
 import pandas as pd
 import logging
 import sys
+from time import sleep
 from .PathwayStudioGOQL import OQL
 from ..pandas.panda_tricks import df
 from zeep import exceptions
@@ -27,6 +28,7 @@ class DataModel:
         from zeep.cache import SqliteCache
         from zeep.transports import Transport
         session = Session()
+        #session.verify = False
         session.auth = HTTPBasicAuth(username, password)
         transport = Transport(cache=SqliteCache(), session=session)
         from zeep import Client, Settings
@@ -40,6 +42,7 @@ class DataModel:
         except Exception as error:
             self.logger.error("Pathway Studio server connection failed: {error}".format(error=error))
             raise ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
+
 
     def __load_model(self):
         object_types = self.SOAPclient.service.GetObjectTypes()
@@ -145,13 +148,17 @@ class DataModel:
                 return result
             except exceptions.Fault: continue
 
+
     def oql_response(self, OQLquery, result_param):
         from zeep import exceptions
-        for i in range (0,3):
+        for i in range (0,10):
             try:
                 result = self.SOAPclient.service.OQLSearch(OQLquery, result_param)
                 return result
-            except exceptions.Fault: continue
+            except exceptions.Fault:
+                print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in 10 sec' % (OQLquery,i+2))
+                sleep(10)
+                continue
      
 
     def result_get_data(self, result_param):

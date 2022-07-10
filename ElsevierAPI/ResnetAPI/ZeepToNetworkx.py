@@ -467,8 +467,9 @@ class PSNetworx(DataModel):
                 # new_relation_graph is now fully loaded with desired rel_props
                 # still need desired props for new nodes that did not exist in self.Graph
                 new_nodes_ids = set(new_relation_graph.nodes()).difference(loaded_node_ids)
-                entity_query = OQL.get_objects(list(new_nodes_ids))
-                pathway_nodes = self.load_graph_from_oql(entity_query,entity_props=list(ent_props), get_links=False)
+                if new_nodes_ids:
+                    entity_query = OQL.get_objects(list(new_nodes_ids))
+                    self.load_graph_from_oql(entity_query,entity_props=list(ent_props), get_links=False)
         
         rels4subgraph = [rel for i,rel in self.id2relation.items() if i in subgraph_relation_ids]
         return_subgraph = self.Graph.subgraph_by_rel_ids(rels4subgraph)
