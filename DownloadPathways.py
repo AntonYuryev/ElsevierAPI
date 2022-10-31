@@ -4,6 +4,7 @@ from ElsevierAPI.ResnetAPI.FolderContent import FolderContent
 from ElsevierAPI import load_api_config 
 import csv
 from contextlib import redirect_stdout
+from ElsevierAPI.ResnetAPI.Resnet2rdf import THRESHOLD
 
 if __name__ == "__main__":
     instructions = '''
@@ -14,13 +15,14 @@ if __name__ == "__main__":
     '''
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,epilog=textwrap.dedent(instructions))
     parser.add_argument('-i', '--infile', type=str, default='')
-    parser.add_argument('-x', '--format', type=str, default='RNEF', choices=['RNEF', 'SBGN', 'JSON-LD'])
+    parser.add_argument('-x', '--format', type=str, default='RNEF', choices=['RNEF','SBGN','JSON-LD','json'])
     parser.add_argument('-f', '--folder', type=str, default='')
     parser.add_argument('-r', '--resume_from', type=str, default='')
     args = parser.parse_args()
 
     api_cofig_file = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
     ps_api = FolderContent(load_api_config(api_cofig_file))
+    ps_api.add_rel_props([THRESHOLD])
 
     if args.infile:
         urnList = [u[0] for u in csv.reader(open(args.infile,"r"), delimiter="\t")]
