@@ -142,7 +142,7 @@ if __name__ == "__main__":
          if dcp.perform_semantic_search():
             dcp.add2writer(target_report,dcp._worksheet_prefix())
             dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
-            dcp._clear_()
+            dcp.clear()
 
     # to find biological processes inhibited by input compound
     dcp.param['indication_types'] = ['CellProcess']
@@ -162,14 +162,22 @@ if __name__ == "__main__":
         if dcp.perform_semantic_search():
             dcp.add2writer(target_report,dcp._worksheet_prefix())
             dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
-            dcp._clear_()
+            dcp.clear()
 
-    other_processes = dcp.rn2pd(dcp.other_effects(),dcp.param['input_compound'])
-    other_processes.to_excel(target_report, sheet_name='Possbl.CellProcess', index=False)
+    #other_processes = dcp.rn2df(dcp.other_effects(),dcp.param['input_compound'])
+    #other_processes.to_excel(target_report, sheet_name='Possbl.CellProcess', index=False)
+    dcp.param['indication_types'] = ['CellProcess']
+    other_effects_graph_cellproc = dcp.other_effects()
+    other_indications_cellproc = other_effects_graph_cellproc.snippets2df(df_name='Possbl.CellProcess')
+    dcp.add2report(other_indications_cellproc)
+
+   # other_indications = dcp.rn2df(dcp.other_effects(),dcp.param['input_compound'])
+   #other_indications.to_excel(target_report, sheet_name='Possbl.Diseases', index=False)
 
     dcp.param['indication_types'] = ['Disease']
-    other_indications = dcp.rn2pd(dcp.other_effects(),dcp.param['input_compound'])
-    other_indications.to_excel(target_report, sheet_name='Possbl.Diseases', index=False)
+    other_effects_graph_disease = dcp.other_effects()
+    other_indications_dis = other_effects_graph_disease.snippets2df(df_name='Possbl.Diseases')
+    dcp.add2report(other_indications_dis)
 
     target_report.save()
     raw_data_cache.save()

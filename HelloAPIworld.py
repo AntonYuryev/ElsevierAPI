@@ -1,15 +1,16 @@
 from ElsevierAPI import open_api_session
-from ElsevierAPI.ETM_API.references import PS_ID_TYPES,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS,RELATION_PROPS
+#from ElsevierAPI.ETM_API.references import PS_ID_TYPES,PS_BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS,RELATION_PROPS
+from ElsevierAPI.ResnetAPI.ResnetAPISession import SNIPPET_PROPERTIES
 
 # ps_api retreives data from the database and loads it into APISession.Graph derived from Networkx:MultiDiGraph 
-ps_api = open_api_session(api_config_file='')#specify here path to your APIconfig file. 
+ps_api = open_api_session(api_config_file='',what2retrieve=SNIPPET_PROPERTIES)#specify here path to your APIconfig file. 
 #If api_config_file not specified the default APIConfig from __init__.py will be used
 
-all_relation_properties = list(PS_ID_TYPES)+list(PS_BIBLIO_PROPS)+list(SENTENCE_PROPS)+list(CLINTRIAL_PROPS)+list(RELATION_PROPS)
+#all_relation_properties = list(PS_ID_TYPES)+list(PS_BIBLIO_PROPS)+list(SENTENCE_PROPS)+list(CLINTRIAL_PROPS)+list(RELATION_PROPS)
 
-ps_api.add_rel_props(['Name','Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType','Sentence','Title','PMID','DOI'])
+#ps_api.add_rel_props(['Name','Effect','Mechanism','ChangeType','BiomarkerType','QuantitativeType','Sentence','Title','PMID','DOI'])
 #add_rel_props specifies what attributes to retreive for relations from the database. The list order defines the column order in the dump file
-ps_api.add_ent_props(['Name','Description','URN'])
+ps_api.add_ent_props(['Description','Alias'])
 #add_ent_props specifies what attributes to retreive for nodes (entities) from the database.The list order defines the column order in the dump file
 ps_api.clear_graph_cache = False #set it to True for large downloads
 #by default ps_api.clear_graph_cache = False to keep all downloaded data in ps_api.Graph
@@ -29,6 +30,7 @@ if __name__ == "__main__":
 
     my_goql_query = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE Name = PKC) AND NeighborOf (SELECT Entity WHERE Name = PDPK1)'
     my_graph = ps_api.process_oql(my_goql_query,request_name, debug=False, flush_dump=True)
+    my_graph.name = ''
 
     ps_api.csv_delimeter = '\t'
     ps_api.to_csv('my_graph.tsv')

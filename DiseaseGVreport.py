@@ -4,15 +4,17 @@ from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 import xlsxwriter
 import urllib.parse
 import networkx as nx
-from  ElsevierAPI.ResnetAPI.Resnet2rdf import ResnetGraph,ResnetRDF,PSObject, PSRelation
+from  ElsevierAPI.ResnetAPI.Resnet2rdf import ResnetGraph,ResnetRDF,PSObject,PSRelation
 from ElsevierAPI.ETM_API.references import PUBYEAR
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
+from ElsevierAPI.NCBI.pubmed import pubmed_hyperlink
 
 
 api_config = str()
-ps_api = open_api_session(api_config) # specify here path to your APIconfig file. Defaults to ./ElsevierAPI/APIconfig.json
+#api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
+ps_api = open_api_session(api_config)
 ps_api.add_rel_props(['PMID',PUBYEAR])
 ps_api.PageSize = 1000
 
@@ -26,7 +28,7 @@ def read_disease_urns(file_name:str):
 def get_disease_childs(disease_name:str):
     ontology_branch_graph = ps_api.child_graph([disease_name],['Name','Alias'])
     branch_nodes = [PSObject(node) for i,node in ontology_branch_graph.nodes(data=True)]
-    return [x['URN'][0] for x in branch_nodes]
+    return [x.urn() for x in branch_nodes]
 
 
 def map_gvid2genes(disease2gvs:ResnetGraph):
@@ -92,11 +94,12 @@ def minor_allele(rsids:list):
 
     return snp2allele2freq
 
-DATA_DIR = 'D:/Python/Quest/raw/'
+DATA_DIR = 'D:/Python/PMI/'
 
 if __name__ == "__main__":
-    disease_name = 'Hepatitis'
+    disease_name = 'Myocardial Infarction'#'Atrial Fibrillation'#'Pulmonary Hypertension' #'diabetes mellitus' #'uterine cancer'# 
     disease_dir = DATA_DIR+disease_name+'/'
+    #disease_urns = read_disease_urns('D:/Python/ENTELLECT_API/Data/hGraph/Focus uterine cancers from PS.txt')
     disease_urns = get_disease_childs(disease_name)
 
     oql_query = OQL.expand_entity(disease_urns,['URN'], expand2neighbors=['GeneticVariant'])
@@ -147,26 +150,20 @@ if __name__ == "__main__":
             else:
                 worksheet.write_string(row_counter, 2, gv_node['Name'][0]) # column #3
 
-
             refcount = rel.get_reference_count()
             last_refs = rel._get_refs(ref_limit=5)
             rel_pmids = [x.get_doc_id()[1] for x in last_refs]
-            ids_str = ','.join(rel_pmids)
             
             if add_hyperlinks:
-                base_url = 'https://pubmed.ncbi.nlm.nih.gov/?'
-                params = {'term':ids_str}
-                data = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-                formula = '=HYPERLINK("'+base_url+data+'",\"{refcount}\")'.format(refcount=refcount)
+                formula = pubmed_hyperlink(rel_pmids,refcount)
                 ref_col_value = refcount
                 worksheet.write_formula(row_counter, 3, formula) # column #4
             else:
-                worksheet.write_string(row_counter, 3, ids_str) # column #4
-                ref_col_value = ids_str
-
+                ref_col_value = ','.join(rel_pmids)
+                worksheet.write_string(row_counter, 3, ref_col_value) # column #4
+                
             worksheet.write_string(row_counter, 3, allele) # column #5
             worksheet.write_string(row_counter, 3, str(freq)) # column #6
-            
 
             table2sort.loc[row_counter] = [disease_node['Name'][0],gene_names,str(gv_node['Name'][0]),
                                         int(rel['RelationNumberOfReferences'][0]),ref_col_value,allele,freq]
@@ -177,6 +174,5 @@ if __name__ == "__main__":
 
     ResnetRDF.fromResnetGraph(disease2gvs).to_json(disease_dir+disease_name+' GVs.jsonld')
     #table2sort = table2sort.sort_values(by=['Gene name','Disease'])
-    table2sort.sort_values(by=['#References'],ascending=False, inplace=True)
+    table2sort.sort_values(by=['#References','Allele frequency'],ascending=[False,True], inplace=True)
     table2sort.to_csv(disease_dir+disease_name+' GVs.tsv',sep='\t', index=False, float_format='%g')
-

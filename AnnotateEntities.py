@@ -19,12 +19,14 @@ if __name__ == "__main__":
     map2attributes = list(annotation_pd[mapping_property])
 
     api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigLanzaTech.json'
+    api_config = ''
     ps_api = open_api_session(api_config)
-    ps_api.map_props2objs(map2attributes,[mapping_property])
+    ps_api.map_props2objs(map2attributes,[mapping_property]) # have to fetch objects for mapping first
 
-    annotation_cols = annotation_pd.columns[1:]
+    annotation_cols = annotation_pd.columns.to_list()[1:]
     for col_name in annotation_cols:
         map_dict = pd.Series(annotation_pd[col_name].values,index=annotation_pd[mapping_property]).to_dict()
+        map_dict = {str(k):[str(v)] for k,v in map_dict.items()}
         ps_api.Graph.add_node_annotation(with_new_prop=col_name,map2prop=mapping_property,using_map=map_dict)
 
     ps_api.add_ent_props(annotation_cols)
