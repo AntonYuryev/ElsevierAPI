@@ -1,7 +1,7 @@
 from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 import time
 from ElsevierAPI import open_api_session
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL 
 from ElsevierAPI.ResnetAPI.NetworkxObjects import BIBLIO_PROPS,PS_ID_TYPES
 from  ElsevierAPI.ResnetAPI.rnef2sbgn import make_file_name
 import xml.etree.ElementTree as et
@@ -25,10 +25,8 @@ def retreive_clinical_trials(drugs_name_file=None):
         print('Read %s with %d drug names' %(drugs_name_file,len(drug_names)))
 
         search_by_prop, drug_names_str = OQL.get_search_strings(['Name','Alias'],drug_names)
-        oql_query =  oql_query + ' AND NeighborOf (SELECT Entity WHERE (Name,Alias)= ({names}))'
-        oql_query = oql_query.format(names = drug_names_str)
-        request_name = 'Find clinical trials for drugs in {fname}'
-        request_name = request_name.format(fname=drugs_name_file)
+        oql_query =  oql_query + f' AND NeighborOf (SELECT Entity WHERE (Name,Alias)= ({drug_names_str}))'
+        request_name = f'Find clinical trials for drugs in {drugs_name_file}'
 
     return ps_api.process_oql(oql_query,request_name, debug=False)
 
@@ -69,7 +67,7 @@ for drug in drug_with_targets:
                         (y['ObjTypeName'][0] in ['Protein','Complex','FunctionalClass']))])
         drug_target_indication.remove_nodes_from(targets_without_indications)
 
-    drug_name = drug_target_indication.get_properties({drug},'Name')[drug][0]
+    drug_name = drug_target_indication.get_properties('Name',{drug})[drug][0]
     pathway_name = drug_name +' targets in clinical trials'
     pathway_rnef = et.fromstring(ps_api.to_rnef(drug_target_indication))
     pathway_rnef.set('name', pathway_name)
@@ -89,6 +87,6 @@ for drug in drug_with_targets:
     with open(out_dir+fout_name+'.rnef', mode='w', encoding='utf-8') as rnefout:
         rnefout.write(pathway_rnef_str)
 
-    ps_api.Graph.clear() # need to release memory when performing large dumps
+    ps_api.Graph.clear_resnetgraph() # need to release memory when performing large dumps
 
 print('Pathways with drug targets are in %s into %s directory' % (ps_api.execution_time(start),out_dir))
