@@ -1,6 +1,6 @@
 ﻿import time
 import networkx as nx
-from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL,len
 from ElsevierAPI import open_api_session
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import nx2neo4j
 from ElsevierAPI.ResnetAPI.PSnx2Neo4j import REL_PROPs, ENT_PROP_Neo4j
@@ -8,8 +8,8 @@ from ElsevierAPI.ResnetAPI.PSnx2Neo4j import REL_PROPs, ENT_PROP_Neo4j
 ps_api = open_api_session()
 
 global_start = time.time()
-# SearchEntitiesBy = ['Ileocolitis']
-SearchEntitiesBy = ['Inflammatory Bowel Disease']
+SearchEntitiesBy = ['Ileocolitis']
+#SearchEntitiesBy = ['Inflammatory Bowel Disease']
 # SearchEntitiesBy = ['Friedreich Ataxia']
 InputDiseaseNames = ','.join(SearchEntitiesBy)
 
@@ -28,7 +28,7 @@ ps_api.process_oql(
     OQL.expand_entity(PropertyValues=SearchEntitiesBy, SearchByProperties=['Name', 'Alias'], expand_by_rel_types=[],
                        expand2neighbors=['GeneticVariant']))
 
-SNPIds = ps_api.Graph.get_entity_ids(['GeneticVariant'])
+SNPIds = ps_api.Graph.get_node_ids(['GeneticVariant'])
 print("Finding Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDiseaseProteins, replace_main_dump=True)
 ps_api.process_oql(
@@ -36,23 +36,23 @@ ps_api.process_oql(
                        expand2neighbors=['Protein']), flush_dump=True)
 
 foutDiseasePPI = myDir + "\\PPIs between genes linked to " + InputDiseaseNames + '.tsv'
-PPIgraph = ps_api.get_ppi_graph(foutDiseasePPI)
+PPIgraph = ps_api._get_ppi_graph(foutDiseasePPI)
 # calculating centrality
 
 degree_cent = nx.degree_centrality(PPIgraph)
+closness = PPIgraph.harmonic_centrality()
 sorted_centrality = sorted(degree_cent.items(), key=lambda kv: kv[1], reverse=True)
-PPIids = set([x for x in PPIgraph.nodes()])
-IdToNames = ps_api.Graph.get_properties(PPIids, 'Name')
+PPIids = set(PPIgraph.nodes())
+IdToNames = ps_api.Graph.get_properties('Name',PPIids)
 sorted_centrality_byName = list()
 for t in sorted_centrality:
     idx = t[0]
-    # if idx in IdToNames.keys():
     name = IdToNames[idx][0]
     sorted_centrality_byName.append((name, t[1]))
 
 print(sorted_centrality_byName)
 
-DiseaseProteins = set(ps_api.Graph.get_entity_ids(['Protein']))
+DiseaseProteins = set(ps_api.Graph.get_node_ids(['Protein']))
 print("Finding Drugs for Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDrugsForDiseaseProteins, replace_main_dump=True)
 start_time = time.time()
