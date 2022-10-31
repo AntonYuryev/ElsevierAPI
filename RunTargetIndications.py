@@ -62,18 +62,16 @@ if __name__ == "__main__":
             parameters['to_inhibit'] = True
             rd = TargetIndications(APIconfig,parameters)
             rd.make_report()
-            rd.add2writer(target_report,rd._worksheet_prefix())
-            rd.addraw2writer(raw_data_cache,rd._worksheet_prefix())
+            rd.columns2drop += [rd.__resnet_name__, rd.__mapped_by__]
+            rd.add2writer(target_report)
+            rd.addraw2writer(raw_data_cache)
 
             parameters['to_inhibit'] = False
             rd = TargetIndications(APIconfig,parameters)
             rd.make_report()
-            ws_prefix = rd._worksheet_prefix()
-            rd.add2writer(target_report,rd._worksheet_prefix())
-            rd.addraw2writer(raw_data_cache,rd._worksheet_prefix())
-
-            other_indications = rd.rn2pd(rd.other_effects(), rd._target_names())
-            other_indications.to_excel(target_report, sheet_name='Possbl.'+indication, index=False)
+            rd.columns2drop += [rd.__resnet_name__, rd.__mapped_by__]
+            rd.add2writer(target_report,rd)
+            rd.addraw2writer(raw_data_cache,rd)
 
         target_report.save()
         raw_data_cache.save()
