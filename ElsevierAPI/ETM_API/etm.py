@@ -1,4 +1,4 @@
-from .references import DocMine, Reference
+from .references import DocMine, Reference, len, pubmed_hyperlink, make_hyperlink
 from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES,RELEVANCE 
 import urllib.request
 import urllib.parse
@@ -9,9 +9,11 @@ import xlsxwriter
 import os
 import math
 from ..ScopusAPI.scopus import Scopus
-import pandas as pd
+from ..pandas.panda_tricks import pd, df
+from threading import Thread
 
 SCOPUS_AUTHORIDS = 'scopusAuthors'
+ETM_REFS_COLUMN = 'Click on # references to view 5 most relevant articles in Pubmed'
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
@@ -182,7 +184,8 @@ class ETMjson(DocMine):
     @staticmethod
     def __parse_snippet(article:dict, markup_all=False):
         try:
-            snippet = str(article['data']['snippet']['text'])
+            data = article['data']
+            snippet = str(data['snippet']['text'])
             term_ids = set()
             keywords = set()
             pos_shift = 0
@@ -223,7 +226,15 @@ class ETMjson(DocMine):
             return snippet,term_ids,keywords
         except KeyError:
             try:
-                return article['article']['body']['sec']['addressOrAlternativesOrArray']['p'], set(), set()
+                article_body = article['article']
+                sec = article_body['body']['sec']
+                if isinstance(sec,dict):
+                    return sec['addressOrAlternativesOrArray']['p'], set(), set()
+                else:
+                    snippets = str()
+                    for s in sec:
+                        snippets += s['addressOrAlternativesOrArray']['p']+'...'
+                    return snippets, set(), set()
             except KeyError:
                 return '', set(), set()
 
@@ -277,15 +288,16 @@ class ETMstat:
     page_size = 100
     request_type = '/search/basic?'  # '/search/advanced?'
     def __base_url(self): return self.url+self.request_type
-    searchTarget = 'full_index'
-    number_snippets = 1
     hit_count = 0
+    min_relevance = 0
     
     def __init__(self,APIconfig:dict, limit=5, add_param=dict()):
+        """
+        self.ref_counter = {str(id_type+':'+identifier):(ref,count)}
+        """
         self.url = APIconfig['ETMURL']
         self.params = {
             'searchTarget': 'full_index',
-            'snip': '1.desc',
             'apikey':APIconfig['ETMapikey'],
             'limit': limit,
             'so_p':'ffb~' # excluding NIH reporter
@@ -293,7 +305,24 @@ class ETMstat:
         self.params.update(add_param)       
         self.ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
 
-    def __limit(self): return self.params['limit']
+
+    def clone(self, to_url:str):
+        myApiconfig = {'ETMURL':to_url,'ETMapikey':self.params['apikey']}
+        newEtMstat =  ETMstat(myApiconfig,self._limit(),self.params)
+        newEtMstat.page_size = self.page_size
+        newEtMstat.request_type = self.request_type
+        newEtMstat.hit_count = 0
+        newEtMstat.min_relevance = self.min_relevance
+        return newEtMstat
+
+
+    def _limit(self): 
+        """
+        Returns
+        -------
+        self.params['limit'] - max number of reference to retreive
+        """
+        return self.params['limit']
 
     def references(self):
         return set([x[0] for x in self.ref_counter.values()])
@@ -313,14 +342,22 @@ class ETMstat:
     def _url_request(self):
         return self.__base_url()+self.__get_param_str()
 
-    def _get_articles(self, page_start=0):
+    def _get_articles(self, page_start=0, need_snippets=True):
+        """
+        Returns tuple
+        -------
+        result['article-data'], result['total-hits=']
+        """
         if page_start: self.params['start'] = page_start
+        if need_snippets:
+            self.params.update({'snip': '1.desc'})
         the_page = urllib.request.urlopen(self._url_request()).read()
         if the_page:
             result = json.loads(the_page.decode('utf-8'))
             return result['article-data'], result['total-hits=']
         else:
-            return [], 0
+            return [],0
+
 
     def _add2counter(self, ref:Reference):
         for id_type in REF_ID_TYPES:
@@ -329,8 +366,7 @@ class ETMstat:
                 counter_key = id_type+':'+identifier
                 try:
                     count_exist = self.ref_counter[counter_key][1]
-                    self.ref_counter[counter_key] = (ref, count_exist+1)  
-                    # {str(id_type+':'+identifier):(ref,count)}
+                    self.ref_counter[counter_key] = (ref, count_exist+1)
                 except KeyError:
                     self.ref_counter[counter_key] = (ref,1)
                 return id_type,identifier
@@ -338,61 +374,99 @@ class ETMstat:
                 continue
 
 
-    def counter2pd(self, use_relevance=True):
-        table_rows = list()
-        first_col = RELEVANCE if use_relevance else 'Citation index'
+    def etm_counter2pd(self, use_relevance=True):
+        """
+        used for internal self.ref_counter = {identifier:(ref,ref_count)}
+        used to count references from ETM
+        """
+        table_rows = set()
         for identifier, ref_count in self.ref_counter.items():
             ref = ref_count[0]
             refcount = ref_count[1]
-            score = math.ceil(float(ref[RELEVANCE][0]) * refcount) if use_relevance else refcount         
- 
-            biblio_str, id_type, identifier = ref.get_biblio_tuple()
-            table_rows.append((score,biblio_str,id_type,identifier))
+            score = math.ceil(float(ref[RELEVANCE][0]) * refcount) if use_relevance else refcount
+            biblio_str, id_type, identifier = ref._biblio_tuple()
+            if id_type == 'PMID':
+                identifier = pubmed_hyperlink([identifier],identifier)
+            elif id_type == 'DOI':
+                identifier = make_hyperlink(identifier,'http://dx.doi.org/')
+            table_rows.add(tuple([score,biblio_str,id_type,identifier]))
 
-        return_pd = pd.DataFrame(columns=[first_col,'Citation','Identifier type','Identifier'])
-        table_rows.sort(key=lambda x:x[0],reverse=True)
-        for tup in table_rows:
-            #f.write(str(tup[0])+'\t'+tup[1]+'\t'+tup[2]+'\n')
-            return_pd.loc[len(return_pd.index)] = list(tup)
-
+        first_col = RELEVANCE if use_relevance else 'Citation index'
+        header = [first_col,'Citation','Identifier type','Identifier']
+        return_pd = df.from_rows(table_rows,header)
+        return_pd.sort_values(first_col,ascending=False,inplace=True)
+        return_pd.make_header_horizontal()
+        return_pd.set_hyperlink_color(['Identifier'])
         return return_pd
 
-    
+
+    @staticmethod
+    def external_counter2pd(ref_counter:set, stat_prop=RELEVANCE):
+        '''
+        use for external ref_counter = {Reference} where Reference objects are annotated as Reference[stat_prop]
+        used to count references in ResnetGraph()
+        '''
+        table_rows = set()
+        for ref in ref_counter:
+            biblio_str, id_type, identifier = ref._biblio_tuple()
+            if id_type == 'PMID':
+                identifier = pubmed_hyperlink([identifier],identifier)
+            elif id_type == 'DOI':
+                identifier = make_hyperlink(identifier,'http://dx.doi.org/')
+            elif id_type == 'NCT ID':
+                identifier = make_hyperlink(identifier,'https://clinicaltrials.gov/ct2/show/')
+            table_rows.add(tuple([ref[stat_prop][0],biblio_str,id_type,identifier]))
+
+        header = [stat_prop,'Citation','Identifier type','Identifier']
+        return_pd = df.from_rows(table_rows,header)
+        return_pd.sort_values(stat_prop,ascending=False,inplace=True)
+        return_pd.make_header_horizontal()
+        return_pd.set_hyperlink_color(['Identifier'])
+        return return_pd
+
+
     def __make_query(self,terms:list):
         if self.request_type == '/search/basic?':
             return ';'.join(terms)
         else:
             return '{'+'};{'.join(terms)+'}' # for advanced search
 
+
     def relevant_articles(self, terms:list):
         """
-        Returns most relevant references identified by ETM basic search using input terms.
+        Returns
+        -------
+        most relevant references identified by ETM basic search using input terms.
         Number of returned references is controled by ETMstat.params['limit'] parameter.
         Return tuple contains:
             [0] hit_count - TOTAL number of reference found by ETM basic search 
-            [1] ref_ids = {id_type:[identifiers]}; len(ref_ids) == ETMstat.params['limit'] 
-            id_type is from [PMID, DOI, 'PII', 'PUI', 'EMBASE','NCT ID']
+            [1] ref_ids = {id_type:[identifiers]}, where len(ref_ids) == ETMstat.params['limit']\n
+            id_type is from [PMID, DOI, 'PII', 'PUI', 'EMBASE','NCT ID']\n
             [2] references = [ref] list of Reference objects sorted by ETM relevance. len(references) == ETMstat.params['limit'] 
             Relevance score is stored in ref['Relevance']
         """
+    #    if 'octreotide' in terms:
+    #       print('')
+
         query = self.__make_query(terms)
         self._set_query(query)
         articles = list()
 
-        articles, self.hit_count = self._get_articles()
+        articles, self.hit_count = self._get_articles(need_snippets=False)
 
-        if self.__limit() > 100:
-            for page_start in range(len(articles), self.__limit(), 100):
-                more_articles, discard = self._get_articles(page_start=page_start)
+        if self._limit() > 100:
+            for page_start in range(len(articles), self._limit(), 100):
+                more_articles, discard = self._get_articles(page_start=page_start,need_snippets=False)
                 articles += more_articles
 
         references = list()
         for article in articles:
-            etm_ref = ETMjson(article)
             relevance_score = float(article['score'])
-            etm_ref[RELEVANCE] = [relevance_score]
-            if hasattr(etm_ref,"Identifiers"):
-                references.append(etm_ref)
+            if relevance_score >= self.min_relevance:
+                etm_ref = ETMjson(article)
+                etm_ref[RELEVANCE] = [relevance_score]
+                if hasattr(etm_ref,"Identifiers"):
+                    references.append(etm_ref)
 
         ref_ids = dict()
         for ref in references:
@@ -407,6 +481,10 @@ class ETMstat:
 
     @staticmethod
     def count_refs(ref_counter:set, references:list):
+        '''
+        updates "ref_counter" with "references"
+        updates 'Citation index' for reference in "ref_counter" by 1 if reference is in "references"
+        '''
         ref_counter.update(references)
         counter_refs = ref_counter.intersection(set(references))
         for ref in counter_refs:
@@ -431,7 +509,7 @@ class ETMstat:
             with open(fname, 'w', encoding='utf-8') as f:
                 f.write('Relevance\tCitation\tPMID or DOI\n')
                 for ref in to_sort:
-                    biblio_tup = ref.get_biblio_tuple()
+                    biblio_tup = ref._biblio_tuple()
                     if not biblio_tup[2]: 
                         continue
                     if include_idtype:
@@ -447,7 +525,7 @@ class ETMstat:
                 for ref in to_sort:
                     if not biblio_tup[2]: 
                         continue #to remove reference with no ID type
-                    biblio_tup = ref.get_biblio_tuple()
+                    biblio_tup = ref._biblio_tuple()
                     if include_idtype:
                         biblio_str = biblio_tup[0]+'\t'+biblio_tup[1]+':'+biblio_tup[2]
                     else:
@@ -460,7 +538,121 @@ class ETMstat:
         item_idx = 1 if sort_by_value else 0
         return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))           
 
+
+    def __get_refs(self, entity_name:str, concepts2link:list,add2query=[]):
+        references = set()
+        total_hits = 0
+        for concept in concepts2link:
+            search_terms = [concept,entity_name]+add2query
+            hit_count,ref_ids,etm_refs = self.relevant_articles(search_terms)
+            total_hits += hit_count
+            references.update(etm_refs)
+
+        references = list(references)
+        references.sort(key=lambda x:x[RELEVANCE][0],reverse=True)
+        best_refid_list = references[0:self._limit()]
+
+        pmids=list()
+        dois = list()
+        for ref in best_refid_list:
+            id_type,identifier = ref.get_doc_id()
+            if id_type == 'PMID':
+                pmids.append(identifier)
+            elif id_type == 'DOI':
+                dois.append(identifier)
+            else:
+                continue
+
+        hyperlink2pubmed = pubmed_hyperlink(pmids,total_hits) if pmids else '' 
+        doi_str = make_hyperlink(dois[0],url='http://dx.doi.org/', display_str=';'.join(dois)) if dois else ''
+        return [hyperlink2pubmed,doi_str]
+
+
+    def __add_etm_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,add2query=[]):
+        to_df[[ETM_REFS_COLUMN,'DOIs']] = to_df[between_names_in_col].apply(lambda x: self.__get_refs(x,and_concepts,add2query)).apply(pd.Series)
+        to_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+
+
+    def add_etm_references(self,to_df:df,between_names_in_col:str,and_concepts:list,add2query=[]):
+        """
+        Adds
+        ----
+        columns ETM_REFS_COLUMN,DOIs to to_df
+        """
+        start_time = time.time()
+        etm1 = self.clone('https://demo.elseviertextmining.com/api')
+        etm2 = self.clone('https://discover.elseviertextmining.com/api')
+        etm3 = self.clone('https://research.elseviertextmining.com/api')
+        my_df = to_df.copy_df(to_df)
         
+        row_count = len(my_df)
+        one3rd = int(row_count/3)
+        df1 = df(my_df.iloc[:one3rd])
+        df2 = df(my_df.iloc[one3rd : 2*one3rd])
+        df3 = df(my_df.iloc[2*one3rd:])
+
+        t1 = Thread(target=etm1.__add_etm_refs, args=(df1,between_names_in_col,and_concepts,add2query),name='etm_demo')
+        t1.start()
+        t2 = Thread(target=etm2.__add_etm_refs, args=(df2,between_names_in_col,and_concepts,add2query),name='etm_discover')
+        t2.start()
+        t3 = Thread(target=etm3.__add_etm_refs, args=(df3,between_names_in_col,and_concepts,add2query),name='etm_research')
+        t3.start()
+
+        t1.join()
+        t2.join()
+        t3.join()
+
+        annotated_df = df(pd.concat([df1,df2,df3]),name=to_df._name_)
+        [self._add2counter(ref) for ref in etm2.references()]
+        [self._add2counter(ref) for ref in etm3.references()]
+        
+        annotated_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+        print('Annotated %d rows from %s with ETM references in %s' % 
+                (len(to_df),to_df._name_,execution_time(start_time)))
+        return annotated_df
+
+
+    def etm42columns(self,in_df:df,between_col:str,and_col:str,add2query=[]):
+        for i in in_df.index:
+            col1 = in_df.loc[i][between_col]
+            col2 = in_df.loc[i][and_col]
+            hyperlink2pubmed,doi_str = self.__get_refs(col1,[col2],add2query)
+            in_df.at[i,ETM_REFS_COLUMN] = hyperlink2pubmed
+            in_df.at[i,'DOIs'] = doi_str
+        in_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+
+
+    def add_etm42columns(self,in_df:df,between_col:str,and_col:str,add2query=[],max_row=100):
+        start_time = time.time()
+        etm2 = self.clone('https://discover.elseviertextmining.com/api')
+        etm3 = self.clone('https://research.elseviertextmining.com/api')
+        df2annotate = df(in_df.iloc[:max_row])
+        unannoated_rows = df(in_df.iloc[max_row:])
+        
+        one3rd = int(max_row/3)
+        df1 = df(df2annotate.iloc[:one3rd])
+        df2 = df(df2annotate.iloc[one3rd : 2*one3rd])
+        df3 = df(df2annotate.iloc[2*one3rd:])
+
+        t1 = Thread(target=self.etm42columns, args=(df1,between_col,and_col,add2query),name='etm_demo')
+        t1.start()
+        t2 = Thread(target=etm2.etm42columns, args=(df2,between_col,and_col,add2query),name='etm_discover')
+        t2.start()
+        t3 = Thread(target=etm3.etm42columns, args=(df3,between_col,and_col,add2query),name='etm_research')
+        t3.start()
+
+        t1.join()
+        t2.join()
+        t3.join()
+
+        annotated_df = df(pd.concat([df1,df2,df3,unannoated_rows]),name=in_df._name_)
+        [self._add2counter(ref) for ref in etm2.references()]
+        [self._add2counter(ref) for ref in etm3.references()]
+        annotated_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+        print('Annotated %d rows from %s with ETM references in %s' % 
+                (len(in_df),in_df._name_,execution_time(start_time)))
+        return annotated_df
+
 
 class ETMcache (ETMstat):
     """

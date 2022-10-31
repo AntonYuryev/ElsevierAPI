@@ -1,9 +1,11 @@
+from builtins import len
 from .medscan import MedScan
 import xlsxwriter
 import re
 from datetime import timedelta
 import time
 import json
+from ..NCBI.pubmed import pubmed_hyperlink
 
 
 AUTHORS = 'Authors'
@@ -32,22 +34,33 @@ PS_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID']
 ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
 PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
 CLINTRIAL_PROPS = {'TrialStatus','Phase','StudyType','Start','Intervention','Condition','Company','Collaborator'}
+
 JOURNAL_PROPS = {JOURNAL,'ISSN','ESSN',MEDLINETA}
-PS_BIBLIO_PROPS = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes','Start'}|JOURNAL_PROPS # 'Start' = 'PubYear'
+PS_BIBLIO_PROPS_ALL = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes','Start'}|JOURNAL_PROPS # 'Start' = 'PubYear'
+PS_BIBLIO_PROPS = {TITLE, PUBYEAR, AUTHORS, JOURNAL, MEDLINETA,'Start'} # contains only props necessary for reference::__biblio_tuple
+
 BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
 REF_ID_TYPES = PS_ID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
-PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent']
+PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD]
 SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence']
 # SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.Sentences
 RELATION_PROPS = {EFFECT,'Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
+ALL_PS_PROPS = list(RELATION_PROPS)+list(CLINTRIAL_PROPS)+PS_ID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS+['TextRef']
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences, titles, abstracts
 
+def make_hyperlink(identifier:str,url:str,display_str=''):
+        # hyperlink in Excel does not work with long URLs, 
+        display_str = display_str if display_str else identifier
+        return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
+
 class Reference(dict):  
-# self{BIBLIO_PROPS[i]:[values]}; Identifiers{REF_ID_TYPES[i]:identifier}; Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}
+# self{BIBLIO_PROPS[i]:[values]}; 
+# Identifiers{REF_ID_TYPES[i]:identifier};
+# Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}
     pass
 
     def __init__(self, idType:str, ID:str):
@@ -55,7 +68,7 @@ class Reference(dict):
         self.Identifiers = {idType:ID} #from REF_ID_TYPES
         self.snippets = dict() # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
         self.addresses = dict() # {orgname:adress}
-
+      
     @classmethod
     def copy(cls, other):
         if isinstance(other, Reference):
@@ -118,12 +131,14 @@ class Reference(dict):
                 except KeyError:
                     continue
 
+
     def get_doc_id(self):
         for id_type in REF_ID_TYPES:
             try:
                 return id_type, self.Identifiers[id_type]
             except KeyError: continue
-    
+        return '',''
+
     def append_property(self, PropId, PropValue):
         try:
             self[PropId].append(PropValue)
@@ -224,7 +239,11 @@ class Reference(dict):
         return id_type  +':'+identifier
     
 
-    def to_list(self,id_types:list=None,print_snippets=False,biblio_props=[],other_props=[]):
+    def to_list(self,id_types=list(),print_snippets=False,biblio_props=list(),other_props=list(),with_hyperlinks=False):
+        '''
+        order of properties in return list:
+        other_props, id_types, biblio_props, snippets
+        '''
         row = list()
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         for p in other_props:
@@ -234,11 +253,16 @@ class Reference(dict):
             except KeyError:
                 row.append('')
 
-        if isinstance(id_types,list):
+        if id_types:
             for t in id_types:
                 try:
-                    #row.append(t+':'+self.Identifiers[t])
-                    row.append(self.Identifiers[t])
+                    identifier = self.Identifiers[t]
+                    if with_hyperlinks:
+                        if t == 'PMID':
+                            identifier = pubmed_hyperlink([identifier])
+                        elif t == 'DOI':
+                            identifier = make_hyperlink(identifier,'http://dx.doi.org/')
+                    row.append(identifier)
                 except KeyError:
                     row.append('')
         else:
@@ -253,7 +277,6 @@ class Reference(dict):
                 prop_values_str = ''
             
             row.append(prop_values_str)
-            #row = row + col_sep + prop_id + ':' + prop_values_str
 
         if print_snippets:
             sentence_props =  json.dumps(self.snippets)
@@ -267,46 +290,12 @@ class Reference(dict):
         row = self.to_list(id_types,print_snippets,biblio_props,other_props)
         return col_sep.join(row)
 
-        id_types = id_types if isinstance(id_types,list) else ['PMID']
-        row = str()
-        for p in other_props:
-            try:
-                prop_values_str = ';'.join(map(str,self[p]))
-                row = row + prop_values_str + col_sep
-            except KeyError:
-                row = row  + '' + col_sep
-
-        if isinstance(id_types,list):
-            for t in id_types:
-                try:
-                    row = row + t+':'+self.Identifiers[t]+col_sep
-                except KeyError:
-                    row = row + col_sep
-        else:
-            row = self._identifiers_str() + col_sep
-                
-        for prop_id in biblio_props:
-            try:
-                prop_values_str = ';'.join(self[prop_id])
-                if prop_id in ['Title', 'Abstract']:
-                    prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_values_str)
-            except KeyError:
-                prop_values_str = ''
-            
-            row = row + prop_values_str + col_sep
-            #row = row + col_sep + prop_id + ':' + prop_values_str
-
-        if print_snippets:
-            sentence_props =  json.dumps(self.snippets)
-            sentence_props = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sentence_props)
-            row = row + sentence_props + col_sep
-
-        return row[:-1] #remove last separator
-
-
-    def get_biblio_tuple(self):
+    
+    def _biblio_tuple(self):
         """
-        Returns title+' ('+pubyear+'). '+authors, identifier_type,identifier 
+        Returns
+        --------
+        tuple str(title+' ('+pubyear+'). journal.'+authors), identifier_type, identifier 
         """
         try:
             title = self[TITLE][0]
@@ -326,14 +315,22 @@ class Reference(dict):
                 if authors_str[-1] != '.': authors_str += '.'
         except KeyError:
             authors_str = 'unknown authors.'
+
+        try:
+            journal = self[JOURNAL][0]
+        except KeyError:
+            try:
+                journal = self[MEDLINETA][0]
+            except KeyError:
+                journal = 'No journal name'
         
         identifier_tup = self._identifier()
-        return title+' ('+year+'). '+authors_str, identifier_tup[0],identifier_tup[1]
+        return title+' ('+year+'). '+journal+'.'+authors_str, identifier_tup[0],identifier_tup[1]
 
     
     def get_biblio_str(self, sep='\t'):
-        biblio, id_type,identifier = self.get_biblio_tuple()
-        return biblio+sep+id_type+':'+identifier
+        biblio, journal, id_type,identifier = self._biblio_tuple()
+        return biblio+sep+journal+sep+id_type+':'+identifier
 
     def _merge(self, other):
         if isinstance(other, Reference):
@@ -404,7 +401,10 @@ class Reference(dict):
                             try:
                                 return 'info:patentgrant/'+ self.Identifiers[PATENT_GRANT_NUM]
                             except KeyError:
-                                return NotImplemented
+                                try:
+                                    return 'info:title/'+self.Identifiers[TITLE] #.replace(' ','%20')
+                                except KeyError:
+                                    return 'NotImplemented'
 
 
     def _make_textref(self):
@@ -444,6 +444,36 @@ class Reference(dict):
             except KeyError:
                 return 0.0 if is_numerical else '0'
 
+
+    def get_snippet_prop(self,prop_name:str):
+        """
+        Returns
+        -------
+        {textref:[prop_vals]}
+        """
+        prop_values = dict()
+        for textref, sentence_props in self.snippets.items():
+            try:
+                prop_vals = sentence_props[prop_name]
+                prop_values[textref] = prop_vals
+            except KeyError:
+                continue
+
+        return prop_values
+    
+
+    def get_props(self,prop_name:str):
+        try:
+            return self[prop_name]
+        except KeyError:
+            try:
+                return self.Identifiers[prop_name]
+            except KeyError:
+                snippet_prop_dic = self.get_snippet_prop(prop_name)
+                props = set()
+                for text_ref, prop_vals in snippet_prop_dic.items():
+                    props.update(prop_vals)
+                return list(props)
 
 
 #########################################DocMine#############################################DocMine##################

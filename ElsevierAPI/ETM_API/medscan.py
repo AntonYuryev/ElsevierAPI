@@ -86,7 +86,7 @@ class MedScan:
             medscan_markup = self.markup_sentence(str(sentence))
             range2dict = dict() #{id_range:{id:obj_name}}
             markup_pos = medscan_markup.find('ID{')
-            while markup_pos > 0:
+            while markup_pos >= 0:
                 markup_start = markup_pos + 3
                 id_end = medscan_markup.find('=',markup_start)
                 msids = list(medscan_markup[markup_start:id_end].split(','))
@@ -107,7 +107,6 @@ class MedScan:
 
                 markup_pos = medscan_markup.find('ID{',markup_end+1)
             
-
             to_return[medscan_markup] = range2dict
         
         return to_return # {medscan_markup:{id_range:{id:obj_name}}}, str
