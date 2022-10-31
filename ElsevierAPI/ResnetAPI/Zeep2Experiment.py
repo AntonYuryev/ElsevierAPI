@@ -1,5 +1,5 @@
 from .ResnetGraph import ResnetGraph,PSObject
-from ..pandas.panda_tricks import df, np, pd
+from ..pandas.panda_tricks import df, pd
 from  .PathwayStudioZeepAPI import DataModel
 import scipy.stats as stats
 from math import log2
@@ -22,7 +22,7 @@ class Sample(PSObject):
     def copy(self, with_data=True):
         my_copy = Sample(self)
         if with_data:
-            my_copy.data = df.make_df(self.data)
+            my_copy.data = df.copy_df(self.data)
         return my_copy
 
 
@@ -296,7 +296,7 @@ class Experiment(PSObject):
         for sample in self.get_samples(sample_names,sample_ids):
             node_annotation_name, urn2value = self.__make_dict4annotation(sample)
             if graph:
-                graph.set_annotation(urn2value,node_annotation_name)
+                graph.set_node_annotation(urn2value,node_annotation_name)
                 graph.urn2obj = {o['URN'][0]:o for i,o in graph.nodes(data=True)}
             
             

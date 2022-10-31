@@ -14,7 +14,7 @@ class SNEA(APISession):
         self.experiment = Experiment.download(experiment_name,APIconfig)
         self.__load_network() #expression_network is in self.Graph
         self.subnetworks = dict() # {regulator_id:[target_ids]}
-        self.activation_pd = df()
+        self.activation_df = df()
         self.subnet_pvalue_cutoff = 0.05
         self.min_subnet_size = 2
         
@@ -142,52 +142,52 @@ class SNEA(APISession):
             node_annotation_names.append(annotation_name)
             column_list += [annotation_name,'activation pvalue in '+s['Name'][0],'# valid targets in '+s['Name'][0]]
 
-        self.activation_pd = df(columns=column_list)
+        self.activation_df = df(columns=column_list)
         row = 0
         for regulator in annotated_regulators:
-            self.activation_pd.loc[row,'URN'] = regulator['URN'][0]
-            self.activation_pd.loc[row,'# targets'] = regulator['# targets'][0]
+            self.activation_df.loc[row,'URN'] = regulator['URN'][0]
+            self.activation_df.loc[row,'# targets'] = regulator['# targets'][0]
             for a in node_annotation_names:
                 try:
                     annotation = regulator[a]
-                    self.activation_pd.loc[row,a] = annotation[0]
+                    self.activation_df.loc[row,a] = annotation[0]
                     sampl_name = str(a)[14:]
 
                     pval_col = 'activation pvalue in '+sampl_name
                     pval = '{:12.5e}'.format(annotation[1]) if annotation[1] != np.nan else ''
-                    self.activation_pd.loc[row,pval_col] = pval
+                    self.activation_df.loc[row,pval_col] = pval
 
                     measured_targets_col = '# valid targets in ' + sampl_name
                     measured_targets_val = str(annotation[2]) if annotation[2] > 0 else ''
-                    self.activation_pd.loc[row,measured_targets_col] = measured_targets_val
+                    self.activation_df.loc[row,measured_targets_col] = measured_targets_val
                 except KeyError:
                     continue
             row += 1
 
-        activation_scores_columns = [c for c in self.activation_pd.columns if c[:13] == 'activation in']
-        activation_scores_only = self.activation_pd[activation_scores_columns]
+        activation_scores_columns = [c for c in self.activation_df.columns if c[:13] == 'activation in']
+        activation_scores_only = self.activation_df[activation_scores_columns]
         averages = activation_scores_only.mean(axis=1,skipna=True)
-        self.activation_pd['Average activation score'] = averages
+        self.activation_df['Average activation score'] = averages
 
-        pvalue_columns = [c for c in self.activation_pd.columns if c[:17] == 'activation pvalue']
-        pvalues_only = self.activation_pd[pvalue_columns]
-        self.activation_pd['# samples'] = pvalues_only.count(axis = 1)
+        pvalue_columns = [c for c in self.activation_df.columns if c[:17] == 'activation pvalue']
+        pvalues_only = self.activation_df[pvalue_columns]
+        self.activation_df['# samples'] = pvalues_only.count(axis = 1)
 
-        self.activation_pd.dropna(how='all',subset=['Average activation score'],inplace=True)
-        self.activation_pd.sort_values(['# samples','Average activation score'],ascending=False,inplace=True,ignore_index=True)
-        self.activation_pd['Regulator'] = self.activation_pd['URN'].apply(lambda x: self.Graph.urn2obj[x]['Name'][0])
+        self.activation_df.dropna(how='all',subset=['Average activation score'],inplace=True)
+        self.activation_df.sort_values(['# samples','Average activation score'],ascending=False,inplace=True,ignore_index=True)
+        self.activation_df['Regulator'] = self.activation_df['URN'].apply(lambda x: self.Graph.urn2obj[x]['Name'][0])
 
         print('Report table for %d regulators in %d samples from "%s" experiment was generated' %
                             (len(annotated_regulators), len(samples), self.experiment.name()))
 
-        return self.activation_pd
+        return self.activation_df
 
 
     def report(self):
-        self.activation_pd.fillna('', inplace=True)
-        fout = self.__expname()+' regulators.xlsx'
+        self.activation_df.fillna('', inplace=True)
+        fout = self.experiment.name()+' regulators.xlsx'
         writer = ExcelWriter(fout, engine='xlsxwriter')
-        abs_scores = self.activation_pd['Average activation score'].abs()
+        abs_scores = self.activation_df['Average activation score'].abs()
         max_abs = abs_scores.max()
         cond_format = {
                         'type': '3_color_scale',
@@ -201,8 +201,9 @@ class SNEA(APISession):
                         'min_type': "num",
                         'max_type': "num"
                         }
-        self.activation_pd.df2excel(writer,'activity',vertical_header=True, 
-                        cond_format=cond_format,for_areas=['C:C'])
+        self.activation_df.set_conditional_frmt(cond_format,'Average activation score','Average activation score')
+        self.activation_df.make_header_vertical()
+        self.activation_df.df2excel(writer,'activity')
         writer.save()
         print('Scored regulators are in %s file' % fout)
 

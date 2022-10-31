@@ -1,15 +1,14 @@
 import time
-from ElsevierAPI.ResnetAPI.FolderContent import FolderContent,PATHWAY_ID
-from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
-from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
-from ElsevierAPI.ResnetAPI.Zeep2Experiment import Experiment
-from ElsevierAPI.pandas.panda_tricks import df, np, ExcelWriter
-from ElsevierAPI.ETM_API.references import RELATION_PROPS
+
 import scipy.stats as stats
 import xml.etree.ElementTree as et
 import glob
 import os
 from .rnef2sbgn import make_file_name,to_sbgn_file
+from ElsevierAPI.ResnetAPI.FolderContent import FolderContent,PSPathway
+from ElsevierAPI.ResnetAPI.Zeep2Experiment import Experiment
+from ElsevierAPI.pandas.panda_tricks import df,ExcelWriter
+from ElsevierAPI.ETM_API.references import RELATION_PROPS
 
 MEASURED_COUNT = '# measured entities'
 MEASURED_ENTITIES = 'measured entities'
@@ -18,51 +17,18 @@ def get_file_listing(dirname:str):
     listing = glob.glob(dirname+'/*.rnef')
     return list(map(os.path.basename, listing))
 
-class PSPathway(PSObject, ResnetGraph):
-    def __init__(self,dic=dict(),g=ResnetGraph()):
-        PSObject.__init__(self,dic)
-        ResnetGraph.__init__(self)
-        self.update(g)
-
-
-    @classmethod
-    def from_resnet(cls, resnet:et.Element, add_annotation=dict()):
-        pathway = PSPathway()
-        pathway['Name'] = [resnet.get('name')]
-        pathway['URN'] = [resnet.get('urn')]
-        pathway.update(add_annotation)
-        [pathway.update_with_value(p.get('name'),p.get('value')) for p in resnet.findall('properties/attr')]
-
-        if pathway._parse_nodes_controls(resnet):
-            pathway['resnet'] = et.tostring(resnet, encoding='unicode', method='xml')
-            return pathway
-        else:
-            print('Invalid <resnet> section')
-            return None
-
-
-    def number_of_nodes(self, obj_type=''):
-        if obj_type:
-            try:
-                return self['#'+obj_type]
-            except KeyError:
-                obj_count = len([o for o in self.urn2obj.values() if obj_type in o['ObjTypeName']])
-                self['#'+obj_type] = obj_count
-                return obj_count
-        else:
-            return len(self.urn2obj)
-
 
 class GSEA(FolderContent):
     def __init__(self, APIconfig):
         super().__init__(APIconfig)
         self.mv_pvalue_cutoff = 0.05
         self.diffexp_pvalue_cuoff= 0.05
-        self.id2pathway = dict() # self.id2pathway = {id:PSObject}
+        self.id2pathway = dict() # self.id2pathway = {id:PSPathway}
         self.data_dir = 'ElsevierAPI/ResnetAPI/__pscache__/'
         self.report_dir = ''
-        self.base_url = 'https://mammal-profservices.pathwaystudio.com/app/sd?urn='
-
+        wsdl_url = str(self.SOAPclient.wsdl.location)
+        self.base_url = wsdl_url[:wsdl_url.find('/services/')]+'/app/sd?urn='
+        
 
     def __add_pathway(self,p:PSPathway):
         try:
@@ -71,10 +37,9 @@ class GSEA(FolderContent):
             print('Pathway %s already exist' % p.name())
         except KeyError:
             p_id = len(self.id2pathway)
-            p['Id'] = [p_id]
+            p['Id'] = [p_id] # makes fake IDs
             self.id2pathway[p_id] = p
-            self.Graph.urn2obj.update(p.urn2obj)
-            # makes fake IDs
+            self.Graph.urn2obj.update(p.graph.urn2obj)
 
 
     @staticmethod
@@ -140,7 +105,10 @@ class GSEA(FolderContent):
             raise FileNotFoundError
         file_count = 0
         for fname in listing:
-            add_annotation = {'Folder':[folder_name],'File':[fname]}
+            dirpath = os.path.dirname(fname)
+            file_folder = os.path.basename(dirpath)
+            file_name = os.path.basename(fname)
+            add_annotation = {'Folder':[file_folder],'File':[file_name]}
             self.read_rnef(fname,must_have_urns,add_annotation=add_annotation,min_overlap=min_overlap)
             file_count += 1
             print('%d out of %d files loaded' % (file_count,len(listing)))
@@ -156,9 +124,7 @@ class GSEA(FolderContent):
                         % folder_name)
                 missing_in_cache.append(folder_name)
 
-
         self.relProps = list(RELATION_PROPS) + ['URN']
-        
         if missing_in_cache:
             for folder_name in missing_in_cache:
                 self.content2rnef(folder_name)
@@ -178,7 +144,7 @@ class GSEA(FolderContent):
             abs_sample_distribution = sample.data['value'].abs()
 
             for ps_pathway in self.id2pathway.values():
-                annotated_pathway_obj = {u:o for u,o in self.Graph.urn2obj.items() if u in ps_pathway.urn2obj and sample_annotation in o}
+                annotated_pathway_obj = {u:o for u,o in self.Graph.urn2obj.items() if u in ps_pathway.graph.urn2obj and sample_annotation in o}
                 # self.Graph.urn2obj can have duplicate 'Id' since it collects objects from multople pathways
 
                 pathway_values = [v[sample_annotation][0][0] for v in annotated_pathway_obj.values()]
@@ -197,14 +163,14 @@ class GSEA(FolderContent):
                                 
                 if mv_pvalue <= self.mv_pvalue_cutoff:
                     logfc_sum = sum([n[sample_annotation][0][0] for n in annotated_pathway_obj.values()])
-                    enity_count = ps_pathway.number_of_nodes(experiment.objtype())
+                    enity_count = ps_pathway.graph.number_of_nodes(experiment.objtype())
                     ps_pathway[sample_annotation+':GSEA'] = [(logfc_sum/enity_count, mv_pvalue)]
                     
                     if calculate_activity:
                         pathway_activity = 0.0
                         for urn, node in annotated_pathway_obj.items():
                             node_id = ps_pathway.urn2obj[urn]['Id'][0]
-                            node_downstrem_rels = ps_pathway.downstream_relations(node_id)
+                            node_downstrem_rels = ps_pathway.graph.downstream_relations(node_id)
                             node_impact = 0
                             node_impact += sum([r.effect_sign() for r in node_downstrem_rels])
                             pathway_activity += node_impact*node[sample_annotation][0][0]
@@ -267,13 +233,18 @@ class GSEA(FolderContent):
             return df(), list()
 
 
-    def report(self, fout:str,experiment:Experiment, format='SBGN'):
+    def report(self, folders_with_target_pathways:list,experiment:Experiment, format='SBGN'):
         report_pd, significant_pathway_ids = self.make_report(experiment)
+
+        folders_name = ','.join(folders_with_target_pathways)
+
+        fout = experiment.name()+' GSEA of '+ make_file_name(folders_name)
         report_fout = self.report_dir+fout
 
-        clean_pd =  df(report_pd).clean()
+        clean_df = df(report_pd).clean()
         writer = ExcelWriter(report_fout+'.xlsx', engine='xlsxwriter')
-        clean_pd.df2excel(writer,'GSEA',vertical_header=True)
+        clean_df.make_header_vertical()
+        clean_df.df2excel(writer,'GSEA')
         writer.save()
         print('Ranked pathways are in %s file' % fout)
 

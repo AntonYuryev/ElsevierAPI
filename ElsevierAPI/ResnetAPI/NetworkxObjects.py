@@ -3,7 +3,7 @@ import json
 import itertools
 import pickle
 
-from ..ETM_API.references import Reference
+from ..ETM_API.references import Reference, len
 from ..ETM_API.references import JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
 from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR
 
@@ -20,9 +20,10 @@ FUNC_ASSOC = 'FunctionalAssociation'
 
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
+    pass
     def __init__(self, dic=dict()):
         super().__init__(dic)
-
+        
     @staticmethod
     def from_zeep_objects(ZeepObjectRef):
         return_dict = dict()
@@ -76,6 +77,13 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             raise KeyError
 
+    def descr(self):
+        try:
+            return self['Description'][0]
+        except KeyError:
+            return ''
+
+
     def update_with_value(self, prop_id:str, new_value):
         try:
             values = list(self[prop_id])
@@ -94,6 +102,19 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             self[prop_id] = new_values
 
+
+    def merge_obj(self,other:'PSObject'):
+        [self.update_with_list(prop_name,values) for prop_name,values in other.items()]
+
+
+    def _prop2str(self, prop_id:str,cell_sep:str =';'):
+        try:
+            return cell_sep.join(self[prop_id])
+        except KeyError:
+            return ''
+
+    def props2dict(self,prop_ids:list):
+        return {k:self._prop2str(k) for k in self.keys() if k in prop_ids}
 
     def data2str(self, columnPropNames: list, col_sep='\t', cell_sep=';', endOfline='\n'):
         table_row = str()
@@ -114,26 +135,30 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def has_propeties(self,prop_names:set):
         return not prop_names.isdisjoint(set(self.keys()))
 
-    def is_annotated(self,prop_name,prop_values:list,case_sensitive=False):
+    def is_annotated(self,with_prop:str,having_values:list,case_sensitive=False):
         try:
-            if case_sensitive or prop_name in {'Id','id','ID'}:
-                search_in = self[prop_name]
-                search_set = set(prop_values)   
+            if case_sensitive or with_prop in {'Id','id','ID'}:
+                search_in = self[with_prop]
+                search_set = set(with_prop)   
             else:
-                search_in = list(self[prop_name])
-                search_in  = list(map(lambda x: x.lower(),search_in))
-                search_set = set(map(lambda x: x.lower(),prop_values))
+                search_in = list(self[with_prop])
+                search_in  = set(map(lambda x: x.lower(),search_in))
+                search_set = set(map(lambda x: x.lower(),having_values))
                 
             return not search_set.isdisjoint(search_in)
         except KeyError: return False
 
 
     def has_value_in(self,prop2values:dict,case_sensitive=False):
-        # prop2values = {propName:[values]}
+        """
+        Input
+        -----
+        prop2values = {propName:[values]}
+        """
         for prop_name, prop_values in prop2values.items():
             if self.is_annotated(prop_name,prop_values,case_sensitive): return True
-
         return False
+
 
     def prop_values(self, prop_name:str, sep=','):
         try:
@@ -142,8 +167,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             return ''
 
-    def merge(self,with_other):
-        if isinstance(with_other,PSObject):
+    def _merge(self,with_other:"PSObject"):
             for k, vlist in with_other.items():
                 self.update_with_list(k,vlist)
 
@@ -163,6 +187,34 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             return o
         except FileNotFoundError:
             raise FileNotFoundError
+
+
+    def merge_with_rel(self,rel:"PSRelation"):
+        self._merge(rel)
+        self.update_with_list('References',rel._get_refs())
+
+
+    def transform(self, remap:dict, remove_unmapped_props=False):
+        transformed_copy = PSObject(self)
+        for old_prop, new_prop in remap.items():
+            try:
+                transformed_copy[new_prop] = transformed_copy.pop(old_prop)
+            except KeyError:
+                try:
+                    references = transformed_copy['References']
+                    ref_values = set()
+                    for ref in references:
+                        ref_props = ref.get_props(old_prop)
+                        ref_values.update(ref_props)
+                    if ref_values:
+                        transformed_copy[new_prop] = list(ref_values)
+                except KeyError:
+                    continue
+        
+        if remove_unmapped_props:
+            transformed_copy = {k:v for k,v in transformed_copy.items() if k in remap.values()}
+
+        return transformed_copy
 
 
 class PSRelation(PSObject):
@@ -196,7 +248,19 @@ class PSRelation(PSObject):
                     self.References[i] = r
 
 
-    def _get_refs(self, only_with_id_type='', sort_by=PUBYEAR,reverse=True, ref_limit=0):
+    def effects(self):
+        try:
+            return self[EFFECT]
+        except KeyError:
+            return []
+
+    def mechanisms(self):
+        try:
+            return self['Mechanism']
+        except KeyError:
+            return []
+
+    def _get_refs(self, only_with_id_type='',sort_by=PUBYEAR,reverse=True,ref_limit=0):
         all_refs = list(set(self.References.values()))
         if only_with_id_type:
             filter_refs = [ref for ref in all_refs if only_with_id_type in ref.Identifiers.keys()]
@@ -207,13 +271,20 @@ class PSRelation(PSObject):
             return  all_refs[:ref_limit] if ref_limit else all_refs
 
 
-    def copy(self, other):
-        if isinstance(other, PSRelation):
-            self.merge(other)
-            self.PropSetToProps.update(other.PropSetToProps)
-            self.Nodes.update(other.Nodes)
-            self.add_references(other._get_refs())
+    def merge_rel(self, other:'PSRelation'):
+        self.merge_obj(other)
+        self.PropSetToProps.update(other.PropSetToProps)
+        self.Nodes.update(other.Nodes)
+        self.add_references(other._get_refs())
 
+
+    def copy(self):
+        copy = PSRelation(self)
+        copy.PropSetToProps.update(self.PropSetToProps)
+        copy.Nodes.update(self.Nodes)
+        copy.add_references(self._get_refs())
+        return copy
+        
 
     @ classmethod
     def make_rel(cls,regulator:PSObject,target:PSObject,props:dict,refs=[],is_directional=True):
@@ -241,7 +312,8 @@ class PSRelation(PSObject):
     def is_directional(self):
         return len(self.Nodes) == 2
 
-    def _props2str(self, prop_id, cell_sep:str =';'):
+
+    def _prop2str(self, prop_id, cell_sep:str =';'):
         try:
             return cell_sep.join(map(str, self[prop_id]))
         except KeyError:
@@ -257,6 +329,9 @@ class PSRelation(PSObject):
                 to_return = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', to_return)
             return to_return
 
+
+    def props2dict(self, prop_ids:list,cell_sep:str =';'):
+        return {k:self._prop2str(k,cell_sep) for k in self.keys() if k in prop_ids}
     
     def props2list(self, propID, cell_sep=';'):
         try:
@@ -273,10 +348,10 @@ class PSRelation(PSObject):
             return to_return
 
 
+
+
     def load_references(self):
         if self.References: return
-        #if self['Id'][0] == 216172782119007911:
-        #    print('')
         for propSet in self.PropSetToProps.values():
             my_reference_tuples = list()
             for ref_id_type in PS_ID_TYPES:
@@ -356,12 +431,12 @@ class PSRelation(PSObject):
             else: 
                 ref.snippets[textref] = {'Sentence':[]} #load empty dict for data consistency
 
-        #self.PropSetToProps.clear() 
-        # # PropSetToProps is used in print_references do not clear it.
 
 
     def filter_references(self, prop_names2values:dict):
-        # prop_names2values = {prop_name:[values]}
+        '''
+        prop_names2values = {prop_name:[values]}
+        '''
         all_refs = set(self.References.values())
         ref2keep = {ref for ref in all_refs if ref.has_properties(prop_names2values)}
         self.References = {k:r for k,r in self.References.items() if r in ref2keep}
@@ -378,16 +453,18 @@ class PSRelation(PSObject):
                 ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
                 return len(ref_from_abstract)
             return ref_count
-        elif len(self[REFCOUNT]) > 0:
-            # case when REFCOUNT was loaded from RNEF dump that did not contain references
-            # e.g. for loading network from __pscache__
-            refcount2merge = list(map(int,self[REFCOUNT]))
-            max_refcount = max(refcount2merge)
-            self[REFCOUNT] = [max_refcount]
-            return max_refcount
         else:
-            self[REFCOUNT] = [0]
-            return 0
+            try:
+                refcount = self[REFCOUNT]
+                # case when REFCOUNT was loaded from RNEF dump that did not contain references
+                # e.g. for loading network from __pscache__
+                refcount2merge = list(map(int,refcount))
+                max_refcount = max(refcount2merge)
+                self[REFCOUNT] = [max_refcount]
+                return max_refcount
+            except KeyError:
+                self[REFCOUNT] = [0]
+                return 0
 
 
     def rel_prop_str(self, sep=':'):
@@ -428,7 +505,7 @@ class PSRelation(PSObject):
             propId = columnPropNames[col]
             if propId in self.keys(): # filling columns with relation properties
                 for row in range(0, rowCount):
-                    propValue = self._props2str(propId)
+                    propValue = self._prop2str(propId)
                     table[row][col] = propValue
             elif RelationNumberOfReferences >= RefNumPrintLimit: #filling columns with reference properties
                 row = 0
@@ -473,7 +550,7 @@ class PSRelation(PSObject):
         for col in range(len(columnPropNames)):
             propId = columnPropNames[col]
             if propId in self.keys(): # filling columns with relation properties
-                propValues = self._props2str(propId)
+                propValues = self._prop2str(propId)
                 table[col] = propValues.replace(cell_sep, ' ')
             elif RelationNumberOfReferences >= RefNumPrintLimit: #filling columns with reference properties
                 for propList in self.PropSetToProps.values():
@@ -497,6 +574,12 @@ class PSRelation(PSObject):
             return self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
 
     def get_regulators_targets(self):
+        """
+        Returns
+        -------
+        regulator,target pairs for directional self
+        all possible pairwise combinations for non-directional self
+        """
         if len(self.Nodes) > 1:
             # for directional relations
             return [(r[0],t[0]) for r in self.Nodes[REGULATORS] for t in self.Nodes[TARGETS]]
@@ -510,18 +593,18 @@ class PSRelation(PSObject):
                 objIdList = [x[0] for x in self.Nodes[TARGETS]]
                 return itertools.combinations(objIdList, 2)
 
-    def get_regulator_ids(self):
+    def regulator_ids(self):
         nodeIds = [x[0] for x in self.Nodes[REGULATORS]]
         return list(nodeIds)
 
-    def get_target_ids(self):
+    def target_ids(self):
         try:
             nodeIds = [x[0] for x in self.Nodes[TARGETS]]
             return list(nodeIds)
         except KeyError: return []
 
-    def get_entities_ids(self):
-        return self.get_regulator_ids()+self.get_target_ids()
+    def entities_ids(self):
+        return self.regulator_ids()+self.target_ids()
 
     def to_json(self):
         str1 = '{"Relation Properties": ' + json.dumps(self) + '}'

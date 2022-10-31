@@ -1,5 +1,7 @@
 
+from builtins import len
 NEED_QUOTES = {' ', '-', '/', '(', ')', '[', ']', '+', '#',':'}
+PERCNT = '%'
 
 class OQL:
     @staticmethod
@@ -31,7 +33,7 @@ class OQL:
 
         property_names = str()
         for n in range(0, len(PropertyNameList)):
-            prop_name = PropertyNameList[n]
+            prop_name = str(PropertyNameList[n])
             if prop_name.find(' ') > 0:
                 if not some_values_have_quotes:
                     prop_name = '\"' + prop_name + '\"'
@@ -71,9 +73,14 @@ class OQL:
 
 
     @staticmethod
-    def get_relations_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=[], MinRef=0):
+    def id2str(ids:list):
+        return ','.join(map(str,ids))
+
+
+    @staticmethod
+    def get_relations_by_props(PropertyValues:list, SearchByProperties:list, only_object_types=[], MinRef=0):
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
-            oql_query = "SELECT Relation WHERE id = " + '(' + ','.join([str(int) for int in PropertyValues]) + ')'
+            oql_query = "SELECT Relation WHERE id = " + '(' + OQL.id2str(PropertyValues) + ')'
         else:
             prop_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
             oql_query = "SELECT Relation WHERE (" + prop_names + ") = (" + values + ')'
@@ -84,12 +91,13 @@ class OQL:
 
         return oql_query if MinRef == 0 else oql_query + ' AND RelationNumberOfReferences >= ' + str(MinRef)
 
+
     @staticmethod
     def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=[],include_parents=False):
         ontology_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE {entities})'
         search_by_id = False
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
-            entity_query = "id = (" + ','.join([str(i) for i in PropertyValues]) + ')'
+            entity_query = "id = (" + OQL.id2str(PropertyValues) + ')'
             search_by_id = True
         else:
             prop_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
@@ -108,6 +116,7 @@ class OQL:
                 return None
 
         return search_query
+
 
     @staticmethod
     def expand_entity_by_id(IDlist: list, expand_by_rel_types=None, expand2neighbors=None, direction=''):
@@ -195,16 +204,15 @@ class OQL:
                 return "SELECT Entity WHERE Connected by (SELECT Relation WHERE NOT (URN = NULL))" + connect_to_str + ")"
 
     @staticmethod
-    def get_objects(object_ids: list):
-        strings = [str(integer) for integer in object_ids]
-        db_ids = ",".join(strings)
-        return "SELECT Entity WHERE id = (" + db_ids + ")"
+    def get_objects(by_ids:list):
+        return "SELECT Entity WHERE id = (" + OQL.id2str(by_ids) + ")"
 
     @staticmethod
     def get_drugs(for_targets_with_ids: list):
         strings = [str(integer) for integer in for_targets_with_ids]
         db_ids = ",".join(strings)
-        return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = (" + db_ids + ")) AND NeighborOf downstream (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs))"
+        return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = (" + db_ids + ")) \
+            AND NeighborOf downstream (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs))"
 
     @staticmethod
     def get_reaxys_substances(ForTargetsIDlist: list):

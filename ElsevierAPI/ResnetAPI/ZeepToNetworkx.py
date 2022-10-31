@@ -1,13 +1,18 @@
 import networkx as nx
 from  .PathwayStudioGOQL import OQL
 from  .PathwayStudioZeepAPI import DataModel
-from  .NetworkxObjects import PSObject,PSRelation,REGULATORS,TARGETS,EFFECT
+from  .NetworkxObjects import PSObject,PSRelation,len,REGULATORS,TARGETS,EFFECT
 from  .ResnetGraph import ResnetGraph
 import math
 import time
 from datetime import timedelta
 
+
 class PSNetworx(DataModel):
+    '''
+    PSNetworx is not aware of retreived properties.\n
+    Properties for retreival must be passed to all functions explicitly
+    '''
     def __init__(self, url, username, password):
         super().__init__(url, username, password)
         self.id2relation = dict()  # {relID:{node_id1,node_id2,PSRelation}} needs to be - Resnet relations may not be binary
@@ -28,27 +33,29 @@ class PSNetworx(DataModel):
             obj_id = prop.ObjId
             prop_id = prop.PropId
             prop_name = prop.PropName
-            values = prop.PropValues.string
-            id2entity[obj_id][prop_id] = values
-            id2entity[obj_id][prop_name] = values
-
-            try:
-                prop_display_name = prop.PropDisplayName
-                id2entity[obj_id][prop_display_name] = values
-            except AttributeError:
-                continue
+            if type(prop.PropValues) != type(None):
+                values = prop.PropValues.string
+                id2entity[obj_id][prop_id] = values
+                id2entity[obj_id][prop_name] = values
+                try:
+                    prop_display_name = prop.PropDisplayName
+                    id2entity[obj_id][prop_display_name] = values
+                except AttributeError:
+                    continue
 
         return id2entity
 
+    
     @staticmethod
-    def link_id(t:tuple):
-        return t[0]
+    def execution_time(execution_start):
+        return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
+
 
     def _load_graph(self, zeep_relations, zeep_objects, add2self = True):
         new_graph = ResnetGraph()
         # loading entities and their properties
         id2entity = self._zeep2psobj(zeep_objects)
-        new_graph.add_nodes_from([(k, v.items()) for k, v in id2entity.items()])
+        new_graph.add_nodes(id2entity)
 
         new_relations = dict()
         if type(zeep_relations) != type(None):
@@ -97,23 +104,17 @@ class PSNetworx(DataModel):
                         new_relations[rel_id].Nodes[REGULATORS].append(link)
 
             try:
-                new_relations[rel_id].Nodes[TARGETS].sort(key=self.link_id)
+                new_relations[rel_id].Nodes[TARGETS].sort(key=lambda x:x[0])
+                # sorting TARGETS by id for speed
             except KeyError: pass
 
             try:
-                new_relations[rel_id].Nodes[REGULATORS].sort(key=self.link_id)
+                new_relations[rel_id].Nodes[REGULATORS].sort(key=lambda x:x[0])
+                # sorting REGULATORS by id for speed
             except KeyError: pass
             
-            for rel in new_relations.values():
-                regulator_target = rel.get_regulators_targets()
-                for pair in regulator_target:
-                    try:
-                        ref_count = rel['RelationNumberOfReferences'][0]
-                    except KeyError: ref_count = 0
-
-                    rel_dict = {'relation':rel,'weight':float(ref_count),'key':new_graph.rel_urn(rel)}
-                    new_graph.add_edges_from([(pair[0], pair[1], rel_dict)])
-
+            [new_graph.add_rel(rel) for rel in new_relations.values()]
+            
         if add2self:
             self.Graph = nx.compose(self.Graph,new_graph)
             self.id2relation.update(new_relations)
@@ -121,21 +122,11 @@ class PSNetworx(DataModel):
         return new_graph
 
 
-    def load_graph_from_oql(self, oql_query:str, relation_props:list=None, entity_props:list=None, get_links=True, add2self=True):
-        
-        if isinstance(entity_props,(list, set)):
-            entity_props = set(['Name']+list(entity_props)) if entity_props else set()
-            #specify empty list explicitly to avoid retreival of any properties
-            #can be used to retrieve only IDs for speed
-        else: entity_props = {'Name'}
-        
+    def load_graph_from_oql(self,oql_query:str,relation_props:list=[],entity_props:list=[],get_links=True,add2self=True):
+        '''
+        # to retrieve only IDs for speed cache specify relation_props,entity_props as empty lists
+        '''
         if get_links:
-            if isinstance(relation_props,(set,list)):
-                relation_props = set(relation_props+['Name','RelationNumberOfReferences']) if relation_props else set()
-                #specify empty list explicitly to avoid retreival of any properties
-                #can be used to retrieve only IDs for speed
-            else: relation_props = {'Name','RelationNumberOfReferences'}
-            
             zeep_relations = self.get_data(oql_query, list(relation_props), getLinks=True)
             if type(zeep_relations) != type(None):
                 obj_id_list = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
@@ -311,36 +302,48 @@ class PSNetworx(DataModel):
             accumulate_network = nx.compose(accumulate_network, network_iter)
 
             splitter = new_splitter
-            execution_time = "{}".format(str(timedelta(seconds=time.time() - iter_start)))
-            print('Iteration %d out of %d was completed in %s' % (s,number_of_splits, execution_time))
+            executiontime = self.execution_time(iter_start)
+            print('Iteration %d out of %d was completed in %s' % (s,number_of_splits, executiontime))
             s += 1
         return accumulate_network
 
-    def _iterate_oql(self, oql_query:str, id_set:set, REL_PROPS:list=None, ENTITY_PROPS:list=None):
+    def _iterate_oql(self,oql_query:str,id_set:set,REL_PROPS=list(),ENTITY_PROPS=list(),add2self=True,get_links=True):
         # oql_query MUST contain string placeholder called {ids} 
         entire_graph = ResnetGraph()
         id_list = list(id_set)
-        step = 500
+        step = 1000
         for i in range(0,len(id_list), step):
             ids = id_list[i:i+step]
             oql_query_with_ids = oql_query.format(ids=','.join(map(str,ids)))
-            iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS)
+            iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS,add2self=add2self,get_links=get_links)
             entire_graph = nx.compose(entire_graph,iter_graph)
         return entire_graph
 
-    def _iterate_oql2(self, oql_query:str, id_set1:set, id_set2:set, REL_PROPS:list=None, ENTITY_PROPS:list=None):
+
+    def _iterate_oql2(self, oql_query:str, id_set1:set, id_set2:set, REL_PROPS=list(), ENTITY_PROPS=list(),add2self=True,get_links=True):
         # oql_query MUST contain 2 string placeholders called {ids1} and {ids2}
         entire_graph = ResnetGraph()
         id_list1 = list(id_set1)
         id_list2 = list(id_set2)
-        step = 500
+        step = 1000
+        number_of_iterations = math.ceil(len(id_set1)/step) * math.ceil(len(id_set2)/step)
+        print('Connecting %d with %d entities' % (len(id_set1), len(id_set2)))
+        if number_of_iterations > 2:
+            print('Query will be executed in %d iterations' % number_of_iterations)
+
+        iteration_counter = 1
+        start  = time.time()
         for i1 in range(0,len(id_list1), step):
             ids1 = id_list1[i1:i1+step]
             for i2 in range(0,len(id_list2), step):
                 ids2 = id_list2[i2:i2+step]
                 oql_query_with_ids = oql_query.format(ids1=','.join(map(str,ids1)),ids2=','.join(map(str,ids2)))
-                iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS)
+                iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS,add2self=add2self,get_links=get_links)
                 entire_graph = nx.compose(entire_graph,iter_graph)
+                if number_of_iterations > 2:
+                    print('Iteration %d out of %d performed in %s' % 
+                        (iteration_counter,number_of_iterations,self.execution_time(start)))
+                iteration_counter +=1
         return entire_graph
     
     
@@ -349,6 +352,7 @@ class PSNetworx(DataModel):
         """
         returns id2psobj {id:PSObject} of entities from pathways found by 'search_pathways_by' or from 'pathway_ids'
         """
+
         if with_properties is None:
             with_properties = ['Name', 'Alias']
         if only_entities is None:
@@ -438,48 +442,48 @@ class PSNetworx(DataModel):
                 return ResnetGraph()
 
 
-    def get_pathway_components(self, by_pathway_props:list, in_prop_type:str, retrieve_rel_properties:set=set(), retrieve_ent_properties:set=set()):
+    def pathway_components(self,by_pathway_props:list,in_prop_type:str, 
+                relprops2load:list=[], entprops2load:list=[]):
         """
-        returns ResnetGraph containing graphs merged from all pathways found\n
+        Returns
+        -------
+        ResnetGraph containing graphs merged from all pathways found\n
         with by_pathway_props+in_prop_type
         """
-        ent_props = retrieve_ent_properties
-        ent_props.add('Name')
-
-        rel_props = retrieve_rel_properties
-        rel_props.update(['Name','RelationNumberOfReferences'])
          
-        rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = {pathway})'
+        rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = \'{pathway}\')'
         subgraph_relation_ids = set()
         for pathway_prop in by_pathway_props:
             loaded_node_ids = set(self.Graph.nodes())
             loaded_relation_ids = set(self.Graph._relations_ids())
 
             rel_q = rel_query.format(propName=in_prop_type,pathway=pathway_prop)
-            pathway_id_only_graph = self.load_graph_from_oql(rel_q, relation_props=[],get_links=True,add2self=False)
+            pathway_id_only_graph = self.load_graph_from_oql(rel_q,[],[],get_links=True,add2self=False)
             pathway_relation_ids = set(pathway_id_only_graph._relations_ids())
             subgraph_relation_ids.update(pathway_relation_ids)
             new_relation_ids = pathway_relation_ids.difference(loaded_relation_ids)
     
             if new_relation_ids:
                 oql_query = OQL.get_relations_by_props(list(new_relation_ids),['id'])
-                new_relation_graph = self.load_graph_from_oql(oql_query,relation_props=list(rel_props))
+                new_relation_graph = self.load_graph_from_oql(oql_query,relprops2load)
                 # new_relation_graph is now fully loaded with desired rel_props
                 # still need desired props for new nodes that did not exist in self.Graph
                 new_nodes_ids = set(new_relation_graph.nodes()).difference(loaded_node_ids)
                 if new_nodes_ids:
                     entity_query = OQL.get_objects(list(new_nodes_ids))
-                    self.load_graph_from_oql(entity_query,entity_props=list(ent_props), get_links=False)
+                    self.load_graph_from_oql(entity_query,[],entprops2load,get_links=False)
         
         rels4subgraph = [rel for i,rel in self.id2relation.items() if i in subgraph_relation_ids]
-        return_subgraph = self.Graph.subgraph_by_rel_ids(rels4subgraph)
+        return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
         return return_subgraph
 
 
-    def to_rnef(self, in_graph=None,add_rel_props:dict=None,add_pathway_props:dict=None):
+    def to_rnef(self,in_graph=ResnetGraph(),add_rel_props=dict(),add_pathway_props=dict()):
         """
-        # add_rel_props = {PropName:[PropValues]}
+        Input
+        -----
+        add_pathway_props, add_rel_props = {PropName:[PropValues]}
         """
-        if not isinstance(in_graph,ResnetGraph): in_graph=self.Graph
+        my_graph = in_graph if in_graph else self.Graph
         all_rnef_props = set(self.RNEFnameToPropType.keys())
-        return in_graph.to_rnef(list(all_rnef_props),list(all_rnef_props),add_rel_props,add_pathway_props)
+        return my_graph._2rnef_s(list(all_rnef_props),list(all_rnef_props),add_rel_props,add_pathway_props)

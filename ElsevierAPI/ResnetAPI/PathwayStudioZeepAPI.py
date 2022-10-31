@@ -2,8 +2,7 @@ import pandas as pd
 import logging
 import sys
 from time import sleep
-from .PathwayStudioGOQL import OQL
-from ..pandas.panda_tricks import df
+from .PathwayStudioGOQL import OQL,len
 from zeep import exceptions
 
 
@@ -38,7 +37,7 @@ class DataModel:
         try:
             self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
             self.__load_model()
-            print('Connected to Resnet API server:\n%s as %s' % (url,username))
+            print('New connection to Pathway Studio API server:\n%s as %s' % (url,username))
         except Exception as error:
             self.logger.error("Pathway Studio server connection failed: {error}".format(error=error))
             raise ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
@@ -86,7 +85,9 @@ class DataModel:
 
     def load_folder_tree(self):
         """
-        returns {folder_id:folder}
+        Returns
+        -------
+        {folder_id:folder}
         """
         folders = self.SOAPclient.service.GetFoldersTree(0)
         id2folders = dict()
@@ -162,8 +163,15 @@ class DataModel:
      
 
     def result_get_data(self, result_param):
-        result = self.SOAPclient.service.ResultGetData(result_param)
-        return result
+        for i in range (0,10):
+            try:
+                result = self.SOAPclient.service.ResultGetData(result_param)
+                return result
+            except exceptions.Fault:
+                print('Connection error while retrieving results\n"%s"\nAttempt #%d to reconnect is in 10 sec' %
+                         (str(result_param.ResultRef),i+2))
+                sleep(10)
+                continue   
 
     def create_result_param(self, property_names=None):
         property_names = ['Name'] if property_names is None else property_names
@@ -571,7 +579,7 @@ class DataModel:
         urns = [a['EntityURN'] for a in results]
         ids = [a['OriginalGeneID'] for a in results]
         assert(len(urns) == len(ids))
-        identifiers = df.from_dict({'OriginalGeneID':ids,'URN':urns})
+        identifiers = pd.DataFrame.from_dict({'OriginalGeneID':ids,'URN':urns})
         return identifiers
 
 
