@@ -1,6 +1,7 @@
 from ElsevierAPI import load_api_config, APISession
-from  ElsevierAPI.ResnetAPI.ResnetGraph import PSObject,CHILDS, PS_ID_TYPES
-import pandas as pd
+from ETM_API.references import PS_ID_TYPES
+from  ElsevierAPI.ResnetAPI.ResnetGraph import PSObject,CHILDS
+from  ElsevierAPI.pandas.panda_tricks import ExcelWriter,df
 
 from TargetGeneticsReport import DATA_DIR
 DATA_DIR = 'D:/Python/PMI/'
@@ -10,7 +11,7 @@ class TissueLocalization(APISession):
     def __init__(self, APIconfig):
         super().__init__(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
         self.printed_ids = set()
-        self.report = pd.DataFrame(columns=['Top category','#References','Organs','Tissues','Cell types','Cell lines'])
+        self.report = df(columns=['Top category','#References','Organs','Tissues','Cell types','Cell lines'])
         self.flush_dump_files()
         self.PageSize = 1000
 
@@ -153,14 +154,14 @@ class TissueLocalization(APISession):
 if __name__ == "__main__":
     entities = ['CNR1','CNR2','GPR55','GPR18','GPR119']
     xslx_file = DATA_DIR+'cannabinoid_receptors_tissue_localization.xlsx'
-    writer = pd.ExcelWriter(xslx_file, engine='xlsxwriter')
+    writer = ExcelWriter(xslx_file, engine='xlsxwriter')
 
     for entity in entities:
         ps_api = TissueLocalization(load_api_config())
         ps_api.load_graph(entity)
         ps_api.make_report()
         ps_api.report.sort_values(by=['#References'],ascending=False, inplace=True)
-        ps_api.report.to_excel(writer, sheet_name=entity+'_anatomy', index=False)
+        ps_api.report.df2excel(writer, sheet_name=entity+'_anatomy')
 
     writer.save()
 
