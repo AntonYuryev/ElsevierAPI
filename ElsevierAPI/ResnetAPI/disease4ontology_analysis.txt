@@ -1,0 +1,89 @@
+head and neck disease
+urogenital disease
+endocrine disorder
+pelvic disease
+benign breast disease
+respiratory disease
+skin and connective tissue disease
+mucosal disease
+musculoskeletal disorder
+chest disease
+soft tissue disease
+hematologic disease
+digestive system disease
+otorhinolaryngological disease
+oral disease
+neurological disorder
+eye disease
+abdominal disease
+cardiovascular disease
+exercise intolerance
+elimination disorder
+sexual dysfunction
+motor dysfunction
+yin deficiency
+voiding dysfunction
+shock
+speech disorder
+respiratory function disorder
+constipation
+faintness
+yang deficiency
+sensation disorder
+pathological conditions, signs and symptoms
+body temperature regulation disorder
+reflex disorder
+pregnancy disorder
+balance disorder
+cyanosis
+growth failure
+autonomic dysfunction
+nutritional and metabolic diseases
+fatigue
+immunopathology
+salivation disorder
+cough
+hypertension
+disability
+consciousness disorder
+disorder of higher cerebral function
+appetite disturbance
+nausea and vomiting
+sleep disorder
+body weight disorder
+coagulopathy
+swallowing disorder
+diarrhea
+infertility
+organ failure
+pain
+rare bone disease
+rare systemic or rheumatologic disease
+rare genetic disease
+rare endocrine disease
+rare skin disease
+rare urogenital disease
+the other rare diseases
+rare immune disease
+rare abdominal surgical disease
+rare neoplastic disease
+rare disorder due to toxic effects
+rare allergic disease
+rare renal disease
+rare hematologic disease
+rare odontologic disease
+rare gastroenterologic disease
+rare otorhinolaryngologic disease
+rare ophthalmic disorder
+rare hepatic disease
+rare systemic or rheumatological disease of childhood
+rare respiratory disease
+rare cardiac disease
+rare maxillo-facial surgical disease
+rare circulatory system disease
+rare infectious disease
+rare gynecologic or obstetric disease
+rare neurologic disease
+rare infertility
+rare surgical thoracic disease
+rare developmental defect during embryogenesis
