@@ -1,13 +1,13 @@
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
 from pandas import ExcelWriter as ExcelWriter
 import rdfpandas
 from ..ResnetAPI.NetworkxObjects import PSObject
 import string
 from openpyxl import load_workbook
 
-
 MIN_COLUMN_WIDTH = 0.65 # in inches
-
+NUMBER_OF_REFERENCE = 'Number of references'
 
 def make_hyperlink(identifier:str,url:str,display_str=''):
         # hyperlink in Excel does not work with long URLs, 
@@ -54,8 +54,12 @@ class df(pd.DataFrame):
         except KeyError:
             column_format = dict()
 
-            column_format.update({fmt_property:fmt_value})
-            self.column2format[column_name] = column_format
+        column_format.update({fmt_property:fmt_value})
+        self.column2format[column_name] = column_format
+
+
+    def set_hyperlink_color(self, column_names:list):
+        [self.add_column_format(column_name,'font_color','blue') for column_name in column_names]
 
 
     def __copy_attrs(self,from_df:'df'):
@@ -78,6 +82,7 @@ class df(pd.DataFrame):
         for col_idx, width in layout.items():
             col_name = str(self.columns[col_idx])
             self.column2format[col_name] = {'inch_width':width}
+
 
     def inch_width_layout(self):
         layout = {i:self.inch_width(i) for i in range(0,len(self.columns))}
@@ -106,21 +111,18 @@ class df(pd.DataFrame):
             read_formula = kwargs.pop('read_formula',False)
             if read_formula:
                 wb = load_workbook(filename=fname)
-                if kwargs['sheet_name']:
-                    try:
-                        sheet = wb[kwargs['sheet_name']]  
-                    except KeyError:
-                        print('%s has no worksheet "%s"' % (fname,kwargs['sheet_name']))    
-                else:
+                try:
+                    sheet = wb[kwargs['sheet_name']]  
+                except KeyError:
                     sheet_names = wb.get_sheet_names()
-                    sheet = sheet_names[0]
+                    sheet = wb[sheet_names[0]]
 
                 header_pos = kwargs.pop('header',0)
                 skiprows = kwargs.pop('skiprows',0)
                 _df = df(pd.DataFrame(sheet.values))
                 _df.columns = _df.iloc[header_pos].to_list()
                 _df = df(_df[header_pos+1+skiprows:])
-                _df._name_ = df_name
+                _df._name_ = df_name if df_name else sheet
                 return _df
             try:
                 _df = df(pd.read_excel(*args, **kwargs))
@@ -169,20 +171,23 @@ class df(pd.DataFrame):
         new_pd._name_ = df_name
         return new_pd
 
+
     @classmethod 
     def from_rows(cls, rows:set or list, header:list):
         dic  = {i:list(row) for i,row in enumerate(rows)}
         new_pd = cls(pd.DataFrame.from_dict(dic,orient='index',columns=header))
         return new_pd
 
+
     @classmethod
-    def dict2pd(cls,dic:dict, key_colname:str, value_colname:str)->pd.DataFrame:
+    def dict2pd(cls,dic:dict, key_colname:str, value_colname:str)->'df':
         """
         input - single value dic {str:str or float} 
         """
-        new_df = cls(pd.DataFrame(columns=[key_colname,value_colname]))
-        new_df = pd.DataFrame.from_dict({key_colname:list(dic.keys()), value_colname:list(dic.values())})
+        #new_df = cls(pd.DataFrame(columns=[key_colname,value_colname]))
+        new_df = df(pd.DataFrame.from_dict({key_colname:list(dic.keys()), value_colname:list(dic.values())}))
         return new_df
+
 
     def merge_dict(self, dict2add:dict, new_col:str, map2column:str, add_all=False, case_sensitive_match=False):
         pd2merge = df.dict2pd(dict2add,map2column,new_col)
@@ -195,6 +200,7 @@ class df(pd.DataFrame):
         merged_pd = df(in2pd.merge(pd2merge,how, on=map2column))
         merged_pd.__copy_attrs(self)
         return merged_pd
+
 
     def append_df(self, other:'df'):
         merged_df = df(pd.concat([self,other],ignore_index=True),name=self._name_)
@@ -256,10 +262,6 @@ class df(pd.DataFrame):
             jsonout.write(self.to_json(None,indent=2, orient='index'))
 
 
-    def set_hyperlink_color(self, column_names:list):
-        [self.add_column_format(column_name,'font_color','blue') for column_name in column_names]
-
-
     def __worksheet_area4(self, first_col:str,last_col:str,first_row=2,last_row=0):
         first_col_idx = self.columns.to_list().index(first_col)
         last_col_idx = self.columns.to_list().index(last_col)
@@ -281,18 +283,19 @@ class df(pd.DataFrame):
         self.conditional_frmt[area] = conditional_format
 
 
-    def make_header_vertical(self):
+    def make_header_vertical(self,height=120):
         self.header_format['rotation'] = '90'
-        self.header_format['height'] = 120
+        self.header_format['height'] = height
         self.header_format['valign'] = 'vcenter'
+
 
     def make_header_horizontal(self):
         self.header_format.pop('rotation','not_found')
         self.header_format.pop('height','not_found')
         self.header_format.pop('valign','not_found')
 
-    def df2excel(self, writer:ExcelWriter,sheet_name:str):
 
+    def df2excel(self, writer:ExcelWriter,sheet_name:str):
         self.to_excel(writer, sheet_name=sheet_name, startrow=1, header=False, index=False, float_format='%g')
         workbook  = writer.book
         worksheet = writer.sheets[sheet_name]
@@ -309,9 +312,13 @@ class df(pd.DataFrame):
             try:
                 col_fmt_dic = dict(self.column2format[column_name])
                 width = col_fmt_dic.pop('width', 20)
+                wrap = col_fmt_dic.pop('wrap_text', False)
                 inch_width = col_fmt_dic.pop('inch_width', 1)
                 column_format = workbook.add_format(col_fmt_dic)
+                if wrap:
+                    column_format.set_text_wrap()
                 worksheet.set_column(idx, idx, width, column_format)
+                # set_column(first_col, last_col, width, cell_format, options)
             except KeyError:
                 continue
 
@@ -320,10 +327,12 @@ class df(pd.DataFrame):
 
 
     def clean(self):
-        clean_pd = self.fillna('')
-        clean_pd = clean_pd.dropna(how='all',subset=None)
+        clean_pd = self.dropna(how='all',subset=None)
         clean_pd = clean_pd.drop_duplicates()
-        return df(clean_pd)
+        clean_pd = clean_pd.fillna('')
+        clean_df = df(clean_pd, name=self._name_)
+        clean_df.copy_format(self)
+        return clean_df
 
 
     def filter_by(self,values:list, in_column:str):
@@ -335,12 +344,16 @@ class df(pd.DataFrame):
 
 
     def drop_empty_columns(self, max_abs=0.00000000000000001, subset=list()):
-        in_columns = subset if subset else self.columns
+        my_columns = subset if subset else self.columns
+        my_numeric_columns = subset if subset else [x for x in my_columns if is_numeric_dtype(self[x])]
         no_value_cols = list()
-        [no_value_cols.append(col) for col in in_columns if abs(self[col].max()) < max_abs]
-        self.drop(columns = no_value_cols)
+        [no_value_cols.append(col) for col in my_numeric_columns if abs(self[col].max()) < max_abs]
+        no_empty_cols = df(self.drop(columns = no_value_cols))
+        no_empty_cols.copy_format(self)
+        no_empty_cols._name_ = self._name_
         print('%s columns were dropped  because they have all values = 0' % no_value_cols)
-
+        return no_empty_cols
+        
 
     def table_layout(self, table_witdh=7.5):
         """
@@ -432,6 +445,7 @@ class df(pd.DataFrame):
         """
         Input
         -----
+        file name i sin args[0]
         'only_columns' = [col_names]
         'ref_limit' = [col_name:reflimit]
         'as_str' = True - formats floats to string as %2.2f'
@@ -444,19 +458,34 @@ class df(pd.DataFrame):
         max_row = kwargs.pop('max_row',0)
         try:
             table_df = df.read(*args,**kwargs)
-            if table_df.empty: return df()
-            select_columns = only_columns
-            if select_columns:
-                if isinstance(select_columns[0],int):
+            if table_df.empty:
+                print('worksheet %s in %s is empty' % (table_df._name_,args[0]))
+                return df()
+            
+            if only_columns:
+                if isinstance(only_columns[0],int):
                     select_columns = [v for i,v in enumerate(table_df.columns.to_list()) if i in only_columns]
+                else:
+                    select_columns = only_columns
+            else:
+                select_columns = []
 
             return table_df.clean4doc(max_row,select_columns,ref_limit,as_str) 
         except FileNotFoundError: 
-            return df()
+            raise FileNotFoundError
 
 
     @staticmethod
     def formula2hyperlink(formula:str):
+        '''
+        extracts hyperlink from HYPERLINK formula in Excel
+        '''
         values = formula[formula.find('(')+1:-2]
         url, txt = values.split(',')
         return url.strip(' "'), txt.strip(' "')
+
+
+    def remove_rows_by(self, values:list, in_column:str):
+        clean_df = df(self[~self[in_column].isin(values)])
+        clean_df.copy_format(self)
+        return clean_df
