@@ -13,7 +13,8 @@ from ..pandas.panda_tricks import pd, df
 from threading import Thread
 
 SCOPUS_AUTHORIDS = 'scopusAuthors'
-ETM_REFS_COLUMN = 'Click on # references to view 5 most relevant articles in Pubmed'
+ETM_REFS_COLUMN = 'Number of references. Link opens most relevant articles in PubMed'
+IDENTIFIER_COLUMN = 'Document identifier: PMID or DOI'
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
@@ -304,6 +305,7 @@ class ETMstat:
             }
         self.params.update(add_param)       
         self.ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
+        self.etm_ref_column_name = list()
 
 
     def clone(self, to_url:str):
@@ -342,6 +344,12 @@ class ETMstat:
     def _url_request(self):
         return self.__base_url()+self.__get_param_str()
 
+    def search_reviews_only(self):
+        self.params.update({'so_p': '1~'})
+
+    def use_advanced_search(self):
+        self.request_type = '/search/advanced?'
+
     def _get_articles(self, page_start=0, need_snippets=True):
         """
         Returns tuple
@@ -354,9 +362,9 @@ class ETMstat:
         the_page = urllib.request.urlopen(self._url_request()).read()
         if the_page:
             result = json.loads(the_page.decode('utf-8'))
-            return result['article-data'], result['total-hits=']
+            return list(result['article-data']), int(result['total-hits='])
         else:
-            return [],0
+            return [],int(0)
 
 
     def _add2counter(self, ref:Reference):
@@ -374,7 +382,7 @@ class ETMstat:
                 continue
 
 
-    def etm_counter2pd(self, use_relevance=True):
+    def counter2df(self, use_relevance=True):
         """
         used for internal self.ref_counter = {identifier:(ref,ref_count)}
         used to count references from ETM
@@ -392,11 +400,13 @@ class ETMstat:
             table_rows.add(tuple([score,biblio_str,id_type,identifier]))
 
         first_col = RELEVANCE if use_relevance else 'Citation index'
-        header = [first_col,'Citation','Identifier type','Identifier']
+        header = [first_col,'Citation','Identifier type',IDENTIFIER_COLUMN]
         return_pd = df.from_rows(table_rows,header)
         return_pd.sort_values(first_col,ascending=False,inplace=True)
+        return_pd.add_column_format('Citation','width',150)
+        return_pd.add_column_format('Citation','wrap_text',True)
         return_pd.make_header_horizontal()
-        return_pd.set_hyperlink_color(['Identifier'])
+        return_pd.set_hyperlink_color([IDENTIFIER_COLUMN])
         return return_pd
 
 
@@ -417,41 +427,90 @@ class ETMstat:
                 identifier = make_hyperlink(identifier,'https://clinicaltrials.gov/ct2/show/')
             table_rows.add(tuple([ref[stat_prop][0],biblio_str,id_type,identifier]))
 
-        header = [stat_prop,'Citation','Identifier type','Identifier']
+        header = [stat_prop,'Citation','Identifier type',IDENTIFIER_COLUMN]
         return_pd = df.from_rows(table_rows,header)
         return_pd.sort_values(stat_prop,ascending=False,inplace=True)
+        return_pd.add_column_format('Citation','width',150)
+        return_pd.add_column_format('Citation','wrap_text',True)
         return_pd.make_header_horizontal()
-        return_pd.set_hyperlink_color(['Identifier'])
+        return_pd.set_hyperlink_color([IDENTIFIER_COLUMN])
         return return_pd
 
 
-    def __make_query(self,terms:list):
+    @staticmethod
+    def __make_query(self,terms:list,operator='rel'):
+        '''
+        Returns
+        -------
+        ETM query for either basic or advanced serach where "terms" are joined with AND operator
+        '''
         if self.request_type == '/search/basic?':
             return ';'.join(terms)
         else:
-            return '{'+'};{'.join(terms)+'}' # for advanced search
+            if operator:
+                my_terms = list()
+                for term in terms:
+                    slash_pos = term.find('/')
+                    if slash_pos > 0:
+                        term2add = '{'+term[:slash_pos]+'}'+term[slash_pos:]
+                    else:
+                        term2add = '{'+term+'}'
+                    my_terms.append(term2add)
+
+                return operator+'('+' AND '.join(my_terms)+')'
+            else:
+                return '{'+'};{'.join(terms)+'}'
+
+    @staticmethod
+    def basic_query(entity1:str,entity2:str,add2query:list):
+        '''
+        Returns
+        -------
+        ETM query for either basic serach where "terms" are joined with AND operator
+        '''
+        #return ';'.join([entity1,entity2]+add2query)
+        return '{'+'};{'.join([entity1,entity2]+add2query)+'}'
 
 
-    def relevant_articles(self, terms:list):
+    @staticmethod
+    def advanced_query(entity1:str,entity2:str,add2query:list):
+        return '{'+'} AND {'.join([entity1,entity2]+add2query)+'}'
+
+
+    @staticmethod
+    def advanced_query_rel(entity1:str,entity2:str,add2query:list):
+        '''
+        Input
+        -----
+        Two terms.  Terms can have expansion function specified by /:
+        /syn - find synonyms
+        /exp - find child terms
+        /inf - find inflected form
+        /prt - find the term as part of composite term
+        '''
+        my_terms = list()
+        for term in [entity1,entity2]+add2query:
+            slash_pos = term.find('/')
+            if slash_pos > 0:
+                term2add = '{'+term[:slash_pos]+'}'+term[slash_pos:]
+            else:
+                term2add = '{'+term+'}'
+            my_terms.append(term2add)
+
+        return 'rel({'+'} AND {'.join(my_terms)+'})'
+   
+
+    def __get_stats(self):
         """
         Returns
         -------
-        most relevant references identified by ETM basic search using input terms.
-        Number of returned references is controled by ETMstat.params['limit'] parameter.
-        Return tuple contains:
+        Tuple:
             [0] hit_count - TOTAL number of reference found by ETM basic search 
             [1] ref_ids = {id_type:[identifiers]}, where len(ref_ids) == ETMstat.params['limit']\n
             id_type is from [PMID, DOI, 'PII', 'PUI', 'EMBASE','NCT ID']\n
             [2] references = [ref] list of Reference objects sorted by ETM relevance. len(references) == ETMstat.params['limit'] 
-            Relevance score is stored in ref['Relevance']
+            Relevance score is stored in ref['Relevance'] for every reference
         """
-    #    if 'octreotide' in terms:
-    #       print('')
-
-        query = self.__make_query(terms)
-        self._set_query(query)
-        articles = list()
-
         articles, self.hit_count = self._get_articles(need_snippets=False)
 
         if self._limit() > 100:
@@ -539,12 +598,46 @@ class ETMstat:
         return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))           
 
 
-    def __get_refs(self, entity_name:str, concepts2link:list,add2query=[]):
+    def __relevant_articles(self,terms:list,operator='rel'):
+        """
+        Returns
+        -------
+        most relevant references identified by ETM basic search using input terms.
+        Number of returned references is controled by ETMstat.params['limit'] parameter.
+        Return tuple contains:
+            [0] hit_count - TOTAL number of reference found by ETM basic search 
+            [1] ref_ids = {id_type:[identifiers]}, where len(ref_ids) == ETMstat.params['limit']\n
+            id_type is from [PMID, DOI, 'PII', 'PUI', 'EMBASE','NCT ID']\n
+            [2] references = [ref] list of Reference objects sorted by ETM relevance. len(references) == ETMstat.params['limit'] 
+            Relevance score is stored in ref['Relevance']
+        """
+    #    if 'octreotide' in terms:
+    #       print('')
+
+        query = self.__make_query(terms,operator)
+        self._set_query(query)
+        return self.__get_stats()
+
+    
+    def __multiple_search(self,for_entity:str,and_concepts:list,my_query,add2query=[]):
+        references = set()
+        total_hits = 0
+        for concept in and_concepts:
+            query = my_query(for_entity,concept,add2query)
+            self._set_query(query)
+            hit_count,ref_ids,etm_refs = self.__get_stats()
+            total_hits += hit_count
+            references.update(etm_refs)
+
+        return references, total_hits
+
+
+    def __get_refs_old(self, entity_name:str, concepts2link:list,add2query=[],operator='rel'):
         references = set()
         total_hits = 0
         for concept in concepts2link:
             search_terms = [concept,entity_name]+add2query
-            hit_count,ref_ids,etm_refs = self.relevant_articles(search_terms)
+            hit_count,ref_ids,etm_refs = self.__relevant_articles(search_terms,operator)
             total_hits += hit_count
             references.update(etm_refs)
 
@@ -568,16 +661,54 @@ class ETMstat:
         return [hyperlink2pubmed,doi_str]
 
 
-    def __add_etm_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,add2query=[]):
-        to_df[[ETM_REFS_COLUMN,'DOIs']] = to_df[between_names_in_col].apply(lambda x: self.__get_refs(x,and_concepts,add2query)).apply(pd.Series)
-        to_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+    def __get_refs(self, entity_name:str, concepts2link:list,my_query,add2query=[]):
+        references = set()
+        references, total_hits = self.__multiple_search(entity_name,concepts2link,my_query,add2query)
+
+        references = list(references)
+        references.sort(key=lambda x:x[RELEVANCE][0],reverse=True)
+        best_refid_list = references[0:self._limit()]
+
+        pmids=list()
+        dois = list()
+        for ref in best_refid_list:
+            id_type,identifier = ref.get_doc_id()
+            if id_type == 'PMID':
+                pmids.append(identifier)
+            elif id_type == 'DOI':
+                dois.append(identifier)
+            else:
+                continue
+
+        hyperlink2pubmed = pubmed_hyperlink(pmids,total_hits) if pmids else '' 
+        doi_str = make_hyperlink(dois[0],url='http://dx.doi.org/', display_str=';'.join(dois)) if dois else ''
+        return [hyperlink2pubmed,doi_str]
 
 
-    def add_etm_references(self,to_df:df,between_names_in_col:str,and_concepts:list,add2query=[]):
+    @staticmethod
+    def __etm_ref_column_name(between_column:str, and_concepts:str or list):
+        if isinstance(and_concepts,str):
+            return ETM_REFS_COLUMN + ' between '+between_column+' and '+and_concepts
+        else:
+            return ETM_REFS_COLUMN + ' between '+between_column+' and '+','.join(and_concepts)
+
+
+    def __add_etm_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,my_query,add2query=[]):
+        etm_ref_column_name = self.__etm_ref_column_name(between_names_in_col,and_concepts)
+        to_df[[etm_ref_column_name,'DOIs']] = to_df[between_names_in_col].apply(lambda x: self.__get_refs(x,and_concepts,my_query,add2query)).apply(pd.Series)
+
+
+    def add_etm_references(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[]):
         """
+        Input
+        -----
+        my_query - function to generate query from "between_names_in_col" and each concept in "and_concepts"
+        my_query must have 3 arguments: my_query(entity1:str, entity2:str, add2query:list)\n
+        where add2query - list of additinal keywords used for all pairs "between_names_in_col" and "and_concepts"
+
         Adds
         ----
-        columns ETM_REFS_COLUMN,DOIs to to_df
+        columns "ETM_REFS_COLUMN","DOIs" to to_df
         """
         start_time = time.time()
         etm1 = self.clone('https://demo.elseviertextmining.com/api')
@@ -591,11 +722,11 @@ class ETMstat:
         df2 = df(my_df.iloc[one3rd : 2*one3rd])
         df3 = df(my_df.iloc[2*one3rd:])
 
-        t1 = Thread(target=etm1.__add_etm_refs, args=(df1,between_names_in_col,and_concepts,add2query),name='etm_demo')
+        t1 = Thread(target=etm1.__add_etm_refs, args=(df1,between_names_in_col,and_concepts,use_query,add2query),name='etm_demo')
         t1.start()
-        t2 = Thread(target=etm2.__add_etm_refs, args=(df2,between_names_in_col,and_concepts,add2query),name='etm_discover')
+        t2 = Thread(target=etm2.__add_etm_refs, args=(df2,between_names_in_col,and_concepts,use_query,add2query),name='etm_discover')
         t2.start()
-        t3 = Thread(target=etm3.__add_etm_refs, args=(df3,between_names_in_col,and_concepts,add2query),name='etm_research')
+        t3 = Thread(target=etm3.__add_etm_refs, args=(df3,between_names_in_col,and_concepts,use_query,add2query),name='etm_research')
         t3.start()
 
         t1.join()
@@ -606,23 +737,28 @@ class ETMstat:
         [self._add2counter(ref) for ref in etm2.references()]
         [self._add2counter(ref) for ref in etm3.references()]
         
-        annotated_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+        etm_ref_column_name = self.__etm_ref_column_name(between_names_in_col,and_concepts)
+        self.etm_ref_column_name.append(etm_ref_column_name)
+        annotated_df.add_column_format(etm_ref_column_name,'align','center')
+        annotated_df.set_hyperlink_color([etm_ref_column_name,'DOIs'])
         print('Annotated %d rows from %s with ETM references in %s' % 
                 (len(to_df),to_df._name_,execution_time(start_time)))
         return annotated_df
 
 
-    def etm42columns(self,in_df:df,between_col:str,and_col:str,add2query=[]):
+    def __etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[]):
+        etm_ref_column_name = self.__etm_ref_column_name(between_col,and_col)
         for i in in_df.index:
             col1 = in_df.loc[i][between_col]
             col2 = in_df.loc[i][and_col]
-            hyperlink2pubmed,doi_str = self.__get_refs(col1,[col2],add2query)
-            in_df.at[i,ETM_REFS_COLUMN] = hyperlink2pubmed
+            hyperlink2pubmed,doi_str = self.__get_refs(col1,[col2],my_query,add2query)
+            in_df.at[i,etm_ref_column_name] = hyperlink2pubmed
             in_df.at[i,'DOIs'] = doi_str
-        in_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+       # in_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+        #in_df.add_column_format(ETM_REFS_COLUMN,'align','center')
 
 
-    def add_etm42columns(self,in_df:df,between_col:str,and_col:str,add2query=[],max_row=100):
+    def add_etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[],max_row=100):
         start_time = time.time()
         etm2 = self.clone('https://discover.elseviertextmining.com/api')
         etm3 = self.clone('https://research.elseviertextmining.com/api')
@@ -634,11 +770,11 @@ class ETMstat:
         df2 = df(df2annotate.iloc[one3rd : 2*one3rd])
         df3 = df(df2annotate.iloc[2*one3rd:])
 
-        t1 = Thread(target=self.etm42columns, args=(df1,between_col,and_col,add2query),name='etm_demo')
+        t1 = Thread(target=self.__etm42columns, args=(df1,between_col,and_col,my_query,add2query),name='etm_demo')
         t1.start()
-        t2 = Thread(target=etm2.etm42columns, args=(df2,between_col,and_col,add2query),name='etm_discover')
+        t2 = Thread(target=etm2.__etm42columns, args=(df2,between_col,and_col,my_query,add2query),name='etm_discover')
         t2.start()
-        t3 = Thread(target=etm3.etm42columns, args=(df3,between_col,and_col,add2query),name='etm_research')
+        t3 = Thread(target=etm3.__etm42columns, args=(df3,between_col,and_col,my_query,add2query),name='etm_research')
         t3.start()
 
         t1.join()
@@ -648,7 +784,11 @@ class ETMstat:
         annotated_df = df(pd.concat([df1,df2,df3,unannoated_rows]),name=in_df._name_)
         [self._add2counter(ref) for ref in etm2.references()]
         [self._add2counter(ref) for ref in etm3.references()]
-        annotated_df.set_hyperlink_color([ETM_REFS_COLUMN,'DOIs'])
+
+        etm_ref_column_name = self.__etm_ref_column_name(between_col,and_col)
+        self.etm_ref_column_name.append(etm_ref_column_name)
+        annotated_df.add_column_format(etm_ref_column_name,'align','center')
+        annotated_df.set_hyperlink_color([etm_ref_column_name,'DOIs'])
         print('Annotated %d rows from %s with ETM references in %s' % 
                 (len(in_df),in_df._name_,execution_time(start_time)))
         return annotated_df
@@ -664,7 +804,7 @@ class ETMcache (ETMstat):
     etm_results_dir = ''
     etm_stat_dir = ''
     
-    def __init__(self,query,search_name,APIconfig:dict, etm_dump_dir:str, etm_stat_dir, add_params={}):
+    def __init__(self,query,search_name,APIconfig:dict,etm_dump_dir='',etm_stat_dir='',add_params={}):
         super().__init__(APIconfig,add_param=add_params)
         self.params.pop('limit')
         self._set_query(query)

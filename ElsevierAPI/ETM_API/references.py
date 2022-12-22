@@ -7,7 +7,6 @@ import time
 import json
 from ..NCBI.pubmed import pubmed_hyperlink
 
-
 AUTHORS = 'Authors'
 INSTITUTIONS = 'Institutions'
 JOURNAL = 'Journal'
@@ -151,19 +150,22 @@ class Reference(dict):
 
         return dict()
 
+
     def update_with_value(self, PropId, PropValue:str):
         clean_prop = PropValue.strip(' .')
-        self_clean_props = set(map(lambda x: str(x).strip(' .'), PropValue))
         try:
-            self[PropId] = list(set(self_clean_props|{clean_prop}))
+            my_props = self[PropId]
+            self[PropId] = list(set(my_props).add(clean_prop))
         except KeyError:
             self[PropId] = [clean_prop]
 
-    def update_with_list(self, prop_id, prop_values: list):
+
+    def update_with_list(self, prop_id, with_values:list):
+        clean_vals = set(map(lambda x: str(x).strip(' .'),with_values))
         try:
-            self[prop_id] = list(set(self[prop_id] + prop_values))
+            self[prop_id] = list(set(self[prop_id])|clean_vals)
         except KeyError:
-            self[prop_id] = list(set(prop_values))
+            self[prop_id] = list(clean_vals)
 
 
     def add_sentence_prop(self, text_ref:str, propID:str, prop_value:str):
@@ -325,7 +327,7 @@ class Reference(dict):
                 journal = 'No journal name'
         
         identifier_tup = self._identifier()
-        return title+' ('+year+'). '+journal+'.'+authors_str, identifier_tup[0],identifier_tup[1]
+        return title+' ('+year+'). '+journal+'. '+authors_str, identifier_tup[0],identifier_tup[1]
 
     
     def get_biblio_str(self, sep='\t'):
