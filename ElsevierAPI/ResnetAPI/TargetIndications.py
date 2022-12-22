@@ -1,8 +1,7 @@
-from .SemanticSearch import SemanticSearch,ResnetGraph, len,df,REFERENCE_IDENTIFIERS
+from .SemanticSearch import SemanticSearch,ResnetGraph, len,df,REFERENCE_IDENTIFIERS,COUNTS,ONTOLOGY_ANALYSIS
 from .ResnetGraph import REFCOUNT
 from ..ETM_API.references import PS_SENTENCE_PROPS, EFFECT,PS_BIBLIO_PROPS
 from .PathwayStudioGOQL import OQL
-from ..ETM_API.etm import ETMstat
 import time
 
 RANK_SUGGESTED_INDICATIONS = True 
@@ -16,19 +15,30 @@ DF4AGONISTS = 'agonistInd.'
 ANTAGONISTS_WS = 'indications4antagonists'
 AGONISTS_WS = 'indications4agonists'
 
-class TargetIndications(SemanticSearch):
+class Indications4targets(SemanticSearch):
     pass
+    indications4antagonists = set()
+    indications4agonists = set()
+    indications4antagonists_strict = set()
+    indications4agonists_strict = set()
+    unknown_effect_indications = set()
+    unknown_effect_indications_strict = set()
+    DirectAntagonistsIDs = list()
+    DirectAgonistsIDs = list()
+    IndirectAgonistsIDs = list()
+    IndirectAntagonistsIDs = list()
+    GVids = list()
+
+
     def __init__(self, APIconfig, params={}):
         super().__init__(APIconfig)
         self.add_rel_props([EFFECT])
-        self.indications4antagonists = set()
-        self.indications4agonists = set()
-        self.indications4antagonists_strict = set()
-        self.indications4agonists_strict = set()
-        self.unknown_effect_indications = set()
-        self.unknown_effect_indications_strict = set()
+        self.partners = list() # list of PSObject
+        self.partners_ids = list() #
+        self.columns2drop += [self.__resnet_name__,self.__mapped_by__]
 
-        if params: self.param = dict(params)
+        if params: 
+            self.param = dict(params)
         else: # default params:
             self.param = {'partner_names':[],
     # if partner_names is empty script will try finding Ligands for Receptor targets and Receptors for Ligand targets
@@ -45,6 +55,8 @@ class TargetIndications(SemanticSearch):
                  'data_dir':'',
                  'add_bibliography' : True
                 }
+
+        self.set_dir(self.param['data_dir'])
     
     
     def _target_names(self):
@@ -235,7 +247,10 @@ class TargetIndications(SemanticSearch):
         print('%d indications cannot be resolved.\n They will appear in both worksheets for agonists and antagonist:' % 
                     len(unresolved_ids))
         for i in unresolved_ids:
-            print(self.Graph._get_node(i).name())
+            try:
+                print(self.Graph._get_node(i).name())
+            except KeyError:
+                continue
 
 
     def find_target_indications(self):
@@ -358,8 +373,10 @@ class TargetIndications(SemanticSearch):
 
         return modulators_ids, indication_ids
 
+
     def modulators_indications(self,linked_by:list(),with_effect_on_target:str,min_refcount=1,drugs_only=False):
         return self.modulators_effects(linked_by,with_effect_on_target,True,min_refcount,drugs_only)
+
 
     def modulators_toxicities(self,linked_by:list(),with_effect_on_target:str,min_refcount=1,drugs_only=False):
         return self.modulators_effects(linked_by,with_effect_on_target,False,min_refcount,drugs_only)
@@ -380,28 +397,7 @@ class TargetIndications(SemanticSearch):
         self.IndirectAntagonistsIDs, indication_ids = self.modulators_indications(
             ['Regulation','Expression','MolTransport'],'negative',min_refcount=1,drugs_only=True)
 
-    '''
-    def counterindications4chem_antimodulators(self):
-        exist_indication_count = len(self._indications())
-        # liked_to_target_by can be relaxed to (DirectRegulation,Regulation,Expression,MolTransport)
-        #opposite_effect = 'positive' if self.param['to_inhibit'] else 'negative'
-        if self.param['to_inhibit']:
-            self.DirectAntiModulatorsID,indication_ids = self.modulators_indications(
-                                                                ['DirectRegulation'],'positive')
-            self.indications4agonists.update(indication_ids)
-            new_indication_count = len(self._indications()) - exist_indication_count
-            print('%d counter-indications for compounds directly activating %s were not found by previous searches' %  
-                            (new_indication_count,self._target_names()))
-            self.IndirectAntiModulatorsIDs, indication_ids = self.modulators_indications(
-                ['Regulation','Expression','MolTransport'],'positive',min_refcount=1,drugs_only=True)
-        else:
-            self.DirectAntiModulatorsID,indication_ids = self.modulators_indications(
-                                                            ['DirectRegulation'],'negative')
-            self.indications4antagonists.update(indication_ids)
-            self.IndirectAntiModulatorsIDs, indication_ids = self.modulators_indications(
-                ['Regulation','Expression','MolTransport'],'negative',min_refcount=1,drugs_only=True)
-    '''
-        
+ 
     def indications4partners(self):
         """
         Assumes partners are linked to Target with Effect=positive
@@ -433,7 +429,7 @@ class TargetIndications(SemanticSearch):
                 (new_indication_count, len(self.partners),t_n,self.partner_class.lower()))
         
 
-    def indications4cells_secreting_target(self):
+    def indications4cells_secreted_target(self):
         if not self.target_class == 'Ligand': return
 
         t_n = self._target_names()
@@ -532,11 +528,14 @@ class TargetIndications(SemanticSearch):
 
 
     def init_semantic_search(self):
+        '''
+        Loads DF4ANTAGONISTS and DF4AGONISTS df to raw_data
+        '''
         print('\n\nInitializing semantic search')
         t_n = self._target_names()
 
-        indication_ids = self._indications4antagonists()
-        IndicationNames4antagonists = [y[0] for i,y in self.Graph.nodes(data='Name') if i in indication_ids]
+        indications4antagonists = self._indications4antagonists()
+        IndicationNames4antagonists = [y[0] for i,y in self.Graph.nodes(data='Name') if i in indications4antagonists]
 
         if IndicationNames4antagonists:
             indications2load = df.from_dict({'Name':IndicationNames4antagonists})
@@ -545,8 +544,8 @@ class TargetIndications(SemanticSearch):
             self.add2raw(indication_df)
             print('Will score %d indications for antagonists of %s' % (len(indication_df),t_n))
         
-        indication_ids = self._indications4agonists()
-        IndicationNames4agonists = [y[0] for i,y in self.Graph.nodes(data='Name') if i in indication_ids]
+        indications4agonists = self._indications4agonists()
+        IndicationNames4agonists = [y[0] for i,y in self.Graph.nodes(data='Name') if i in indications4agonists]
 
         if IndicationNames4agonists:
             indications2load = df.from_dict({'Name':IndicationNames4agonists})
@@ -647,27 +646,31 @@ class TargetIndications(SemanticSearch):
         return effect, drug_class, concept_ids
 
 
-    def semantic_score(self,in_worksheet:str,effect_on_indication:str):
+    def semantic_score(self,in_worksheet:str,target_effect_on_indication:str):
         """
         Input
         -----
-        effect - required Effect sign between target and Indication 
-        effect =  'positive' to score antagonists
-        effect =  'negative' to score agonists
+        target_effect_on_indication: required Effect sign between target and Indication 
+        target_effect_on_indication = 'positive' to score antagonists
+        target_effect_on_indication = 'negative' to score agonists
+
+        Output
+        ------
+        adds score columns to "in_worksheet" from raw_data
         """
         t_n = self._target_names()   
-        colname = 'Activated by ' if effect_on_indication == 'positive' else 'Inhibited by '
+        colname = 'Activated by ' if target_effect_on_indication == 'positive' else 'Inhibited by '
         colname += t_n
         my_df = self.raw_data[in_worksheet]
-        score4antagonists = True if effect_on_indication == 'positive' else False
+        score4antagonists = True if target_effect_on_indication == 'positive' else False
 
         if self.__is_strict():
             booster_reltypes = ['Regulation','Biomarker','GeneticChange','QuantitativeChange','StateChange']
         else:
             booster_reltypes = ['Regulation','GeneticChange']
-        self.set_how2connect(['Regulation'],[effect_on_indication],'',booster_reltypes)
+        self.set_how2connect(['Regulation'],[target_effect_on_indication],'',booster_reltypes)
         linked_row_count,linked_ent_ids,my_df = self.link2concept(colname,self.target_ids,my_df)
-        print('%d indications are %sly regulated by %s' % (linked_row_count,effect_on_indication,t_n))
+        print('%d indications are %sly regulated by %s' % (linked_row_count,target_effect_on_indication,t_n))
 
         self.score_GVs(my_df)
 
@@ -694,25 +697,25 @@ class TargetIndications(SemanticSearch):
 
     
         #references where target expression or activity changes in the indication
-        colname = ' is upregulated' if effect_on_indication == 'positive' else ' is downregulated'
+        colname = ' is upregulated' if target_effect_on_indication == 'positive' else ' is downregulated'
         colname = t_n + colname
-        self.set_how2connect(['QuantitativeChange'],[effect_on_indication],'',['Biomarker','StateChange'])
+        self.set_how2connect(['QuantitativeChange'],[target_effect_on_indication],'',['Biomarker','StateChange'])
         linked_row_count,linked_ent_ids,my_df= self.link2concept(colname,self.target_ids,my_df)
-        print('%d indications %sly regulate %s' % (linked_row_count,effect_on_indication,t_n))
+        print('%d indications %sly regulate %s' % (linked_row_count,target_effect_on_indication,t_n))
 
 
         #references suggesting target partners as targets for indication
         if hasattr(self, 'PartnerIndicationNetwork'):
             p_cl = self.partner_class
             colname = '{target_name} {partnet_class}s'.format(target_name=t_n,partnet_class=p_cl)
-            self.set_how2connect(['Regulation'],[effect_on_indication],'',['Regulation'])
+            self.set_how2connect(['Regulation'],[target_effect_on_indication],'',['Regulation'])
             linked_row_count,linked_ent_ids,my_df = self.link2concept(colname,self.partners_ids,my_df)
             print('Linked %d indications for %d %s %ss' % (linked_row_count,len(self.partners_ids),t_n,p_cl))
 
         #references reporting that cells producing the target linked to indication
         if hasattr(self, 'ProducingCellsIDs'):
             colname = '{target_name} producing cells'.format(target_name=t_n)
-            self.set_how2connect(['Regulation'],[effect_on_indication],'',['Regulation'])
+            self.set_how2connect(['Regulation'],[target_effect_on_indication],'',['Regulation'])
             linked_row_count,linked_ent_ids,my_df = self.link2concept(colname,self.ProducingCellsIDs,my_df)
             print('Liked %d indications linked %d cells producing %s' % (linked_row_count,len(self.ProducingCellsIDs),t_n))
 
@@ -743,7 +746,7 @@ class TargetIndications(SemanticSearch):
         if hasattr(self, 'PathwayComponentsIDs'):
             #references linking target pathway to indication
             colname = t_n + ' pathway components'
-            self.set_how2connect(['Regulation'],[effect_on_indication],'')
+            self.set_how2connect(['Regulation'],[target_effect_on_indication],'')
             self._clone_(to_retrieve=REFERENCE_IDENTIFIERS)
             linked_row_count,linked_ent_ids,my_df = self.link2concept(colname,list(self.PathwayComponentsIDs),my_df)
             print('Linked %d indications to %s pathway components' % (linked_row_count,t_n))
@@ -785,46 +788,33 @@ class TargetIndications(SemanticSearch):
         self.relProps = old_rel_props
         return to_return
 
-    '''
-    def rn2df(self, ModulatedNetwork:ResnetGraph, by_entity:str):
-        # depricated. Moved to self.make_report():
-        # other_effects_graph = self.other_effects()
-        #other_indications = other_effects_graph.snippets2df(df_name='possibilities')
-        # self.add2report(other_indications)
-        print('Finding references in Pathway Studio for other indication with unknown effect')
-        old_rel_props = self.relProps
-        self.add_rel_props(PS_SENTENCE_PROPS+['Title','PubYear'])
-        ref_df = df(columns=['Indication','Entity','#Reference','PMID','DOI','Title','PubYear','Snippet'])
-        for n1,n2,rel in ModulatedNetwork.edges.data('relation'):
-            node1 = ModulatedNetwork._get_node(n1)
-            node2 = ModulatedNetwork._get_node(n2)
-            indication = node1 if node1['ObjTypeName'][0] in self.param['indication_types'] else node2
 
-            ref_counter = set()
-            links_between = self.connect_nodes([n1],[n2])
-            references = links_between.load_references()
-            ETMstat.count_refs(ref_counter,references)
-            #refs come from Resnet without Relevance
-        
-            for ref in list(ref_counter):
-                ref_list = ref.to_list(id_types=['PMID','DOI'],
-                                print_snippets=True,biblio_props=['Title','PubYear']) #other_props=['Citation index']
-                row = [indication['Name'][0],by_entity,len(references)]+ref_list
-                ref_df.loc[len(ref_df.index)] = row
-        
-        ref_df.sort_values(by=['#Reference','Indication','PMID','DOI'],ascending=False, inplace=True)
-        ref_df._name_ = 'possibilities'
-        
-        self.relProps = old_rel_props
-        return ref_df
-    '''
-
-    def make_report(self):
+    def load_indications4targets(self):
+        '''
+        assumes self.param['target_names'] is not empty
+        '''
         start_time = time.time()
         self.set_targets()
         self.set_partners()
-        self.flush_dump_files()
 
+        self.find_target_indications()
+        if self.target_class != 'Ligand':
+            self.indications4chem_modulators()
+        else:
+            self.indications4cells_secreted_target()
+        self.indications4partners()
+        self.get_pathway_componets()
+        self.__resolve_conflict_indications()
+
+        print("Target indications were loaded in %s" % self.execution_time(start_time))
+
+    def make_report(self):
+        start_time = time.time()
+        self.flush_dump_files()
+        self.load_indications4targets()
+        '''
+        self.set_targets()
+        self.set_partners()
         self.find_target_indications()
         self.get_pathway_componets()
 
@@ -833,14 +823,15 @@ class TargetIndications(SemanticSearch):
             self.indications4chem_modulators()
             #self.counterindications4chem_antimodulators()
         else:
-            self.indications4cells_secreting_target() #will work only if target is Ligand
+            self.indications4cells_secreted_target() #will work only if target is Ligand
 
         self.indications4partners()
         self.__resolve_conflict_indications()
+        '''
         
         if self.init_semantic_search():
-            self.semantic_score(DF4ANTAGONISTS,effect_on_indication='positive')
-            self.semantic_score(DF4AGONISTS,effect_on_indication='negative')
+            self.semantic_score(DF4ANTAGONISTS,target_effect_on_indication='positive')
+            self.semantic_score(DF4AGONISTS,target_effect_on_indication='negative')
 
         self.normalize(DF4ANTAGONISTS,ANTAGONISTS_WS)
         self.normalize(DF4AGONISTS,AGONISTS_WS)
@@ -852,5 +843,5 @@ class TargetIndications(SemanticSearch):
 
         self.add_etm_refs(ANTAGONISTS_WS,self.input_names())
         self.add_etm_refs(AGONISTS_WS,self.input_names())
-        self.etm2df()
+        self.add_etm_bibliography()
         print('Repurposing of %s was done in %s' % (self._get_report_name(), self.execution_time(start_time)))

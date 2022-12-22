@@ -1,4 +1,4 @@
-from .ResnetAPISession import APISession, time, ResnetGraph, PSObject, nx, math
+from .ResnetAPISession import APISession, time, ResnetGraph, nx, math
 from ..pandas.panda_tricks import df, ExcelWriter
 from .Zeep2Experiment import Experiment
 import scipy.stats as stats
@@ -45,7 +45,7 @@ class SNEA(APISession):
         #oql_query = 'SELECT Relation WHERE objectType = Metabolization' # for testing
         self.process_oql(oql_query, 'Fetching protein expression network')
         self.Graph = self.Graph.make_simple()
-        self.graph2rnef(cache_path+network_name+'.rnef')
+        self.Graph.rnef2file(cache_path+network_name+'.rnef')
         self.Graph.name = network_name
         print('%s with %d edges and %d nodes was downloaloaded from database in %s' 
                 % (network_name,self.Graph.number_of_edges(),self.Graph.number_of_nodes(),self.execution_time(start)))
@@ -67,7 +67,7 @@ class SNEA(APISession):
         print('%s experiment has %d edges and %d nodes' 
                 %(network_name,expression_network.number_of_edges(),expression_network.number_of_nodes()))
         
-        self.experiment.annotate_graph(expression_network,sample_names,sample_ids)
+        self.experiment.annotate(expression_network,sample_names,sample_ids)
         regulomes =  expression_network.regulome_dict(self.min_subnet_size)
 
         sample_counter = 0

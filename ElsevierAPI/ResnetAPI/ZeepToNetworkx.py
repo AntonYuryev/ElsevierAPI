@@ -147,29 +147,62 @@ class PSNetworx(DataModel):
             return set()
 
 
+    def _id2children_(self,parent_ids:list):
+        '''
+        Returns
+        -------
+        parent2children = {parent_id:[children_ids]}
+
+        Updates
+        -------
+        self.ID2Children with parent2children
+        '''
+        parent2children = dict()
+        for parent_id in parent_ids:
+            query_ontology = OQL.get_childs([parent_id],['id'])
+            children_ids = list(self._obj_id_by_oql(query_ontology))
+            parent2children[parent_id] = children_ids
+
+        self.ID2Children.update(parent2children)
+        return parent2children
+
+
     def _get_obj_ids_by_props(self, propValues: list, search_by_properties=[], get_childs=True,
                              only_obj_types=[]):
-        if not search_by_properties: search_by_properties = ['Name','Alias']
-        
-        query_node = OQL.get_entities_by_props(propValues, search_by_properties, only_obj_types)
-        target_ids = self._obj_id_by_oql(query_node)
-        
-        if get_childs:
-            child_ids = list()
-            for i in target_ids:
-                try:
-                    child_ids = child_ids + self.ID2Children[i]
-                except KeyError:
-                    query_ontology = OQL.get_childs([i],['id'])
-                    children = list(self._obj_id_by_oql(query_ontology))
-                    self.ID2Children[i] = children
-                    child_ids = child_ids + children
+        '''
+        Loads
+        -----
+        self.ID2Children if get_childs == True  
 
-            target_ids.update(child_ids)         
-        return target_ids
+        Returns
+        -------
+        {database_ids} for all parents and children combined
+        '''
+        if not search_by_properties: search_by_properties = ['Name','Alias']
+        query_node = OQL.get_entities_by_props(propValues, search_by_properties, only_obj_types)
+        parent_ids = self._obj_id_by_oql(query_node)
+
+        if get_childs:
+            parent2children = self._id2children_(parent_ids)
+            all_ids = parent_ids
+            for parent_id, children_ids in parent2children.items():
+                all_ids.add(parent_id)
+                all_ids.update(children_ids)
+            return all_ids
+        else:
+            return parent_ids
 
 
     def get_children(self, parent_ids:list):
+        '''
+        Returns
+        -------
+        ids of children of parents with parent_ids
+
+        Loads
+        -----
+        self.ID2Children
+        '''
         child_ids = set()
         for parent_id in parent_ids:
             try:
@@ -262,7 +295,7 @@ class PSNetworx(DataModel):
                     obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
                     zeep_objects = self.get_object_properties(obj_ids, ENTITY_PROPS)
                     new_ps_relations = self._load_graph(zeep_relations, zeep_objects)
-                    ppi_keeper = nx.compose(ppi_keeper, new_ps_relations)
+                    ppi_keeper.add_graph(new_ps_relations)
 
                 new_splitter.append(uq_list1)
                 new_splitter.append(uq_list2)
@@ -316,6 +349,19 @@ class PSNetworx(DataModel):
             ids = id_list[i:i+step]
             oql_query_with_ids = oql_query.format(ids=','.join(map(str,ids)))
             iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS,add2self=add2self,get_links=get_links)
+            entire_graph = nx.compose(entire_graph,iter_graph)
+        return entire_graph
+
+
+    def _iterate_oql_s(self,oql_query:str,prop_set:set,REL_PROPS=list(),ENTITY_PROPS=list(),add2self=True,get_links=True):
+        # oql_query MUST contain string placeholder called {props} 
+        entire_graph = ResnetGraph()
+        prop_list = list(prop_set)
+        step = 1000
+        for i in range(0,len(prop_list), step):
+            props = prop_list[i:i+step]
+            oql_query_with_props = oql_query.format(props=OQL.join_with_quotes(props))
+            iter_graph = self.load_graph_from_oql(oql_query_with_props,REL_PROPS,ENTITY_PROPS,add2self=add2self,get_links=get_links)
             entire_graph = nx.compose(entire_graph,iter_graph)
         return entire_graph
 
@@ -477,13 +523,3 @@ class PSNetworx(DataModel):
         return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
         return return_subgraph
 
-
-    def to_rnef(self,in_graph=ResnetGraph(),add_rel_props=dict(),add_pathway_props=dict()):
-        """
-        Input
-        -----
-        add_pathway_props, add_rel_props = {PropName:[PropValues]}
-        """
-        my_graph = in_graph if in_graph else self.Graph
-        all_rnef_props = set(self.RNEFnameToPropType.keys())
-        return my_graph._2rnef_s(list(all_rnef_props),list(all_rnef_props),add_rel_props,add_pathway_props)

@@ -1,14 +1,13 @@
 import time
-
-import scipy.stats as stats
-import xml.etree.ElementTree as et
 import glob
 import os
+import scipy.stats as stats
+import xml.etree.ElementTree as et
 from .rnef2sbgn import make_file_name,to_sbgn_file
-from ElsevierAPI.ResnetAPI.FolderContent import FolderContent,PSPathway
-from ElsevierAPI.ResnetAPI.Zeep2Experiment import Experiment
-from ElsevierAPI.pandas.panda_tricks import df,ExcelWriter
-from ElsevierAPI.ETM_API.references import RELATION_PROPS
+from .FolderContent import FolderContent,PSPathway
+from .Zeep2Experiment import Experiment
+from ..pandas.panda_tricks import df,ExcelWriter
+from ..ETM_API.references import RELATION_PROPS
 
 MEASURED_COUNT = '# measured entities'
 MEASURED_ENTITIES = 'measured entities'
@@ -127,7 +126,7 @@ class GSEA(FolderContent):
         self.relProps = list(RELATION_PROPS) + ['URN']
         if missing_in_cache:
             for folder_name in missing_in_cache:
-                self.content2rnef(folder_name)
+                self.folder2rnef(folder_name)
                 self.__load_cache(must_have_urns,folder_name)
 
 
@@ -145,7 +144,7 @@ class GSEA(FolderContent):
 
             for ps_pathway in self.id2pathway.values():
                 annotated_pathway_obj = {u:o for u,o in self.Graph.urn2obj.items() if u in ps_pathway.graph.urn2obj and sample_annotation in o}
-                # self.Graph.urn2obj can have duplicate 'Id' since it collects objects from multople pathways
+                # self.Graph.urn2obj can have duplicate 'Id' because it collects objects from multiple pathways
 
                 pathway_values = [v[sample_annotation][0][0] for v in annotated_pathway_obj.values()]
                 ps_pathway[MEASURED_COUNT]= [len(pathway_values)]

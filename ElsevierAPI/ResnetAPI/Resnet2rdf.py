@@ -114,6 +114,7 @@ class ResnetRDF(rdf.Graph):
         try:
             self.add((ref_uri, self.make_uri('schema','periodical'),rdf.Literal(ref[JOURNAL][0])))
         except KeyError: pass
+
     #   [self.add(ref_uri, SCHEMA['author'],a) for a in ref[AUTHORS]] 
            
         try:
@@ -124,6 +125,11 @@ class ResnetRDF(rdf.Graph):
             pubtype = ref['PubTypes'][0]
             self.add((ref_rel_uri, self.make_uri('etm','pubtype'), rdf.Literal(pubtype)))
         except KeyError: pass
+
+        threshold_dict = ref.get_snippet_prop(THRESHOLD)
+        for text_ref, threshold in threshold_dict.items():
+            threshold_str = ','.join(threshold)
+            self.add((ref_rel_uri, self.__resnet_uri('threshold'),rdf.Literal(threshold_str)))
 
 
     def __obj_uri(self, obj:PSObject): 

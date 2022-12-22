@@ -1,6 +1,7 @@
 from .DiseaseTargets import DiseaseTargets,ResnetGraph,EFFECT
 from .DiseaseTargets import ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,REFERENCE_IDENTIFIERS
-from .SemanticSearch import RANK, ETM_REFS_COLUMN
+from .SemanticSearch import RANK
+from ..ETM_API.etm import ETM_REFS_COLUMN
 from .ResnetAPISession import APISession, NO_REL_PROPERTIES
 from ..pandas.panda_tricks import df,pd,PSObject
 from numpy import NaN
@@ -9,7 +10,6 @@ import networkx as nx
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
-
 
 PATHWAY_REGULATOR_SCORE = 'Disease model regulator score'
 DRUG2TARGET_REGULATOR_SCORE = 'Targets regulator score'
@@ -33,6 +33,7 @@ class Drugs4Targets(DiseaseTargets):
         super().__init__(APIconfig)
         if params:
             self.param = dict(params)
+            self.set_dir(self.param['data_dir'])
         else:
             self.param = {
                 'disease':[],
@@ -44,11 +45,15 @@ class Drugs4Targets(DiseaseTargets):
                 'pathway_folders':[],
                 'pathways': [],
                 'consistency_correction4target_rank':False
-                }      
+                }
 
-
+            
     def _get_report_name(self):
-        return 'Drugs predicted for {}'.format(self._disease2str())
+        return f'Ranked Targets and Drugs repositioned for {self._disease2str()}'
+
+
+    def report_path(self,extension=''):
+        return self.data_dir+self._get_report_name()+extension
 
 
     def rank2dict(self,from_ranked_targets_df:df):
@@ -426,7 +431,9 @@ class Drugs4Targets(DiseaseTargets):
                 concepts_thread = sd.submit(self.link2disease_concepts,drug_df)
                 new_drug_df = concepts_thread.result()
                 drugs_df_with_etmrefs = drugs_etm_thread.result()
-                new_drug_df[ETM_REFS_COLUMN] = drugs_df_with_etmrefs[ETM_REFS_COLUMN]
+                #merging results of two threads:
+                ref_column_name = self.etm_counter.etm_ref_column_name[-1]
+                new_drug_df[ref_column_name] = drugs_df_with_etmrefs[ref_column_name]
                 new_drug_df['DOIs'] = drugs_df_with_etmrefs['DOIs']
         else:
             new_drug_df = self.link2disease_concepts(drug_df)
@@ -445,8 +452,6 @@ class Drugs4Targets(DiseaseTargets):
         start_time = time.time()
         super().make_report()
         if self.param['add_bibliography']:
-            #with ThreadPoolExecutor(max_workers=1, thread_name_prefix='ETM4diseaseTargets') as e:
-             #   etm_annotation = e.submit(self.add_etm_bibliography())
             etm_thread = Thread(target=self.add_etm_bibliography(),name='ETM4diseaseTargets')
             etm_thread.start()
 
@@ -458,12 +463,12 @@ class Drugs4Targets(DiseaseTargets):
         else:
             self.score_drugs()
         
-        targets4antagonist_df = self.report_pandas[ANTAGONIST_TARGETS_WS]
-        targets4antagonist_df = targets4antagonist_df.merge_psobject(self.direct_target2drugs,'DirectlyInhibitedBy','Name',values21cell=True)
-        self.report_pandas[ANTAGONIST_TARGETS_WS] = targets4antagonist_df.merge_psobject(self.indirect_target2drugs,'IndirectlyInhibitedBy','Name',values21cell=True)
+        targets4antagonist_df = df(self.report_pandas[ANTAGONIST_TARGETS_WS])
+        targets4antagonist_df = targets4antagonist_df.merge_psobject(self.direct_target2drugs,'Directly Inhibited by','Name',values21cell=True)
+        self.report_pandas[ANTAGONIST_TARGETS_WS] = targets4antagonist_df.merge_psobject(self.indirect_target2drugs,'Indirectly Inhibited by','Name',values21cell=True)
         
-        targets4atagonist_df = self.report_pandas[AGONIST_TARGETS_WS]
-        targets4atagonist_df =  targets4atagonist_df.merge_psobject(self.direct_target2drugs,'DirectlyActivatedBy','Name',values21cell=True)
-        self.report_pandas[AGONIST_TARGETS_WS] = targets4atagonist_df.merge_psobject(self.indirect_target2drugs,'IndirectlyActivatedBy','Name',values21cell=True)
+        targets4atagonist_df = df(self.report_pandas[AGONIST_TARGETS_WS])
+        targets4atagonist_df =  targets4atagonist_df.merge_psobject(self.direct_target2drugs,'Directly Activated by','Name',values21cell=True)
+        self.report_pandas[AGONIST_TARGETS_WS] = targets4atagonist_df.merge_psobject(self.indirect_target2drugs,'Indirectly Activated by','Name',values21cell=True)
         print('Drug repurposing for %s was done in %s' % (self._disease2str(), self.execution_time(start_time)))
         

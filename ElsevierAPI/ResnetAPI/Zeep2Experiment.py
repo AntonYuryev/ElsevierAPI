@@ -6,11 +6,6 @@ from math import log2
 
 
 class Sample(PSObject):
-    # self['Type'] = ['Signal' or 'Ratio']
-    # self['Subtype'] = ['Unknown' or 'Bare' or 'Log']
-    # self['phenotype'] = [phenotypes]
-    #def __init__(self,columns=['value','pvalue'], dic=dict()):
-
 
     def __init__(self,dic=dict()):
         super().__init__(dic)
@@ -116,9 +111,10 @@ class Experiment(PSObject):
         else:
             return self.identifiers.loc[:,'OriginalGeneID'].tolist()
 
+
     def get_sample_names(self,sample_ids):
         sample_name_list = list(self.samples.keys())
-        return [k for i,k in enumerate(sample_name_list) if i in sample_ids]
+        return [str(k) for i,k in enumerate(sample_name_list) if i in sample_ids]
 
 
     def get_samples(self, sample_names=[],sample_ids=[]):
@@ -127,9 +123,9 @@ class Experiment(PSObject):
             s_names += self.get_sample_names(sample_ids)
 
         if s_names:
-            return [v for k,v in self.samples.items() if k in s_names]
+            return [Sample(v) for k,v in self.samples.items() if k in s_names]
         else:
-            return [v for k,v in self.samples.items()]
+            return [Sample(v) for k,v in self.samples.items()]
 
 
 #################    CONSTRUCTORS CONSTRUCTORS CONSTRUCTORS  ###################################
@@ -292,11 +288,11 @@ class Experiment(PSObject):
         return self.name4annotation(sample), urn2value
 
 
-    def annotate(self, graph:ResnetGraph, sample_names=[],sample_ids=[]):
-        for sample in self.get_samples(sample_names,sample_ids):
-            node_annotation_name, urn2value = self.__make_dict4annotation(sample)
-            if graph:
-                graph.set_node_annotation(urn2value,node_annotation_name)
+    def annotate(self,graph:ResnetGraph,with_values_from_sample_names=[],with_values_from_sample_ids=[]):
+        if graph:
+            for sample in self.get_samples(with_values_from_sample_names,with_values_from_sample_ids):
+                node_annotation_name, urn2expvalue = self.__make_dict4annotation(sample)
+                graph.set_node_annotation(urn2expvalue,node_annotation_name)
                 graph.urn2obj = {o['URN'][0]:o for i,o in graph.nodes(data=True)}
             
             

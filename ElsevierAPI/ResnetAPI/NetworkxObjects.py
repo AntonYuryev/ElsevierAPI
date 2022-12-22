@@ -77,11 +77,18 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             raise KeyError
 
+
     def descr(self):
         try:
             return self['Description'][0]
         except KeyError:
             return ''
+
+
+    @staticmethod
+    def unpack(list_of_lists:list,make_unique=True):
+        flat_list = [item for sublist in list_of_lists for item in sublist]
+        return list(set(flat_list)) if make_unique else flat_list
 
 
     def update_with_value(self, prop_id:str, new_value):
@@ -348,8 +355,6 @@ class PSRelation(PSObject):
             return to_return
 
 
-
-
     def load_references(self):
         if self.References: return
         for propSet in self.PropSetToProps.values():
@@ -364,7 +369,7 @@ class PSRelation(PSObject):
             if my_reference_tuples: # propSet is valid reference - resolving duplicates 
                 # case when reference have valid identifiers
                 article_identifiers = {x[1] for x in my_reference_tuples}
-                existing_ref = [r for i, r in self.References.items() if i in article_identifiers]
+                existing_ref = [r for i,r in self.References.items() if i in article_identifiers]
                 if not existing_ref:  # case when reference is new
                     id_type, id_value = my_reference_tuples[0][0], my_reference_tuples[0][1]
                     ref = Reference(id_type, id_value)
@@ -395,7 +400,7 @@ class PSRelation(PSObject):
                 except KeyError:
                     try:
                         txtref = propSet['TextRef'][0]
-                        if txtref != 'Admin imported':
+                        if txtref not in ['Admin imported','Customer imported']:
                             ref = Reference.from_textref(txtref)
                             for ref_id_type, ref_id in ref.Identifiers.items():
                                 self.References[ref_id] = ref
@@ -405,8 +410,8 @@ class PSRelation(PSObject):
             textref = None 
             sentence_props = dict()
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
-                #if propValues[0] == 'info:pmid/16842844':
-                #    print('')
+              #  if propValues[0] == 'info:pmid/21180064#abs:4':
+              #      print('')
                 if propId in BIBLIO_PROPS:
                     ref.update_with_list(propId, propValues)
                 elif propId in SENTENCE_PROPS:
@@ -423,7 +428,8 @@ class PSRelation(PSObject):
                 textref = ref._make_textref()
             elif textref[4:10] == 'hash::': # references from older Resnet versions can start with 'urn:hash::'
                 textref = ref._make_textref()
-            elif textref == 'Admin imported': 
+            elif textref in ['Admin imported','Customer imported','']: 
+                print('Reference has no TextRef property and will be ignored!!!')
                 continue # ignore and move to the next PropSet
             
             if sentence_props: 
@@ -432,16 +438,27 @@ class PSRelation(PSObject):
                 ref.snippets[textref] = {'Sentence':[]} #load empty dict for data consistency
 
 
-
-    def filter_references(self, prop_names2values:dict):
+    def filter_references(self, keep_prop2values:dict):
         '''
+        !!!! does not change self[REFCOUNT] to keep the original number of references !!!!\n
+        can be used to filter references by journal name
+
+        Input
+        -----
         prop_names2values = {prop_name:[values]}
         '''
+        # self.References = {identifier:ref} contains reference duplications. Reference list needs compression for speed
         all_refs = set(self.References.values())
-        ref2keep = {ref for ref in all_refs if ref.has_properties(prop_names2values)}
+        ref2keep = {ref for ref in all_refs if ref.has_properties(keep_prop2values)}
         self.References = {k:r for k,r in self.References.items() if r in ref2keep}
         return
-        #self[REFCOUNT] will NOT be changed to keep the original number of references for relation
+
+
+    def remove_reference(self, remove_prop2values:dict):
+        # self.References = {identifier:ref} contains reference duplications. Reference list needs compression for speed
+        all_refs = set(self.References.values()) 
+        ref2keep = {ref for ref in all_refs if not ref.has_properties(remove_prop2values)}
+        self.References = {k:r for k,r in self.References.items() if r in ref2keep}
 
 
     def get_reference_count(self, count_abstracts=False):

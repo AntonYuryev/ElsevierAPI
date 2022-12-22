@@ -47,6 +47,7 @@ class OQL:
 
         return property_names, values
 
+
     @staticmethod
     def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=[], MinConnectivity=0):
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
@@ -207,12 +208,19 @@ class OQL:
     def get_objects(by_ids:list):
         return "SELECT Entity WHERE id = (" + OQL.id2str(by_ids) + ")"
 
+
     @staticmethod
-    def get_drugs(for_targets_with_ids: list):
+    def get_drugs(for_targets_with_ids:list):
         strings = [str(integer) for integer in for_targets_with_ids]
         db_ids = ",".join(strings)
         return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = (" + db_ids + ")) \
             AND NeighborOf downstream (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs))"
+
+
+    @staticmethod
+    def select_drugs():
+        return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs)"
+
 
     @staticmethod
     def get_reaxys_substances(ForTargetsIDlist: list):

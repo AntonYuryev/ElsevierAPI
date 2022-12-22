@@ -22,6 +22,8 @@ SNIPPET_PROPERTIES = 4 # retrieves only PS_SENTENCE_PROPS to generate biblio_str
 ONLY_REL_PROPERTIES = 5
 ALL_PROPERTIES = 10
 
+NO_RNEF_REL_PROPS={'RelationNumberOfReferences','Name','URN'}
+
 
 class APISession(PSNetworx):
     '''
@@ -38,8 +40,7 @@ class APISession(PSNetworx):
     __relPropCache__ = relProps # for temporary caching relProps if props2load() was used
     entProps = ['Name'] # Name is highly recommended to make sense of the data
 
-    reference_cache_size = 1000000 # max number of reference allowed in self.Graph
-    # Dumps self.Graph into files and clears self.Graph to release memory
+    reference_cache_size = 1000000 # max number of reference allowed in self.Graph. Clears self.Graph if exceeded
     resnet_size = 1000 # number of <node><control> sections in RNEF dump
     max_rnef_size = 100000000 # max size of RNEF XML dump file. If dump file exceeds max_file_size new file is opened with index++
 
@@ -93,8 +94,9 @@ class APISession(PSNetworx):
         return new_session
 
 
-    def __set_get_links(self):
-        return self.GOQLquery[7:15] == 'Relation'
+    def __set_get_links(self,oql_query=''):
+        my_query = oql_query if oql_query else self.GOQLquery
+        return my_query[7:15] == 'Relation'
 
 
     def __replace_goql(self, oql_query:str):
@@ -291,14 +293,18 @@ class APISession(PSNetworx):
             return nodes_graph
 
 
-    def iterate_oql(self, oql_query:str, id_set:set,use_relation_cache=True,request_name=''):
+    def iterate_oql(self, oql_query:str,id_set:set,use_relation_cache=True,request_name='',iterate_ids=True):
         """
-        # oql_query MUST contain string placeholder called {ids}
+        # oql_query MUST contain string placeholder called {ids} if iterate_ids==True\n
+        # oql_query MUST contain string placeholder aclled {props} if iterate_ids==False
         """
         #self = self.__clone() if self.clone else self
         print('Processing "%s" request\n' % request_name)
-        getlinks = True if oql_query[7:15] == 'Relation' else False
-        id_only_graph = self._iterate_oql(oql_query,id_set,[],[],add2self=False,get_links=getlinks)
+        getlinks = self.__set_get_links(oql_query)
+        if iterate_ids:
+            id_only_graph = self._iterate_oql(oql_query,id_set,[],[],add2self=False,get_links=getlinks)
+        else:
+            id_only_graph = self._iterate_oql_s(oql_query,id_set,[],[],add2self=False,get_links=getlinks)
         return self.__graph_by_ids(id_only_graph,use_relation_cache)
 
 
@@ -370,7 +376,6 @@ class APISession(PSNetworx):
 
     def _get_ppi_graph(self,fout):
         # Build PPI network between proteins
-        #self = self.__clone() if self.clone else self
         graph_proteins = self.Graph.get_node_ids(['Protein'])
         print('Retrieving PPI network for %d proteins' % (len(graph_proteins)))
         start_time = time.time()
@@ -492,24 +497,6 @@ class APISession(PSNetworx):
         return ontology_graph
 
 
-    def load_children(self,in_graph=ResnetGraph(),for_parent_ids=[],add_new_nodes=False):
-        """
-        slower than self.child_graph() but annotates each parent with CHILDS property
-        """
-        graph_registry = [in_graph, self.Graph] #need to pass as pointers because graph is modified
-        index = 0 if in_graph else 1
-
-        annotate_parent_ids = set(for_parent_ids) if for_parent_ids else set(graph_registry[index])
-        self.get_children(annotate_parent_ids)
-
-        if add_new_nodes:
-            [graph_registry[index].property2node(parent_id,CHILDS,self.ID2Children[parent_id]) for parent_id in annotate_parent_ids]
-        else:
-            for parent_id in annotate_parent_ids:
-                all_child_ids = set(self.ID2Children[parent_id])
-                graph_child_ids = all_child_ids.intersection(set(graph_registry[index]))
-                graph_registry[index].property2node(parent_id,CHILDS,list(graph_child_ids))
-
 
     def ontology_graph(self,members:list,add2parent:PSObject):
         """
@@ -534,34 +521,54 @@ class APISession(PSNetworx):
         return ontology_graph
 
 
-    def add_parents(self,to_graph=ResnetGraph(),for_child_ids=[],depth=1):
+    def load_children(self,for_parent_ids=[],add_new_nodes=False):
+        """
+        slower than self.child_graph() but annotates each parent with CHILDS property
+        """
+        annotate_parent_ids = set(for_parent_ids) if for_parent_ids else set(self.Graph)
+        self.get_children(annotate_parent_ids)
+
+        if add_new_nodes:
+            [self.Graph.property2node(parent_id,CHILDS,self.ID2Children[parent_id]) for parent_id in annotate_parent_ids]
+        else:
+            for parent_id in annotate_parent_ids:
+                all_child_ids = set(self.ID2Children[parent_id])
+                graph_child_ids = all_child_ids.intersection(set(self.Graph))
+                self.Graph.property2node(parent_id,CHILDS,list(graph_child_ids))
+
+
+    def add_parents(self,for_child_ids=[],depth=1):
         """
         Adds
         ----
-        ontology parents to to_graph
+        ontology parents to_graph\n
+        annotates each parent with CHILDS property
+
+        Returns
+        -------
+        [PSObject] - list of parents with CHILDS property
         """
         if not for_child_ids:
-            if to_graph:
-                for_child_ids = list(to_graph)
-            else:
-                for_child_ids = list(self.Graph)
+            for_child_ids = list(self.Graph)
 
         get_parent_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') inRange {steps} over (SELECT OntologicalNode WHERE id = ({ids}))'
         oql_query = get_parent_query.format(steps=str(depth),ids=','.join(map(str,for_child_ids)))
         request_name = 'Find parents of {count} nodes with depth {d}'.format(count = str(len(for_child_ids)), d=str(depth))
         parent_graph = self.process_oql(oql_query,request_name)
 
-        if to_graph:
-            to_graph.add_graph(parent_graph)
-            self.load_children(to_graph,for_parent_ids=list(parent_graph))
-            return to_graph._get_node(list(parent_graph))
-        else:
-            self.load_children(for_parent_ids=list(parent_graph))
-            return self.Graph._get_nodes(list(parent_graph))
+      #  if to_graph:
+       #     graph_registry[index].add_graph(parent_graph)
+        
+        self.load_children(for_parent_ids=list(parent_graph))
+        return self.Graph._get_nodes(list(parent_graph))
+
 
 
     def load_ontology(self, parent_ontology_groups:list):
         """
+        Input
+        -----
+        [Parent Name]
         loads self.child2parent = {child_name:[ontology_parent_names]}
         """
         self.child2parent = dict()
@@ -594,48 +601,6 @@ class APISession(PSNetworx):
             pretty_xml = pretty_xml[pretty_xml.find('\n')+1:]
         return pretty_xml
 
-    '''
-    def __graph2rnef_str(self,in_graph=ResnetGraph(),resnet_size=1000):
-        if not in_graph: in_graph = self.Graph
-
-        resnet_sections = ResnetGraph()
-        graph_rnef_str = str()
-        for regulatorID, targetID, e in in_graph.edges(data='relation'):
-            resnet_sections.copy_rel(e,in_graph)
-            if resnet_sections.number_of_edges() == resnet_size:
-                rnef_str = resnet_sections.to_rnef(ent_props=self.entProps,rel_props=self.relProps)
-                rnef_str = self.pretty_xml(rnef_str,no_declaration=True)
-                graph_rnef_str += rnef_str
-               # file_out.write(rnef_str)
-                resnet_sections.clear_resnetgraph()
-
-        rnef_str = resnet_sections.to_rnef(ent_props=self.entProps,rel_props=self.relProps)
-        rnef_str = self.pretty_xml(rnef_str,no_declaration=True)
-        return graph_rnef_str + rnef_str
-       # file_out.write(rnef_str)
-    
-
-    def __graph2rnef(self,file_out,in_graph=ResnetGraph(),resnet_size=1000):
-        my_graph = in_graph if my_graph else self.Graph
-        my_rnef_str = my_graph._2rnef(set(self.entProps),set(self.relProps),with_section_size=resnet_size)
-        file_out.write(my_rnef_str)
-    '''
-
-    def graph2rnef(self,fname:str, in_graph=ResnetGraph(), resnet_size=1000):
-        my_graph = in_graph if in_graph else self.Graph
-        relation_count = my_graph.number_of_edges()
-        print('Dumping graph with %d edges and %d nodes into %s file' % 
-                (relation_count,in_graph.number_of_nodes(),self.data_dir+fname) )
-        
-        resnets_cnt = math.ceil(relation_count/resnet_size)
-        print('%s cache file will have %d <resnet> sections with %d relations' % 
-                (self.data_dir+fname, resnets_cnt, resnet_size))
-
-        with open(self.data_dir+fname, 'w', encoding='utf=8') as f:
-            f.write('<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\n<batch>\n')
-            my_graph._2rnef(f,self.entProps,self.relProps,with_section_size=resnet_size)
-            f.write('</batch>')          
-
 
     @staticmethod
     def __make_file_name(folder_or_object_name: str):
@@ -648,7 +613,7 @@ class APISession(PSNetworx):
         return "".join(new_str)
 
 
-    def find_folder(self, folder_name:str):
+    def __find_folder(self, folder_name:str):
         folder_name_ = self.__make_file_name(folder_name)
         longest_path = str()
         for dirpath, dirnames, filenames in os.walk(self.data_dir):
@@ -662,10 +627,10 @@ class APISession(PSNetworx):
 
     def dump_path(self, of_folder:str, in2parent_folder=''):
         # finding directory
-        my_dir = self.find_folder(of_folder)
+        my_dir = self.__find_folder(of_folder)
         if not my_dir:
             if in2parent_folder:
-                parent_dir = self.find_folder(in2parent_folder)
+                parent_dir = self.__find_folder(in2parent_folder)
                 if parent_dir:
                     my_dir = parent_dir+self.__make_file_name(of_folder)+'/'
                     os.mkdir(my_dir) 
@@ -679,7 +644,7 @@ class APISession(PSNetworx):
         return my_dir
 
 
-    def count_files(self, in_folder:str,in2parent_folder='', with_extension='rnef'):
+    def __count_dumpfiles(self, in_folder:str,in2parent_folder='', with_extension='rnef'):
         folder_path = self.dump_path(in_folder,in2parent_folder)
         listing = glob.glob(folder_path+'*.' + with_extension)
         if listing:
@@ -687,17 +652,19 @@ class APISession(PSNetworx):
         else:
             return folder_path,1
 
-    def dump_base(self,of_folder:str):
+
+    def __dump_base_name(self,of_folder:str):
         return 'content of '+ APISession.__make_file_name(of_folder)+'_'
 
-    def dumpfile(self,of_folder:str,in2parent_folder='',new=False):
-        folder_path,file_count = self.count_files(of_folder,in2parent_folder)
+
+    def __make_dumpfile_name(self,of_folder:str,in2parent_folder='',new=False):
+        folder_path,file_count = self.__count_dumpfiles(of_folder,in2parent_folder)
         if new:
             file_count += 1
-        return folder_path + self.dump_base(of_folder)+str(file_count)+'.rnef'
+        return folder_path + self.__dump_base_name(of_folder)+str(file_count)+'.rnef'
 
 
-    def dump_rnef(self,rnef_xml:str,to_folder='',in2parent_folder='',can_close=True):
+    def str2rnefdump(self,rnef_xml:str,to_folder='',in2parent_folder='',can_close=True):
         '''
         Dumps
         -----
@@ -707,7 +674,7 @@ class APISession(PSNetworx):
         where # - dump file number
         keep can_close = False to continue dumping
         '''
-        write2 = self.dumpfile(to_folder,in2parent_folder)
+        write2 = self.__make_dumpfile_name(to_folder,in2parent_folder)
         if Path(write2).exists():
             f = open(write2,'a',encoding='utf-8')
             f.write(rnef_xml)
@@ -716,7 +683,7 @@ class APISession(PSNetworx):
                 f.write('</batch>')
                 f.close()
 
-                new_write2 = self.dumpfile(to_folder,in2parent_folder,new=True)
+                new_write2 = self.__make_dumpfile_name(to_folder,in2parent_folder,new=True)
                 f = open(new_write2,'w',encoding='utf-8')
                 f.write('<batch>\n')
             f.close()
@@ -725,24 +692,43 @@ class APISession(PSNetworx):
                 f.write('<batch>\n'+rnef_xml)
 
 
-    def dump_graph2rnef(self,in_graph=ResnetGraph(),to_folder='',in2parent_folder='',can_close=True):
-        my_graph = in_graph if in_graph else self.Graph
+    def to_rnef(self,graph=ResnetGraph(),add_rel_props:dict={},add_pathway_props:dict={}):
+        '''
+        used for dumping pathway, group and results objects by FolderContent
+        Returns
+        -------
+        graph RNEF XML with single <resnet> section and session properties for nodes and edges
+        '''
+        my_graph = graph if graph else self.Graph
+        rel_props = [p for p in self.relProps if p not in NO_RNEF_REL_PROPS]
+        return my_graph.rnef(self.entProps,rel_props,add_rel_props,add_pathway_props)
+
+
+    def graph2rnefdump(self,graph=ResnetGraph(),to_folder='',in_parent_folder='',can_close=True):
+        '''
+        Dumps
+        -----
+        large graph objects into several RNEF XML files
+        '''
+        my_graph = graph if graph else self.Graph
+        rel_props = [p for p in self.relProps if p not in NO_RNEF_REL_PROPS]
+
         resnet_sections = ResnetGraph()
         for regulatorID, targetID, e in my_graph.edges(data='relation'):
             resnet_sections.copy_rel(e,my_graph)
             if resnet_sections.number_of_edges() == self.resnet_size:
-                rnef_str = resnet_sections.to_rnef(ent_props=self.entProps,rel_props=self.relProps)
+                rnef_str = resnet_sections.rnef(ent_props=self.entProps,rel_props=rel_props)
                 rnef_str = self.pretty_xml(rnef_str,no_declaration=True)
-                self.dump_rnef(rnef_str,to_folder)
+                self.str2rnefdump(rnef_str,to_folder,in_parent_folder,can_close)
                 resnet_sections.clear_resnetgraph()
 
-        rnef_str = resnet_sections.to_rnef(ent_props=self.entProps,rel_props=self.relProps)
+        rnef_str = resnet_sections.rnef(ent_props=self.entProps,rel_props=self.relProps)
         rnef_str = self.pretty_xml(rnef_str,no_declaration=True)
-        self.dump_rnef(rnef_str,to_folder,can_close)
+        self.str2rnefdump(rnef_str,to_folder,in_parent_folder,can_close)
 
 
     def close_rnef_dump(self,to_folder='',in2parent_folder=''):
-        last_dump_file = self.dumpfile(to_folder,in2parent_folder)
+        last_dump_file = self.__make_dumpfile_name(to_folder,in2parent_folder)
         f = open(last_dump_file,'a',encoding='utf-8')
         f.write('</batch>')
         f.close()
@@ -750,9 +736,12 @@ class APISession(PSNetworx):
 
     def download_oql(self,oql_query,request_name:str,resume_page=0):
         '''
+        Use for oql_query producing large results 
+
         Dumps
         -----
-        results of oql_query to to_rnef file. Use for oql_query producing large results 
+        results of oql_query to folder in self.data_dir named "request_name.rnef".\n
+        Splits dump into small files smaller than self.max_rnef_size 
         '''
         self.__replace_goql(oql_query)
         reference_counter = 0
@@ -775,8 +764,7 @@ class APISession(PSNetworx):
             print("With %d in %d %s, %d %s in %d with %d references retrieved in: %s" % 
             (iteration,number_of_iterations,iterations_str,self.ResultPos,return_type,self.ResultSize,reference_counter,exec_time))
                          
-            #self.Graph.add_graph(page_graph)
-            self.dump_graph2rnef(in_graph=page_graph, to_folder=request_name)
+            self.graph2rnefdump(in_graph=page_graph, to_folder=request_name)
             self.clear()
             page_graph = self.__get_next_page()
 
@@ -881,7 +869,81 @@ class APISession(PSNetworx):
         return graph12
 
 
+    def gv2gene(self,gv_ids:list):
+        """
+        Input
+        -----
+        list of GV ids
 
+        Returns
+        -------
+        {gv_id:[gene_names]}
+        """
+        prot2gvs_graph = ResnetGraph()
+        print ('Finding genes for %d genetic variants' % len(gv_ids))
+        number_of_iterations = int(len(gv_ids)/1000)+1
+        for i in range(0, len(gv_ids),1000):
+            chunk = gv_ids[i: i+1000]
+            oql_query = OQL.expand_entity(PropertyValues=chunk, SearchByProperties=['id'], 
+                                expand_by_rel_types=['GeneticChange'],expand2neighbors=['Protein'])
+            request_name = f'{str(int(i/1000)+1)} iteration out of {str(number_of_iterations)} to find genes linked to GVs'
+            prot2gvs_graph.add_graph(self.process_oql(oql_query,request_name))
+
+        # making gvid2genes for subsequent annotation
+        gvid2genes = dict()
+        for gv_id, protein_id, rel in prot2gvs_graph.edges.data('relation'):
+            protein_node = prot2gvs_graph._get_node(protein_id)
+            gene_name = protein_node['Name'][0]
+            try:
+                gvid2genes[gv_id].append(gene_name)
+            except KeyError:
+                gvid2genes[gv_id] = [gene_name]
+
+        #[nx.set_node_attributes(disease2gvs, {}) for gvid, gene_names in gvid2genes.items()]
+        return gvid2genes
+
+        
+    def unified_rel(self,merge2rel:PSRelation):
+        unified_rel = merge2rel.copy()
+        graph_between = ResnetGraph()
+        for regulator_id, target_id in merge2rel.get_regulators_targets():
+            graph_between.add_graph(self.connect_nodes([regulator_id],[target_id],in_direction='>'))
+
+        positive_refs,negative_refs = graph_between._effect_counts__() 
+        if len(positive_refs) > len(negative_refs):
+            my_effect =  'activated'
+        elif len(negative_refs) > len(positive_refs):
+            my_effect = 'repressed'
+        else:
+            my_effect = 'unknown'
+
+        def choose_type(rels:list):
+            type_ranks = ['DirectRegulation','Binding','ProtModification','PromoterBinding','Expression','MolTransport','MolSynthesis','Regulation']
+            for type in type_ranks:
+                for r in rels:
+                    if r.objtype() == type:
+                        return type
+            return NotImplemented
+
+        rel_between = graph_between.get_relations()
+        if merge2rel.objtype() != 'ChemicalReaction':
+            my_type = choose_type(rel_between)
+        else:
+            my_type = 'ChemicalReaction'
+        
+        [unified_rel.merge_rel(r) for r in rel_between]
+        unified_rel.set_property('ObjTypeName',my_type)
+        unified_rel.set_property('Effect',my_effect)
+        return unified_rel
+        
+
+    def repair_graph(self,graph=ResnetGraph()):
+        my_graph = graph if graph else self.Graph
+        for regulator_id,target_id,rel in my_graph.edges(data='relation'):
+            if rel.get_reference_count() == 0:
+                new_rel = self.unified_rel(rel)
+                my_graph.remove_relation(rel)
+                my_graph.add_rel(new_rel)
 
 
     

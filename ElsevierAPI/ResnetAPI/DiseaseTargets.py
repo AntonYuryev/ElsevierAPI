@@ -109,7 +109,7 @@ class DiseaseTargets(SemanticSearch):
 
         target_withGVs_ids = gv2target.get_node_ids(PROTEIN_TYPES)
         gv2dis_refs = self.gv2diseases.load_references()
-        print('Found %d targets with %d GeneticVariants linked to %s supported by %d references' % 
+        print('Found %d targets with %d GeneticVariants for %s supported by %d references' % 
             (len(target_withGVs_ids), len(self.GVids), disease_names, len(gv2dis_refs)))
         
         self.targets4strictmode.update(target_withGVs_ids)
@@ -345,7 +345,7 @@ class DiseaseTargets(SemanticSearch):
             print('%s has no known Genetic Variants' % self._disease2str())
             return
 
-        self.__colnameGV__ = 'Genetic Variants linked to '+self._disease2str()
+        self.__colnameGV__ = 'Genetic Variants for '+self._disease2str()
         target_gvlinkcounter = 0
         for i in self.RefCountPandas.index:
             target_ids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
@@ -366,19 +366,19 @@ class DiseaseTargets(SemanticSearch):
 
     def __vote4effect(self,target_ids:list):
         between_graph = self.Graph.get_subgraph(target_ids, self.disease_ids)
-        positive_refcount, negative_refcount = between_graph._effect_counts__()
+        positive_refs, negative_refs = between_graph._effect_counts__()
 
-        if len(positive_refcount) > len(negative_refcount):
+        if len(positive_refs) > len(negative_refs):
             return 'activated'
-        elif len(negative_refcount) > len(positive_refcount):
+        elif len(negative_refs) > len(positive_refs):
             return 'repressed'
         else:
             target_partners_ids = set(self.partners.get_neighbors(target_ids))
             between_graph = self.Graph.get_subgraph(target_partners_ids, self.disease_ids)
-            positive_refcount, negative_refcount = between_graph._effect_counts__()
-            if len(positive_refcount) > len(negative_refcount):
+            positive_refs, negative_refs = between_graph._effect_counts__()
+            if len(positive_refs) > len(negative_refs):
                 return 'activated'
-            elif len(negative_refcount) > len(positive_refcount):
+            elif len(negative_refs) > len(positive_refs):
                 return 'repressed'
             else:
                 # attempting to deduce effect from GeneticChange
@@ -506,7 +506,7 @@ class DiseaseTargets(SemanticSearch):
         self.score_regulators()
 
         if self.cellproc_ids:
-            colname = 'Cell processess affected by '+ t_n
+            colname = 'Cell processes affected by '+ t_n
             self.set_how2connect(['Regulation'],[],'',how2clone=REFERENCE_IDENTIFIERS)
             was_linked = self.link2RefCountPandas(colname,self.cellproc_ids)
             #linked_row_count = new_session.link2RefCountPandas(colname,self.cellproc_ids)
@@ -576,12 +576,20 @@ class DiseaseTargets(SemanticSearch):
         self.normalize(DF4AGONISTS,AGONIST_TARGETS_WS)
         self.normalize(DF4UNKNOWN,UNKNOWN_TARGETS_WS)
 
+
     def add_etm_bibliography(self):
+        '''
+        Adds
+        ----
+        etm references column to ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,UNKNOWN_TARGETS_WS worksheets,\n
+        adds ETM_BIBLIOGRAPHY worksheet to report
+        '''
         print('Adding ETM bibliography for ranked targets', flush=True)
         self.add_etm_refs(ANTAGONIST_TARGETS_WS,self.input_names())
         self.add_etm_refs(AGONIST_TARGETS_WS,self.input_names())
         self.add_etm_refs(UNKNOWN_TARGETS_WS,self.input_names())
-        self.etm2df()
+        super().add_etm_bibliography()
+
 
     def make_report(self):
         start_time = time.time()
