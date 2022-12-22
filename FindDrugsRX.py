@@ -4,7 +4,7 @@ from ElsevierAPI import open_api_session,load_api_config
 import ElsevierAPI.ReaxysAPI.Reaxys_API as RxAPI
 import argparse
 import textwrap
-
+from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
 
 start_time = time.time()
 def GOQLtoFindDrugs(TargetIds:list, TargetType = 'Protein', drugEffect=['negative']):
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     ps_api.process_oql(GOQLtoFindDrugs(TargetIDs, TargetType=TargetType, drugEffect=drugEffect))
 
     if len(ReaxysFields) > 0:
-        FoundDrugs = [y for x,y in ps_api.Graph.nodes(data=True) if ((ps_api.Graph.out_degree(x)>0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))]
+        FoundDrugs = [PSObject(y) for x,y in ps_api.Graph.nodes(data=True) if ((ps_api.Graph.out_degree(x)>0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))]
         print('Found %d drugs in Resnet' % len(FoundDrugs))
         ReaxysAPI = RxAPI.Reaxys_API()
         ReaxysAPI.OpenSession(load_api_config())

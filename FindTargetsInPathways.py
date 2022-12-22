@@ -15,8 +15,7 @@ def map2pathways(entity2folder2pathway: dict, id2pathways: dict, folderName, Fil
         if pathway['ObjTypeName'][0] == 'Pathway':
             PathwayName = pathway['Name'][0]
             PathwayIds = pathway['Id']
-            IdtoMembersInPathway = ps_api.get_pathway_member_ids(PathwayIds=PathwayIds, only_entities=FilterBy,
-                                                                 with_properties=SearchByProperties)
+            IdtoMembersInPathway = ps_api.get_pathway_members(PathwayIds,FilterBy,SearchByProperties)
             for entity_Id in IdtoMembersInPathway.keys():
                 try:
                     entity2folder2pathway[entity_Id][folderName].append(PathwayName)
@@ -45,7 +44,7 @@ def find_pathways(FoldersWithPathways: list, entity_pandas: pd.DataFrame, search
             print('Found %d subfolders in %s' % (len(subFolders), PathwayFolder))
 
         id2folder_pathway = dict()
-        ParentFolder = ps_api.id2folders[PathwayFolder][0]
+        ParentFolder = ps_api.id2folder[PathwayFolder][0]
         id2pathways = ps_api.get_objects_from_folders([ParentFolder.Id])
         id2members.update(
             map2pathways(id2folder_pathway, id2pathways, PathwayFolder, Entities, search_by_property))

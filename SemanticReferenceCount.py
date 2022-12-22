@@ -1,15 +1,15 @@
 import time
-import pandas as pd
+from ElsevierAPI.pandas.panda_tricks import df,pd
 import argparse
 import textwrap
-from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI import load_api_config
-from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch,len
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
+from ElsevierAPI.ResnetAPI.SemanticSearch import SemanticSearch,len,SNIPPET_PROPERTIES,BIBLIO_PROPERTIES
 
-        
+
 if __name__ == "__main__":
     EntityListFile = str()
-    link2concepts = pd.DataFrame()
+    link2concepts = df()
     instructions = '''
     infile - tab-delimted file with entity idnetifiers. Specify identifier type in each column header. 
     Identifiers will be used in the order of the columns: if entity is not found by identifier from the first column, identfier from the second column will be used.
@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     entity_types - comma-separated objectTypeNames for entities in infile
 
-    targets_file - tab-delimted file. Header: SearchPropertyName<>Effect<>RelationType<>Direction
+    concepts_file - tab-delimted file. Header: SearchPropertyName<>Effect<>RelationType<>Direction
         SearchPropertyName - Required. concepts that must be semantically linked to entities from infile. Header value defines what properties must be used to retreive concepts. Defaults to 'Name,Alias'
         Effect - optional.  The effect sign   ebetween entity in infile and concept in targets_file. Defaults to any.
         RelationType - optional. The type of relation between entity in infile and concept in targets_file. Defaults to any.
@@ -34,47 +34,59 @@ if __name__ == "__main__":
     retreive_entity_props - list of entity properties to include into dump file
     use_cache_to_resume - must be 'Y' if you need to continue interrupted download. Will look for map_file.tsv,reference_cache.tsv,counts_cache.tsv to load pre-mapped database identifiers - saves time when infile is re-used. Defaults to start from scratch.
     '''
-
+    
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,epilog=textwrap.dedent(instructions))
     parser.add_argument('-i', '--infile', type=str)
     parser.add_argument('-H', '--infile_has_header',action='store_true')
     parser.add_argument('-E', '--entity_types', type=str,default='')
-    parser.add_argument('-f', '--targets_file', type=str)
+    parser.add_argument('-f', '--concepts_file', type=str)
     parser.add_argument('-d', '--add_references', action='store_true')
-    parser.add_argument('-a', '--retreive_entity_props', type=str)
+    parser.add_argument('-a', '--retreive_entity_props', default='')
     parser.add_argument('-p', '--pathways', type=str, default='')
     parser.add_argument('-c', '--use_cache_to_resume', action='store_true')
     parser.add_argument('--debug', action="store_true")
 
     args = parser.parse_args()
+    if args.add_references:
+        what2retreive = SNIPPET_PROPERTIES
+    else:
+        what2retreive = BIBLIO_PROPERTIES
+
+    api_config = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigTeva.json'
 
     if args.use_cache_to_resume:
-        search = SemanticSearch(load_api_config(),need_references=args.add_references,need_snippets=args.add_references)
+        search = SemanticSearch(load_api_config(api_config),what2retreive)
         search.load_pandas(None,None,use_cache=True)
     elif args.infile:
         #Script will work faster if you specify what list of object types in your input Entity list
-        search = SemanticSearch(load_api_config(),need_references=args.add_references,need_snippets=args.add_references)
+        search = SemanticSearch(load_api_config(api_config),what2retreive)
         header_pos = 0 if args.infile_has_header else None
-        entity_types = str(args.entity_types)
-        entity_types = entity_types.replace("Small molecule",'SmallMol')
-        entity_types = str(entity_types).split(',')
+        if args.entity_types:
+            entity_types = str(args.entity_types)
+            entity_types = entity_types.replace("Small molecule",'SmallMol')
+            entity_types = str(entity_types).split(',')
+        else:
+            entity_types = []
         EntityListFile = args.infile #full path to tab-delimted file with drugs in the first column
-        link2concepts = pd.read_csv(args.targets_file, delimiter='\t', header=0, index_col=0)
-        EntityPandas = pd.read_csv(EntityListFile,delimiter='\t', header=header_pos)
-        search.RefCountPandas = search.RefCountPandas = search.load_pandas(EntityPandas,args.infile_has_header,map2type=entity_types)
-        AnnotateNodesWith = str(args.resnet_retreive_props).split(',') if args.resnet_retreive_props else []
+        link2concepts = df.read(args.concepts_file, header=0)
+        EntityPandas = df.read(EntityListFile, header=header_pos)
+        search.RefCountPandas = search.load_pandas(EntityPandas,args.infile_has_header,map2type=entity_types)
+        AnnotateNodesWith = str(args.retreive_entity_props).split(',') if args.retreive_entity_props else []
         report_fname = EntityListFile[:len(EntityListFile)-4]+'+SemanticRefcount'
     else:
-        # add your code here to select entities from the database
-        search = SemanticSearch(load_api_config(),need_references=True,need_snippets=True)
+        # add your code here to select entities from database
+        # Example below finds proteins linked to 'cardiovascular disease' and all its ontology subcategories 
+        # it then loads found proteins into RefCountPandas for semantic search
+        search = SemanticSearch(load_api_config(api_config),what2retreive)
         entity_types = ['Protein']
-        AnnotateNodesWith = ['Class']
-        concept_name = 'cardiovascular disease' #'chronic obstructive pulmonary disease' #
-        oql_query = "SELECT Entity WHERE objectType=({t}) AND Organism = 'Homo sapiens' AND Connected by ({r}) to ({d})"
-        disease = "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE (Name,Alias)=('{c}')) OR Name = '{c}'".format(c=concept_name)
-        rel = 'SELECT Relation WHERE objectType =(Regulation,QuantitativeChange,Biomarker,GeneticChange,StateChange)'
         entity_types_str = ','.join(entity_types)
-        oql_query = oql_query.format(t=entity_types_str,r=rel,d=disease)
+
+        AnnotateNodesWith = ['Class']
+        concept_name = 'cardiovascular disease' 
+        disease = OQL.get_childs(PropertyValues=[concept_name],SearchByProperties=['Name','Alias'],include_parents=True)
+        relations = 'SELECT Relation WHERE objectType =(Regulation,QuantitativeChange,Biomarker,GeneticChange,StateChange)'
+        oql_query = f"SELECT Entity WHERE objectType=({entity_types_str}) AND Organism = 'Homo sapiens' AND Connected by ({relations}) to ({disease})"
+        
         entity_graph = search.process_oql(oql_query, 'Find disease targets')
         id2names = entity_graph.get_properties('Name')
         protein_names = [v[0] for v in id2names.values()]
@@ -113,12 +125,12 @@ if __name__ == "__main__":
         print('No pathways were specified for semantic linking with entities from \"%s\"' % (EntityListFile))
 
     if len(link2concepts) > 0:
-        search_concept_by = str(link2concepts.index.name).split(',')
+        search_concept_by = str(link2concepts.columns[0]).split(',')
         print ('Will search %d concepts by %s' % (len(link2concepts),link2concepts.index.name))
         
         print("\nBegin linking entities mapped from infile to %d concepts" % (concepts_count))
-        for concept_idx in range(0, len(link2concepts.index)):
-            link2concept = link2concepts.index[concept_idx]
+        for concept_idx in link2concepts.index:
+            link2concept = link2concepts.iat[concept_idx,0]
             concept_ids = search._get_obj_ids_by_props(
                 propValues=[link2concept], search_by_properties=search_concept_by)
  
@@ -129,27 +141,30 @@ if __name__ == "__main__":
                 rel_dir = ''
                 
                 if 'RelationType' in link2concepts.columns:
-                    rel_t = link2concepts.at[link2concept,'RelationType']
+                    rel_t = link2concepts.loc[concept_idx,'RelationType']
                     if pd.notna(rel_t): connect_by_rels= str(rel_t).split(',')
 
                 if 'Effect' in link2concepts.columns:
-                    ef = link2concepts.at[link2concept,'Effect']
+                    ef = link2concepts.loc[concept_idx,'Effect']
                     if pd.notna(ef): rel_effect = str(ef).split(',')
 
                 if 'Direction' in link2concepts.columns:
-                    dr = link2concepts.at[link2concept,'Direction']
+                    dr = link2concepts.loc[concept_idx,'Direction']
                     if pd.notna(dr): rel_dir = str(dr)
 
                 search.set_how2connect(connect_by_rels,rel_effect,rel_dir)
-                linked_entities_count= search.link2concept(link2concept,list(concept_ids))
+                linked_entities_count= search.link2RefCountPandas(link2concept,list(concept_ids))
                 print("Total %d out of %d concepts interrogated in %s" % 
                      (concept_idx + 1, len(link2concepts), search.execution_time(global_start_time)))
 
     exec_time = search.execution_time(global_start_time)
     print("%d entities in file %s were mapped linked to %d concepts from %s in %s" % 
-         (len(EntityPandas), EntityListFile, concepts_count, args.targets_file, exec_time))
+         (len(EntityPandas), EntityListFile, concepts_count, args.concepts_file, exec_time))
 
     search.add2report(search.make_count_df())
     if args.add_references:
-        search.add_snippets()
+        snippets_df = search.Graph.snippets2df()
+        search.add2report(snippets_df)
+    else:
+        search.add_ps_bibliography()
     search.print_report(report_fname+'.xlsx')

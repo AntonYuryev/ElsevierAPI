@@ -15,7 +15,6 @@ if __name__ == "__main__":
     start = time.time()
     exp_fname = 'D:/Python/MDACC/Patwhay-studio_demo_data_Iqbal-MDACC-BCB.csv'
     my_experimet = Experiment.from_file(exp_fname,header=0,phenotype_rows=[1],data_type='Intensity',has_pvalue=False)
-
     '''
     0 - header row
     1 - phenotype rows must start immediately after header rows
@@ -26,20 +25,18 @@ if __name__ == "__main__":
     make_ps_name(gsea_exp)
     gsea_exp['ObjTypeName'] = ['SmallMol']
 
-    APIcofig = ''
+    APIcofig = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfigMDACC.json'
     gsea = GSEA(load_api_config(APIcofig))
     mapped_exp = gsea.map_experiment(gsea_exp)
 
-    folders_with_target_pathways = ['TG triglyceride metabolism']
+    folders_with_target_pathways = ['Neutral and Phospholipids metabolism']
     min_overlap = 3
-    gsea.entProps=['Name'] # for download speed
+    gsea.entProps=['Name'] # to speed up download
     gsea.load_pathways(folders_with_target_pathways,mapped_exp.urns(),min_overlap=min_overlap)
-    
     gsea.gsea(mapped_exp)
-    gsea.report_dir = 'D:/Python/MDACC/' 
+    
     #change out_dir to directory on your computer where you want to see the report Excel file and pathway hits in SBGN files
-    fout_name = mapped_exp.name()+' GSEA of '+','.join(folders_with_target_pathways)+' results'
-
+    gsea.report_dir = 'D:/Python/MDACC/'
     gsea.base_url = 'https://mdacc.pathwaystudio.com/app/sd?urn='
-    report_df = gsea.report(fout_name,mapped_exp)
+    report_df = gsea.report(folders_with_target_pathways,mapped_exp)
     print('GSEA analysis was done in %s' % execution_time(start))

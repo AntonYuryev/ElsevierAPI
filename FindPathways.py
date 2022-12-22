@@ -7,8 +7,8 @@ ps_api = FolderContent(load_api_config())
 
 def MapEntityToPathways(FilterBy:list):
     EntityDict = dict()
-    for id, pthwy in ps_api.id2pathways.items():
-        folder_name = ps_api.id2folders[id][0]['Name']
+    for id, pthwy in ps_api.id2pathway.items():
+        folder_name = ps_api.id2folder[id][0]['Name']
         if pthwy['ObjTypeName'][0] == 'Pathway':
             pathway_name = pthwy['Name'][0]
             PathwayIds = pthwy['Id']
@@ -65,7 +65,6 @@ if __name__ == "__main__":
         SearchPathwaysInFolders = ['Hallmarks of Cancer']
         print('No folder list was specified. Will use pathways from \"%s\" folder ' % ','.join(SearchPathwaysInFolders))
 
-
     start_time = time.time()
     entities = [line.strip() for line in open(EntityListFile)]
     entity_ids = ps_api._get_obj_ids_by_props(entities,SearchByProperty)
@@ -78,7 +77,7 @@ if __name__ == "__main__":
         entity_name = psobj['Name'][0]
         entity_urn = psobj['URN'][0]
         for pathway_id in psobj['Pathway ID']:
-            patwhay_obj = ps_api.id2pathways[pathway_id]
+            patwhay_obj = ps_api.id2pathway[pathway_id]
             pathway_name = patwhay_obj['Name'][0]
             pathway_counter.add(pathway_name)
             for folder_name in patwhay_obj['Folders']:

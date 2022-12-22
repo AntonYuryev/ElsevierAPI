@@ -2,12 +2,11 @@ import urllib.request
 import urllib.parse
 import json
 from ElsevierAPI import load_api_config
-from ElsevierAPI.ResnetAPI.NetworkxObjects import Reference, REF_ID_TYPES
+from ElsevierAPI.ETM_API.references import Reference,REF_ID_TYPES
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
 from threading import Thread
 import time
 
-REFERENCE_TYPES = REF_ID_TYPES | {'REPORTER','GRANTNUMREPORTER'}
 
 def get_children(terms:list = None):
     if isinstance(terms,list):
@@ -122,7 +121,7 @@ if __name__ == "__main__":
                     Id = str(article_id['value'])
                     article_ids[id_type] = Id
 
-                for id_type in REFERENCE_TYPES:
+                for id_type in REF_ID_TYPES:
                     try:
                         ref = Reference(id_type,article_ids[id_type])
                         ref.Identifiers.update(article_ids)

@@ -1,23 +1,24 @@
 from ElsevierAPI import load_api_config
-from ElsevierAPI.PharmapendiumAPI.PharmapendiumAPI import DrugActivity
+from ElsevierAPI.PharmapendiumAPI.PharmapendiumAPI import DrugActivity,DrugIndications
 from ElsevierAPI.ETM_API.medscan import MedScan
 
 APIconfig = load_api_config()
-pp_api = DrugActivity('search', APIconfig)
+pp_api_di = DrugIndications('search', APIconfig)
+pp_api_da = DrugActivity('search', APIconfig)
 medscan = MedScan(APIconfig['MedscanLicense'])
 
-def get_drugs(name:str, aliases:list):
-    drugs = pp_api.drugs4indication([name])
+def get_drugs(for_indication:str, with_aliases:list):
+    drugs = pp_api_di.drugs4indication([for_indication])
     if drugs: return drugs
-    for alias in aliases:
-        drugs = pp_api.drugs4indication([alias])
+    for alias in with_aliases:
+        drugs = pp_api_di.drugs4indication([alias])
         if drugs: return drugs
 
     return dict()
 
 
 def get_rows(drug):
-    items = pp_api.targets4(drug)
+    items = pp_api_da.targets4(drug)
     rows = set()
     for item in items:
         target = item['target']

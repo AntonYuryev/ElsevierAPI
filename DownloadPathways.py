@@ -47,15 +47,15 @@ if __name__ == "__main__":
             else:
                 with open(logfile, 'w',encoding='utf-8') as f:
                     with redirect_stdout(f):
-                            # by default relations will have only attribute from:
-                            # {'TexRef'}|NetworkObjects.RELATION_PROPS|NetworkObjects.REF_ID_TYPES
-                            # Uncomment line below to download pathways with Relations annotated with Sentence
-                            #ps_api.add_rel_props(['Sentence'])
-                            # add names of other attributes to input list for addtional Relation annotation
-                            # max number of references in the ps_api.Graph until clearing
-                            ps_api.content2rnef(args.folder)
-                            #results will be written into the RNEF XML file called "content of args.folder" 
-                            #results will contain pathways and groups from the specified folder
-                            #command performing same operation is available in Pathway UI from folder context menu accesible by right-clicking on the folder 
+                        # by default relations will have only attribute from:
+                        # {'TexRef'}|NetworkObjects.RELATION_PROPS|NetworkObjects.REF_ID_TYPES
+                        # Uncomment line below to download pathways with Relations annotated with Sentence
+                        #ps_api.add_rel_props(['Sentence'])
+                        # add names of other attributes to input list for addtional Relation annotation
+                        # max number of references in the ps_api.Graph until clearing
+                        ps_api.folder2rnef(args.folder)
+                        #results will be written into the RNEF XML file called "content of args.folder" 
+                        #results will contain pathways and groups from the specified folder
+                        #command performing same operation is available in Pathway UI from folder context menu accesible by right-clicking on the folder 
 
 

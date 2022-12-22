@@ -40,7 +40,7 @@ PPIgraph = ps_api._get_ppi_graph(foutDiseasePPI)
 # calculating centrality
 
 degree_cent = nx.degree_centrality(PPIgraph)
-closness = PPIgraph.harmonic_centrality()
+closness = PPIgraph.closeness()
 sorted_centrality = sorted(degree_cent.items(), key=lambda kv: kv[1], reverse=True)
 PPIids = set(PPIgraph.nodes())
 IdToNames = ps_api.Graph.get_properties('Name',PPIids)

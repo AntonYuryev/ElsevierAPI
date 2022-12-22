@@ -64,7 +64,8 @@ def GetStats(Triples:list, TextRefs:list=None):
 if __name__ == "__main__":
     instructions = '''
     infile - 3 column tab-delimted file with triplets description: Regulator<>Relation<tab>Target.
-    TextRefs - comma-separated list of TextRef substrings to obtain document sections stats 
+    TextRefs - comma-separated list of TextRef substrings to obtain document sections stats.\n
+    Possible TextRefs values: "abs", "body", "pmid", "doi"
     If infile is not supplied counts for all possible triplets for all entity types and all relation types will be outputed
 
     '''
@@ -79,7 +80,7 @@ if __name__ == "__main__":
     DBtriples_types = list()
     TextRefs  = None
     if args.TextRefs:
-        TextRefs = args.TextRefs.split(',')
+        TextRefs = str(args.TextRefs).split(',')
 
     if not args.infile:
         DBRelTypes = ps_api.get_relation_types()

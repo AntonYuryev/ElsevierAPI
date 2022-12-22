@@ -1,15 +1,13 @@
-import urllib.request
-import urllib.parse
-import json
 import time
-import ElsevierAPI.ResnetAPI.PathwayStudioGOQL as OQL
+from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
 from ElsevierAPI.ResnetAPI.NetworkxObjects import Reference
 from ElsevierAPI import load_api_config
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
+from ElsevierAPI.PharmapendiumAPI.PharmapendiumAPI import SafetyPP
 import pandas as pd
 
 APIconfig = load_api_config()
-ps_api = APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
+ps_api = APISession(APIconfig)
 fileIn = 'Drugs for Regulators in 4 patients.txt'
 InDir = 'D:\\Python\\PBTA\\PNOC003\\4 patients analysis\\'
 with open(InDir+fileIn) as f:
@@ -30,43 +28,12 @@ for i, drug in resnet_drugs.nodes(data=True):
 
 all_drugs = list(resnet_drugs.nodes(data=True))
 for i, drug in all_drugs:
-    if drug['Name'][0].lower() in resnet2pharmapendium_map.keys() and 'PharmaPendium ID' not in drug.keys():
+    if str(drug['Name'][0]).lower() in resnet2pharmapendium_map.keys() and 'PharmaPendium ID' not in drug.keys():
         resnet_drugs.remove_node(i)
 print ('%d drugs left after deduplication' % resnet_drugs.number_of_nodes())
 
-
 print('Beginning Pharmapendium response download with urllib...')
-ELSapiKey = APIconfig['ELSapikey']#Obtain from https://dev.elsevier.com
-token = APIconfig['insttoken'] #Obtain from mailto:integrationsupport@elsevier.com 
-
-PP_URL = 'https://api.elsevier.com/pharma/'
-PPmodule ='safety/'
-RequestType = 'search'
-
-taxonomy = 'Effects'
-headers = {'X-ELS-APIKey':ELSapiKey,'X-ELS-Insttoken':token}
-baseURL =  PP_URL+PPmodule+RequestType +'?'
-PageLimit = 500 #controls number of records downloaded in one request. Cannot exceed 500
-
-LazyDictTox = dict()
-def GetTopTaxCategory(taxName):
-    try: return LazyDictTox[taxName]
-    except KeyError:
-        params = {'taxonomy': taxonomy, 'query':taxName}
-        paramtURL = urllib.parse.urlencode(params)
-        baseURL2 = PP_URL+PPmodule+'lookupFuzzy?'
-        req = urllib.request.Request(url=baseURL2+paramtURL,headers=headers)
-        with urllib.request.urlopen(req) as response:
-            the_page = response.read()
-            result = json.loads(the_page.decode('utf-8'))
-            if len(result) > 0:
-                topCategory = result['children'][0]['data']['name']
-                LazyDictTox[taxName]= topCategory
-                return topCategory
-            else:
-                LazyDictTox[taxName] = ''
-                return ''
-
+safety_in_pp = SafetyPP('lookupFuzzy',APIconfig)
 
 fileOut2 = InDir + fileIn[:len(fileIn)-4]+'_unmapped.txt'
 col_names = ['Smiles','Resnet name','Tox Category','#Ref','References']
@@ -79,92 +46,71 @@ for i, drug in resnet_drugs.nodes(data=True):
     drugPSname = drug['Name'][0]
     try: drugPPname = drug['PharmaPendium ID'][0]
     except KeyError: drugPPname = drugPSname
-
-    params = {'drugs':drugPPname}
-    paramtURL = urllib.parse.urlencode(params)
-    req = urllib.request.Request(url=baseURL+paramtURL,headers=headers)
-    response = urllib.request.urlopen(req)
-    the_page = response.read()
-    result = json.loads(the_page.decode('utf-8'))
-    docCount = result['data']['countTotal']
-
-    if docCount == 0: 
-        print('cannot find %s in Pharmapendium' % drugPSname)
-        continue
-
-    print('Found %d documents for %s with Pharmapendium ID %s' % (docCount,drugPSname, drugPPname))
+    safety_in_pp._add_param({'drugs':drugPPname})
+    all_docs = safety_in_pp.get_results()
+   
     DrugToxicities = dict()
+    for doc in all_docs:
+        toxicity=doc['effect']
+        try: 
+            DrugToxicities[toxicity].append(doc)
+        except KeyError:
+            DrugToxicities[toxicity] = [doc]
 
-    for page in range(1,docCount,PageLimit):
-        for item in result['data']['items']:
-            toxicity=item['effect']
-            try: DrugToxicities[toxicity].append(item)
+    toxCount = 0
+    for toxicity, references in DrugToxicities.items():
+        toxCount += 1
+        print('\'%s\' - %d from %d toxicities for \"%s\" was reported in %d documents' % (toxicity,toxCount,len(DrugToxicities),drugPSname,len(references)))
+        pandaIndex = drugPPname+'\t'+toxicity
+        
+        try: smiles = references[0]['smiles']
+        except KeyError: smiles=''
+
+        toxTax = safety_in_pp.GetTopEffectCategory(toxicity)
+
+        ToxPandas.at[pandaIndex,col_names[0]] = smiles
+        ToxPandas.at[pandaIndex,col_names[1]] = drugPSname
+        ToxPandas.at[pandaIndex,col_names[2]] = toxTax
+
+        refIndex = dict()
+        for ref in references:
+            document = ref['document']
+
+            try:docName = document['name']
             except KeyError:
-                DrugToxicities[toxicity] = [item]
+                try: docName = document['article']
+                except KeyError: docName = document['journal']
+            
+            docSource = document['sourceShort']
+            refIdentifier = docSource+':'+docName
+            try: PPRef = refIndex[refIdentifier]
+            except KeyError:
+                PPRef = Reference('Title',refIdentifier)
+                refIndex[refIdentifier] = PPRef
 
-        if page+PageLimit < docCount:
-            params = {'drugs':drugPPname,'limitation.firstRow':page+PageLimit}
-            paramtURL = urllib.parse.urlencode(params)
-            req = urllib.request.Request(url=baseURL+paramtURL,headers=headers)
-            response = urllib.request.urlopen(req)
-            the_page = response.read()
-            result = json.loads(the_page.decode('utf-8'))
-        else:
-            toxCount = 0
-            for toxicity, references in DrugToxicities.items():
-                toxCount += 1
-                print('\'%s\' - %d from %d toxicities for \"%s\" was reported in %d documents' % (toxicity,toxCount,len(DrugToxicities),drugPSname,len(references)))
-                pandaIndex = drugPPname+'\t'+toxicity
-                
-                try: smiles = references[0]['smiles']
-                except KeyError: smiles=''
+            try:PubYear = str(document['year'])
+            except KeyError: PubYear = 'historic'
+            PPRef.set_property('PubYear', PubYear)
+            
+            try:dose = ref['dose']
+            except KeyError: dose = ''
 
-                toxTax = GetTopTaxCategory(toxicity)
+            try: doseType=ref['doseType']
+            except KeyError: doseType=''
+            
+            try:route=ref['route']
+            except KeyError: route=''
+            
+            organism=ref['specie']
+            PPRef.update_with_value(route, doseType + ' in ' + organism + ' ' + dose)
 
-                ToxPandas.at[pandaIndex,col_names[0]] = smiles
-                ToxPandas.at[pandaIndex,col_names[1]] = drugPSname
-                ToxPandas.at[pandaIndex,col_names[2]] = toxTax
+        addToPandas = set()
+        for ref in refIndex.values():
+            addToPandas.update([ref.to_str('Title', sep='-')])
 
-                refIndex = dict()
-                for ref in references:
-                    document = ref['document']
-
-                    try:docName = document['name']
-                    except KeyError:
-                        try: docName = document['article']
-                        except KeyError: docName = document['journal']
-                    
-                    docSource = document['sourceShort']
-                    refIdentifier = docSource+':'+docName
-                    try: PPRef = refIndex[refIdentifier]
-                    except KeyError:
-                        PPRef = Reference('Title',refIdentifier)
-                        refIndex[refIdentifier] = PPRef
-
-                    try:PubYear = str(document['year'])
-                    except KeyError: PubYear = 'historic'
-                    PPRef.set_property('PubYear', PubYear)
-                    
-                    try:dose = ref['dose']
-                    except KeyError: dose = ''
-
-                    try: doseType=ref['doseType']
-                    except KeyError: doseType=''
-                    
-                    try:route=ref['route']
-                    except KeyError: route=''
-                    
-                    organism=ref['specie']
-                    PPRef.update_with_value(route, doseType + ' in ' + organism + ' ' + dose)
-
-                addToPandas = set()
-                for ref in refIndex.values():
-                    addToPandas.update([ref.to_str('Title', sep='-')])
-
-                ToxPandas.at[pandaIndex,col_names[3]] = len(addToPandas)
-                reflist = '|'.join(list(addToPandas))
-                ToxPandas.at[pandaIndex,col_names[4]] = reflist  
-            break
+        ToxPandas.at[pandaIndex,col_names[3]] = len(addToPandas)
+        reflist = '|'.join(list(addToPandas))
+        ToxPandas.at[pandaIndex,col_names[4]] = reflist  
         
 ToxPandas.to_csv(InDir+fileIn[:len(fileIn)-4]+'_PPtaxonomy.txt',sep='\t')
 print('Finished finding toxicities in Pharmapendium in %s' % ps_api.execution_time(start_time))

@@ -108,7 +108,7 @@ if __name__ == "__main__":
                 #'input_compound' : 'cannabidiol',#'2-arachidonoylglycerol', #'anandamide', # , '9-tetrahydrocannabinol'
                 #'similars' : ['cannabidivarin', 'Cannabidiolic acid', 'Cannabielsoin'],
                 'input_compound' : 'tetrahydrocannabinol', 
-                'similars' : ['delta 8-THC', '9-tetrahydrocannabinol', 'THC-C4','tetrahydrocannabinolic acid', '11-hydroxy-delta 9-tetrahydrocannabinol'],
+                'similars' : ['delta 8-THC','9-tetrahydrocannabinol', 'THC-C4','tetrahydrocannabinolic acid', '11-hydroxy-delta 9-tetrahydrocannabinol'],
                 'indication_types': ['Disease'], #['CellProcess','Virus']
                 'drug_effect': INHIBIT,
                 'mode_of_action': ANTAGONIST,
@@ -138,41 +138,37 @@ if __name__ == "__main__":
     dcp.param['indication_types'] = ['Disease']
     dcp.load_drug_indications()
     for target in targets:
-         dcp.load_target_indications([target])
+         dcp.load_indications4targets([target])
          if dcp.perform_semantic_search():
             dcp.add2writer(target_report,dcp._worksheet_prefix())
             dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
             dcp.clear()
 
-    # to find biological processes inhibited by input compound
+    # to find biological processes inhibited by input compound:
     dcp.param['indication_types'] = ['CellProcess']
     dcp.load_drug_indications()
     for target in targets:
-        dcp.load_target_indications([target])
-        if dcp.perform_semantic_search():
-            dcp.add2writer(target_report,dcp._worksheet_prefix())
-            dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
-            dcp._clear_()
-
-    # to find biological processes activated by input compound
-    dcp.param['drug_effect'] = ACTIVATE
-    dcp.load_drug_indications()
-    for target in targets:
-        dcp.load_target_indications([target])
+        dcp.load_indications4targets([target])
         if dcp.perform_semantic_search():
             dcp.add2writer(target_report,dcp._worksheet_prefix())
             dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
             dcp.clear()
 
-    #other_processes = dcp.rn2df(dcp.other_effects(),dcp.param['input_compound'])
-    #other_processes.to_excel(target_report, sheet_name='Possbl.CellProcess', index=False)
+    # to find biological processes activated by input compound:
+    dcp.param['drug_effect'] = ACTIVATE
+    dcp.load_drug_indications()
+    for target in targets:
+        dcp.load_indications4targets([target])
+        if dcp.perform_semantic_search():
+            dcp.add2writer(target_report,dcp._worksheet_prefix())
+            dcp.addraw2writer(raw_data_cache,dcp._worksheet_prefix())
+            dcp.clear()
+
+
     dcp.param['indication_types'] = ['CellProcess']
     other_effects_graph_cellproc = dcp.other_effects()
     other_indications_cellproc = other_effects_graph_cellproc.snippets2df(df_name='Possbl.CellProcess')
     dcp.add2report(other_indications_cellproc)
-
-   # other_indications = dcp.rn2df(dcp.other_effects(),dcp.param['input_compound'])
-   #other_indications.to_excel(target_report, sheet_name='Possbl.Diseases', index=False)
 
     dcp.param['indication_types'] = ['Disease']
     other_effects_graph_disease = dcp.other_effects()
