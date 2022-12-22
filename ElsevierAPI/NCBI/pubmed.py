@@ -103,4 +103,50 @@ def pubmed_hyperlink(pmids:list,display_str:int or str='',as_excel_formula=True)
         data = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         return PUBMED_URL+data
 
- 
+
+def minor_allele(rsids:list):
+    """
+    Input
+    -----
+    list of rsIDs
+    
+    Returns
+    -------
+    {rsID:Minor Allele:Frequency}
+    """
+    stepSize = 200
+    params = {'db':'snp'}
+    snp2allele2freq = dict() # {snp_id:{allele:(allele_count, pop_size)}}
+    for i in range(0, len(rsids), stepSize):
+        ids = ','.join(s[2:] for s in rsids[i:i+stepSize])
+
+        baseURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
+        params.update({'id':ids})
+        req = urllib.request.Request(url=baseURL+'efetch.fcgi?'+urllib.parse.urlencode(params))
+        
+        response = urllib.request.urlopen(req).read()
+        snps = ET.fromstring('<documents>'+response.decode()+'</documents>')
+        for snp_record in snps.findall('./DocumentSummary'):
+            alleles = dict() # {allele:(allele_count, pop_size)}
+            snp_id = snp_record.find('./SNP_ID')
+            if type(snp_id) == type(None): continue
+            snp_id = snp_record.find('./SNP_ID').text
+            for maf in snp_record.findall('./GLOBAL_MAFS/MAF'):
+                study = maf.find('STUDY').text
+                allele_freq_pop = maf.find('FREQ').text
+                eq_pos = allele_freq_pop.find('=')
+                slash_pos = allele_freq_pop.find('/', eq_pos)
+                allele = allele_freq_pop[:eq_pos]
+                population_size = int(allele_freq_pop[slash_pos+1:])
+                freq = float(allele_freq_pop[eq_pos+1:slash_pos])
+                try:
+                    allele_count, pop_size = alleles[allele]
+                    alleles[allele] = (allele_count+freq*population_size, pop_size+population_size)
+                except KeyError:
+                    alleles[allele] = (freq*population_size,population_size)
+
+            alele_freqs = {a:f[0]/f[1] for a,f in alleles.items() if f[1]>0}
+            if alele_freqs:
+                snp2allele2freq['rs'+snp_id] = alele_freqs
+
+    return snp2allele2freq
