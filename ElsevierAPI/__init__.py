@@ -26,9 +26,9 @@ def load_api_config(api_config_file=''):# file with your API keys and API URLs
             return None
 
 
-def open_api_session(api_config_file='') -> APISession:
+def open_api_session(api_config_file='',what2retrieve=1) -> APISession:
     APIconfig = load_api_config(api_config_file)
-    return APISession(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
+    return APISession(APIconfig,what2retrieve=what2retrieve)
 
 
 def execution_time(execution_start):
