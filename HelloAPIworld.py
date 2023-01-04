@@ -34,7 +34,7 @@ if __name__ == "__main__":
 
     ps_api.csv_delimeter = '\t'
     ps_api.to_csv('my_graph.tsv')
-    ps_api.Graph.rnef2file('my_graph.rnef', ps_api.entProps, ps_api.relProps)
+    ps_api.Graph.rnef2file('my_graph.rnef',ent_prop2print=ps_api.entProps, rel_prop2print=ps_api.relProps)
 # process_oql retreives data by iterations. Iteration size is controled by ps_api.PageSize
 # ps_api.PageSize defaults to 100 relations per iteration and cannot be bigger than 10,000
 # debug=False retreives resuts only from the first iteration
