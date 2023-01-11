@@ -13,5 +13,5 @@ if __name__ == "__main__":
     # importing ResnetGraph into local Neo4j instance:
     import_start = time.time()
     nx2neo.load_graph2neo4j(expression_network)
-    print("Graph with %d nodes and %d edeges was imported into Neo4j in %s ---" % 
+    print("Graph with %d nodes and %d edges was imported into Neo4j in %s ---" % 
     (expression_network.number_of_nodes(), expression_network.number_of_edges(),execution_time(import_start)))
