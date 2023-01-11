@@ -1,12 +1,13 @@
-from .ZeepToNetworkx import PSObject, PSRelation, PSNetworx
-from .NetworkxObjects import PS_ID_TYPES
+from .ZeepToNetworkx import PSObject, PSRelation
+from .ResnetGraph import ResnetGraph
+from .NetworkxObjects import PS_REFIID_TYPES
 import logging
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 
 REL_PROP_Neo4j = ['Name', 'Effect', 'Mechanism', 'Source', 'TextRef']
 ENT_PROP_Neo4j = ['URN', 'Name', 'Description']
-REL_PROPs = list(PS_ID_TYPES) + REL_PROP_Neo4j
+REL_PROPs = list(PS_REFIID_TYPES) + REL_PROP_Neo4j
 
 
 class nx2neo4j:
@@ -60,8 +61,8 @@ class nx2neo4j:
                 logging.error("{query} raised an error: \n {exception}".format(query=query, exception=exception))
                 raise
 
-    def load_nodes(self, resnet: PSNetworx):
-        nodes = resnet.Graph.nodes(data=True)
+    def load_nodes(self, resnet:ResnetGraph):
+        nodes = resnet.nodes(data=True)
         with self.driver.session() as session:
             # Write transactions allow the driver to handle retries and transient errors
             for i, d in nodes:
@@ -104,17 +105,17 @@ class nx2neo4j:
                 query=query, exception=exception))
             raise
 
-    def load_relations(self, resnet: PSNetworx):
+    def load_relations(self, resnet:ResnetGraph):
         with self.driver.session() as session:
-            for regulatorID, targetID, rel in resnet.Graph.edges.data('relation'):
-                result = session.write_transaction(self.__create_relation, resnet.Graph.nodes[regulatorID],
-                                                   resnet.Graph.nodes[targetID], rel)
+            for regulatorID, targetID, rel in resnet.edges.data('relation'):
+                result = session.write_transaction(self.__create_relation, resnet.nodes[regulatorID],
+                                                   resnet.nodes[targetID], rel)
                 for record in result:
                     print("Created {r}: {p1} - {p2} relation".format(r=record[1], p1=record[0], p2=record[2]))
 
-    def load_graph2neo4j(self, resnet: PSNetworx):
+    def load_graph2neo4j(self, resnet:ResnetGraph):
         print('Importing Resnet data into local Neo4j')
-        #app = nx2neo4j(uriNeo4j, userNeo4j, pswdNeo4j)
+
         self.load_nodes(resnet)
-        resnet.Graph.load_references()
+        resnet.load_references()
         self.load_relations(resnet)
