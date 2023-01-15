@@ -12,7 +12,7 @@ class FolderContent (APISession):
     pass
     def __init__(self, APIconfig:dict, preload_folder_tree=True,what2retrieve=NO_REL_PROPERTIES):
         """
-        self.id2pathway = {id:PSObject} is loaded on demand 
+        self.id2pathway = {id:PSObject} is loaded on demand
         self.id2group = {id:PSObject} is loaded on demand
         self.id2result = {id:PSObject} is loaded on demand\n
         loading is done by self::get_objects_from_folders() or self::load_containers()
@@ -176,7 +176,7 @@ class FolderContent (APISession):
         -------
         tuple ResnetGraph, XML "format" string
         """
-
+        
         pathway_graph = self.pathway_components([pathway_id],'id',self.relProps,self.entProps)
         
         if format == 'JSON-LD':
@@ -184,7 +184,6 @@ class FolderContent (APISession):
         else:
             return pathway_graph, self.pathway2xml(pathway_id,pathway_graph,pathway_urn,pathway_name,
                     format,put2folder, add_props2rel,add_props2pathway, as_batch, prettify)
-
 
 
     def pathway2xml(self, pathway_id,pathway_graph:ResnetGraph, pathway_urn:str=None,pathway_name:str=None,

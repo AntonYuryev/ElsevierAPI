@@ -53,7 +53,7 @@ class SemanticSearch (APISession):
         self.all_entity_ids = set()
         self.weight_dict = dict()
         self.columns2drop = [self.__temp_id_col__] # columns to drop before printing pandas
-        self.params['data_dir'] = ''
+        self.data_dir = ''
 
 
     def reset(self):
@@ -63,13 +63,19 @@ class SemanticSearch (APISession):
         print('DataFrame was reset')
 
 
-    def refcount_columns(self,counts_df=df()):
+    def refcount_columns(self,counts_df=df(),column_prefix=''):
         d = self.RefCountPandas if counts_df.empty else counts_df
-        return [col for col in d.columns if self._col_name_prefix in col]
+        refcount_column_prefix = column_prefix if column_prefix else self._col_name_prefix
+        to_return = [col for col in d.columns if refcount_column_prefix in col]
+        return to_return
 
 
     def add_params(self, param:dict):
         self.params.update(param)
+        try:
+            self.set_dir(param['data_dir'])
+        except KeyError:
+            pass
     
 
     def _clone_(self, to_retrieve=CURRENT_SPECS):
@@ -111,7 +117,7 @@ class SemanticSearch (APISession):
             list_of_tuples = list(df2score[self.__temp_id_col__])
             id_set = set()
             [id_set.update(list(lst)) for lst in list_of_tuples]
-            return list(id_set)
+            return id_set
 
 
     def entities(self,from_df=df(),id_column='Name',map_by_property='Name'):
@@ -121,16 +127,25 @@ class SemanticSearch (APISession):
         return propval2objs
 
 
-    def load_pandas(self, from_entity_pd:df,prop_names_in_header=True,use_cache=False,map2type:list=[]):
+    def load_pandas(self,from_entity_df:df,prop_names_in_header=True,use_cache=False,map2type:list=[],max_children_count=0):
+        '''
+        Input
+        -----
+        if prop_names_in_header=True uses column headers as mapping property\n
+        iterates through all columns in for mapping
+        '''
         self.__only_map2types__ = map2type
         if use_cache:
             try: self.read_cache()
             except FileNotFoundError:
                 print ('Cannot find cache file %s.  You will have to map entities on input identifiers again!' % self.__cntCache__)
-                refcount_df = self.__map_entities(from_entity_pd,prop_names_in_header)
+                refcount_df = self.__map_entities(from_entity_df,prop_names_in_header)
         else:
-            refcount_df = self.__map_entities(from_entity_pd,prop_names_in_header)
+            refcount_df = self.__map_entities(from_entity_df,prop_names_in_header)
         
+        if max_children_count:
+            refcount_df = self.remove_high_level_entities(refcount_df,max_children_count)
+
         refcount_ids = self._all_ids(refcount_df)
         self.all_entity_ids.update(refcount_ids)
         return refcount_df
@@ -146,7 +161,7 @@ class SemanticSearch (APISession):
         
         map2types = self.__only_map2types__
         PropName2Prop2EntityID = dict()
-        RemainToMap = df(EntityPandas)
+        RemainToMap= df.copy_df(EntityPandas)
         mapped_count = 0
         for propName in EntityPandas.columns:
             identifiers = list(map(str,list(RemainToMap[propName])))
@@ -203,7 +218,7 @@ class SemanticSearch (APISession):
         if propName not in ent_props: 
             ent_props.append(propName)
 
-        step = 1000
+        step = 950 # must be slightly less than 1000 to accomodate names with commas
         iteration_counter = math.ceil(len(propValues) / step)
 
         print('Will use %d %s identifiers to find entities in %d iterations' % 
@@ -524,31 +539,43 @@ class SemanticSearch (APISession):
 
     def make_count_df(self,from_df=df(), with_name=COUNTS):
         '''
-        adds df with_name to 
+        Returns
+        -------
+        df with_name from_df with formatted CHILDREN_COUNT column, soreted by first refcount_column
         '''
-        counts_df = self.RefCountPandas if from_df.empty else from_df
+        my_df = self.RefCountPandas if from_df.empty else from_df
 
-        pandas2print = df(counts_df)
+        pandas2print = df(my_df)
         pandas2print[CHILDREN_COUNT] = pandas2print[self.__temp_id_col__].apply(lambda x: len(x))
 
-        refcount_columns = self.refcount_columns(counts_df)
-        to_return = df(pandas2print.sort_values(refcount_columns[0],ascending=False))
-        to_return._name_ = with_name
-        to_return.add_column_format(CHILDREN_COUNT,'align','center')
-        print ('Created "%s" table' % to_return._name_)
-        return to_return
+        def __col2sort__(my_df:df):
+            refcount_columns = self.refcount_columns(my_df)
+            if refcount_columns: return refcount_columns[0]
+            else:
+                for c in my_df.columns.tolist():
+                    if my_df.is_numeric(c): return c
+
+                return str(my_df.columns[1])
+
+        sort_by = __col2sort__(my_df)
+        pandas2print.sort_values(sort_by,ascending=False,inplace=True)
+
+        pandas2print.copy_format(from_df)
+        pandas2print.add_column_format(CHILDREN_COUNT,'align','center')
+        pandas2print._name_ = with_name
+        print ('Created "%s" table' % pandas2print._name_)
+        return pandas2print
         
 
     def normalize(self,raw_df:str,to_df_named:str,entity_column='Name',columns2norm=list(),drop_empty_columns=False):
         """
         Adds
         ----
-        df with _name_ 'norm.raw_df' to self.raw_data. df has normalized values from 'raw_df' df \n
-        and 'Combined score' and 'RANK' columns
-        df with _name_  'to_df_named' to self.report_data where normalized values in 'norm.raw_df' were replace by real counts from raw_df
+        df with _name_ 'norm.raw_df' to self.raw_data.\n
+        'norm.raw_df' has normalized values from 'raw_df' df and 'Combined score' and 'RANK' columns\n
+        df with ._name_='to_df_named' to self.report_data where normalized values from 'norm.raw_df' are replaced by original counts from raw_df
         """
         counts_df = df.copy_df(self.raw_data[raw_df])
-
         refcount_cols = columns2norm if columns2norm else self.refcount_columns(counts_df)
         
         #  removing empty columns
@@ -624,28 +651,28 @@ class SemanticSearch (APISession):
         ranked_counts_df = self._merge_counts2norm(counts_df,normalized_count_df,columns2merge=columns2norm)
         ranked_counts_df.loc[0] = weigths_header
         
-        ranked_counts_df._name_ = to_df_named
+        ranked_counts_df.copy_format(counts_df)
         ranked_counts_df.add_column_format(RANK,'align','center')
         ranked_counts_df.add_column_format('Combined score','align','center')
+        ranked_counts_df._name_ = to_df_named
         self.add2report(ranked_counts_df)
 
 
     def etm_refs2df(self,to_df:df,input_names:list,entity_name_col:str='Name',add2query=[]):
         print('Finding %d most relevant articles in ETM for %d rows in %s and %s' 
                 % (self.etm_counter._limit(),len(to_df),to_df._name_,input_names), flush=True)
-        return self.etm_counter.add_etm_references(to_df,entity_name_col,input_names,self.etm_counter.basic_query(),add2query)
+        return self.etm_counter.add_etm_references(to_df,entity_name_col,input_names,ETMstat.basic_query,add2query)
 
 
-    def add_etm_refs(self,to_df_name:str,input_names:list,entity_name_col:str='Name',add2query=[]):
+    def add_etm_refs(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[]):
         """
         Adds
         ----
-        columns etm.ETM_REFS_COLUMN, 'DOIs' to df with name "to_df_name"
+        columns etm.ETM_REFS_COLUMN, 'DOIs' to df with name "to_df_name" from self.report_pandas
         """
-        rank_counts_df = self.report_pandas[to_df_name]
+        rank_counts_df = self.report_pandas[to_df_named]
         rank_counts_df = self.etm_refs2df(rank_counts_df,input_names,entity_name_col,add2query)
         self.add2report(rank_counts_df)
-        #self.report_pandas[to_df_name] = rank_counts_df
 
 
     def add_etm_bibliography(self,prefix=''):
@@ -744,4 +771,11 @@ class SemanticSearch (APISession):
         self.add2report(ontology_df)
 
 
-
+    def remove_high_level_entities(self,from_df:df, max_children_count=11):
+        return_df = df.copy_df(from_df)
+        return_df = df(return_df[return_df.apply(lambda x: len(x[self.__temp_id_col__]) <= max_children_count, axis=1)])
+        print('%d entities with > %d ontology children were removed from further calculations' %
+        ( (len(from_df)-len(return_df)), max_children_count-1))
+        return_df.copy_format(from_df)
+        return_df._name_ = from_df._name_
+        return return_df

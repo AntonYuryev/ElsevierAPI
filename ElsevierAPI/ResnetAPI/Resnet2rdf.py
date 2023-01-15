@@ -1,7 +1,7 @@
 import rdflib as rdf
 from .ResnetGraph import ResnetGraph
 from .NetworkxObjects import PSObject,PSRelation,REFCOUNT
-from ..ETM_API.references import Reference,PS_ID_TYPES,RELEVANCE,TITLE,PUBYEAR,JOURNAL,LOINCID,THRESHOLD, hGRAPHID,EDMID
+from ..ETM_API.references import Reference,PS_REFIID_TYPES,RELEVANCE,TITLE,PUBYEAR,JOURNAL,LOINCID,THRESHOLD, hGRAPHID,EDMID
 import json
 from pyld import jsonld
 from urllib.parse import quote
@@ -79,7 +79,7 @@ class ResnetRDF(rdf.Graph):
 
     def add_reference(self,ref:Reference, to_rel_uri:str):
         was_added = False
-        for i in PS_ID_TYPES:
+        for i in PS_REFIID_TYPES:
             try:
                 id_value = ref.Identifiers[i]
                 ref_uri =  self.make_uri(REFID2PREFIX[i], id_value)
