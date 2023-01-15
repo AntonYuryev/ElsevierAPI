@@ -1,15 +1,16 @@
 import time
 import math
+import os
+import glob
 import networkx as nx
 from .ZeepToNetworkx import PSNetworx, len
-from .ResnetGraph import ResnetGraph,PSObject,PSRelation,CHILDS,df
+from .ResnetGraph import ResnetGraph,PSObject,PSRelation,CHILDS,df,REFCOUNT
 from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment,Sample
-from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_ID_TYPES,RELATION_PROPS,ALL_PS_PROPS
+from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PS_PROPS
 from xml.dom import minidom
-import glob
 from pathlib import Path
-import os
+from concurrent.futures import ThreadPoolExecutor
 
 # options for "to_retrieve" parameter
 NO_REL_PROPERTIES = -2
@@ -51,6 +52,7 @@ class APISession(PSNetworx):
     __getLinks = True
     APIconfig = dict()
     data_dir = ''
+    debug = True
 
     def __init__(self,APIconfig:dict,what2retrieve=NO_REL_PROPERTIES):
         super().__init__(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
@@ -63,13 +65,13 @@ class APISession(PSNetworx):
         if what2retrieve == NO_REL_PROPERTIES:
             self.relProps = ['URN']
         elif what2retrieve == DATABASE_REFCOUNT_ONLY:
-            self.relProps = ['URN','RelationNumberOfReferences']
+            self.relProps = ['URN',REFCOUNT]
         elif what2retrieve == REFERENCE_IDENTIFIERS:
-            self.relProps = ['URN']+PS_ID_TYPES
+            self.relProps = ['URN']+PS_REFIID_TYPES
         elif what2retrieve == BIBLIO_PROPERTIES:
-            self.relProps = ['URN']+PS_ID_TYPES+list(PS_BIBLIO_PROPS)
+            self.relProps = ['URN']+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS)
         elif what2retrieve == SNIPPET_PROPERTIES:
-            self.relProps = ['URN']+PS_ID_TYPES+list(PS_BIBLIO_PROPS)+PS_SENTENCE_PROPS
+            self.relProps = ['URN']+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS)+PS_SENTENCE_PROPS
         elif what2retrieve == ONLY_REL_PROPERTIES:
             self.relProps = ['URN']+list(RELATION_PROPS)
         elif what2retrieve == ALL_PROPERTIES:
@@ -107,7 +109,7 @@ class APISession(PSNetworx):
 
     def set_dir(self,dir:str):
         self.data_dir = dir
-        if dir[-1] != '/':
+        if dir and dir[-1] != '/':
             self.data_dir += '/'
 
     def _dir(self):
@@ -260,55 +262,67 @@ class APISession(PSNetworx):
         return entire_graph
 
 
-    def __graph_by_ids(self,id_only_graph:ResnetGraph,use_relation_cache=True):
+    def __graph_by_ids(self,id_only_graph:ResnetGraph,use_cache=True):
         '''
         loads
         -----
         new relations to self.Graph by ids in id_only_graph
         '''
-        if use_relation_cache:
-            relation_ids = id_only_graph._relations_ids().difference(self.id2relation.keys())
-            nodes_ids = set(id_only_graph.nodes()).difference(set(self.Graph.nodes()))
-        else:
-            relation_ids = id_only_graph._relations_ids()
-            nodes_ids = list(id_only_graph.nodes())
+        relation_ids2return = id_only_graph._relations_ids()
+        if relation_ids2return:
+            if use_cache:
+                relation_ids2retreive = relation_ids2return.difference(self.id2relation.keys())
+                nodes_ids2retreive = set(id_only_graph.nodes()).difference(set(self.Graph.nodes()))
+            else:
+                relation_ids2retreive = list(relation_ids2return)
+                nodes_ids2retreive = list(id_only_graph.nodes())
 
-        if nodes_ids:
-            entity_query = 'SELECT Entity WHERE id = ({ids})'
-            self._iterate_oql(entity_query,nodes_ids,[],self.entProps,get_links=False)
+            if nodes_ids2retreive:
+                entity_query = 'SELECT Entity WHERE id = ({ids})'
+                self._iterate_oql(entity_query,nodes_ids2retreive,[],self.entProps,get_links=False)
 
-        if relation_ids:
-            rel_query = 'SELECT Relation WHERE id = ({ids})'
-            self._iterate_oql(rel_query,relation_ids,self.relProps)
-        
-        subgraph_rel_ids = id_only_graph._relations_ids()
-        if subgraph_rel_ids:
-            rels4subgraph = [rel for i,rel in self.id2relation.items() if i in subgraph_rel_ids]
+            if relation_ids2retreive:
+                rel_query = 'SELECT Relation WHERE id = ({ids})'
+                self._iterate_oql(rel_query,relation_ids2retreive,self.relProps)
+    
+            # now all relation_ids2return should be in self.id2relation
+            rels4subgraph = [rel for i,rel in self.id2relation.items() if i in relation_ids2return]
+            assert(len(rels4subgraph) == len(relation_ids2return))
             return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
             return return_subgraph
         else:
-            retreived_nodes_id = list(id_only_graph.nodes())
+            # id_only_graph has only nodes
+            nodes_ids2return = list(id_only_graph.nodes())
+            if use_cache:
+                nodes_ids2retreive = set(nodes_ids2return).difference(set(self.Graph.nodes()))
+            else:
+                nodes_ids2retreive = set(nodes_ids2return)
+
+            if nodes_ids2retreive:
+                entity_query = 'SELECT Entity WHERE id = ({ids})'
+                self._iterate_oql(entity_query,nodes_ids2retreive,[],self.entProps,get_links=False)
+
             nodes_graph = ResnetGraph()
-            nodes_graph.add_nodes({i:node for i,node in self.Graph.nodes(data=True) if i in retreived_nodes_id})
+            nodes_graph.add_nodes({i:node for i,node in self.Graph.nodes(data=True) if i in nodes_ids2return})
+            assert(len(nodes_graph) == len(nodes_ids2return))
             return nodes_graph
 
 
-    def iterate_oql(self, oql_query:str,id_set:set,use_relation_cache=True,request_name='',iterate_ids=True):
+    def iterate_oql(self, oql_query:str,id_set:set,use_cache=True,request_name='',iterate_ids=True):
         """
         # oql_query MUST contain string placeholder called {ids} if iterate_ids==True\n
-        # oql_query MUST contain string placeholder aclled {props} if iterate_ids==False
+        # oql_query MUST contain string placeholder called {props} if iterate_ids==False
         """
-        #self = self.__clone() if self.clone else self
         print('Processing "%s" request\n' % request_name)
         getlinks = self.__set_get_links(oql_query)
         if iterate_ids:
             id_only_graph = self._iterate_oql(oql_query,id_set,[],[],add2self=False,get_links=getlinks)
         else:
             id_only_graph = self._iterate_oql_s(oql_query,id_set,[],[],add2self=False,get_links=getlinks)
-        return self.__graph_by_ids(id_only_graph,use_relation_cache)
+        return self.__graph_by_ids(id_only_graph,use_cache)
 
 
-    def iterate_oql2(self,oql_query:str,id_set1:set, id_set2:set,use_relation_cache=True,request_name=''):
+    def iterate_oql2(self,oql_query:str,id_set1:set, id_set2:set,use_cache=True,request_name=''):
         """
         # oql_query MUST contain 2 string placeholders called {ids1} and {ids2}
         """
@@ -316,7 +330,7 @@ class APISession(PSNetworx):
         getlinks = True if oql_query[7:15] == 'Relation' else False
         id_only_graph = self._iterate_oql2(oql_query,id_set1,id_set2,[],[],add2self=False,get_links=getlinks)
         print('Will retrieve graph with %d entities and %d relations' %(id_only_graph.number_of_nodes(),id_only_graph.number_of_edges()))
-        return self.__graph_by_ids(id_only_graph,use_relation_cache)
+        return self.__graph_by_ids(id_only_graph,use_cache)
 
 
     def clear(self):
@@ -591,7 +605,7 @@ class APISession(PSNetworx):
 
     def to_pandas (self, in_graph=None, RefNumPrintLimit=0)-> 'df':
         if not isinstance(in_graph, ResnetGraph): in_graph = self.Graph
-        return df(in_graph.ref2pandas(self.relProps,self.entProps,RefNumPrintLimit))
+        return df(in_graph.ref2pandas(self.relProps,self.entProps,RefNumPrintLimit,single_rel_row=self.print_rel21row))
 
 
     @staticmethod
@@ -736,7 +750,7 @@ class APISession(PSNetworx):
 
     def download_oql(self,oql_query,request_name:str,resume_page=0):
         '''
-        Use for oql_query producing large results 
+        Use for oql_query producing large results
 
         Dumps
         -----
@@ -826,12 +840,11 @@ class APISession(PSNetworx):
             Input
             -----
             dir12,dir23 must be '<','>' or empty string
-            Finds
-            -----
-            nodes in positon 2 for all possible subgraphs 1-->2-->3 using nodes in position 1 and 3 as input
+
             Returns
             -------
-            ResnetGraph with 1-->2-->3 relations
+            ResnetGraph with 1-->2-->3 relations, where nodes in position 1 are from "of_ids1" and nodes in position 3 are from "and_ids3"\n
+            if nodes in positon 1 and positon 3 are neighbors returns graph to complete 3-vertex cliques
         """
         sel_rels = 'SELECT Relation WHERE objectType = ({})'
         sel_rels12 = sel_rels+' AND Effect = ({})'.format(','.join(effect12)) if effect12 else sel_rels
@@ -845,9 +858,10 @@ class APISession(PSNetworx):
         find_neighbors_oql = find_neighbors_oql+' AND Connected by ('+sel_rels12+') to (SELECT Entity WHERE id = ({ids1}))'
         find_neighbors_oql += ' AND Connected by ('+sel_rels23+') to (SELECT Entity WHERE id = ({ids2}))'
 
-        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',of_ids1,and_ids3,'Find common neighbors')
+        r_n = f'Find entities common between {len(of_ids1)} and {len(and_ids3)} entities' 
+        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',of_ids1,and_ids3,request_name=r_n)
         neighbors_ids = list(neighbors_entity_graph.nodes())
-        #select_neighbors_by_ids = OQL.get_objects(neighbors_ids)
+        print('Found %d common neighbors' % len(neighbors_ids))
 
         if dir12 == '>':
             sel_12_graph_oql = sel_rels12 + r' AND downstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND upstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
@@ -855,7 +869,8 @@ class APISession(PSNetworx):
             sel_12_graph_oql = sel_rels12 + r' AND upstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND downstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
         else:
             sel_12_graph_oql = sel_rels12 + r' AND NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
-        graph12 = self.iterate_oql2(f'{sel_12_graph_oql}',of_ids1,neighbors_ids,'Find 1-2 neighbors')
+        rn12 = f'Find 1-2 relations between {len(of_ids1)} entities in position 1 and {len(neighbors_ids)} common neighbors'
+        #graph12 = self.iterate_oql2(f'{sel_12_graph_oql}',of_ids1,neighbors_ids,request_name=rn12)
 
         if dir23 == '>':
             sel_23_graph_oql = sel_rels23 + r' AND upstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND downstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
@@ -863,7 +878,71 @@ class APISession(PSNetworx):
             sel_23_graph_oql = sel_rels23 + r' AND downstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND upstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
         else:
             sel_23_graph_oql = sel_rels23 + r' AND NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
-        graph23 = self.iterate_oql2(f'{sel_23_graph_oql}',and_ids3,neighbors_ids,'Find 2-3 neighbors')
+        rn23 = f'Find 2-3 relations between {len(and_ids3)} entities in position 3 and {len(neighbors_ids)} common neighbors'
+       # graph23 = self.iterate_oql2(f'{sel_23_graph_oql}',and_ids3,neighbors_ids,request_name=rn23)
+
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix='FindCommonNeighbors') as executor:
+            future12 = executor.submit(self.iterate_oql2,f'{sel_12_graph_oql}',of_ids1,neighbors_ids, True,rn12) 
+            future23 = executor.submit(self.iterate_oql2,f'{sel_23_graph_oql}',and_ids3,neighbors_ids, True,rn23)
+            
+            graph12 = future12.result()
+            graph23 = future23.result()
+
+        graph12.add_graph(graph23)
+        return graph12
+
+
+    def common_neighbors_with_effect(self,with_entity_types:list,of_ids1:list,reltypes12:list,dir12:str,
+                                and_ids3:list,reltypes23:list,dir23:str):
+        # written to circumvent bug in Patwhay Studio
+        """
+            Input
+            -----
+            dir12,dir23 must be '<','>' or empty string
+
+            Returns
+            -------
+            ResnetGraph with 1-->2-->3 relations, where nodes in position 1 are from "of_ids1" and nodes in position 3 are from "and_ids3"\n
+            if nodes in positon 1 and positon 3 are neighbors returns graph to complete 3-vertex cliques
+        """
+        sel_rels = 'SELECT Relation WHERE objectType = ({}) AND NOT Effect = unknown'
+
+        sel_rels12 = sel_rels.format(','.join(reltypes12))
+        sel_rels23 = sel_rels.format(','.join(reltypes23))
+
+        find_neighbors_oql = r'SELECT Entity objectType = ('+','.join(with_entity_types)+')'
+
+        find_neighbors_oql = find_neighbors_oql+' AND Connected by ('+sel_rels12+') to (SELECT Entity WHERE id = ({ids1}))'
+        find_neighbors_oql += ' AND Connected by ('+sel_rels23+') to (SELECT Entity WHERE id = ({ids2}))'
+
+        r_n = f'Find entities common between {len(of_ids1)} and {len(and_ids3)} entities' 
+        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',of_ids1,and_ids3,request_name=r_n)
+        neighbors_ids = list(neighbors_entity_graph.nodes())
+        print('Found %d common neighbors' % len(neighbors_ids))
+
+        if dir12 == '>':
+            sel_12_graph_oql = sel_rels12 + r' AND downstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND upstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+        elif dir12 == '<':
+            sel_12_graph_oql = sel_rels12 + r' AND upstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND downstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+        else:
+            sel_12_graph_oql = sel_rels12 + r' AND NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+        rn12 = f'Find 1-2 relations between {len(of_ids1)} entities in position 1 and {len(neighbors_ids)} common neighbors'
+        #graph12 = self.iterate_oql2(f'{sel_12_graph_oql}',of_ids1,neighbors_ids,request_name=rn12)
+
+        if dir23 == '>':
+            sel_23_graph_oql = sel_rels23 + r' AND upstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND downstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+        elif dir12 == '<':
+            sel_23_graph_oql = sel_rels23 + r' AND downstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND upstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+        else:
+            sel_23_graph_oql = sel_rels23 + r' AND NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+        rn23 = f'Find 2-3 relations between {len(and_ids3)} entities in position 3 and {len(neighbors_ids)} common neighbors'
+
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix='FindCommonNeighbors') as executor:
+            future12 = executor.submit(self.iterate_oql2,f'{sel_12_graph_oql}',of_ids1,neighbors_ids, True,rn12) 
+            future23 = executor.submit(self.iterate_oql2,f'{sel_23_graph_oql}',and_ids3,neighbors_ids, True,rn23)
+            
+            graph12 = future12.result()
+            graph23 = future23.result()
 
         graph12.add_graph(graph23)
         return graph12

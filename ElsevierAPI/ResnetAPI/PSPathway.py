@@ -31,9 +31,11 @@ class PSPathway(PSObject):
             print('Invalid <resnet> section')
             return None
 
+
     @classmethod
     def from_pathway(cls,other:"PSPathway"):
         return PSPathway(other,other.graph)
+
 
     def number_of_nodes(self, obj_type=''):
         if obj_type:

@@ -1,9 +1,10 @@
+from math import log2
+import time
 from .ResnetGraph import ResnetGraph,PSObject
 from ..pandas.panda_tricks import df, pd
 from  .PathwayStudioZeepAPI import DataModel
 import scipy.stats as stats
-from math import log2
-
+from datetime import timedelta
 
 class Sample(PSObject):
 
@@ -36,8 +37,8 @@ class Sample(PSObject):
         return mapped_data
 
     
-    def name(self,prefix:str):
-        return prefix+':'+self['Name'][0]
+    def name(self,prefix=''):
+        return prefix+':'+self['Name'][0] if prefix else super().name()
 
 
     def fisher_exact(self, urn2psobj:dict, difexp_pval_cutoff=0.05, using_prefix=''):
@@ -84,6 +85,12 @@ class Experiment(PSObject):
 
         [self._add_sample(s) for s in samples]
 
+
+    def size(self): return(len(self.identifiers))
+
+    @staticmethod
+    def execution_time(execution_start):
+        return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
     
     def urns(self):
         try:
@@ -123,19 +130,20 @@ class Experiment(PSObject):
             s_names += self.get_sample_names(sample_ids)
 
         if s_names:
-            return [Sample(v) for k,v in self.samples.items() if k in s_names]
+            return [v for k,v in self.samples.items() if k in s_names]
         else:
-            return [Sample(v) for k,v in self.samples.items()]
+            return [v for k,v in self.samples.items()]
 
 
-#################    CONSTRUCTORS CONSTRUCTORS CONSTRUCTORS  ###################################
+#################  CONSTRUCTORS CONSTRUCTORS CONSTRUCTORS  ###################################
     @classmethod
     def download(cls,experiment_name:str, APIconfig:dict, only_log_ratio_samples=True):
         """
         returns Experiment object
         """
-        print('Downloading "%s" experiment' % experiment_name)
-        ps_api = DataModel(APIconfig['ResnetURL'], APIconfig['PSuserName'], APIconfig['PSpassword'])
+        print('\nDownloading "%s" experiment' % experiment_name,flush=True)
+        start = time.time()
+        ps_api = DataModel(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
         experiment_zobj,experiment_identifiers,sample_values = ps_api._fetch_experiment_data(experiment_name,only_log_ratio_samples)
         
         psobj = PSObject.from_zeep_objects(experiment_zobj)
@@ -161,10 +169,11 @@ class Experiment(PSObject):
             pvalues = [row['PValue'] for row in results]
             # <PValue>NaN</PValue> in experiments with no p-value columns
 
-            sample.data  = df.from_dict({'value':values,'pvalue':pvalues})
+            sample.data = df.from_dict({'value':values,'pvalue':pvalues})
             experiment.samples[sample['Name'][0]] = sample
             sample_id += 1
 
+        print('Experiment %s was downloaded in %s' % (experiment_name,cls.execution_time(start)))
         return experiment
 
 
@@ -288,14 +297,17 @@ class Experiment(PSObject):
         return self.name4annotation(sample), urn2value
 
 
-    def annotate(self,graph:ResnetGraph,with_values_from_sample_names=[],with_values_from_sample_ids=[]):
+    def annotate(self,graph:ResnetGraph,with_values_from_sample_names:list=[],with_values_from_sample_ids:list=[]):
+        '''
+        Annotates nodes in graph with values from self using node URN for mapping
+        '''
         if graph:
             for sample in self.get_samples(with_values_from_sample_names,with_values_from_sample_ids):
                 node_annotation_name, urn2expvalue = self.__make_dict4annotation(sample)
                 graph.set_node_annotation(urn2expvalue,node_annotation_name)
-                graph.urn2obj = {o['URN'][0]:o for i,o in graph.nodes(data=True)}
+                #graph.urn2obj = {o['URN'][0]:o for i,o in graph.nodes(data=True)}
             
-            
+
     def annotate_objs(self,urn2obj:dict,sample_names=[],sample_ids=[]):
         for sample in self.get_samples(sample_names,sample_ids):
             node_annotation_name, urn2value = self.__make_dict4annotation(sample)

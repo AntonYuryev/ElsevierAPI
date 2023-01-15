@@ -1,6 +1,6 @@
 
 from builtins import len
-NEED_QUOTES = {' ', '-', '/', '(', ')', '[', ']', '+', '#',':'}
+NEED_QUOTES = {' ','-','/','(',')','[',']','+','#',':','&'}
 PERCNT = '%'
 
 class OQL:
@@ -9,10 +9,11 @@ class OQL:
         to_return = str()
         for name in values:
             if name: #property value may not be empty
-                if 1 in [c in name for c in NEED_QUOTES]:
-                    to_return = to_return + '\'' + name + '\'' + separator
+                clean_name = str(name).replace('\'',' ') # protection from properties with quote that will crash OQL request
+                if 1 in [c in clean_name for c in NEED_QUOTES]:
+                    to_return = to_return + '\'' + clean_name + '\'' + separator
                 else:
-                    to_return = to_return + name + separator
+                    to_return = to_return + clean_name + separator
 
         return to_return[:len(to_return) - 1]
 

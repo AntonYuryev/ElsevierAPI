@@ -2,9 +2,10 @@ import re
 import json
 import itertools
 import pickle
+import hashlib
 
 from ..ETM_API.references import Reference, len
-from ..ETM_API.references import JOURNAL,PS_ID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
+from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
 from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR
 
 
@@ -83,6 +84,17 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             return self['Description'][0]
         except KeyError:
             return ''
+
+    
+    def get_prop(self,prop_name:str,value_index=-1,missing_value=''):
+        try:
+            values = self[prop_name]
+            if value_index >= 0:
+                return values[value_index]
+            else:
+                return values
+        except KeyError:
+            return missing_value
 
 
     @staticmethod
@@ -167,7 +179,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         return False
 
 
-    def prop_values(self, prop_name:str, sep=','):
+    def prop_values2str(self, prop_name:str, sep=','):
         try:
             prop_values = self[prop_name]
             return sep.join(map(str,prop_values))
@@ -242,7 +254,7 @@ class PSRelation(PSObject):
         self.load_references()
         for r in references:
             was_merged = False
-            for id in PS_ID_TYPES:
+            for id in PS_REFIID_TYPES:
                 try:
                     self.References[r.Identifiers[id]]._merge(r)
                     was_merged = True
@@ -261,35 +273,54 @@ class PSRelation(PSObject):
         except KeyError:
             return []
 
+
+    def effect(self):
+        try:
+            return self[EFFECT][0]
+        except KeyError:
+            raise KeyError
+
     def mechanisms(self):
         try:
             return self['Mechanism']
         except KeyError:
             return []
 
+
+    def is_from_rnef(self):
+        try:
+            self.id()
+            return False
+        except KeyError:
+            return True
+
+
     def _get_refs(self, only_with_id_type='',sort_by=PUBYEAR,reverse=True,ref_limit=0):
+        self.load_references()
         all_refs = list(set(self.References.values()))
         if only_with_id_type:
             filter_refs = [ref for ref in all_refs if only_with_id_type in ref.Identifiers.keys()]
-            filter_refs.sort(key=lambda r: r._sort_key(sort_by), reverse=reverse)
+            if sort_by:
+                filter_refs.sort(key=lambda r: r._sort_key(sort_by), reverse=reverse)
             return filter_refs[:ref_limit] if ref_limit else filter_refs
         else:
-            all_refs.sort(key=lambda r: r._sort_key(sort_by), reverse=reverse)
-            return  all_refs[:ref_limit] if ref_limit else all_refs
+            if sort_by:
+                all_refs.sort(key=lambda r: r._sort_key(sort_by), reverse=reverse)
+            return all_refs[:ref_limit] if ref_limit else all_refs
 
 
     def merge_rel(self, other:'PSRelation'):
         self.merge_obj(other)
-        self.PropSetToProps.update(other.PropSetToProps)
-        self.Nodes.update(other.Nodes)
         self.add_references(other._get_refs())
-
+     #   self.PropSetToProps.update(other.PropSetToProps)
+     #   self.Nodes.update(other.Nodes)
+        
 
     def copy(self):
         copy = PSRelation(self)
-        copy.PropSetToProps.update(self.PropSetToProps)
-        copy.Nodes.update(self.Nodes)
-        copy.add_references(self._get_refs())
+        copy.PropSetToProps= dict(self.PropSetToProps)
+        copy.Nodes= dict(self.Nodes)
+        copy.References = dict(self.References)
         return copy
         
 
@@ -313,8 +344,15 @@ class PSRelation(PSObject):
             new_rel[REFCOUNT] = [len(refs)]
         return new_rel
 
+
     def __hash__(self):
-        return self['Id'][0]
+        try:
+            return self['Id'][0]
+        except KeyError:
+            # for ResnetGraph imported from RNEF:
+            my_hash = hashlib.md5(str(self.urn()).encode())
+            return int(my_hash.hexdigest(),32)
+
 
     def is_directional(self):
         return len(self.Nodes) == 2
@@ -359,7 +397,7 @@ class PSRelation(PSObject):
         if self.References: return
         for propSet in self.PropSetToProps.values():
             my_reference_tuples = list()
-            for ref_id_type in PS_ID_TYPES:
+            for ref_id_type in PS_REFIID_TYPES:
                 try:
                     ref_id = propSet[ref_id_type][0]
                     my_reference_tuples.append((ref_id_type, ref_id))

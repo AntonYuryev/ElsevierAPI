@@ -31,6 +31,8 @@ class PSNetworx(DataModel):
 
         for prop in zeep_objects.Properties.ObjectProperty:
             obj_id = prop.ObjId
+            if obj_id == 72057594037935395:
+                print('')
             prop_id = prop.PropId
             prop_name = prop.PropName
             if type(prop.PropValues) != type(None):
@@ -116,7 +118,7 @@ class PSNetworx(DataModel):
             [new_graph.add_rel(rel) for rel in new_relations.values()]
             
         if add2self:
-            self.Graph = nx.compose(self.Graph,new_graph)
+            self.Graph.add_graph(new_graph)
             self.id2relation.update(new_relations)
 
         return new_graph
@@ -340,6 +342,7 @@ class PSNetworx(DataModel):
             s += 1
         return accumulate_network
 
+
     def _iterate_oql(self,oql_query:str,id_set:set,REL_PROPS=list(),ENTITY_PROPS=list(),add2self=True,get_links=True):
         # oql_query MUST contain string placeholder called {ids} 
         entire_graph = ResnetGraph()
@@ -349,12 +352,14 @@ class PSNetworx(DataModel):
             ids = id_list[i:i+step]
             oql_query_with_ids = oql_query.format(ids=','.join(map(str,ids)))
             iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS,add2self=add2self,get_links=get_links)
-            entire_graph = nx.compose(entire_graph,iter_graph)
+            entire_graph.add_graph(iter_graph)
         return entire_graph
 
 
     def _iterate_oql_s(self,oql_query:str,prop_set:set,REL_PROPS=list(),ENTITY_PROPS=list(),add2self=True,get_links=True):
-        # oql_query MUST contain string placeholder called {props} 
+        '''
+            # oql_query MUST contain string placeholder called {props} 
+        '''
         entire_graph = ResnetGraph()
         prop_list = list(prop_set)
         step = 1000
@@ -362,7 +367,7 @@ class PSNetworx(DataModel):
             props = prop_list[i:i+step]
             oql_query_with_props = oql_query.format(props=OQL.join_with_quotes(props))
             iter_graph = self.load_graph_from_oql(oql_query_with_props,REL_PROPS,ENTITY_PROPS,add2self=add2self,get_links=get_links)
-            entire_graph = nx.compose(entire_graph,iter_graph)
+            entire_graph.add_graph(iter_graph)
         return entire_graph
 
 
@@ -373,7 +378,7 @@ class PSNetworx(DataModel):
         id_list2 = list(id_set2)
         step = 1000
         number_of_iterations = math.ceil(len(id_set1)/step) * math.ceil(len(id_set2)/step)
-        print('Connecting %d with %d entities' % (len(id_set1), len(id_set2)))
+        print('\nConnecting %d with %d entities' % (len(id_set1), len(id_set2)))
         if number_of_iterations > 2:
             print('Query will be executed in %d iterations' % number_of_iterations)
 
@@ -385,7 +390,7 @@ class PSNetworx(DataModel):
                 ids2 = id_list2[i2:i2+step]
                 oql_query_with_ids = oql_query.format(ids1=','.join(map(str,ids1)),ids2=','.join(map(str,ids2)))
                 iter_graph = self.load_graph_from_oql(oql_query_with_ids,REL_PROPS,ENTITY_PROPS,add2self=add2self,get_links=get_links)
-                entire_graph = nx.compose(entire_graph,iter_graph)
+                entire_graph.add_graph(iter_graph)
                 if number_of_iterations > 2:
                     print('Iteration %d out of %d performed in %s' % 
                         (iteration_counter,number_of_iterations,self.execution_time(start)))
