@@ -85,7 +85,7 @@ class BiomarkerReport(SemanticSearch):
         oql_query = 'SELECT Entity WHERE id = ({ids})'.format(ids=','.join(map(str,disease_ids)))
         request_name = 'Find children for {disease}'.format(disease=self.Disease['Name'][0])
         disease_graph = self.process_oql(oql_query, request_name)
-        self.diseases = disease_graph.get_objects(SearchValues=DISEASE_TYPES)
+        self.diseases = disease_graph.get_objects(only_with_values=DISEASE_TYPES)
 
 
     def load_graph(self, disease_ids:list):

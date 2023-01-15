@@ -321,7 +321,7 @@ class SNEA(APISession):
             drugs_df = drugs_df.add_values(PHARMAPENDIUM_ID,drugs_df4sample,PHARMAPENDIUM_ID,'Name')
             print(f'Added ranks for regulators of {sample_name} sample')
 
-        rank_columns = [c for c in self.drugs_df.columns.to_list() if c[:len(DRUG2TARGET_REGULATOR_SCORE)]==DRUG2TARGET_REGULATOR_SCORE]
+        rank_columns = [c for c in drugs_df.columns.to_list() if c[:len(DRUG2TARGET_REGULATOR_SCORE)]==DRUG2TARGET_REGULATOR_SCORE]
         drugs_df.not_null_counts(rank_columns)
         drugs_df['Average regulator score'] = self.drugs_df[rank_columns].mean(axis=1)
         drugs_df.sort_values(by=['Row count','Average regulator score'],ascending=False,inplace=True)
