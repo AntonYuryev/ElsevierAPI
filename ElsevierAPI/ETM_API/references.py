@@ -28,7 +28,7 @@ hGRAPHID = 'hGraph ID'
 EDMID = 'EDM ID'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
-PS_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID']
+PS_REFIID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID']
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
 ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
 PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
@@ -39,7 +39,7 @@ PS_BIBLIO_PROPS_ALL = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes','Sta
 PS_BIBLIO_PROPS = {TITLE, PUBYEAR, AUTHORS, JOURNAL, MEDLINETA,'Start'} # contains only props necessary for reference::__biblio_tuple
 
 BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
-REF_ID_TYPES = PS_ID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
+REF_ID_TYPES = PS_REFIID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
 PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD]
 SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence']
@@ -47,7 +47,7 @@ SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence']
 #also TextRef - used as key in Reference.Sentences
 RELATION_PROPS = {EFFECT,'Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
-ALL_PS_PROPS = list(RELATION_PROPS)+list(CLINTRIAL_PROPS)+PS_ID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS+['TextRef']
+ALL_PS_PROPS = list(RELATION_PROPS)+list(CLINTRIAL_PROPS)+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS+['TextRef']
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences, titles, abstracts
 
@@ -56,10 +56,12 @@ def make_hyperlink(identifier:str,url:str,display_str=''):
         display_str = display_str if display_str else identifier
         return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
 
-class Reference(dict):  
-# self{BIBLIO_PROPS[i]:[values]}; 
-# Identifiers{REF_ID_TYPES[i]:identifier};
-# Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}
+class Reference(dict):
+    '''
+    Reference{BIBLIO_PROPS[i]:[values]};\n
+    Reference.Identifiers{REF_ID_TYPES[i]:identifier};\n
+    Reference.Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}\n
+    '''
     pass
 
     def __init__(self, idType:str, ID:str):
@@ -326,13 +328,14 @@ class Reference(dict):
             except KeyError:
                 journal = 'No journal name'
         
-        identifier_tup = self._identifier()
-        return title+' ('+year+'). '+journal+'. '+authors_str, identifier_tup[0],identifier_tup[1]
+        identifier_type, identifier  = self._identifier()
+        return title+' ('+year+'). '+journal+'. '+authors_str, identifier_type, identifier 
 
     
     def get_biblio_str(self, sep='\t'):
         biblio, journal, id_type,identifier = self._biblio_tuple()
         return biblio+sep+journal+sep+id_type+':'+identifier
+
 
     def _merge(self, other):
         if isinstance(other, Reference):

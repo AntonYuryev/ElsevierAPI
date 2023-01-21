@@ -182,6 +182,7 @@ class ETMjson(DocMine):
 
         return authors, institutions, scopus_infos #authors: list(str), institutions: list([orname,address])
 
+
     @staticmethod
     def __parse_snippet(article:dict, markup_all=False):
         try:
@@ -306,6 +307,7 @@ class ETMstat:
         self.params.update(add_param)       
         self.ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
         self.etm_ref_column_name = list()
+        self.etm_doi_column_name = list()
 
 
     def clone(self, to_url:str):
@@ -631,7 +633,7 @@ class ETMstat:
 
         return references, total_hits
 
-
+    '''
     def __get_refs_old(self, entity_name:str, concepts2link:list,add2query=[],operator='rel'):
         references = set()
         total_hits = 0
@@ -659,7 +661,7 @@ class ETMstat:
         hyperlink2pubmed = pubmed_hyperlink(pmids,total_hits) if pmids else '' 
         doi_str = make_hyperlink(dois[0],url='http://dx.doi.org/', display_str=';'.join(dois)) if dois else ''
         return [hyperlink2pubmed,doi_str]
-
+    '''
 
     def __get_refs(self, entity_name:str, concepts2link:list,my_query,add2query=[]):
         references = set()
@@ -692,6 +694,13 @@ class ETMstat:
         else:
             return ETM_REFS_COLUMN + ' between '+between_column+' and '+','.join(and_concepts)
 
+    @staticmethod
+    def __etm_doi_column_name(between_column:str, and_concepts:str or list):
+        if isinstance(and_concepts,str):
+            return 'DOIs' + ' between '+between_column+' and '+and_concepts
+        else:
+            return 'DOIs' + ' between '+between_column+' and '+','.join(and_concepts)
+
 
     def __add_etm_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,my_query,add2query=[]):
         etm_ref_column_name = self.__etm_ref_column_name(between_names_in_col,and_concepts)
@@ -706,9 +715,9 @@ class ETMstat:
         my_query must have 3 arguments: my_query(entity1:str, entity2:str, add2query:list)\n
         where add2query - list of additinal keywords used for all pairs "between_names_in_col" and "and_concepts"
 
-        Adds
+        Returns
         ----
-        columns "ETM_REFS_COLUMN","DOIs" to to_df
+        copy of input to_df with added columns "ETM_REFS_COLUMN","DOIs"
         """
         start_time = time.time()
         etm1 = self.clone('https://demo.elseviertextmining.com/api')
@@ -737,10 +746,13 @@ class ETMstat:
         [self._add2counter(ref) for ref in etm2.references()]
         [self._add2counter(ref) for ref in etm3.references()]
         
+        annotated_df.copy_format(to_df)
         etm_ref_column_name = self.__etm_ref_column_name(between_names_in_col,and_concepts)
         self.etm_ref_column_name.append(etm_ref_column_name)
         annotated_df.add_column_format(etm_ref_column_name,'align','center')
-        annotated_df.set_hyperlink_color([etm_ref_column_name,'DOIs'])
+        etm_doi_column_name = self.__etm_doi_column_name(between_names_in_col,and_concepts)
+        self.etm_doi_column_name.append(etm_ref_column_name)
+        annotated_df.set_hyperlink_color([etm_ref_column_name,etm_doi_column_name])
         print('Annotated %d rows from %s with ETM references in %s' % 
                 (len(to_df),to_df._name_,execution_time(start_time)))
         return annotated_df
@@ -830,7 +842,7 @@ class ETMcache (ETMstat):
         for page_start in range(0,self.hit_count,self.page_size):
             more_articles, discard = self._get_articles(page_start=page_start)
             articles += more_articles
-            download_count =len(articles)
+            download_count = len(articles)
             print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
         return articles
 
