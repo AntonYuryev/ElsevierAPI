@@ -51,6 +51,23 @@ class SNEA(APISession):
 
 
     def __load_network(self,regulator_types:list,network_name:str)->'ResnetGraph':
+        reg_types_str = ','.join(regulator_types)
+        if network_name == DPERNET:
+            get_regulators = OQL.select_drugs()
+            ent_props = ['Name','PharmaPendium ID']
+        else:
+            get_regulators = f'SELECT Entity WHERE objectType = ({reg_types_str})'
+            ent_props = ['Name']
+
+        get_targets = 'SELECT Entity WHERE objectType = (Protein,FunctionalClass,Complex)'
+        oql_query = f'SELECT Relation WHERE objectType = (Expression,PromoterBinding) \
+            AND NeighborOf upstream ({get_targets}) AND NeighborOf downstream ({get_regulators})'
+
+        rel_props = ['URN',EFFECT,REFCOUNT]
+        return self.load_cache(network_name,[oql_query],ent_props,rel_props)
+
+    '''
+    def __load_networkOLD(self,regulator_types:list,network_name:str)->'ResnetGraph':
         cache_path = 'ElsevierAPI/ResnetAPI/__pscache__/'
         cache_file = cache_path+network_name+'.rnef'
         start = time.time()
@@ -81,7 +98,7 @@ class SNEA(APISession):
             
         expression_network.name = network_name
         return expression_network
-
+    '''
 
     def network4experiment(self, regulatory_network:ResnetGraph):
         input_net_name = regulatory_network.name
@@ -93,7 +110,7 @@ class SNEA(APISession):
         experiment_network = regulatory_network.regulatory_network(urns,net_name)
 
         print('%s experiment has %d nodes connected with %d edges' 
-            %(net_name,experiment_network.number_of_edges(),experiment_network.number_of_nodes()))
+            %(net_name,experiment_network.number_of_nodes(),experiment_network.number_of_edges()))
 
         return experiment_network
 
@@ -130,7 +147,7 @@ class SNEA(APISession):
                     target_exp_value = target[annotation][0][0]
                     target_exp_pvalue = target[annotation][0][1]
                     if target_exp_pvalue < 0.05 or (str(target_exp_pvalue) == str(np.nan) and abs(target_exp_value) >= 1.0):
-                        reg2target_rels = my_graph._relation4(regulator_id,target['Id'][0])
+                        reg2target_rels = my_graph._relations4(regulator_id,target['Id'][0])
                         rel = reg2target_rels[0]
                         sign = rel.effect_sign()
                         if sign != 0:
@@ -175,7 +192,7 @@ class SNEA(APISession):
             regulator_id_list.update(sample_regulator_ids)
 
         print('SNEA execution time: %s' % self.execution_time(start_time))
-        return my_graph._get_nodes(list(regulator_id_list))
+        return my_graph._get_nodes(list(regulator_id_list)) if regulator_id_list else []
 
 
     def __activity_columns(self):
@@ -322,13 +339,14 @@ class SNEA(APISession):
             print(f'Added ranks for regulators of {sample_name} sample')
 
         rank_columns = [c for c in drugs_df.columns.to_list() if c[:len(DRUG2TARGET_REGULATOR_SCORE)]==DRUG2TARGET_REGULATOR_SCORE]
-        drugs_df.not_null_counts(rank_columns)
-        drugs_df['Average regulator score'] = self.drugs_df[rank_columns].mean(axis=1)
-        drugs_df.sort_values(by=['Row count','Average regulator score'],ascending=False,inplace=True)
-        self.drugs_df = df(drugs_df[[PHARMAPENDIUM_ID,'Name','Row count','Average regulator score']+rank_columns])
+        drugs_df.not_nulls(rank_columns)
+        drugs_df['Average regulator score'] = drugs_df[rank_columns].mean(axis=1)
+        drugs_df[RANK] = drugs_df['Average regulator score'] * drugs_df['Row count']/len(rank_columns)
+        drugs_df.sort_values(by=[RANK],ascending=False,inplace=True)
+        self.drugs_df = df(drugs_df[[PHARMAPENDIUM_ID,'Name',RANK,'Row count','Average regulator score']+rank_columns])
         self.drugs_df.copy_format(drugs_df)
         self.drugs_df._name_ = 'Drugs'
-        return drugs_df
+        return self.drugs_df
 
 
     def report_path(self,extension:str):

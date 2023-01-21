@@ -4,7 +4,7 @@ from datetime import timedelta
 import os, math, time
 from .rnef2sbgn import minidom
 import xml.etree.ElementTree as et
-
+import glob
 from .NetworkxObjects import PSObject,PSRelation,len,REGULATORS,TARGETS,CHILDS,REFCOUNT
 from ..ETM_API.references import PUBYEAR,EFFECT,TITLE,pubmed_hyperlink, make_hyperlink
 from ..ETM_API.etm import ETMstat
@@ -159,6 +159,10 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
     def add_graph(self, other:"ResnetGraph"):
+        '''
+        slow. use it only to merge ResnetGraph from RNEF with ResnetGraph from database
+        node ids and relation ids in self take precedent
+        '''
         self.add_nodes(dict(other.nodes(data=True)))
         other_rels = other._relations()
         [self.copy_rel(rel,other) for rel in other_rels]
@@ -678,8 +682,16 @@ class ResnetGraph (nx.MultiDiGraph):
             raise KeyError
 
 
-    def _get_nodes(self, node_ids:list=[]):
-        if not node_ids:
+    def urn2id(self, urn:str):
+        try:
+            my_node = self.urn2node(urn) 
+            return my_node.id()
+        except KeyError:
+            raise KeyError
+
+    def _get_nodes(self, node_ids:list=None):
+        if type (node_ids) == type(None):
+            # to return ALL ids must be None. empty input list must return empty list
             return [PSObject(ddict) for i,ddict in self.nodes(data=True)]
         else:
             id_set = set(node_ids)
@@ -699,7 +711,6 @@ class ResnetGraph (nx.MultiDiGraph):
 
     def get_obj_by_prop(self,prop_value:str, prop_name='Name'): # use this function to find object by Name
         return [o for i,o in self.nodes(data=True) if prop_value in o[prop_name]]
-        return self._get_nodes(obj_ids)
 
 
     def get_objects(self, with_properties:list=['ObjTypeName'], only_with_values=[]):
@@ -715,7 +726,7 @@ class ResnetGraph (nx.MultiDiGraph):
                 id2prop = nx.get_node_attributes(self,prop_name)
                 return_node_ids.update(id2prop.keys())
             
-        return self._get_nodes(list(return_node_ids))
+        return self._get_nodes(list(return_node_ids)) if return_node_ids else []
 
 
     def _relations(self):
@@ -727,7 +738,7 @@ class ResnetGraph (nx.MultiDiGraph):
         return list(r for n1,n2,r in self.edges.data('relation'))
 
 
-    def _relation4(self, regulator_id, target_id):
+    def _relations4(self, regulator_id, target_id):
         try:
             return [e['relation'] for i,e in dict(self[regulator_id][target_id]).items()]
         except KeyError:
@@ -745,9 +756,9 @@ class ResnetGraph (nx.MultiDiGraph):
 
     
     def __find_relations(self, reg_id, targ_id, rel_types=list(), effect=list(), mechanism=list(), any_direction=False):
-        my_rels = self._relation4(reg_id, targ_id)
+        my_rels = self._relations4(reg_id, targ_id)
         if any_direction:
-            my_rels = my_rels + self._relation4(targ_id, reg_id)
+            my_rels = my_rels + self._relations4(targ_id, reg_id)
 
         if rel_types:
             my_rels = [rel for rel in my_rels if rel['ObjTypeName'][0] in rel_types]
@@ -801,9 +812,68 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
     def effect_stats(self, between_node_ids:list, and_node_ids:list):
+        '''
+        Returns
+        -------
+        tuple: between_graph - graph between_node_ids and_node_ids\n
+        positive_refs - set(Reference) of all relations with Effect = positive\n
+        negative_refs - set(Reference) of all relations with Effect = negative
+        '''
         between_graph = self.get_subgraph(between_node_ids, and_node_ids)
         positive_refs, negative_refs = between_graph._effect_counts__()
         return between_graph,positive_refs,negative_refs
+
+
+    def effect_vote(self,regulator_id:int,target_id:int):
+        positive_refs = set()
+        negative_refs = set()
+        for edge in self[regulator_id][target_id]:
+            rel = edge['relation']
+            refs = rel._get_refs(sort_by='')
+            if rel.effect() == 'positive':
+                positive_refs.update(refs)
+            elif rel.effect() == 'negative':
+                negative_refs.update(refs)
+
+        if len(positive_refs) > len(negative_refs):
+            return 'positive'
+        elif len(positive_refs) < len(negative_refs):
+            return 'negative'
+        return 'unknown'
+
+
+
+    def net_regulator_effect(self,regulator_id:int,target_ids:list,vote_effect_by_ref=False):
+        activated_target_ids = list()
+        inhibited_target_ids = list()
+        if vote_effect_by_ref:
+            for target_id in target_ids:
+                between_graph = self.get_subgraph([regulator_id], [target_id],in_direction='>')
+                positive_refs, negative_refs = between_graph._effect_counts__()
+                if len(positive_refs) > len(negative_refs):
+                    activated_target_ids.append(target_id) 
+                elif len(positive_refs) < len(negative_refs):
+                    inhibited_target_ids.append(target_id)
+        else:
+            for target_id in target_ids:
+                rels = self._relations4(regulator_id,target_id)
+                net_effect = 0
+                for rel in rels:
+                    try:
+                        rel_effect = rel.effect()
+                        if rel_effect == 'positive':
+                            net_effect += 1
+                        elif rel_effect == 'negative':
+                            net_effect += -1
+                    except KeyError:
+                        continue
+
+                if net_effect > 0:
+                    activated_target_ids.append(target_id)
+                elif  net_effect < 0:
+                    inhibited_target_ids.append(target_id)
+
+        return activated_target_ids,inhibited_target_ids
 
 
     def get_prop2obj_dic(self, search_by_property:str, filter_by_values=[], case_insensitive=False):
@@ -1091,7 +1161,7 @@ class ResnetGraph (nx.MultiDiGraph):
             for regulatorID, targetID, rel in self.edges.data('relation'):
                 f.write(rel.triple2str(relPropNames,add_entities=add_entities, as1row=as1row))
 
-
+    '''
     def __get_ref_list(self, relPropNames:list, entity_prop_names=[], RefNumPrintLimit=0,col_sep:str='\t',single_rel_row=False):
         references = list()
         if not entity_prop_names:
@@ -1124,7 +1194,7 @@ class ResnetGraph (nx.MultiDiGraph):
                         references.append(reference_table_view)
 
             return references
-
+        '''
 
     def print_references(self, fileOut:str, relPropNames:list, entity_prop_names=[],access_mode='w',
                           printHeader=True, RefNumPrintLimit=0, col_sep:str='\t', debug=False, single_rel_row=False):
@@ -1424,7 +1494,7 @@ class ResnetGraph (nx.MultiDiGraph):
         return self.rnef_node_count
 
 
-    def __read_rnef(self, rnef_file:str, last_new_node_id=1):
+    def __read_rnef(self, rnef_file:str):
         try:
             print ('\nLoading graph from file %s' % rnef_file,flush=True)
             root = et.parse(rnef_file).getroot()  
@@ -1448,6 +1518,26 @@ class ResnetGraph (nx.MultiDiGraph):
             raise FileNotFoundError
 
 
+    @classmethod
+    def fromRNEFdir(cls,path2dir:str):
+        start = time.time()
+        listing = glob.glob(path2dir+'*.rnef')
+        if listing:
+            combo_g = ResnetGraph.fromRNEF(listing[0])
+        for i in range(1,len(listing)):
+            #file = listing[i]
+            g = ResnetGraph.fromRNEF(listing[i])
+            combo_g.add_graph(g)
+        
+            print('Graph %d edges and %d nodes was loaded from "%s" with %d files in %s' 
+            % (combo_g.number_of_edges(),combo_g.number_of_nodes(),path2dir,len(listing),execution_time(start)))
+        else:
+            print('Cannot find "%s" directory!!!' % path2dir)
+        
+        return combo_g
+        
+
+
     def tree4(self,root_node_id:int,reverse=False):
         tree_rn = ResnetGraph()
         tree = nx.bfs_tree(self,root_node_id,reverse)
@@ -1467,7 +1557,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
         largest_tree_rn = ResnetGraph()
         for r,t in largest_tree.edges():
-            rels = self._relation4(r,t)
+            rels = self._relations4(r,t)
             [largest_tree_rn.copy_rel(rel,self) for rel in rels]
         
         return largest_tree_rn
@@ -1671,44 +1761,50 @@ class ResnetGraph (nx.MultiDiGraph):
         return reg_subgraph
 
 
+
     def make_simple(self, rel_type_rank:list=[]):
         """
-        Returns 
+        Input
+        -----
+        specify rel_type_rank if graph contains relations with different types connecting the same pair of nodes\n
+        Examples:\n
+        ['DirectRegulation','Binding','ProtModification','Regulation']\n
+        ['PromoterBinding','Expression','Regulation']\n
+        ['Biomarker','StateChange']\n
+        ['Biomarker','QuantitativeChange']\n
+        [MolSynthesis','Regulation']\n
+        [MolTransport','Regulation']\n
+        [MolTransport','CellExpression']\n
+        ['Regulation','FunctionalAssosiation']\n
+        
+        Returns
         -------
         graph with only one edge between nodes.\n
         keeps relation with the biggest reference count.\n
         all other relations are merged into the most referenced one
+        if rel_type_rank is specified the new relation type is assigned accordingly 
         """
         def find_best_effect(rels:list):
             rels.sort(key=lambda x: x[REFCOUNT][0], reverse=True)
             for index,rel in enumerate(rels):
-                try:
-                    eff = rel.effect()
-                    if eff in ['positive', 'negative']:
-                        return index
-                    else:
-                        continue
-                except KeyError:
+                if rel.effect() != 'unknown':
+                    return index
+                else:
                     continue
             
             # to merge Binding to DirectRegulation
             for index,rel in enumerate(rels):
                 if rel.is_directional():
                     return index
-
             return 0
 
-       # REL_TYPE_RANK = ['DirectRegulation','Binding','ProtModification','PromoterBinding',
-        #'ChemicalReaction','Expression','Biomarker','QuantitativeChange','StateChange','MolSynthesis','MolTransport','CellExpression','Regulation','FunctionalAssosiation']
-        
+
         def find_best_type(rels:list):
-            for rel_type in rel_type_rank:
-                for rel in rels:
-                    if rel.objtype() == rel_type:
-                        if rel_type == 'Binding':
-                            return 'DirectRegulation'
-                        else:
-                            return rel_type
+            if rel_type_rank:
+                my_rel_types = {r.objtype() for r in rels}
+                for rel_type in rel_type_rank:
+                    if rel_type in my_rel_types:
+                        return 'DirectRegulation' if rel_type == 'Binding' else rel_type
             return ''
         
         simple_g = ResnetGraph()
@@ -1732,7 +1828,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
                 simple_g.copy_rel(best_rel,self)
 
-        print('%d edges in graph were simplified' % (self.number_of_edges()-simple_g.number_of_edges()))
+        print('%d edges in graph "%s" were simplified' % (self.number_of_edges()-simple_g.number_of_edges(),self.name))
         simple_g.rnef_node_count = self.rnef_node_count
 
         return simple_g
@@ -1754,9 +1850,10 @@ class ResnetGraph (nx.MultiDiGraph):
         len_targets = dict()
         for regulator_id in regulator_ids:
             target_ids = list(self.neighbors(regulator_id))
-            targets = self._get_nodes(target_ids)
-            subnetworks[regulator_id] = targets
-            len_targets[regulator_id] = len(target_ids)
+            if target_ids:
+                targets = self._get_nodes(target_ids)
+                subnetworks[regulator_id] = targets
+                len_targets[regulator_id] = len(target_ids)
         
         nx.set_node_attributes(self, len_targets, NUMBER_OF_TARGETS)
 
@@ -1859,6 +1956,11 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
     def get_subgraph(self,between_node_ids:list,and_node_ids:list,by_relation_types:list=[],with_effect:list=[],in_direction=None)->"ResnetGraph":
+        '''
+        Input
+        -----
+        in_direction in ['>','<',None], defaults to None
+        '''
         subgraph = ResnetGraph()
         for n1 in between_node_ids:
             for n2 in and_node_ids:

@@ -288,7 +288,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
                     [self.direct_target2drugs.update_with_value(n,node['Name'][0]) for n in direct_target_names]
                 else:
                     direct_target_names_str = ''
-
                 indirect_target_ids = from_drug_graph.downstream_targets(node_id,['Regulation','MolTransport','Expression'])
                 if indirect_target_ids:
                     indirect_target_names = [name[0] for t,name in from_drug_graph.nodes(data='Name') if t in indirect_target_ids]
@@ -299,18 +298,15 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
                     
                 if direct_target_names_str or indirect_target_names_str:
                     drug2rows[node['Name'][0]] = [node[DRUG2TARGET_REGULATOR_SCORE],node['Drug Class'][0],direct_target_names_str,indirect_target_names_str]
-
         df_copy = df.copy_df(drug_df)
         if DRUG2TARGET_REGULATOR_SCORE not in list(df_copy.columns):
             df_copy[DRUG2TARGET_REGULATOR_SCORE] = np.NaN
             df_copy['Effect on targets'] = NaN
             df_copy['Direct targets'] = NaN
             df_copy['Indirect targets'] = NaN
-
         annotate_df = df(df_copy[df_copy[DRUG2TARGET_REGULATOR_SCORE].isnull()])
         # saving df that already has values from previous graphs:
         has_scores_df = df(df_copy[df_copy[DRUG2TARGET_REGULATOR_SCORE].notnull()])
-
         for idx in annotate_df.index:
             drug_name = annotate_df.at[idx,'Name']
             try:
@@ -322,7 +318,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
                 drug2rows.pop(drug_name)
             except KeyError:
                 continue
-
         if drug2rows: # there are drug that both agonists and antagonists
             duplicate_rows = df(columns=has_scores_df.columns)
             for idx in has_scores_df.index:
@@ -345,11 +340,8 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
             df2return = df(pd.concat([annotate_df,has_scores_df,duplicate_rows],ignore_index=True))
         else:
             df2return = df(pd.concat([annotate_df,has_scores_df],ignore_index=True))
-
         df2return._name_ = drug_df._name_
         return df2return
-
-
     def filter4drugs(self,compound_ids:list):
         """
         Returns
@@ -361,7 +353,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
             my_api_session.add_ent_props(["PharmaPendium ID"])
         else:
             my_api_session = self
-
         oql_query = "SELECT Entity WHERE id = ({ids}) AND InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' \
             AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs)"
         r_n = f'Find drugs linked to {self._disease2str()}'
@@ -380,7 +371,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
         """
         DEPRICATED
         ---------
-
         Input
         -----
         correct4consistency must be supplied explicitly to avoid consitency correction for toxicities in antigraph
@@ -389,14 +379,12 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
         ResnetGraph with drugs annotated with DRUG2TARGET_REGULATOR_SCORE and drug class (agonist/antagonist)
         """
         drug_is_agonist = False if with_effect == 'negative' else True
-
         if self.clone:
             my_api_session = APISession(self.APIconfig,NO_REL_PROPERTIES)
             my_api_session.add_rel_props([EFFECT])
             my_api_session.Graph = self.Graph.copy() #should speed up drug-target retrieval
         else:
             my_api_session = self
-
         drug_ids = {d.id() for d in self.drugs} #needs self.filter4drugs to setup self.drugs
         select_drugs = 'SELECT Entity WHERE id = ({ids1})'
         oql_query = f'SELECT Relation WHERE Effect = {with_effect} AND NeighborOf downstream ({select_drugs})'
@@ -404,12 +392,10 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
         
         r_n = f'Find drugs {with_effect}ly regulating {str(len(target_ids))} ranked targets'
         drug_graph = my_api_session.iterate_oql2(oql_query,drug_ids,target_ids,request_name=r_n)
-
         if not drug_graph: return ResnetGraph()
             
         direct_reg_graph = drug_graph.subgraph_by_relprops(['DirectRegulation'])
         indirect_reg_graph = drug_graph.subgraph_by_relprops(['Regulation','Expression','MolTransport'])
-
         if correct4consistency:
         # correct4consistency must be supplied explicitly to avoid consitency correction for toxicities in antigraph
             drug_class = 'Agonist' if drug_is_agonist else 'Antagonist'
@@ -425,7 +411,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
         for drug in direct_reg_graph.get_objects(['SmallMol']):
             target_ranks4drug = self.correct_ranks_by_confidence(drug.urn(),direct_reg_graph.node_id2urn(self.params['target_types']))
             drug2rank[drug.id()] = 2 * direct_reg_graph.rank_regulator(drug.id(),target_ranks4drug)
-
         # adding indirect targets to ranking
         for drug in indirect_reg_graph.get_objects(['SmallMol']):
             target_ranks4drug = self.correct_ranks_by_confidence(drug.urn(),indirect_reg_graph.node_id2urn(self.params['target_types']))
@@ -434,7 +419,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
             except KeyError:
                 my_rank = 0.0
             drug2rank[drug.id()] = my_rank + indirect_reg_graph.rank_regulator(drug.id(),target_ranks4drug)
-
         all_reg_graph = direct_reg_graph.copy()
         all_reg_graph.add_graph(indirect_reg_graph)
         
@@ -443,7 +427,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
         drug_urn2class = {urn:[drug_class] for urn in drug_id2urn.values()}
         all_reg_graph.set_node_annotation(drug_urn2class,'Drug Class')
         nx.set_node_attributes(all_reg_graph,drug2rank,DRUG2TARGET_REGULATOR_SCORE)
-
         return all_reg_graph
     '''
 
@@ -504,7 +487,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
         Input
         -----
         from_ranked_targets_df must have self.__temp_id_col__ and RANK columns
-
         Loads
         -----
         self.target_ranks,self.need_antagonists_ids,self.need_agonists_ids
@@ -526,7 +508,6 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
         Input
         -----
         self.targets4agonists_ids, self.targets4antagonists_ids
-
         Output
         ------
         self.drug2targets_graph used by self.regulatory_rank()\n
@@ -580,12 +561,12 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
             r_n = f'Find drugs linked to {self._disease2str()}'
             drugs_withno_targets = self.drug_ids.difference(drugs4targets_ids)
             alldrugs4diseases = my_api_session.iterate_oql(oql_query,drugs_withno_targets,request_name=r_n)
-            drugs4disease = alldrugs4diseases.subgraph_by_nodeprops(["PharmaPendium ID"])
+            #drugs4disease = alldrugs4diseases.subgraph_by_nodeprops(["PharmaPendium ID"]) # algorithm fetches all drugs now
             len_before_add = len(self.drugs)
-            drugs4disease = drugs4disease._get_nodes()
-            self.drugs.update(drugs4disease)
+            drugs4disease_with_no_targets = alldrugs4diseases._get_nodes()
+            self.drugs.update(drugs4disease_with_no_targets)
             added_count = len(self.drugs)-len_before_add
-            print('Found additional %d drugs linked to %s' % (added_count,self._disease2str()))
+            print('Found additional %d drugs without targets linked to %s' % (added_count,self._disease2str()))
         
         print(f'Found {str(len(drugs4targets_ids))} drugs linked to {str(len(for_target_ids))} targets for ranking')
         print('Drug-target graph was loaded in %s' % self.execution_time(start_time))
@@ -721,6 +702,15 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
             ranks = sorted(self.column_ranks)
             columns2norm = [self.column_ranks[k] for k in ranks]
             self.normalize('rawDrugs','Drugs','Name',columns2norm)
+
+            #moving RANK column to second position
+            drugdf_columns = list(self.report_pandas['Drugs'].columns)
+            drugdf_columns.remove(RANK)
+            drugdf_columns.insert(1,RANK)
+            drugdf_columns.remove(PHARMAPENDIUM_ID)
+            drugdf_columns = [PHARMAPENDIUM_ID]+drugdf_columns
+            self.report_pandas['Drugs'] =  self.report_pandas['Drugs'].reorder(drugdf_columns)
+            
             print("Drug ranking was done in %s" % self.execution_time(start_time), flush=True)
             print('Normalized worksheet named "Drugs" was added to report')
             return self.report_pandas['Drugs']
@@ -757,4 +747,3 @@ DRUG2TARGET_REGULATOR_SCORE,'Directly inhibited targets','Indirectly inhibited t
         self.report_pandas[AGONIST_TARGETS_WS] =  self.report_pandas[AGONIST_TARGETS_WS].merge_psobject(self.direct_target2drugs,'Directly Activated by','Name',values21cell=True)
         self.report_pandas[AGONIST_TARGETS_WS] = self.report_pandas[AGONIST_TARGETS_WS].merge_psobject(self.indirect_target2drugs,'Indirectly Activated by','Name',values21cell=True)
         print('Drug repurposing for %s was done in %s' % (self._disease2str(), self.execution_time(start_time)))
-        

@@ -138,10 +138,25 @@ class DiseaseTargets(SemanticSearch):
     
         self.target_ids.update(self.__GVtargets())
 
+        disease_model_components_ids = set()
+        disease_pathways = self.load_pathways()
+        if disease_pathways:
+            all_pathways = [p for p in disease_pathways.values()]
+            disease_model_components = set()
+            [disease_model_components.update(p.get_members(self.params['target_types'])) for p in all_pathways]
+            disease_model_components_ids = {n.id() for n in disease_model_components}
+            self.target_ids.update(disease_model_components_ids)
+            before_add = self.Graph.number_of_nodes()
+            self.Graph.add_nodes(list(disease_model_components))
+            print('Added %d targets from disease model' % (self.Graph.number_of_nodes()-before_add))
+
         if self.params['strict_mode']:
             disease_regulators = target_disease_graph.subgraph_by_relprops(['Regulation'])
             regulators_ids = disease_regulators.get_node_ids(self.params['target_types'])
             self.targets4strictmode.update(regulators_ids)
+            if disease_model_components_ids:
+                self.targets4strictmode.update(disease_model_components_ids)
+
 
     def find_symptoms(self):
         if self.params['symptoms']:
@@ -292,9 +307,11 @@ class DiseaseTargets(SemanticSearch):
         {CellType:PSPathway}
         where nodes in PSPathway are annotated with 'Closeness' attribute
         """ 
-        fc = FolderContent(self.APIconfig,ONLY_REL_PROPERTIES)
+        fc = FolderContent(self.APIconfig,what2retrieve=ONLY_REL_PROPERTIES)
+        # references are needed to calculate State Effect for targets in the model
         fc.entProps = ['Name','CellType','Tissue','Organ','Organ System']
-        #fc.relProps = [EFFECT, 'URN']
+        #fc.add_rel_props([EFFECT])
+        # effect is needed to calculate State Effect for targets in the model
 
         disease_pathways = list()
         for folder_name in self.params['pathway_folders']:
@@ -403,10 +420,45 @@ class DiseaseTargets(SemanticSearch):
 
     def set_target_disease_state(self):
         print('\n\nCalculating targets state (activated/repressed) in %s' % self._disease2str())
+                       
         for i in self.RefCountPandas.index:
             target_ids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
-            #between_graph = self.Graph.get_subgraph(target_ids, self.disease_ids)
             self.RefCountPandas.at[i,'State in Disease'] = self.__vote4effect(target_ids)
+
+        model_graph = ResnetGraph()
+        for pathway in self.disease_pathways.values():
+            model_graph = model_graph.compose(pathway.graph)
+
+        def __disease_state_from_model():
+            activ_targets_pd = self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == 'activated')]
+            inhib_targets_pd = self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == 'repressed')]
+            activated_target_ids = self._all_ids(activ_targets_pd)
+            inhibited_target_ids = self._all_ids(inhib_targets_pd)
+
+            new_regulators_count = 0
+            for idx in self.RefCountPandas.index:
+                if self.RefCountPandas.at[idx,'State in Disease'] == 'unknown':
+                    net_effect = 0
+                    for i in self.RefCountPandas.at[idx,self.__temp_id_col__]:
+                        activates_activated_targets,inhibits_activated_targets = model_graph.net_regulator_effect(i,activated_target_ids)
+                        activates_inhibited_targets,inhibits_inhibited_targets = model_graph.net_regulator_effect(i,inhibited_target_ids)
+                        net_effect += len(activates_activated_targets)+len(inhibits_inhibited_targets)-len(inhibits_activated_targets)-len(activates_inhibited_targets)
+
+                    if net_effect > 0:
+                        self.RefCountPandas.at[idx,'State in Disease'] = 'activated'
+                        new_regulators_count += 1
+                    elif net_effect < 0:
+                        self.RefCountPandas.at[idx,'State in Disease'] = 'repressed'
+                        new_regulators_count += 1
+
+            return new_regulators_count
+        
+        new_regulators_count = __disease_state_from_model()
+        while new_regulators_count:
+           new_regulators_count =  __disease_state_from_model()
+
+        return
+
 
 
     def score_partners(self):
@@ -434,13 +486,10 @@ class DiseaseTargets(SemanticSearch):
 
     def score_regulators(self):
         print('\n\nScoring regulators by distance to components of disease pathways',flush=True)
-
-        disease_pathways = self.load_pathways()
-
         print('Retrieving regulatory network between targets and components of disease pathway')
         disease_pathway_component_ids = set()
         regulation_graph = ResnetGraph()
-        [regulation_graph.add_graph(p.graph) for p in disease_pathways.values()]
+        [regulation_graph.add_graph(p.graph) for p in self.disease_pathways.values()]
         disease_pathway_component_ids = set(regulation_graph.nodes())
 
         unconnected_nodes = self.all_entity_ids
@@ -456,7 +505,7 @@ class DiseaseTargets(SemanticSearch):
             # only nodes connected at the previous cycle need to be expanded at the next cycle
             unconnected_nodes = set(unconnected_nodes).difference(regulation_graph.nodes())
 
-        for pathway in disease_pathways.values():
+        for pathway in self.disease_pathways.values():
             closeness_dic = {i:c for i,c in pathway.graph.nodes(data='Closeness')}
             regulation_graph.rank_regulators(closeness_dic,PATHWAY_REGULATOR_SCORE)
 

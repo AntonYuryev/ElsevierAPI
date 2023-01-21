@@ -1,4 +1,4 @@
-from .ResnetAPISession import APISession, time, len, NO_REL_PROPERTIES
+from .ResnetAPISession import APISession, time, len, NO_REL_PROPERTIES,ONLY_REL_PROPERTIES
 from .Resnet2rdf import ResnetRDF
 from .ResnetGraph import ResnetGraph,PSObject,RESNET
 from .PSPathway import PSPathway
@@ -10,7 +10,7 @@ PATHWAY_ID = 'Pathway ID'
 
 class FolderContent (APISession): 
     pass
-    def __init__(self, APIconfig:dict, preload_folder_tree=True,what2retrieve=NO_REL_PROPERTIES):
+    def __init__(self, APIconfig:dict, preload_folder_tree=True,what2retrieve=ONLY_REL_PROPERTIES):
         """
         self.id2pathway = {id:PSObject} is loaded on demand
         self.id2group = {id:PSObject} is loaded on demand

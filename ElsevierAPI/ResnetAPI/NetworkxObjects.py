@@ -278,7 +278,7 @@ class PSRelation(PSObject):
         try:
             return self[EFFECT][0]
         except KeyError:
-            raise KeyError
+            return 'unknown'
 
     def mechanisms(self):
         try:

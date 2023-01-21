@@ -17,7 +17,7 @@ class PSPathway(PSObject):
 
 
     @classmethod
-    def from_resnet(cls, resnet:et.Element, add_annotation=dict()):
+    def from_resnet(cls, resnet:et.Element, add_annotation=PSObject(),make_rnef=True):
         pathway = PSPathway()
         pathway['Name'] = [resnet.get('name')]
         pathway['URN'] = [resnet.get('urn')]
@@ -25,7 +25,8 @@ class PSPathway(PSObject):
         [pathway.update_with_value(p.get('name'),p.get('value')) for p in resnet.findall('properties/attr')]
 
         if pathway.graph._parse_nodes_controls(resnet):
-            pathway[RESNET] = et.tostring(resnet, encoding='unicode', method='xml')
+            if make_rnef:
+                pathway[RESNET] = et.tostring(resnet, encoding='unicode', method='xml')
             return pathway
         else:
             print('Invalid <resnet> section')
@@ -50,50 +51,58 @@ class PSPathway(PSObject):
 
 
     def merge_pathway(self, other:"PSPathway"):
-        self.merge_obj(other)
-        self.graph.add_graph(other.graph)
-        self.graph.urn2obj.update(other.graph.urn2obj)
-        self.graph.urn2rel.update(other.graph.urn2rel)
+        '''
+        Merges pathway.graph\n
+        Removes properties 'layout','resnet' as they are no longer applicable
+        '''
+        self.pop('layout','')
+        self.pop('resnet','')
+        for prop_name,values in other.items():
+            if prop_name not in ['layout','resnet']:
+                self.update_with_list(prop_name,values)
+
+        self.graph = self.graph.compose(other.graph)
 
 
-    def to_rnef(self, format='RNEF',add_props2rel=dict(),add_props2pathway=dict(), as_batch=True, prettify=True):
+    def member_ids(self,with_values:list=[],in_properties:list=['ObjTypeName']):
+        return self.graph.get_node_ids(with_values,in_properties)
+
+    
+    def get_members(self,with_values:list=[],in_properties:list=['ObjTypeName']):
+        node_ids = self.member_ids(with_values,in_properties)
+        if node_ids:
+            return [PSObject(ddict) for i,ddict in self.graph.nodes(data=True)]
+
+
+    def member_ids(self,with_values:list=[],in_properties:list=['ObjTypeName']):
+        return self.graph.get_node_ids(with_values,in_properties)
+
+
+    def to_xml(self,ent_props:list,rel_props:list,add_props2rel=dict(),add_props2pathway=dict(),format='RNEF',as_batch=True, prettify=True):
         '''
         Returns
         -------
-        graph in RNEF XML string
+        pathway XML string. supports RNEF and SBGN XML formats
         '''
-        pathway_urn = self.urn()
-        if not pathway_urn:
-            print('Pathway has no URN!!!!')
-            pathway_urn = 'no_urn'
-        
-        pathway_name = self.name()
-        if not pathway_name:
-            print('Pathway has no Name!!!!')
-            pathway_name = 'no_name'
-        
         self.graph.load_references()
-        graph_xml = self.to_rnef(add_props2rel,add_props2pathway)
+        graph_xml = self.graph.rnef(ent_props,rel_props,add_props2rel,add_props2pathway)
+        pathway_xml = et.fromstring(graph_xml)
 
-        import xml.etree.ElementTree as et
-        rnef_xml = et.fromstring(graph_xml)
-        rnef_xml.set('name', pathway_name)
-        rnef_xml.set('urn', pathway_urn)
-        rnef_xml.set('type', self.objtype())
+        pathway_props = et.SubElement(pathway_xml, 'properties')
+        for prop_name,prop_val in self.items():
+            for val in prop_val:
+                et.SubElement(pathway_props, 'attr', {'name':str(prop_name), 'value':str(val)})
 
-        if self.objtype() == 'Pathway':
+        try:
+            my_layout = et.fromstring(self['layout'])
             lay_out = et.Element('attachments')
-            try:
-                lay_out.append(et.fromstring(self['layout']))
-            except KeyError: pass
-            rnef_xml.append(lay_out)
-        
-        batch_xml = et.Element('batch')
-        batch_xml.insert(0,rnef_xml)
-                   
+            lay_out.append(my_layout)
+        except KeyError: pass
+        pathway_xml.append(lay_out)
+
         if format == 'SBGN':
-            pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-            pathway_xml = rnef2sbgn_str(pathway_xml)
+            pathway_xml_str = et.tostring(pathway_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+            pathway_xml_str = rnef2sbgn_str(pathway_xml)
         else:
             '''
             if put2folder:
@@ -114,16 +123,18 @@ class PSPathway(PSObject):
                 batch_xml.append(resnet)
             '''
             if as_batch:
-                pathway_xml = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
-                if prettify: pathway_xml = minidom.parseString(pathway_xml).toprettyxml(indent='   ')
+                batch_xml = et.Element('batch')
+                batch_xml.insert(0,pathway_xml)
+                pathway_xml_str = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+                if prettify: pathway_xml_str = minidom.parseString(pathway_xml_str).toprettyxml(indent='   ')
             else:
-                pathway_xml = et.tostring(rnef_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+                pathway_xml_str = et.tostring(pathway_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
                 if prettify:
-                    pathway_xml = str(minidom.parseString(pathway_xml).toprettyxml(indent='   '))
-                    pathway_xml = pathway_xml[pathway_xml.find('\n')+1:]
+                    pathway_xml_str = str(minidom.parseString(pathway_xml_str).toprettyxml(indent='   '))
+                    pathway_xml_str = pathway_xml[pathway_xml_str.find('\n')+1:]
                 #minidom does not work without xml_declaration
 
-        return str(pathway_xml)
+        return str(pathway_xml_str)
 
 
  

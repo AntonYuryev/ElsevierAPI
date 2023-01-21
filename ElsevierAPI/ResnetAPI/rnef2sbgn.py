@@ -333,6 +333,8 @@ def do_the_job(filename_in, dir_out, language, plot_scale, classmap='sbgn/rnef2s
 if __name__ == '__main__':
     # Usage:
     # rnef2sbgn.py FILENAME_IN.RNEF FILENAME_OUT SBGN_TYPE PLOT_SCALE
-    [fin, dir_out, lang, s_plot_scale] = ['COVID19 models backup.rnef', 'COVID19 models', "activity flow", 30]
+    input_rnef = 'D:/Python/NEO7/Aging/Aging pathways/Fundamental Signalings Changed in Aging/mTOR Signaling.rnef'
+    out_dir = 'D:/Python/NEO7/Aging/Aging pathways/'
+    [fin, dir_out, lang, s_plot_scale] = [input_rnef, out_dir, "activity flow", 30]
     plot_scale = int(s_plot_scale)
     do_the_job(fin, dir_out, lang, plot_scale)

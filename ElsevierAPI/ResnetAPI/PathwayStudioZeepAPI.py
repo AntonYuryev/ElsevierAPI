@@ -27,7 +27,7 @@ class DataModel:
         from zeep.cache import SqliteCache
         from zeep.transports import Transport
         session = Session()
-        #session.verify = False
+        #session.verify = False # not recommended
         session.auth = HTTPBasicAuth(username, password)
         transport = Transport(cache=SqliteCache(), session=session)
         from zeep import Client, Settings
@@ -207,6 +207,7 @@ class DataModel:
             ApplySourceFilter=False)
         return rp
 
+
     def get_object_properties(self, obj_ids: list, property_names: list=None):
         property_names = ['Name'] if property_names is None else property_names
 
@@ -366,6 +367,7 @@ class DataModel:
 
         return obj_props, (obj_props.ResultRef, obj_props.ResultSize, obj_props.ResultPos)
 
+
     def get_session_page(self, ResultRef, ResultPos, PageSize, ResultSize, property_names=None, getLinks=True):
         property_names = ['Name'] if property_names is None else property_names
 
@@ -380,11 +382,12 @@ class DataModel:
         rp.ResultPos = ResultPos
         obj_props = self.result_get_data(rp)
 
-        # setting objectType name
+        if type(obj_props) == type(None):
+            return None, 0, 0
         if type(obj_props.Objects) == type(None):
             # print('Your SOAP response is empty! Check your OQL query and try again\n')
-            return
-
+            return None,obj_props.ResultSize, obj_props.ResultPos
+        
         for obj in obj_props.Objects.ObjectRef:
             obj_type_id = obj['ObjTypeId']
             obj_type_name = self.IdtoObjectType[obj_type_id]['Name']
@@ -407,7 +410,7 @@ class DataModel:
         if rp.ResultPos >= rp.ResultSize:
             self.SOAPclient.service.ResultRelease(rp.ResultRef)
 
-        return obj_props,  obj_props.ResultSize, obj_props.ResultPos
+        return obj_props, obj_props.ResultSize, obj_props.ResultPos
 
     def put_experiment(self, dataframe: pd, expName, expType, entityType, map_entities_by, has_pvalue=True, description=''):
         # PSexp = self.SOAPclient.service('ns0:GetExperiment')
@@ -613,3 +616,7 @@ class DataModel:
                 sample_id += 1
   
         return experiment, experiment_identifiers, sample_values
+
+
+    def close_connection(self):
+        self.SOAPclient.transport.session.close()
