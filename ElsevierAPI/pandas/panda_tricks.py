@@ -1,10 +1,13 @@
 import pandas as pd
+from numpy import NaN
 from pandas.api.types import is_numeric_dtype
 from pandas import ExcelWriter as ExcelWriter
 import rdfpandas
 from ..ResnetAPI.NetworkxObjects import PSObject
 import string
 from openpyxl import load_workbook
+from pandas.api.types import is_string_dtype,is_numeric_dtype
+
 
 MIN_COLUMN_WIDTH = 0.65 # in inches
 NUMBER_OF_REFERENCE = 'Number of references'
@@ -44,18 +47,21 @@ class df(pd.DataFrame):
         self.conditional_frmt = from_df.conditional_frmt
 
 
+    def add_format(self, from_df:'df'):
+        self.header_format.update(from_df.header_format)
+        self.column2format.update(from_df.column2format)
+        self.conditional_frmt.update(from_df.conditional_frmt)
+
+
     def set_col_format(self,fmt:dict):
         self.column2format = fmt
 
 
     def add_column_format(self,column_name:str,fmt_property:str,fmt_value:str):
         try:
-            column_format = self.column2format[column_name]
+            self.column2format[column_name].update({fmt_property:fmt_value})
         except KeyError:
-            column_format = dict()
-
-        column_format.update({fmt_property:fmt_value})
-        self.column2format[column_name] = column_format
+            self.column2format[column_name] = {fmt_property:fmt_value}
 
 
     def set_hyperlink_color(self, column_names:list):
@@ -90,9 +96,17 @@ class df(pd.DataFrame):
 
 
     @classmethod
-    def copy_df(cls, other:'df') ->'df':
-        newdf = cls(other.copy())
-        newdf.__copy_attrs(other)
+    def copy_df(cls, other:'df',only_columns:list=[], rename2:dict=dict()) ->'df':
+        if only_columns:
+            newdf = df(pd.DataFrame.from_records(other, columns=only_columns))
+            newdf.header_format = other.header_format
+            newdf.column2format = {k:v for k,v in other.column2format if k in only_columns}
+        else:
+            newdf = df(other.copy())
+            newdf.__copy_attrs(other)
+
+        if rename2:
+            newdf.rename(columns=rename2,inplace=True)
         return newdf
 
 
@@ -197,9 +211,9 @@ class df(pd.DataFrame):
             in2pd[map2column].apply(lambda x: str(x).lower())
 
         how = 'outer' if add_all else 'left'
-        merged_pd = df(in2pd.merge(pd2merge,how, on=map2column))
-        merged_pd.__copy_attrs(self)
-        return merged_pd
+        merged_df = df(in2pd.merge(pd2merge,how, on=map2column))
+        merged_df.__copy_attrs(self)
+        return merged_df
 
 
     def append_df(self, other:'df'):
@@ -240,12 +254,15 @@ class df(pd.DataFrame):
                 
             in2pd =  in2pd.merge_dict(merge_dict,new_col,map2column,add_all)
             in2pd[map2column] = self[map2column]
-            return in2pd
         else:          
             obj_pd = df.psobj2pd(obj,map2column,new_col)
             how = 'outer' if add_all else 'left'
-            return in2pd.merge(obj_pd,how, on=map2column)
-            
+            in2pd = in2pd.merge(obj_pd,how, on=map2column)
+        
+        in2pd.copy_format(self)
+        in2pd._name_ = self._name_
+        return in2pd
+
 
     def get_rows(self, by_value1, in_column1, and_by_value2, in_column2):
         return self.loc[(self[in_column1] == by_value1) & (self[in_column2] == and_by_value2)]
@@ -296,6 +313,14 @@ class df(pd.DataFrame):
 
 
     def df2excel(self, writer:ExcelWriter,sheet_name:str):
+        '''
+        Column format specifications must be in self.column2format\n
+        Header format specification must be in self.header_format\n
+        Parameters
+        ----------
+        height,width,wrap_text,inch_width\n
+        other format parameters are at https://xlsxwriter.readthedocs.io/format.html
+        '''
         self.to_excel(writer, sheet_name=sheet_name, startrow=1, header=False, index=False, float_format='%g')
         workbook  = writer.book
         worksheet = writer.sheets[sheet_name]
@@ -357,7 +382,7 @@ class df(pd.DataFrame):
 
     def table_layout(self, table_witdh=7.5):
         """
-        Returns {col_idx:width} for default table_witdh=7.5
+        Returns {col_idx:width} for default table_witdh
         """
         length_averages = dict()
         columns = list(self.columns)
@@ -445,7 +470,7 @@ class df(pd.DataFrame):
         """
         Input
         -----
-        file name i sin args[0]
+        file name must be in args[0]
         'only_columns' = [col_names]
         'ref_limit' = [col_name:reflimit]
         'as_str' = True - formats floats to string as %2.2f'
@@ -489,3 +514,65 @@ class df(pd.DataFrame):
         clean_df = df(self[~self[in_column].isin(values)])
         clean_df.copy_format(self)
         return clean_df
+
+
+    def is_numeric(self,column:str):
+        return is_numeric_dtype(self[column])
+
+
+    def to_dict(self,key_col:str,values_col:str):
+        return dict(list(zip(getattr(self,key_col),getattr(self,values_col))))
+
+    def not_nulls(self,columns4count:list,write2column='Row count'):
+        self[write2column] = self[columns4count].isna().sum(axis=1)
+        self[write2column] = self[write2column].apply(lambda x: len(columns4count) - x)
+
+
+    def add_values(self,from_column:str,in_df:'df',to_my_col:str,map_by_my_col:str,map2col='',how2replace='false'):
+        '''
+        Input
+        -----
+        replace = 'false' - no replacement\n
+        replace = 'true' - replace existing values\n
+        replace = 'merge' - adds values to existing values after ";"
+
+        if "map2col" is not specified mapping of in_df values is done using column with name "map_by_my_col"
+
+        '''
+        in_df_map_column = map2col if map2col else map_by_my_col
+        map_dict = in_df.to_dict(in_df_map_column,from_column)
+        
+        def __my_value(x):
+            try:
+                new_value = map_dict[x[map_by_my_col]]
+            except KeyError:
+                new_value = ''
+
+            exist_value = '' if pd.isna(x[to_my_col]) else str(x[to_my_col])
+
+            if how2replace == 'true':
+                return new_value
+            elif how2replace == 'merge':
+                if exist_value:
+                    return ';'.join(set(exist_value,new_value)) if new_value else exist_value
+                else:
+                    return new_value if new_value else NaN
+            else:
+                # if how2replace='false' - do not replace
+                if exist_value:
+                    return exist_value
+                else:
+                    return new_value if new_value else NaN
+
+        copy_df = df.copy_df(self)
+        if to_my_col not in copy_df.columns: copy_df[to_my_col] = NaN
+        copy_df[to_my_col] = copy_df.apply(__my_value, axis=1)
+        return copy_df
+
+
+    def reorder(self,columns_in_new_order:list):
+        copy_df = df(self[columns_in_new_order])
+        copy_df.copy_format(self)
+        copy_df._name_ = self._name_
+        return copy_df
+
