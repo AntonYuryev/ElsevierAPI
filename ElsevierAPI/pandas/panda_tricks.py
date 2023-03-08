@@ -194,17 +194,23 @@ class df(pd.DataFrame):
 
 
     @classmethod
-    def dict2pd(cls,dic:dict, key_colname:str, value_colname:str)->'df':
-        """
-        input - single value dic {str:str or float} 
-        """
+    def from_dict2(cls,dic:dict, key_colname:str, value_colname:str)->'df':
         #new_df = cls(pd.DataFrame(columns=[key_colname,value_colname]))
         new_df = df(pd.DataFrame.from_dict({key_colname:list(dic.keys()), value_colname:list(dic.values())}))
         return new_df
 
 
     def merge_dict(self, dict2add:dict, new_col:str, map2column:str, add_all=False, case_sensitive_match=False):
-        pd2merge = df.dict2pd(dict2add,map2column,new_col)
+        '''
+        Input
+        -----
+        "dict2add" must have keys equal to values in "map2column"
+
+        Return
+        ------
+        new df with values from dict2add.values() in "new_col" 
+        '''
+        pd2merge = df.from_dict2(dict2add,map2column,new_col)
         in2pd = df.copy_df(self)
         if not case_sensitive_match:
             pd2merge[map2column].apply(lambda x: str(x).lower())
@@ -220,11 +226,36 @@ class df(pd.DataFrame):
         merged_df = df(pd.concat([self,other],ignore_index=True),name=self._name_)
         return merged_df
 
+
     def merge_df(self, *args, **kwargs):
+        '''
+        Input
+        -----
+        right df = args[0]
+        non pd.DataFrame kwargs: 'name','columns'
+        "on" kwarg has to specify column in both self and right df
+
+        Return
+        ------
+        df merged using "on" kwarg with columns added from right df specified by 'columns'\n
+        if 'columns' were not specified will merge all columns from right df
+        Format of "self" takes precedent 
+        '''
         df_name = kwargs.pop('name',self._name_)
-        merged_pd = df(self.merge(*args, **kwargs),name=df_name)
-        merged_pd.__copy_attrs(self)
+        columns2copy = kwargs.pop('columns',[])
+        merge_on_column = kwargs.get('on')
+        my_args = list(args)
+        if columns2copy:
+            columns2copy.append(merge_on_column)
+            copy_df = df(args[0][columns2copy])
+            copy_df.copy_format(my_args[0])
+            my_args[0] = copy_df
+
+        merged_pd = df(self.merge(*my_args, **kwargs),name=df_name)
+        merged_pd.add_format(args[0])
+        merged_pd.add_format(self)
         return merged_pd
+
 
     @classmethod
     def psobj2pd(cls,obj:PSObject,key_colname:str,value_colname:str,df_name=str()):
@@ -255,20 +286,21 @@ class df(pd.DataFrame):
             in2pd =  in2pd.merge_dict(merge_dict,new_col,map2column,add_all)
             in2pd[map2column] = self[map2column]
         else:          
-            obj_pd = df.psobj2pd(obj,map2column,new_col)
+            obj_df = df.psobj2pd(obj,map2column,new_col)
             how = 'outer' if add_all else 'left'
-            in2pd = in2pd.merge(obj_pd,how, on=map2column)
+            in2pd = in2pd.merge_df(obj_df,how, on=map2column)
         
-        in2pd.copy_format(self)
-        in2pd._name_ = self._name_
+        in2pd.__copy_attrs(self)
         return in2pd
 
 
     def get_rows(self, by_value1, in_column1, and_by_value2, in_column2):
         return self.loc[(self[in_column1] == by_value1) & (self[in_column2] == and_by_value2)]
 
+
     def get_cells(self,by_value1, in_column1, and_by_value2, in_column2, from_column3):
         return (self.loc[(self[in_column1] == by_value1) & (self[in_column2] == and_by_value2),from_column3]).iloc[0]
+
 
     def df2json(self, to_file:str, dir=''):
         dump_fname = to_file
@@ -290,7 +322,7 @@ class df(pd.DataFrame):
         if last_row:
             area += str(last_row)
         else:
-            area += str(len(self))
+            area += str(first_row+len(self)-1)
         
         return area
 
@@ -365,7 +397,10 @@ class df(pd.DataFrame):
 
 
     def greater_than(self, value:float, in_column:str):
-        return df(self[self[in_column] >= value])
+        return df(self[self[in_column] > value])
+    
+    def smaller_than(self, value:float, in_column:str):
+        return df(self[self[in_column] < value])
 
 
     def drop_empty_columns(self, max_abs=0.00000000000000001, subset=list()):
@@ -373,9 +408,8 @@ class df(pd.DataFrame):
         my_numeric_columns = subset if subset else [x for x in my_columns if is_numeric_dtype(self[x])]
         no_value_cols = list()
         [no_value_cols.append(col) for col in my_numeric_columns if abs(self[col].max()) < max_abs]
-        no_empty_cols = df(self.drop(columns = no_value_cols))
+        no_empty_cols = df(self.drop(columns = no_value_cols),name=self._name_)
         no_empty_cols.copy_format(self)
-        no_empty_cols._name_ = self._name_
         print('%s columns were dropped  because they have all values = 0' % no_value_cols)
         return no_empty_cols
         
@@ -512,7 +546,7 @@ class df(pd.DataFrame):
 
     def remove_rows_by(self, values:list, in_column:str):
         clean_df = df(self[~self[in_column].isin(values)])
-        clean_df.copy_format(self)
+        clean_df.__copy_attrs(self)
         return clean_df
 
 
@@ -523,12 +557,18 @@ class df(pd.DataFrame):
     def to_dict(self,key_col:str,values_col:str):
         return dict(list(zip(getattr(self,key_col),getattr(self,values_col))))
 
+
     def not_nulls(self,columns4count:list,write2column='Row count'):
+        '''
+        Adds
+        ----
+        Column named "write2column" with count of empty "columns4count" for every row
+        '''
         self[write2column] = self[columns4count].isna().sum(axis=1)
         self[write2column] = self[write2column].apply(lambda x: len(columns4count) - x)
 
 
-    def add_values(self,from_column:str,in_df:'df',to_my_col:str,map_by_my_col:str,map2col='',how2replace='false'):
+    def add_values(self,from_column:str,in_df:'df',map_by_my_col:str,to_my_col='',map2col='',how2replace='false'):
         '''
         Input
         -----
@@ -536,19 +576,23 @@ class df(pd.DataFrame):
         replace = 'true' - replace existing values\n
         replace = 'merge' - adds values to existing values after ";"
 
-        if "map2col" is not specified mapping of in_df values is done using column with name "map_by_my_col"
-
+        Returns
+        -------
+        df with new "to_my_col"\n
+        if "to_my_col" is not specified the column named "from_column" will be created in retruned df\n
+        if "map2col" is not specified mapping of "in_df" values uses column with name "map_by_my_col" that must be present "in_df" 
+    
         '''
         in_df_map_column = map2col if map2col else map_by_my_col
         map_dict = in_df.to_dict(in_df_map_column,from_column)
-        
+        copy2column =  to_my_col if to_my_col else from_column
         def __my_value(x):
             try:
                 new_value = map_dict[x[map_by_my_col]]
             except KeyError:
                 new_value = ''
 
-            exist_value = '' if pd.isna(x[to_my_col]) else str(x[to_my_col])
+            exist_value = '' if pd.isna(x[copy2column]) else str(x[copy2column])
 
             if how2replace == 'true':
                 return new_value
@@ -565,8 +609,8 @@ class df(pd.DataFrame):
                     return new_value if new_value else NaN
 
         copy_df = df.copy_df(self)
-        if to_my_col not in copy_df.columns: copy_df[to_my_col] = NaN
-        copy_df[to_my_col] = copy_df.apply(__my_value, axis=1)
+        if copy2column not in copy_df.columns: copy_df[copy2column] = NaN
+        copy_df[copy2column] = copy_df.apply(__my_value, axis=1)
         return copy_df
 
 
