@@ -1,8 +1,8 @@
-from .SemanticSearch import SemanticSearch,df,BIBLIO_PROPERTIES,COUNTS,RANK,CHILDS
+from .SemanticSearch import SemanticSearch,df,BIBLIO_PROPERTIES,COUNTS,RANK
 from ..ETM_API.etm import ETM_REFS_COLUMN
 from .ResnetAPISession import SNIPPET_PROPERTIES
 from .PathwayStudioGOQL import OQL
-from .NetworkxObjects import PSObject,REFCOUNT
+from .NetworkxObjects import PSObject,REFCOUNT,CHILDS
 from ..ETM_API.references import JOURNAL_PROPS,JOURNAL
 from  .Resnet2rdf import ResnetGraph,ResnetRDF
 import numpy as np
@@ -81,11 +81,9 @@ class BiomarkerReport(SemanticSearch):
             print('No diseases were found for %s' % disease_name)
             return
 
-        disease_ids = self.Disease[CHILDS] + self.Disease['Id']
-        oql_query = 'SELECT Entity WHERE id = ({ids})'.format(ids=','.join(map(str,disease_ids)))
-        request_name = 'Find children for {disease}'.format(disease=self.Disease['Name'][0])
-        disease_graph = self.process_oql(oql_query, request_name)
-        self.diseases = disease_graph.get_objects(only_with_values=DISEASE_TYPES)
+        diseases = self.Disease[CHILDS] + [self.Disease]
+        children = self.load_children4(diseases)
+        self.diseases = list(set(diseases)|children)
 
 
     def load_graph(self, disease_ids:list):
@@ -120,7 +118,7 @@ class BiomarkerReport(SemanticSearch):
         else:
             oql_query = OQL.expand_entity(disease_ids,['Id'], expand2neighbors=['GeneticVariant'])
             disease2gvs = self.process_oql(oql_query, 'Find GVs linked to diseases')
-            gv_ids = disease2gvs.get_node_ids(['GeneticVariant'])
+            gv_ids = disease2gvs.dbids4nodes(['GeneticVariant'])
             gvid2genes = self.gv2gene(gv_ids)
             genes_with_gvs = {name for names in [names for names in gvid2genes.values()] for name in names}
             print('Found %d GeneticVariants linked to input disease in %d genes' % (len(gvid2genes),len(genes_with_gvs)))
@@ -156,13 +154,14 @@ class BiomarkerReport(SemanticSearch):
 
     def semantic_search(self):
         disease_name2ids = dict()
-        all_disease_ids = set()
+        #all_disease_ids = set()
         for disease in self.diseases:
-            dis_name = disease['Name'][0]
+            #dis_name = disease['Name'][0]
             #finds children for disease:
-            disease_ids = list(self._get_obj_ids_by_props(disease['Id'],["Id"],only_obj_types=DISEASE_TYPES))        
-            disease_name2ids[dis_name] = disease_ids
-            all_disease_ids.update(disease_ids)
+            self.load_children4(disease)
+        #    diseases = list(self._props2psobj(disease['Id'],["Id"],only_obj_types=DISEASE_TYPES))        
+         #   disease_name2ids[dis_name] = disease_ids
+         #   all_disease_ids.update(disease_ids)
 
         if self.params['biomarker_type'] == GENETIC:
             biomarker_rel_types = QUANTITATIVE_BIOMARKER_RELS + GENETIC_BIOMARKER_RELS
@@ -172,8 +171,9 @@ class BiomarkerReport(SemanticSearch):
         disease_count = 0
         for disease in self.diseases:
             dis_name = disease['Name'][0]
+            disease_and_childs = disease.childs()+[disease]
             self.set_how2connect(biomarker_rel_types,[],'')
-            linked_entities_count = self.link2RefCountPandas(dis_name,disease_name2ids[dis_name])
+            linked_entities_count = self.link2RefCountPandas(dis_name,disease_and_childs)
             disease_count += 1
             print('%d biomarkers are linked to %s' % (linked_entities_count,dis_name))
             print('%d concepts out of %d were linked' % (disease_count,len(self.diseases)))
@@ -319,10 +319,10 @@ class BiomarkerReport(SemanticSearch):
         if self.params['print_rdf']:
             self.bm2dis_graph = ResnetGraph() # to convert into RDF
             for i in range(0,max_etm_row): 
-                biomarker = biomarker2disease.loc[i]['Biomarker']
-                disease = biomarker2disease.loc[i]['Disease']
-                biomarker_objs = self.Graph.get_obj_by_prop(biomarker)
-                disease_objs = self.Graph.get_obj_by_prop(disease)
+                biomarker_name = biomarker2disease.loc[i]['Biomarker']
+                disease_name = biomarker2disease.loc[i]['Disease']
+                biomarker_objs = self.Graph._psobjs_with(biomarker_name)
+                disease_objs = self.Graph._psobjs_with(disease_name)
                 rel_props[REFCOUNT] = biomarker2disease.loc[i][ETM_REFS_COLUMN]
                 [self.bm2dis_graph.add_triple(d,b,rel_props) for b in biomarker_objs for d in disease_objs] 
             
@@ -351,7 +351,7 @@ class BiomarkerReport(SemanticSearch):
 
     def print_report(self):
         self.find_diseases(self.params['disease'])
-        disease_ids = self.Graph.get_node_ids(DISEASE_TYPES)
+        disease_ids = self.Graph.dbids4nodes(DISEASE_TYPES)
         self.load_graph(disease_ids)
         self.init_semantic_search()
         counts_df = self.semantic_search()

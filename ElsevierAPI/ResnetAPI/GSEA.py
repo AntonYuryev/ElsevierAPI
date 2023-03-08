@@ -21,7 +21,7 @@ class GSEA(FolderContent):
     def __init__(self, APIconfig):
         super().__init__(APIconfig)
         self.mv_pvalue_cutoff = 0.05
-        self.diffexp_pvalue_cuoff= 0.05
+        self.diffexp_pvalue_cutoff= 0.05
         self.id2pathway = dict() # self.id2pathway = {id:PSPathway}
         self.data_dir = 'ElsevierAPI/ResnetAPI/__pscache__/'
         self.report_dir = ''
@@ -31,7 +31,7 @@ class GSEA(FolderContent):
 
     def __add_pathway(self,p:PSPathway):
         try:
-            p_id = p.id()
+            p_id = p.uid()
             self.id2pathway[p_id] = p
             print('Pathway %s already exist' % p.name())
         except KeyError:

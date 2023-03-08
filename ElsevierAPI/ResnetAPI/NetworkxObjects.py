@@ -13,11 +13,12 @@ PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
 REGULATORS = 'Regulators'
 TARGETS = 'Targets'
 REFCOUNT = 'RelationNumberOfReferences'
-CHILDS = 'Child Ids'
-
+CHILDS = 'Childs'
 #enums for objectypes to avoid misspeling
 GENETICVARIANT = 'GeneticVariant'
 FUNC_ASSOC = 'FunctionalAssociation'
+ENTITY_IDENTIFIERS = ["CAS ID","EC Number","Ensembl ID","LocusLink ID","GO ID","GenBank ID",
+                      "HMDB ID","MedScan ID","Microarray ID","PharmaPendium ID","PubChem CID","miRBase ID"]
 
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
@@ -41,12 +42,60 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     @classmethod
     def from_zeep(cls, ZeepObjectRef):
         return cls(cls.from_zeep_objects(ZeepObjectRef))
-
+    
+    def urn(self):
+        try:
+            return self['URN'][0]
+        except KeyError:
+            raise KeyError
+        
+    @staticmethod
+    def urn2uid(urn:str):
+        #return hash(urn)
+        my_hash = hashlib.md5(str(urn).encode())
+        return int(my_hash.hexdigest(),32)
+        
     def __hash__(self):
-        return self['Id'][0]
+        #__hash__ needs __eq__ to work properly
+        return self.urn2uid(self.urn())
+
+    def __eq__(self, other):
+        #__hash__ needs __eq__ to work properly
+        return self['URN'][0] == other['URN'][0]
+
+    def uid(self):
+        return self.__hash__()
+
+    def dbid(self):
+        try:
+            return self['Id'][0]
+        except KeyError:
+            return 0
 
     def set_property(self, PropId, PropValue: str):
         self[PropId] = [PropValue]
+
+    
+    def childs(self):
+        try:
+            return list(self[CHILDS])
+        except KeyError:
+            return list()
+
+    def child_dbids(self):
+        try:
+            children = self[CHILDS]
+            return [c.dbid() for c in children]
+        except KeyError:
+            return []
+        
+    def child_uids(self):
+        try:
+            children = self[CHILDS]
+            return [c.uid() for c in children]
+        except KeyError:
+            return []
+
 
     def append_property(self, PropId, PropValue):
         try:
@@ -57,18 +106,6 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def name(self):
         try:
             return self['Name'][0]
-        except KeyError:
-            raise KeyError
-
-    def urn(self):
-        try:
-            return self['URN'][0]
-        except KeyError:
-            raise KeyError
-
-    def id(self):
-        try:
-            return self['Id'][0]
         except KeyError:
             raise KeyError
 
@@ -85,8 +122,16 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             return ''
 
+
+    def is_from_rnef(self):
+        try:
+            database_id = self['Id'[0]]
+            return False
+        except KeyError:
+            return True
     
-    def get_prop(self,prop_name:str,value_index=-1,missing_value=''):
+
+    def get_prop(self,prop_name:str,value_index=-1,if_missing_return=''):
         try:
             values = self[prop_name]
             if value_index >= 0:
@@ -94,7 +139,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             else:
                 return values
         except KeyError:
-            return missing_value
+            return if_missing_return
 
 
     @staticmethod
@@ -113,10 +158,15 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             self[prop_id] = [new_value]
 
 
-    def update_with_list(self, prop_id:str, new_values:list):
+    def update_with_list(self, prop_id:str, new_values):
         try:
-            values = list(self[prop_id])
-            [values.append(x) for x in new_values if x not in values]
+            values = self[prop_id]
+            if isinstance(values,list):
+                [values.append(x) for x in new_values if x not in values]
+            elif isinstance(values,set):
+                [values.update(x) for x in new_values if x not in values]
+            else:
+                pass
             self[prop_id] = values
         except KeyError:
             self[prop_id] = new_values
@@ -124,7 +174,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
     def merge_obj(self,other:'PSObject'):
         [self.update_with_list(prop_name,values) for prop_name,values in other.items()]
-
+        
 
     def _prop2str(self, prop_id:str,cell_sep:str =';'):
         try:
@@ -148,23 +198,27 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         return table_row[0:len(table_row) - 1] + endOfline
 
 
-    def has_property(self, prop_name:str):
-        return prop_name in self.keys()
-
     def has_propeties(self,prop_names:set):
         return not prop_names.isdisjoint(set(self.keys()))
 
-    def is_annotated(self,with_prop:str,having_values:list,case_sensitive=False):
+
+    def is_annotated(self,with_prop:str,having_values:list=[],case_sensitive=False):
+        '''
+        Input
+        -----
+        if "having_values" is empty will return True if self has any value in "with_prop"
+        '''
         try:
-            if case_sensitive or with_prop in {'Id','id','ID'}:
-                search_in = self[with_prop]
-                search_set = set(with_prop)   
+            search_in = self[with_prop]
+            if having_values:
+                if case_sensitive or with_prop in {'Id','id','ID'}:
+                    search_set = set(having_values)   
+                else:
+                    search_in  = set(map(lambda x: x.lower(),search_in))
+                    search_set = set(map(lambda x: x.lower(),having_values))      
+                return not search_set.isdisjoint(search_in)
             else:
-                search_in = list(self[with_prop])
-                search_in  = set(map(lambda x: x.lower(),search_in))
-                search_set = set(map(lambda x: x.lower(),having_values))
-                
-            return not search_set.isdisjoint(search_in)
+                return True
         except KeyError: return False
 
 
@@ -175,7 +229,8 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         prop2values = {propName:[values]}
         """
         for prop_name, prop_values in prop2values.items():
-            if self.is_annotated(prop_name,prop_values,case_sensitive): return True
+            if self.is_annotated(prop_name,prop_values,case_sensitive): 
+                return True
         return False
 
 
@@ -250,7 +305,64 @@ class PSRelation(PSObject):
         self.References = dict()  # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
 
 
-    def add_references(self, references:list):#list of Reference objects
+    def __hash__(self):
+        #__hash__ needs __eq__ to work properly
+        urn = self.urn()
+        my_hash = hashlib.md5(str(urn).encode())
+        return int(my_hash.hexdigest(),32)
+
+
+    def __eq__(self, other):
+        #__hash__ needs __eq__ to work properly
+        return self['URN'][0] == other['URN'][0]
+    
+
+    def __effects(self):
+        try:
+            return self[EFFECT]
+        except KeyError:
+            return ['unknown']
+
+
+    def effect(self):
+        my_effects = self.__effects()
+        return my_effects[0]
+
+
+    def mechanisms(self):
+        try:
+            return self['Mechanism']
+        except KeyError:
+            return []
+        
+    def mechanism(self):
+        try:
+            return self['Mechanism'][0]
+        except KeyError:
+            return ''
+        
+
+    def make_urn(self,reg_urns:list,tar_urns:list):
+        reg_urns.sort()
+        tar_urns.sort()
+        rel_urn = 'urn:agi-'+self.objtype()+':'
+        if tar_urns:
+            rel_urn += 'out:'.join([u for u in tar_urns])
+            rel_urn += 'in-out:'.join([u for u in reg_urns])
+            try:
+                rel_urn += ':'+ self[EFFECT][0]
+            except KeyError: pass
+            try:
+                rel_urn += ':'+self['Mechanism'][0]
+            except KeyError: pass
+        else:
+            rel_urn += 'in-out:'.join([u for u in reg_urns])
+
+        self.set_property('URN', rel_urn)
+        return rel_urn
+    
+
+    def _add_refs(self, references:list):#list of Reference objects
         self.load_references()
         for r in references:
             was_merged = False
@@ -265,34 +377,6 @@ class PSRelation(PSObject):
             if not was_merged:
                 for i in r.Identifiers.values():
                     self.References[i] = r
-
-
-    def effects(self):
-        try:
-            return self[EFFECT]
-        except KeyError:
-            return []
-
-
-    def effect(self):
-        try:
-            return self[EFFECT][0]
-        except KeyError:
-            return 'unknown'
-
-    def mechanisms(self):
-        try:
-            return self['Mechanism']
-        except KeyError:
-            return []
-
-
-    def is_from_rnef(self):
-        try:
-            self.id()
-            return False
-        except KeyError:
-            return True
 
 
     def _get_refs(self, only_with_id_type='',sort_by=PUBYEAR,reverse=True,ref_limit=0):
@@ -311,11 +395,10 @@ class PSRelation(PSObject):
 
     def merge_rel(self, other:'PSRelation'):
         self.merge_obj(other)
-        self.add_references(other._get_refs())
+        self._add_refs(other._get_refs())
      #   self.PropSetToProps.update(other.PropSetToProps)
-     #   self.Nodes.update(other.Nodes)
-        
 
+        
     def copy(self):
         copy = PSRelation(self)
         copy.PropSetToProps= dict(self.PropSetToProps)
@@ -333,29 +416,36 @@ class PSRelation(PSObject):
         except KeyError:
             effect_val = str()
 
-        new_rel.Nodes[REGULATORS] = [(regulator['Id'][0], '0', effect_val)]
+        new_rel.Nodes[REGULATORS] = [(regulator.uid(), '0', effect_val)]
         if is_directional:
-            new_rel.Nodes[TARGETS] = [(target['Id'][0], '1', effect_val)]
+            new_rel.Nodes[TARGETS] = [(target.uid(), '1', effect_val)]
         else:
-            new_rel.Nodes[REGULATORS].append((target['Id'][0], '0', effect_val))
+            new_rel.Nodes[REGULATORS].append((target.uid(), '0', effect_val))
 
-        new_rel.add_references(refs)
+        new_rel._add_refs(refs)
         if REFCOUNT not in new_rel.keys():
             new_rel[REFCOUNT] = [len(refs)]
         return new_rel
-
-
-    def __hash__(self):
-        try:
-            return self['Id'][0]
-        except KeyError:
-            # for ResnetGraph imported from RNEF:
-            my_hash = hashlib.md5(str(self.urn()).encode())
-            return int(my_hash.hexdigest(),32)
-
+            
 
     def is_directional(self):
         return len(self.Nodes) == 2
+    
+
+    def regulator_uids(self):
+        nodeIds = [x[0] for x in self.Nodes[REGULATORS]]
+        return list(nodeIds)
+
+
+    def target_uids(self):
+        try:
+            nodeIds = [x[0] for x in self.Nodes[TARGETS]]
+            return list(nodeIds)
+        except KeyError: return []
+
+
+    def entities_uids(self):
+        return self.regulator_uids()+self.target_uids()
 
 
     def _prop2str(self, prop_id, cell_sep:str =';'):
@@ -378,6 +468,7 @@ class PSRelation(PSObject):
     def props2dict(self, prop_ids:list,cell_sep:str =';'):
         return {k:self._prop2str(k,cell_sep) for k in self.keys() if k in prop_ids}
     
+
     def props2list(self, propID, cell_sep=';'):
         try:
             return self[propID]
@@ -448,8 +539,6 @@ class PSRelation(PSObject):
             textref = None 
             sentence_props = dict()
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
-              #  if propValues[0] == 'info:pmid/21180064#abs:4':
-              #      print('')
                 if propId in BIBLIO_PROPS:
                     ref.update_with_list(propId, propValues)
                 elif propId in SENTENCE_PROPS:
@@ -573,6 +662,7 @@ class PSRelation(PSObject):
 
         return table
 
+
     def to_table_str(self, columnPropNames:list, col_sep:str='\t', 
                      cell_sep=';', RefNumPrintLimit=0, add_entities=False):
 
@@ -582,6 +672,7 @@ class PSRelation(PSObject):
         for row in table_dict.values():
             tableStr = tableStr + col_sep.join(row) + '\n'
         return tableStr
+
 
     def to1row(self, columnPropNames:list, col_sep:str='\t', cell_sep:str=';', RefNumPrintLimit=0, add_entities=False):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
@@ -622,11 +713,13 @@ class PSRelation(PSObject):
 
         return col_sep.join(table)+'\n'
 
+
     def triple2str(self,columnPropNames:list, col_sep:str='\t', cell_sep:str=';', RefNumPrintLimit=0, add_entities=False, as1row=False):
         if as1row:
             return self.to1row(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
         else: 
             return self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
+
 
     def get_regulators_targets(self):
         """
@@ -648,18 +741,6 @@ class PSRelation(PSObject):
                 objIdList = [x[0] for x in self.Nodes[TARGETS]]
                 return itertools.combinations(objIdList, 2)
 
-    def regulator_ids(self):
-        nodeIds = [x[0] for x in self.Nodes[REGULATORS]]
-        return list(nodeIds)
-
-    def target_ids(self):
-        try:
-            nodeIds = [x[0] for x in self.Nodes[TARGETS]]
-            return list(nodeIds)
-        except KeyError: return []
-
-    def entities_ids(self):
-        return self.regulator_ids()+self.target_ids()
 
     def to_json(self):
         str1 = '{"Relation Properties": ' + json.dumps(self) + '}'

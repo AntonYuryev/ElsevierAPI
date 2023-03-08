@@ -2,8 +2,17 @@ import pandas as pd
 import logging
 import sys
 from time import sleep
+import json
 from .PathwayStudioGOQL import OQL,len
 from zeep import exceptions
+import time
+from datetime import timedelta
+import requests.exceptions
+import os
+
+
+def execution_time(execution_start):
+    return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
 
 
 def configure_logging(logger):
@@ -16,31 +25,70 @@ def configure_logging(logger):
     return logger
 
 
+def load_api_config(api_config_file=''):# file with your API keys and API URLs
+    cur_dir = os.getcwd()
+    default_apiconfig = cur_dir+'/ElsevierAPI/APIconfig.json'
+    if not api_config_file:
+        print('No API config file was specified\nWill use default %s instead'% default_apiconfig)
+        api_config_file = default_apiconfig
+        
+    try:
+        return dict(json.load(open(api_config_file)))
+    except FileNotFoundError:
+        print("Cannot find API config file: %s" % api_config_file)
+        if api_config_file != default_apiconfig:
+            print('Cannot open %s config file\nWill use default %s instead'% (api_config_file, default_apiconfig))
+            return dict(json.load(open(default_apiconfig)))
+        else:
+            print('No working API server was specified!!! Goodbye')
+            return None
+
+
 class DataModel:
-    def __init__(self, url, username, password):
+    def __init__(self, *args,**kwargs):
+        '''
+        APIconfig - args[0]\n
+        no_mess - default True, if False your script becomes more verbose\n
+        connect2server - default True, set to False to run script using data in __pscache__ files instead of database
+        '''
+        APIconfig = dict(args[0])
+        my_kwargs = {'connect2server':True,'no_mess':True}
+        my_kwargs.update(kwargs)
+
         self.IdToPropType = dict()
         self.IdtoObjectType = dict()
         self.PropIdToDict = dict()
         self.RNEFnameToPropType = dict()
-        from requests.auth import HTTPBasicAuth
-        from requests import Session
-        from zeep.cache import SqliteCache
-        from zeep.transports import Transport
-        session = Session()
-        #session.verify = False # not recommended
-        session.auth = HTTPBasicAuth(username, password)
-        transport = Transport(cache=SqliteCache(), session=session)
-        from zeep import Client, Settings
-        settings = Settings(strict=False, xml_huge_tree=True)
-        #settings = zeep.Settings(extra_http_headers={'Authorization': 'Bearer ' + token})
-        self.logger = configure_logging(logging.getLogger(__name__))
-        try:
-            self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
-            self.__load_model()
-            print('New connection to Pathway Studio API server:\n%s as %s' % (url,username))
-        except Exception as error:
-            self.logger.error("Pathway Studio server connection failed: {error}".format(error=error))
-            raise ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
+        self.no_mess = my_kwargs.get('no_mess',True)
+        
+        if my_kwargs['connect2server']:
+            if not APIconfig: 
+                APIconfig = load_api_config()
+            url = APIconfig['ResnetURL']
+            username = APIconfig['PSuserName']
+            password = APIconfig['PSpassword']
+        
+            from requests.auth import HTTPBasicAuth
+            from requests import Session
+            from zeep.cache import SqliteCache
+            from zeep.transports import Transport
+            session = Session()
+            #session.verify = False # not recommended
+            session.auth = HTTPBasicAuth(username, password)
+            transport = Transport(cache=SqliteCache(), session=session)
+            from zeep import Client, Settings
+            settings = Settings(strict=False, xml_huge_tree=True)
+            #settings = zeep.Settings(extra_http_headers={'Authorization': 'Bearer ' + token})
+            self.logger = configure_logging(logging.getLogger(__name__))
+            if my_kwargs['connect2server']:
+                try:
+                    self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
+                    self.__load_model()
+                    if not self.no_mess:
+                        print('New connection to Pathway Studio API server:\n%s as %s' % (url,username))
+                except Exception as error:
+                    self.logger.error("Pathway Studio server connection failed: {error}".format(error=error))
+                    raise ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
 
 
     def __load_model(self):
@@ -89,6 +137,7 @@ class DataModel:
         -------
         {folder_id:folder}
         """
+        print('Loading folders tree from database')
         folders = self.SOAPclient.service.GetFoldersTree(0)
         id2folders = dict()
         for folder in folders:
@@ -116,7 +165,12 @@ class DataModel:
                 f.write(json.dumps(o) + '\n')
 
     def map_property_names_to_id(self, PropertyNames: list):
-        id_list = [self.IdToPropType[x]['Id'] for x in PropertyNames]
+        id_list = list()
+        for x in PropertyNames:
+            try:
+                id_list.append(self.IdToPropType[x]['Id'])
+            except KeyError:
+                continue
         if 'Name' not in PropertyNames:
             id_list.append(self.IdToPropType['Name']['Id'])
         return id_list
@@ -152,15 +206,40 @@ class DataModel:
 
     def oql_response(self, OQLquery, result_param):
         from zeep import exceptions
-        for i in range (0,10):
+        timeout = 300 # 300 sec is default timeout in zeep
+        max_iter = 10
+        start = time.time()
+        for i in range (0,max_iter):
             try:
                 result = self.SOAPclient.service.OQLSearch(OQLquery, result_param)
                 return result
-            except exceptions.Fault:
-                print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in 10 sec' % (OQLquery,i+2))
-                sleep(10)
+            except exceptions.TransportError as err:
+                if err.status_code == 504:
+                    print('\nSOAPclient session timed out after %s on %d iteration out of %d with GOQL query:\n%s' % 
+                            (execution_time(start),i+1,max_iter,OQLquery[:100]),flush=True)
+                    timeout = (i+2)*300 # 300 - default timeout in zeep
+                    print(f'\nWill make attempt #{i+2} with the same query after {timeout} seconds')
+                    self.SOAPclient.transport.load_timeout = timeout
+                    sleep(timeout)
+                    continue
+            except requests.exceptions.ChunkedEncodingError as cherr:
+                chunk_timeout = 10
+                print(f'{cherr}\nWill try again in {chunk_timeout} seconds')
+                sleep(chunk_timeout)
                 continue
-     
+            except exceptions.Fault:
+                connection_timeout = 10
+                print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in %d sec' % 
+                                                                (OQLquery[:200],i+1,connection_timeout))
+                sleep(connection_timeout)
+                continue
+        
+        if self.SOAPclient.transport.load_timeout > 300:
+            t = self.SOAPclient.transport.load_timeout
+            raise exceptions.TransportError(f'Timed out on GOQL query {OQLquery} after {t} seconds',status_code=504)
+        else:
+            raise exceptions.Fault(f'Could not reconnect after 10 attempts while executing GOQL query {OQLquery}')
+
 
     def result_get_data(self, result_param):
         for i in range (0,10):
@@ -172,6 +251,7 @@ class DataModel:
                          (str(result_param.ResultRef),i+2))
                 sleep(10)
                 continue   
+
 
     def create_result_param(self, property_names=None):
         property_names = ['Name'] if property_names is None else property_names

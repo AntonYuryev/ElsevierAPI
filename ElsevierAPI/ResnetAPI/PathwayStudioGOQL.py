@@ -15,7 +15,19 @@ class OQL:
                 else:
                     to_return = to_return + clean_name + separator
 
-        return to_return[:len(to_return) - 1]
+        return to_return[:-1]
+
+
+    @staticmethod
+    def join_prop_names(prop_names:list):
+        property_names = str()
+        for prop_name in prop_names:
+            if ' ' in prop_name:
+                property_names += '\"' + prop_name + '\",'
+            else:
+                property_names += prop_name + ','
+        return property_names[:-1]
+
 
     @staticmethod
     def get_search_strings(PropertyNameList: list, PropValuesList: list):
@@ -44,7 +56,7 @@ class OQL:
                         "Otherwise please remove values with white spaces from either your value list or property name list")
                     return
             property_names = property_names + prop_name + ','
-        property_names = property_names[:len(property_names) - 1]
+        property_names = property_names[:-1]
 
         return property_names, values
 
@@ -57,13 +69,14 @@ class OQL:
             prop_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
             oql_query = "SELECT Entity WHERE (" + prop_names + ") = (" + values + ')'
 
-        if len(only_object_types) > 0:
+        if only_object_types:
             object_types = OQL.join_with_quotes(only_object_types)
             oql_query = oql_query + ' AND objectType = (' + object_types + ')'
 
-        if MinConnectivity == 0: return oql_query
-        else: 
-            return oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
+        if MinConnectivity:
+            oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
+
+        return oql_query
 
     @staticmethod
     def get_group_by_props(PropertyValues: list, SearchByProperties: list):
@@ -87,7 +100,7 @@ class OQL:
             prop_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
             oql_query = "SELECT Relation WHERE (" + prop_names + ") = (" + values + ')'
 
-        if len(only_object_types) > 0:
+        if only_object_types:
             object_types = OQL.join_with_quotes(only_object_types)
             oql_query = oql_query + ' AND objectType = (' + object_types + ')'
 
@@ -106,7 +119,7 @@ class OQL:
             entity_query = '(' + prop_names + ') = (' + values + ')'
 
         search_query = ontology_query.format(entities=entity_query)
-        if len(only_object_types) > 0:
+        if only_object_types:
             object_types = OQL.join_with_quotes(only_object_types)
             search_query = search_query + ' AND objectType = (' + object_types + ')'
 
@@ -136,18 +149,19 @@ class OQL:
         else:
             opposite_direction = ''
 
-        if len(expand_by_rel_types) > 0:
-            if len(expand2neighbors) > 0:
+        if expand_by_rel_types:
+            if expand2neighbors:
                 expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + opposite_direction
                 expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
             else:
                 expand += " AND objectType = (" + expand_by_rel_types_str + ")"
         else:
-            if len(expand2neighbors) > 0:
+            if expand2neighbors:
                 expand += ' AND NeighborOf ' + opposite_direction
                 expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
 
         return expand
+
 
     @staticmethod
     def expand_entity(PropertyValues: list, SearchByProperties: list, expand_by_rel_types:list=None,
@@ -170,18 +184,19 @@ class OQL:
         else:
             opposite_direction = ''
 
-        if len(expand_by_rel_types) > 0:
-            if len(expand2neighbors) > 0:
+        if expand_by_rel_types:
+            if expand2neighbors:
                 expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + opposite_direction
                 expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
             else:
                 expand += " AND objectType = (" + expand_by_rel_types_str + ")"
         else:
-            if len(expand2neighbors) > 0:
+            if expand2neighbors:
                 expand += ' AND NeighborOf ' + opposite_direction + ' (SELECT Entity WHERE objectType = ('
                 expand += expand2neighbors_str + "))"
 
         return expand
+
 
     @staticmethod
     def get_neighbors(PropertyValues: list, SearchByProperties: list, expand_by_rel_types=None,
@@ -193,29 +208,21 @@ class OQL:
 
         property_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
         connect_to_str = " to (SELECT Entity WHERE (" + property_names + ") = (" + values + ")"
-        if len(expand_by_rel_types) > 0:
-            if len(expand2neighbors) > 0:
+        if expand_by_rel_types:
+            if expand2neighbors:
                 return "SELECT Entity WHERE objectType = (" + expand2neighbors_str + ") AND Connected by (SELECT Relation WHERE objectType = " + expand_by_rel_types_str + ")" + connect_to_str + ")"
             else:
                 return "SELECT Entity WHERE Connected by (SELECT Relation WHERE objectType= " + expand_by_rel_types_str + ")" + connect_to_str + ")"
         else:
-            if len(expand2neighbors) > 0:
+            if expand2neighbors:
                 return "SELECT Entity WHERE objectType = (" + expand2neighbors_str + ") AND Connected by (SELECT Relation WHERE NOT (URN = NULL))" + connect_to_str + ")"
             else:
                 # no ExpandWithRelationTypes specified and no ExpandToNeighborTypes specified -> get ALL neigbors
                 return "SELECT Entity WHERE Connected by (SELECT Relation WHERE NOT (URN = NULL))" + connect_to_str + ")"
 
     @staticmethod
-    def get_objects(by_ids:list):
-        return "SELECT Entity WHERE id = (" + OQL.id2str(by_ids) + ")"
-
-
-    @staticmethod
-    def get_drugs(for_targets_with_ids:list):
-        strings = [str(integer) for integer in for_targets_with_ids]
-        db_ids = ",".join(strings)
-        return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = (" + db_ids + ")) \
-            AND NeighborOf downstream (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs))"
+    def get_objects(by_dbids:list):
+        return "SELECT Entity WHERE id = (" + OQL.id2str(by_dbids) + ")"
 
 
     @staticmethod
@@ -224,10 +231,19 @@ class OQL:
 
 
     @staticmethod
+    def drugs4(targets_with_dbids:list):
+        strings = [str(integer) for integer in targets_with_dbids]
+        db_ids = ",".join(strings)
+        return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = (" + db_ids + ")) \
+            AND NeighborOf downstream (SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs))"
+
+
+    @staticmethod
     def get_reaxys_substances(ForTargetsIDlist: list):
         strings = [str(integer) for integer in ForTargetsIDlist]
         db_ids = ",".join(strings)
         return "SELECT Relation WHERE objectType = (DirectRegulation,Binding) AND NeighborOf upstream (SELECT Entity WHERE id = (" + db_ids + ")) AND Source = Reaxys"
+
 
     @staticmethod
     def connect_entities(PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list, PropertyValues2: list,
@@ -261,6 +277,7 @@ class OQL:
 
         return oql_query
 
+
     @staticmethod
     def connect_ids (idlist1: list, idlist2: list, connect_by_rel_types=None, rel_effect=None, RelDirection=''):
         rel_effect = [] if rel_effect is None else rel_effect
@@ -292,6 +309,7 @@ class OQL:
 
         return oql_query
 
+
     @staticmethod
     def find_targets(RegulatorsIDs: list, TargetIDs: list, relation_types=None):
         relation_types = [] if relation_types is None else relation_types
@@ -305,6 +323,7 @@ class OQL:
         oql_query += "AND NeighborOf downstream (SELECT Entity WHERE id = (" + reg_ids + ")) "
         oql_query += "AND NeighborOf upstream (SELECT Entity WHERE id = (" + target_ids + "))"
         return oql_query
+
 
     @staticmethod
     def get_ppi(obj_ids1: set, obj_ids2: set):

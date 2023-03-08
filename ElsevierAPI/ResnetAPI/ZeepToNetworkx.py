@@ -2,7 +2,7 @@ import networkx as nx
 from  .PathwayStudioGOQL import OQL
 from  .PathwayStudioZeepAPI import DataModel
 from  .NetworkxObjects import PSObject,PSRelation,len,REGULATORS,TARGETS,EFFECT
-from  .ResnetGraph import ResnetGraph
+from  .ResnetGraph import ResnetGraph, CHILDS 
 import math
 import time
 from datetime import timedelta
@@ -11,53 +11,93 @@ from datetime import timedelta
 class PSNetworx(DataModel):
     '''
     PSNetworx is not aware of retreived properties.\n
-    Properties for retreival must be passed to all functions explicitly
+    Property names for retrieval must be passed to all functions explicitly
     '''
-    def __init__(self, url, username, password):
-        super().__init__(url, username, password)
-        self.id2relation = dict()  # {relID:{node_id1,node_id2,PSRelation}} needs to be - Resnet relations may not be binary
+    def __init__(self, *args,**kwargs):
+        '''
+        Input
+        -----
+        APIconfig = args[0]
+        no_mess - default False, if True your script becomes more verbose\n
+        connect2server - default True, set to False to run script using data in __pscache__ files instead of database
+        '''
+        my_kwargs = dict(kwargs)
+        super().__init__(*args,**my_kwargs)
+        self.dbid2relation = dict()  # {relID:{node_id1,node_id2,PSRelation}} needs to be - Resnet relations may not be binary
         self.Graph = ResnetGraph()
-        self.ID2Children = dict()
+
 
     @staticmethod
     def _zeep2psobj(zeep_objects):
-        id2entity = dict()
-        if type(zeep_objects) == type(None):
-            return id2entity
-        for o in zeep_objects.Objects.ObjectRef:
-            ps_obj = PSObject.from_zeep(o)
-            obj_id = o.Id
-            id2entity[obj_id] = ps_obj
+        '''
+        Returns
+        -------
+        id2entity = {db_id:PSObject}
+        '''
+        dbid2entity = dict()
+        if type(zeep_objects) != type(None):
+            for o in zeep_objects.Objects.ObjectRef:
+                ps_obj = PSObject.from_zeep(o)
+                dbid2entity[ps_obj.dbid()] = ps_obj
 
-        for prop in zeep_objects.Properties.ObjectProperty:
-            obj_id = prop.ObjId
-         #   if obj_id == 72057594037935395:
-         #       print('')
-            prop_id = prop.PropId
-            prop_name = prop.PropName
-            if type(prop.PropValues) != type(None):
-                values = prop.PropValues.string
-                id2entity[obj_id][prop_id] = values
-                id2entity[obj_id][prop_name] = values
-                try:
-                    prop_display_name = prop.PropDisplayName
-                    id2entity[obj_id][prop_display_name] = values
-                except AttributeError:
-                    continue
+            for prop in zeep_objects.Properties.ObjectProperty:
+                dbid = prop.ObjId
+                #prop_id = prop.PropId
+                prop_name = prop.PropName
+                if type(prop.PropValues) != type(None):
+                    values = prop.PropValues.string
+                    #id2entity[db_id][str(prop_id] = values
+                    dbid2entity[dbid][prop_name] = values
+                    try:
+                        prop_display_name = prop.PropDisplayName
+                        dbid2entity[dbid][prop_display_name] = values
+                    except AttributeError:
+                        continue
 
-        return id2entity
+        return dbid2entity
 
     
     @staticmethod
-    def execution_time(execution_start):
-        return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
+    def execution_time(execution_start,remaining_iterations=None,number_of_iterations=None):
+        '''
+        Input
+        -----
+        if "number_of_iterations" is supplied assumes that "execution_start" is global start
+        otherwise assumes "execution_start" is the start of the current iteration if "remaining_iterations" is supplied
+        '''
+        delta = time.time() - execution_start
+        if type(number_of_iterations) != type(None):
+            passed_iterations = number_of_iterations-remaining_iterations
+            if passed_iterations:
+                remaining_time = delta*float(remaining_iterations/passed_iterations)
+            else:
+                remaining_time = 0
+            return "{}".format(str(timedelta(seconds=delta))), "{}".format(str(timedelta(seconds=remaining_time)))
+        elif type(remaining_iterations) != type(None):
+                remaining_time = delta*remaining_iterations
+                return "{}".format(str(timedelta(seconds=delta))), "{}".format(str(timedelta(seconds=remaining_time)))
+        else:
+            return "{}".format(str(timedelta(seconds=delta)))
+    
 
-
-    def _load_graph(self, zeep_relations, zeep_objects, add2self = True):
+    def __psrel2dict(self,rels:dict):
+        '''
+        Input
+        -----
+        rels = {dbid:PSRelation}
+        '''
+        for dbid, rel in rels.items():
+            try:
+                self.dbid2relation[dbid].merge_rel(rel)
+            except:
+                self.dbid2relation[dbid] = rel
+            
+        
+    def _load_graph(self, zeep_relations, zeep_objects, add2self=True, merge_data=False):
         new_graph = ResnetGraph()
         # loading entities and their properties
-        id2entity = self._zeep2psobj(zeep_objects)
-        new_graph.add_nodes(id2entity)
+        id2psobj = self._zeep2psobj(zeep_objects)
+        new_graph.add_nodes_from([(n.uid(),n.items()) for n in id2psobj.values()])
 
         new_relations = dict()
         if type(zeep_relations) != type(None):
@@ -91,8 +131,10 @@ class PSNetworx(DataModel):
             # loading connected entities from Links
             for l in zeep_relations.Links.Link:
                 rel_id = l['RelationId']
-                direction = l['Dir'] # 0:no arrow, 1:arrow to entity, -1:arrow from entity
-                link = (l['EntityId'], direction, l[EFFECT])
+                direction = l['Dir'] # 0:no arrow, 1:arrow to entity from relation, -1:arrow from entity to relation
+                graph_node = id2psobj[l['EntityId']]
+                #link = (l['EntityId'], direction, l[EFFECT])
+                link = (graph_node.uid(), direction, l[EFFECT])
 
                 if direction == 1:
                     if len(new_relations[rel_id].Nodes) < 2:
@@ -115,11 +157,15 @@ class PSNetworx(DataModel):
                 # sorting REGULATORS by id for speed
             except KeyError: pass
             
-            [new_graph.add_rel(rel) for rel in new_relations.values()]
+            [new_graph.add_rel(rel,merge=False) for rel in new_relations.values()]
             
         if add2self:
-            self.Graph.add_graph(new_graph)
-            self.id2relation.update(new_relations)
+            if merge_data:
+                self.Graph.add_graph(new_graph,merge=True)
+                self.__psrel2dict(new_relations)
+            else:
+                self.Graph = self.Graph.compose(new_graph)
+                self.dbid2relation.update(new_relations)
 
         return new_graph
 
@@ -140,7 +186,7 @@ class PSNetworx(DataModel):
             return self._load_graph(None, zeep_objects,add2self)
 
 
-    def _obj_id_by_oql(self, oql_query: str):
+    def _db_id_by_oql(self, oql_query: str):
         zeep_entities = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
         if type(zeep_entities) != type(None):
             obj_ids = set([x['Id'] for x in zeep_entities.Objects.ObjectRef])
@@ -148,95 +194,67 @@ class PSNetworx(DataModel):
         else:
             return set()
 
+    '''
+    def __oql2psobjs(self, oql_query:str):
+        """
+        Return
+        ------
+        {dbid:PSObject}
+        """
+        zeep_objects = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
+        if type(zeep_objects) != type(None):
+            return self._zeep2psobj(zeep_objects)
+        else:
+            return dict()
 
-    def _id2children_(self,parent_ids:list):
-        '''
+
+
+        
+    def __get_obj_by_props(self,propValues:list,search_by_properties=[],get_childs=True,only_obj_types=[]):
+        
+        obj_dbids = self.__get_obj_dbids_by_props(propValues,search_by_properties,get_childs,only_obj_types)
+        return self.get
+
+    
+    def __parent_dbid2children_(self,parent_dbids:list):
+        """
         Returns
         -------
         parent2children = {parent_id:[children_ids]}
 
         Updates
         -------
-        self.ID2Children with parent2children
-        '''
+        self.parent_dbid2children with parent2children
+        """
         parent2children = dict()
-        for parent_id in parent_ids:
+        for parent_id in parent_dbids:
             query_ontology = OQL.get_childs([parent_id],['id'])
-            children_ids = list(self._obj_id_by_oql(query_ontology))
+            children_ids = list(self._db_id_by_oql(query_ontology))
             parent2children[parent_id] = children_ids
 
-        self.ID2Children.update(parent2children)
+        self.parent_dbid2children.update(parent2children)
         return parent2children
 
-
-    def _get_obj_ids_by_props(self, propValues: list, search_by_properties=[], get_childs=True,
-                             only_obj_types=[]):
-        '''
-        Loads
-        -----
-        self.ID2Children if get_childs == True  
-
-        Returns
-        -------
-        {database_ids} for all parents and children combined
-        '''
-        if not search_by_properties: search_by_properties = ['Name','Alias']
-        query_node = OQL.get_entities_by_props(propValues, search_by_properties, only_obj_types)
-        parent_ids = self._obj_id_by_oql(query_node)
-
-        if get_childs:
-            parent2children = self._id2children_(parent_ids)
-            all_ids = parent_ids
-            for parent_id, children_ids in parent2children.items():
-                all_ids.add(parent_id)
-                all_ids.update(children_ids)
-            return all_ids
-        else:
-            return parent_ids
-
-
-    def get_children(self, parent_ids:list):
-        '''
-        Returns
-        -------
-        ids of children of parents with parent_ids
-
-        Loads
-        -----
-        self.ID2Children
-        '''
-        child_ids = set()
-        for parent_id in parent_ids:
-            try:
-                children = list(self.ID2Children[parent_id])
-                child_ids.update(children)
-            except KeyError:
-                query_ontology = OQL.get_childs([parent_id],['id'])
-                children = list(self._obj_id_by_oql(query_ontology))
-                self.ID2Children[parent_id] = children
-                child_ids.update(children)
-
-        return list(child_ids)
-
-
-    def get_children_props(self, for_psobjs:list, prop_name:str):
+        
+    def __load_children_props(self, for_psobjs:list, prop_name:str):
         """
         finds children of for_psobjs and then returns their annotation by prop_name together with for_psobjs annotation
+        used to get gene names of members of FunctionalClass or any other complex entity
         """
         psobjs_prop_lists = [x[prop_name] for x in for_psobjs] 
         psobjs_props = [prop for x in psobjs_prop_lists for prop in x]
         children_props = list()
-        psobjs_ids = [x['Id'][0] for x in for_psobjs]
-        children_ids = self.get_children(psobjs_ids) # finds children in cache for the enzyme
+        psobjs_ids = [x.id()for x in for_psobjs]
+        children_ids = self.load_children4(psobjs_ids) # finds children in cache for the enzyme
         if children_ids:
-            children_prop_lists = [x[prop_name] for nodeid,x in self.Graph.nodes(data=True) if x['Id'][0] in children_ids]
+            children_prop_lists = [x[prop_name] for nodeid,x in self.Graph.nodes(data=True) if x.id() in children_ids]
             children_props = [prop for x in children_prop_lists for prop in x]
                   
         return list(set(psobjs_props + children_props))
-
+    '''
 
     def find_drugs(self, for_targets_with_ids: list, REL_PROPS: list, ENTITY_PROPS: list):
-        oql_query = OQL.get_drugs(for_targets_with_ids)
+        oql_query = OQL.drugs4(for_targets_with_ids)
         zeep_relations = self.get_data(oql_query, REL_PROPS)
         if type(zeep_relations) != type(None):
             obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
@@ -447,28 +465,28 @@ class PSNetworx(DataModel):
         """
          
         rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = \'{pathway}\')'
-        subgraph_relation_ids = set()
+        subgraph_relation_dbids = set()
         for pathway_prop in by_pathway_props:
-            loaded_node_ids = set(self.Graph.nodes())
-            loaded_relation_ids = set(self.Graph._relations_ids())
+            loaded_node_ids = set(self.Graph.dbids4nodes())
+            loaded_relation_ids = set(self.Graph.dbids4nodes())
 
             rel_q = rel_query.format(propName=in_prop_type,pathway=pathway_prop)
             pathway_id_only_graph = self.load_graph_from_oql(rel_q,[],[],get_links=True,add2self=False)
-            pathway_relation_ids = set(pathway_id_only_graph._relations_ids())
-            subgraph_relation_ids.update(pathway_relation_ids)
-            new_relation_ids = pathway_relation_ids.difference(loaded_relation_ids)
+            pathway_relation_dbids = set(pathway_id_only_graph.relation_dbids())
+            subgraph_relation_dbids.update(pathway_relation_dbids)
+            new_relation_ids = pathway_relation_dbids.difference(loaded_relation_ids)
     
             if new_relation_ids:
                 oql_query = OQL.get_relations_by_props(list(new_relation_ids),['id'])
                 new_relation_graph = self.load_graph_from_oql(oql_query,relprops2load)
                 # new_relation_graph is now fully loaded with desired rel_props
                 # still need desired props for new nodes that did not exist in self.Graph
-                new_nodes_ids = set(new_relation_graph.nodes()).difference(loaded_node_ids)
+                new_nodes_ids = set(new_relation_graph.dbids4nodes()).difference(loaded_node_ids)
                 if new_nodes_ids:
                     entity_query = OQL.get_objects(list(new_nodes_ids))
                     self.load_graph_from_oql(entity_query,[],entprops2load,get_links=False)
         
-        rels4subgraph = [rel for i,rel in self.id2relation.items() if i in subgraph_relation_ids]
+        rels4subgraph = [rel for i,rel in self.dbid2relation.items() if i in subgraph_relation_dbids]
         return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
         return return_subgraph
-
+    

@@ -1,7 +1,7 @@
-from math import log2
+from math import log2, isnan
 import time
 from .ResnetGraph import ResnetGraph,PSObject
-from ..pandas.panda_tricks import df, pd
+from ..pandas.panda_tricks import df, pd, NaN
 from  .PathwayStudioZeepAPI import DataModel
 import scipy.stats as stats
 from datetime import timedelta
@@ -10,9 +10,9 @@ class Sample(PSObject):
 
     def __init__(self,dic=dict()):
         super().__init__(dic)
-        self.data = df(columns=['value','pvalue'])
-        self.data.astype({'value': 'float64'}).dtypes
-        self.data.astype({'pvalue': 'float64'}).dtypes
+        data_pd = pd.DataFrame(columns=['value','pvalue'])
+        data_pd = data_pd.astype({'value': 'float64','pvalue': 'float64'}).dtypes
+        self.data = df(data_pd)
 
 
     def copy(self, with_data=True):
@@ -27,7 +27,7 @@ class Sample(PSObject):
             return self['hasPvalue']
         except KeyError:
             haspval = not self.data['pvalue'].dropna().empty
-            self['hasPvalue'] = haspval
+            self['hasPvalue'] = [haspval]
             return haspval
 
 
@@ -79,9 +79,9 @@ class Experiment(PSObject):
             urns = ['']*len(identifiers)
             self.identifiers = df.from_dict({identifier_name:identifiers,'URN':urns})
         else:
-            self.identifiers = df(columns=['OriginalGeneID','URN'])
-            self.identifiers.astype({'OriginalGeneID': 'object'}).dtypes
-            self.identifiers.astype({'URN': 'object'}).dtypes
+            identifiers_pd = pd.DataFrame(columns=['OriginalGeneID','URN'])
+            identifiers_pd = identifiers_pd.astype({'OriginalGeneID': 'object','URN': 'object'}).dtypes
+            self.identifiers = df(identifiers_pd)
 
         [self._add_sample(s) for s in samples]
 
@@ -100,6 +100,12 @@ class Experiment(PSObject):
 
 
     def identifier_name(self):
+        '''
+        Return
+        ------
+        name of the first column in self.identifiers\n
+        This name must be identical to property name of PSObject in ResnetGraph for mapping self.identifiers[URN] column
+        '''
         try:
             return self.identifiers.columns[0]
         except KeyError:
@@ -133,7 +139,22 @@ class Experiment(PSObject):
             return [v for k,v in self.samples.items() if k in s_names]
         else:
             return [v for k,v in self.samples.items()]
-
+        
+    
+    def mask_by_pval(self, max_pval=0.05):
+        masked_experiment = Experiment(self)
+        masked_experiment.identifiers = df.copy_df(self.identifiers)
+        for sample in self.get_samples():
+            masked_counter = 0
+            sample_copy = sample.copy()
+            if sample_copy.has_pvalue():
+                for idx in sample_copy.data.index:
+                    if sample_copy.data.at[idx,'pvalue'] > max_pval:
+                        sample_copy.data.loc[idx,'value'] = NaN
+                        masked_counter += 1
+            masked_experiment.samples[sample['Name'][0]] = sample_copy
+            print(f'{masked_counter} rows out of {len(sample.data)} total in sample {sample.name()} were masked because their p-value was greater than {max_pval}')
+        return masked_experiment
 
 #################  CONSTRUCTORS CONSTRUCTORS CONSTRUCTORS  ###################################
     @classmethod
@@ -143,12 +164,12 @@ class Experiment(PSObject):
         """
         print('\nDownloading "%s" experiment' % experiment_name,flush=True)
         start = time.time()
-        ps_api = DataModel(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
+        ps_api = DataModel(APIconfig)
         experiment_zobj,experiment_identifiers,sample_values = ps_api._fetch_experiment_data(experiment_name,only_log_ratio_samples)
         
         psobj = PSObject.from_zeep_objects(experiment_zobj)
-        experiment = Experiment(psobj)
-        experiment.identifiers = experiment_identifiers
+        experiment = cls(psobj)
+        experiment.identifiers = df(experiment_identifiers)
 
         experiment.samples = dict()
         assert(len(experiment['SampleDefinitions'][0]['SampleDefinition']) == len(sample_values))
@@ -173,17 +194,36 @@ class Experiment(PSObject):
             experiment.samples[sample['Name'][0]] = sample
             sample_id += 1
 
-        print('Experiment %s was downloaded in %s' % (experiment_name,cls.execution_time(start)))
+        print('Experiment %s was downloaded in %s' % (experiment_name,Experiment.execution_time(start)))
         return experiment
 
 
     @classmethod
-    def from_file(cls,experiment_file_name:str,identifier_column=0,phenotype_rows=list(),
-                    header=0,data_type='LogFC',has_pvalue=True):
+    def from_file(cls,*args,**kwargs):
         """
-        reads files with .xlsx, .tsv, .txt extensions
-        data_type in ['LogFC', 'Intensity', 'LogIntensity', 'SignedFC']
+        Input
+        -----
+        filename = args[0], reads files with .xlsx, .tsv, .txt extensions\n
+        data_type from ['LogFC', 'Intensity', 'LogIntensity', 'SignedFC']\n
+        identifier_column - default 0\n
+        phenotype_rows - default []\n
+        header - default 0\n
+        has_pvalue - default True\n
+        sample_ids - defaults [], overrides "last_sample"
+        last_sample - column with last sample, default None. If experiment has p-value columns "last_sample" must point to the last p-value column\n
         """
+        experiment_file_name = str(args[0])
+        identifier_column=int(kwargs.get('identifier_column',0))
+        phenotype_rows=list(kwargs.get('phenotype_rows',[]))
+        header=int(kwargs.get('header',0))
+        data_type=str(kwargs.get('data_type','LogFC'))
+        has_pvalue=bool(kwargs.get('has_pvalue',True))
+        last_sample=kwargs.get('last_sample',None)
+        sample_ids = list(kwargs.get('sample_ids',[]))
+        if sample_ids:
+            last_sample = max(sample_ids)
+            if has_pvalue:
+                last_sample += 1
 
         if phenotype_rows: 
             exp_df = df.read(experiment_file_name,skiprows=phenotype_rows,header=header)
@@ -193,11 +233,10 @@ class Experiment(PSObject):
 
         experiment_name = experiment_file_name[:experiment_file_name.rfind('.')]
         experiment_name = experiment_name[experiment_name.rfind('/')+1:]
+        range_end = len(exp_df.columns) if type(last_sample) == type(None) else identifier_column+last_sample 
 
-        experiment = Experiment({'Name':[experiment_name]})
-        experiment.identifiers['OriginalGeneID'] = exp_df.iloc[:,identifier_column]
-
-        for i in range(identifier_column+1,len(exp_df.columns)):
+        samples = list()
+        for i in range(identifier_column+1,range_end):
             column_name = exp_df.columns[i]
             sample_name = column_name
             sample = Sample({'Name':[sample_name]})
@@ -216,16 +255,79 @@ class Experiment(PSObject):
                 sample['phenotype'] = sample_phenotypes
 
             if has_pvalue:
-                sample.data['value'] = exp_df[exp_df.columns[i]]
-                sample.data['pvalue'] = exp_df[exp_df.columns[i+1]]
-                sample['hasPValue'] = [0]
-                experiment.__add_sample(sample)
+                values = exp_df[exp_df.columns[i]].to_list()
+                pvalues = exp_df[exp_df.columns[i+1]].to_list()
+                sample.data = df.from_dict({'value':values,'pvalue':pvalues})
+                sample['hasPValue'] = [0] # tp make consistent with database annotations
+                samples.append(sample)
                 i += 1
             else:
-                sample.data['value'] = exp_df[exp_df.columns[i]]
-                experiment._add_sample(sample)
+                values = exp_df[exp_df.columns[i]].to_list()
+                sample.data = df.from_dict({'value':values})
+                samples.append(sample)
         
+        identifier_name = exp_df.columns[identifier_column]
+        identifiers = exp_df[identifier_name].to_list()
+        experiment = cls({'Name':[experiment_name]},identifier_name,identifiers,samples)
         return experiment
+
+
+    def map(self, using_id2objs:dict):
+        '''
+        Input
+        -----
+        identifier2objs = {identifier:[PSObject]} - dictionary mapping self.identifier_name() values to corresponding [PSObject]
+        '''
+        identifier_name = self.identifier_name()
+        identifiers = self.list_identifiers()
+
+        unmapped_identifiers = set(identifiers).difference(set(using_id2objs.keys()))
+        unmapped_str = '\n'.join(unmapped_identifiers)
+        print(f'Following {len(unmapped_identifiers)} identifiers out of {len(identifiers)} in {self.name()} experiment were not mapped:\n{unmapped_str}')
+
+        identifiers_columns = self.identifiers.columns.to_list()
+        #mapped_entities_df = df(columns = identifiers_columns)
+        identifiers_lst = list()
+        urn_lst = list()
+        for i in identifiers:
+            try:
+                psobjs = using_id2objs[i]
+                urns = [o.urn() for o in psobjs]
+                identifiers_lst += [i]*len(urns)
+                urn_lst += urns
+            except KeyError:
+                continue     
+        assert(len(identifiers_lst) == len(urn_lst))
+                
+        mapped_entities_df = df.from_dict({identifier_name:identifiers_lst,'URN':urn_lst})        
+        samples_pd = self.samples2pd()
+        mapped_data = mapped_entities_df.merge(samples_pd,'outer', on=identifier_name)
+        mapped_data = mapped_data.drop('URN_y', axis=1)
+        mapped_data.rename(columns={'URN_x':'URN'},inplace=True)
+
+        mapped_exp = Experiment(self)
+        mapped_exp.identifiers = df(mapped_data[identifiers_columns])
+
+        column_counter = len(identifiers_columns)
+        for idx, sample in enumerate(self.get_samples()):
+            mapped_sample = Sample(sample)
+            values = mapped_data.iloc[:,idx+column_counter].to_list()
+            if sample.has_pvalue():
+                pvalues = mapped_data.iloc[:,idx+column_counter+1].to_list()
+                mapped_sample.data = df.from_dict({'value':values,'pvalue':pvalues})
+            else:
+                mapped_sample.data = df.from_dict({'value':values})
+            mapped_exp._add_sample(mapped_sample)
+
+        print('%d out of %d entities were mapped to URNs in %s experiment'%
+                (len(mapped_exp.identifiers),len(self.identifiers),self.name()))
+
+        return mapped_exp
+
+
+    def map2(self,network:ResnetGraph,using_original_id2:str):
+        original_id2psobjs, uid2original_id = network.get_prop2obj_dic(using_original_id2)
+        return self.map(original_id2psobjs)
 
 
     def ttest(self,control_phenotype:str,case_phenotype:str):
@@ -291,22 +393,30 @@ class Experiment(PSObject):
         for idx in sample_pd.index:
             urn = sample_pd.loc[idx,'URN']
             value = sample_pd.loc[idx,'value']
-            pvalue = sample_pd.loc[idx,'pvalue']
-            urn2value[urn] = [(value,pvalue)]
+            if not isnan(value):
+                pvalue = sample_pd.loc[idx,'pvalue']
+                urn2value[urn] = [(value,pvalue)]
 
         return self.name4annotation(sample), urn2value
 
 
-    def annotate(self,graph:ResnetGraph,with_values_from_sample_names:list=[],with_values_from_sample_ids:list=[]):
+    def annotated_subnetwork(self,graph:ResnetGraph,with_values_from_sample_names:list=[],with_values_from_sample_ids:list=[]):
         '''
-        Annotates nodes in graph with values from self using node URN for mapping
+        Returns
+        -------
+        ResnetGraph with nodes annotated with "self.name4annotation(sample)" properties for all samples
+        Nodes that do not have value in all samples and are not regulators in input graph are removed
         '''
-        if graph:
-            for sample in self.get_samples(with_values_from_sample_names,with_values_from_sample_ids):
-                node_annotation_name, urn2expvalue = self.__make_dict4annotation(sample)
-                graph.set_node_annotation(urn2expvalue,node_annotation_name)
-                #graph.urn2obj = {o['URN'][0]:o for i,o in graph.nodes(data=True)}
-            
+        graph_copy = graph.copy()
+        urns_with_values = set()
+        for sample in self.get_samples(with_values_from_sample_names,with_values_from_sample_ids):
+            node_annotation_name, urn2expvalue = self.__make_dict4annotation(sample)
+            graph_copy.set_node_annotation(urn2expvalue,node_annotation_name)
+            urns_with_values.update(urn2expvalue.keys())
+
+        subnetwork_name = graph.name+f' for "{self.name()}"'
+        return graph_copy.regulatory_network_urn(urns_with_values,subnetwork_name)
+
 
     def annotate_objs(self,urn2obj:dict,sample_names=[],sample_ids=[]):
         for sample in self.get_samples(sample_names,sample_ids):

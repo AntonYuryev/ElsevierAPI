@@ -12,7 +12,6 @@ class PSPathway(PSObject):
         
         self.update(dic)
         self.graph.update(g)
-        self.graph.urn2obj.update(g.urn2obj)
         self.graph.urn2rel.update(g.urn2rel)
 
 
@@ -43,11 +42,11 @@ class PSPathway(PSObject):
             try:
                 return self['#'+obj_type]
             except KeyError:
-                obj_count = len([o for o in self.graph.urn2obj.values() if obj_type in o['ObjTypeName']])
+                obj_count = len([obj_t for i,obj_t in self.graph.nodes.data('ObjTypeName') if obj_type in obj_t['ObjTypeName']])
                 self['#'+obj_type] = obj_count
                 return obj_count
         else:
-            return len(self.graph.urn2obj)
+            return len(self.graph)
 
 
     def merge_pathway(self, other:"PSPathway"):
@@ -64,28 +63,30 @@ class PSPathway(PSObject):
         self.graph = self.graph.compose(other.graph)
 
 
-    def member_ids(self,with_values:list=[],in_properties:list=['ObjTypeName']):
-        return self.graph.get_node_ids(with_values,in_properties)
+    def member_dbids(self,with_values:list=[],in_properties:list=['ObjTypeName']):
+        return self.graph.dbids4nodes(with_values,in_properties)
 
     
-    def get_members(self,with_values:list=[],in_properties:list=['ObjTypeName']):
-        node_ids = self.member_ids(with_values,in_properties)
-        if node_ids:
-            return [PSObject(ddict) for i,ddict in self.graph.nodes(data=True)]
+    def get_members(self,with_values:list=[],in_properties=['ObjTypeName']):
+        return self.graph.psobjs_with(in_properties,with_values)
 
 
-    def member_ids(self,with_values:list=[],in_properties:list=['ObjTypeName']):
-        return self.graph.get_node_ids(with_values,in_properties)
+    def props2rnef(self):
+        props_element = et.Element('properties')
+        for prop_name,prop_val in self.items():
+            for val in prop_val:
+                et.SubElement(props_element, 'attr', {'name':str(prop_name), 'value':str(val)})
+        return str(et.tostring(props_element,encoding='utf-8',xml_declaration=True).decode("utf-8"))
 
 
-    def to_xml(self,ent_props:list,rel_props:list,add_props2rel=dict(),add_props2pathway=dict(),format='RNEF',as_batch=True, prettify=True):
+    def to_xml_s(self,ent_props:list,rel_props:list,add_props2rel=dict(),add_props2pathway=dict(),format='RNEF',as_batch=True, prettify=True):
         '''
         Returns
         -------
         pathway XML string. supports RNEF and SBGN XML formats
         '''
         self.graph.load_references()
-        graph_xml = self.graph.rnef(ent_props,rel_props,add_props2rel,add_props2pathway)
+        graph_xml = self.graph.to_rnefstr(ent_props,rel_props,add_props2rel,add_props2pathway)
         pathway_xml = et.fromstring(graph_xml)
 
         pathway_props = et.SubElement(pathway_xml, 'properties')
@@ -136,6 +137,15 @@ class PSPathway(PSObject):
 
         return str(pathway_xml_str)
 
+
+    def rnef2file(self,fname, ent_props:list,rel_props:list,add_props2rel=dict(),add_props2pathway=dict()):
+        self.update(add_props2pathway)
+        with open(fname,'w',encoding='utf-8') as f:
+            f.write('<batch>\n') 
+            props_str = self.props2rnef()
+            f.write(props_str+'\n')
+            self.graph.rnef2sections(f,ent_props,rel_props,add_props2rel,self.graph.number_of_edges())
+            f.write('</batch>') 
 
  
             

@@ -1,21 +1,18 @@
-from .ResnetAPISession import APISession, time, len, NO_REL_PROPERTIES,ONLY_REL_PROPERTIES,SNIPPET_PROPERTIES
+from .ResnetAPISession import APISession, time, len, ALL_PROPERTIES
 from .Resnet2rdf import ResnetRDF
-from .ResnetGraph import ResnetGraph,RESNET
-import glob
-from .NetworkxObjects import ENTITY_IDENTIFIERS, PSObject
-from .PSPathway import PSPathway
+from .ResnetGraph import ResnetGraph,PSPathway,PSObject,RESNET
 from .rnef2sbgn import rnef2sbgn_str, minidom
 import xml.etree.ElementTree as et
 from urllib.parse import quote
-from concurrent.futures import ThreadPoolExecutor
 
 PATHWAY_ID = 'Pathway ID'
 
 class FolderContent (APISession): 
     pass
-    def __init__(self, APIconfig:dict, preload_folder_tree=True,what2retrieve=SNIPPET_PROPERTIES):
+    repair_pathways = False
+    def __init__(self, APIconfig:dict, preload_folder_tree=True,what2retrieve=ALL_PROPERTIES):
         """
-        self.id2pathway = {id:PSObject} is loaded on demand
+        self.id2pathway = {id:PSObject} is loaded on demand 
         self.id2group = {id:PSObject} is loaded on demand
         self.id2result = {id:PSObject} is loaded on demand\n
         loading is done by self::get_objects_from_folders() or self::load_containers()
@@ -23,51 +20,44 @@ class FolderContent (APISession):
         super().__init__(APIconfig,what2retrieve)
         self.PageSize = 1000
         self.DumpFiles = []
-        self.id2folder = {}
+        self.id2folder = self.load_folder_tree() #{folder_id:folder}
+        self.id2pathway = dict() # self.id2pathway = {id:PSPathway}
+        self.id2group = dict() # self.id2pathway = {id:PSObject}
+        self.id2result = dict() # self.id2result = {id:PSObject}
         if preload_folder_tree:
             self.id2folder = self.load_folder_tree() # {folder_id:folder_zobj, folder_name:folder_zobj}
         #self.reference_cache_size = 1000000
           
 
-    def __folder_id(self,folder_name:str) -> list:
-        if not hasattr(self, "id2folder"): 
-            self.id2folder = self.load_folder_tree()
-
+    def get_folder_id(self,folder_name:str) -> list:
         for k,v in self.id2folder.items():
             if v['Name'] == folder_name:
                 return k
-
         return None
 
 
-    def load_subfolders(self, subfolder_ids:list):
-        # FolderIds - list of folder IDs
-        if not hasattr(self, "id2folder"): 
-            self.id2folder = self.load_folder_tree()
-
+    def get_subfolders(self, folder_ids: list):
         subfolders_ids = set()
-        for folder_id in subfolder_ids:
+        for folder_id in folder_ids:
             folder = self.id2folder[folder_id]
             if type(folder['SubFolders']) != type(None):
                 subfolders_ids.update(folder['SubFolders']['long'])
-
         return subfolders_ids
 
 
-    def subfolder_ids(self, folder_name:str, include_parent=True):
+    def get_subfolders_recursively(self, FolderId):
         """
         Returns
         -------
         {subfolders_ids+parent_folder_id}
         """
-        FolderId = self.__folder_id(folder_name)
-        accumulate_subfolder_ids = {FolderId} if include_parent else set()
-        subfolder_ids = set(self.load_subfolders([FolderId]))
+        accumulate_subfolder_ids = {FolderId}
+        subfolder_ids = set(self.get_subfolders([FolderId]))
         while len(subfolder_ids) > 0:
             accumulate_subfolder_ids.update(subfolder_ids)
             subs = set()
             for db_id in subfolder_ids:
-                subs.update(self.load_subfolders([db_id]))
+                subs.update(self.get_subfolders([db_id]))
             subfolder_ids = subs
 
         return accumulate_subfolder_ids
@@ -81,7 +71,7 @@ class FolderContent (APISession):
         if not hasattr(self, "id2folder"): 
             self.id2folder = self.load_folder_tree()
 
-        folder_id = self.__folder_id(folder_name)
+        folder_id = self.get_folder_id(folder_name)
         child2parent = {folder_id:folder_id}
         parent2child = PSObject(dict())
 
@@ -111,24 +101,23 @@ class FolderContent (APISession):
         retreives entire folder tree stricture from database 
         including all folder objects
         if from_folders is not specidied works for ~40sec
+
         Updates
         -----
         self.id2folder = {id:PSObject}
         self.id2pathway = {id:PSObject}
         self.id2group = {id:PSObject}
         self.id2result = {id:PSObject}
+
         Returns
         -------
-        urn2pathway = {urn:PSObject}
+        urn2pathway = {urn:(PSObject or PSPathway)}
         """
         if property_names is None: property_names = ['Name']
         print('Retrieving identifiers of all pathways from database may take couple minutes')
 
-        if not hasattr(self,'id2folder'): self.id2folder = self.load_folder_tree()
+        if not self.id2folder: self.id2folder = self.load_folder_tree()
 
-        self.id2pathway = dict() # self.id2pathway = {id:PSObject}
-        self.id2group = dict() # self.id2pathway = {id:PSObject}
-        self.id2result = dict() # self.id2result = {id:PSObject}
         urn2pathway = dict()
         folder_objs =  [PSObject.from_zeep(folder) for folder in self.id2folder.values()]
         if from_folders:
@@ -142,9 +131,11 @@ class FolderContent (APISession):
                     try:
                         self.id2pathway[Id].update_with_value('Folders', folder['Name'])
                     except KeyError:
-                        psObj['Folders'] = [folder['Name']]
-                        self.id2pathway[Id] = psObj
-                        urn2pathway[psObj['URN'][0]] = psObj
+                        #pathway_graph = self.pathway_components([Id],'id',self.relProps,self.entProps)
+                        ps_pathway = PSPathway(psObj,ResnetGraph())
+                        ps_pathway['Folders'] = [folder['Name']]
+                        self.id2pathway[Id] = ps_pathway
+                        urn2pathway[ps_pathway['URN'][0]] = ps_pathway
                 elif psObj['ObjTypeName'][0] == 'Group':
                     try:
                         self.id2group[Id].update_with_value('Folders', folder['Name'])
@@ -163,9 +154,9 @@ class FolderContent (APISession):
         return urn2pathway
 
 
-    def get_pathway(self, pathway_dbid,pathway_urn:str=None,pathway_name:str=None,
-                    format='RNEF',put2folder='', add_props2rel:dict={}, 
-                    add_props2pathway:dict={}, as_batch=True, prettify=True):
+    def get_pathway(self, pathway_id,pathway_urn:str=None,pathway_name:str=None,
+                    format='RNEF',put2folder='', add_props2rel=dict(), 
+                    add_props2pathway=dict(), as_batch=True, prettify=True):
         """
         Input
         -----
@@ -176,25 +167,25 @@ class FolderContent (APISession):
         'as_batch' must be True to output returned output string to single rnef file
         if 'as_batch'=False output strings can be concatenated into one file.  <batch> element must be added after concatenation
         prettify - uses minidom to prettify xml output  
+
         Returns
         -------
         tuple ResnetGraph, XML "format" string
         """
-        
-        pathway_graph = self.pathway_components([pathway_dbid],'id',self.relProps,self.entProps)
+
+        #pathway_graph = self.pathway_components([pathway_id],'id',self.relProps,self.entProps)
         
         if format == 'JSON-LD':
             return pathway_graph, ResnetRDF.fromResnetGraph(pathway_graph).to_jsons()
-        elif format == 'RNEF':
-            return pathway_graph, self.pathway2xml(pathway_dbid,pathway_graph,pathway_urn,pathway_name,
-                    format,put2folder, add_props2rel,add_props2pathway, as_batch, prettify)
         else:
-            return pathway_graph,''
+            return pathway_graph, self.pathway2xml(pathway_id,pathway_graph,pathway_urn,pathway_name,
+                    format,put2folder, add_props2rel,add_props2pathway, as_batch, prettify)
 
 
+    '''
     def pathway2xml(self, pathway_id,pathway_graph:ResnetGraph, pathway_urn:str=None,pathway_name:str=None,
-                    format='RNEF',put2folder='', add_props2rel:dict={}, 
-                    add_props2pathway:dict={}, as_batch=True, prettify=True):
+                    format='RNEF',put2folder='', add_props2rel=dict(), 
+                    add_props2pathway=dict(), as_batch=True, prettify=True):
 
         if hasattr(self,'id2pathway'):
             if not isinstance(pathway_urn,str):
@@ -213,7 +204,7 @@ class FolderContent (APISession):
             pathway_name = 'no_name'
         
         pathway_graph.load_references()
-        graph_xml = self.to_rnef(pathway_graph,add_props2rel,add_props2pathway)
+        graph_xml = self.to_rnef(add_props2rel,add_props2pathway)
 
         import xml.etree.ElementTree as et
         rnef_xml = et.fromstring(graph_xml)
@@ -265,7 +256,7 @@ class FolderContent (APISession):
             (pathway_name, pathway_graph.number_of_nodes(),pathway_graph.number_of_edges(),pathway_graph.size(weight="weight")))
 
         return str(pathway_xml)
-
+    '''
 
     def get_group(self, group_id,group_urn:str=None,group_name:str=None, put2folder:str=None,as_batch=True, prettify=True):
         if hasattr(self,'id2group'):
@@ -386,40 +377,40 @@ class FolderContent (APISession):
         where PSObject is either Pathway, Group, Result
         """
         if property_names is None: property_names = ['Name']
-        if not hasattr(self,'id2folder'): self.id2folder = self.load_folder_tree()
-        if not hasattr(self,'id2pathway'): self.id2pathway = dict() # self.id2pathway = {id:PSObject}
-        if not hasattr(self,'id2group'): self.id2group = dict() # self.id2pathway = {id:PSObject}
-        if not hasattr(self,'id2result'): self.id2result = dict() # self.id2result = {id:PSObject}
-        dbid2objects = dict()
+        id2objects = dict()
         for fid in FolderIds:
             folder_name = self.id2folder[fid]['Name']
             zeep_objects = self.get_folder_objects_props(fid, property_names)
-            dbid2objs = self._zeep2psobj(zeep_objects)
-            for dbid, psObj in dbid2objs.items():
+            id2objs = self._zeep2psobj(zeep_objects)
+            for Id, psObj in id2objs.items():
                 if psObj['ObjTypeName'][0] == 'Pathway':
                     try:
-                        self.id2pathway[dbid].update_with_value('Folders', folder_name)
+                        self.id2pathway[Id].update_with_value('Folders', folder_name)
                     except KeyError:
-                            psObj['Folders'] = [folder_name]
-                            self.id2pathway[dbid] = psObj
-                    if with_layout:
-                        psObj['layout'] = self.get_layout(dbid)
+                        pathway_graph = self.pathway_components([Id],'id',self.relProps,self.entProps)
+                        ps_pathway = PSPathway(psObj,pathway_graph)
+                        ps_pathway['Folders'] = [folder_name]
+                        if with_layout:
+                            ps_pathway['layout'] = self.get_layout(Id)
+                        self.id2pathway[Id] = ps_pathway
+
                 elif psObj['ObjTypeName'][0] == 'Group':
                     try:
-                        self.id2group[dbid].update_with_value('Folders', folder_name)
+                        self.id2group[Id].update_with_value('Folders', folder_name)
                     except KeyError:
                             psObj['Folders'] = [folder_name]
-                            self.id2group[dbid] = psObj
+                            self.id2group[Id] = psObj
+
                 elif psObj['ObjTypeName'][0] == 'attributesSearch':
                     try:
-                        self.id2result[dbid].update_with_value('Folders', folder_name)
+                        self.id2result[Id].update_with_value('Folders', folder_name)
                     except KeyError:
                             psObj['Folders'] = [folder_name]
                             psObj['URN'] = ['urn:agi-pathway:'+quote(psObj['Name'][0])]
-                            self.id2result[dbid] = psObj
+                            self.id2result[Id] = psObj
 
-            dbid2objects.update(dbid2objs)
-        return dbid2objects
+            id2objects.update(id2objs)
+        return id2objects
 
 
     def folder_content(self,folder_id_or_name:int or str,parent_folder_name:str,skip_id:set=None,skip_urn:set=None,
@@ -429,29 +420,32 @@ class FolderContent (APISession):
         -----
         either folder_id or folder_name must be supplied
         if folder_id is supplied folder_name is retreived from database
+
         Updates
         -----
         self.id2folder = {id:PSObject}
-        self.id2pathway = {id:PSObject}
+        self.id2pathway = {id:PSPathway}
         self.id2group = {id:PSObject}
         self.id2result = {id:PSObject}
+
         Dumps
         -----
         Objects from "folder_id_or_name" into 'folder_name' inside 'parent_folder_name' located in "self.data_dir"
         if size of dump file exceeds 100000000, "rnef_xml" is splitted into several RNEF files\n
         dump RNEF files are named as: 'content of folder_name#',
         where # - dump file number
+
         Returns
         -------
         tuple new_pathway_counter, symlinks
         symlinks = {pathway_id : pathway_obj['URN'][0]}
         """
 
-        folder_id = self.__folder_id(folder_id_or_name) if isinstance(folder_id_or_name, str) else folder_id_or_name
+        folder_id = self.get_folder_id(folder_id_or_name) if isinstance(folder_id_or_name, str) else folder_id_or_name
         folder_name = self.id2folder[folder_id]['Name']
-        dbid2folder_obj = self.get_objects_from_folders([folder_id],self.entProps,with_layout=True)
-        if dbid2folder_obj:
-            print('Start downloading %d pathways from \"%s\" folder' % (len(dbid2folder_obj),folder_name))
+        id2folder_obj = self.get_objects_from_folders([folder_id],self.entProps,with_layout=True)
+        if id2folder_obj:
+            print('Start downloading %d pathways from \"%s\" folder' % (len(id2folder_obj),folder_name))
         else:
             print('Folder \"%s\" has no pathways' % folder_name)
             return 0, {}
@@ -462,39 +456,39 @@ class FolderContent (APISession):
         symlinks = dict()
         folder_download_start = time.time()
         write2folder = '' if parent_folder_name == folder_name else parent_folder_name
-        for dbid, folder_obj in dbid2folder_obj.items():
-            if not folder_obj['IsSymlink'][0]:
+        for pathway_id, pathway_obj in id2folder_obj.items():
+            if not pathway_obj['IsSymlink'][0]:
                 #printing pathways only symlinks should be printed at the end and only if they were not downloaded for another folder
                 start_time = time.time()
                 folder_object_counter += 1
                 if isinstance(skip_id,set):
-                    if dbid in skip_id:
-                        print('%s pathway was downloaded for another folder' % folder_obj['Name'][0])
+                    if pathway_id in skip_id:
+                        print('%s pathway was downloaded for another folder' % pathway_obj['Name'][0])
                         continue
                 if isinstance(skip_urn,set):
-                    if folder_obj['URN'][0] in skip_urn:
-                        print('%s pathway was downloaded for another folder' % folder_obj['Name'][0])
+                    if pathway_obj['URN'][0] in skip_urn:
+                        print('%s pathway was downloaded for another folder' % pathway_obj['Name'][0])
                         continue
 
-                if folder_obj['ObjTypeName'][0] == 'Pathway':
-                    pathway_graph, pathway_xml = self.get_pathway(dbid,add_props2rel=add_props2rel,add_props2pathway=add_props2pathway,as_batch=False)
-                elif folder_obj['ObjTypeName'][0] == 'Group':
-                    pathway_graph, pathway_xml = self.get_group(dbid, as_batch=False)
-                elif folder_obj['ObjTypeName'][0] == 'attributesSearch':
-                    pathway_graph, pathway_xml = self.get_result(dbid,add_props2rel=add_props2rel,add_props2pathway=add_props2pathway,as_batch=False)
+                if pathway_obj['ObjTypeName'][0] == 'Pathway':
+                    pathway_graph, pathway_xml = self.get_pathway(pathway_id,add_props2rel=add_props2rel,add_props2pathway=add_props2pathway,as_batch=False)
+                elif pathway_obj['ObjTypeName'][0] == 'Group':
+                    pathway_graph, pathway_xml = self.get_group(pathway_id, as_batch=False)
+                elif pathway_obj['ObjTypeName'][0] == 'attributesSearch':
+                    pathway_graph, pathway_xml = self.get_result(pathway_id,add_props2rel=add_props2rel,add_props2pathway=add_props2pathway,as_batch=False)
                 else:
-                    print ('%s folder has object with unknown type %s: id = %d' % (folder_name,folder_obj['ObjTypeName'][0],dbid))
+                    print ('%s folder has object with unknown type %s: id = %d' % (folder_name,pathway_obj['ObjTypeName'][0],pathway_id))
                     continue
 
                 self.rnefs2dump(pathway_xml,folder_name,write2folder,can_close=False)
                 new_pathway_counter += 1
-                if isinstance(skip_id,set):skip_id.add(dbid)
-                if isinstance(skip_urn,set):skip_urn.add(folder_obj['URN'][0])
+                if isinstance(skip_id,set):skip_id.add(pathway_id)
+                if isinstance(skip_urn,set):skip_urn.add(pathway_obj['URN'][0])
                 
                 print('%d out of %d objects in folder "%s" was downloaded in %s' %
-                    (folder_object_counter, len(dbid2folder_obj),folder_name, self.execution_time(start_time)))
+                    (folder_object_counter, len(id2folder_obj),folder_name, self.execution_time(start_time)))
             else:
-                symlinks[dbid] = folder_obj['URN'][0]
+                symlinks[pathway_id] = pathway_obj['URN'][0]
 
             #printing folder object membership
             folder_resnet = et.Element('resnet')
@@ -505,16 +499,16 @@ class FolderContent (APISession):
             et.SubElement(xml_node_folder, 'attr', {'name':'NodeType', 'value':'Folder'})
             et.SubElement(xml_node_folder, 'attr', {'name':'Name', 'value':folder_name})
 
-            pathway_urn = folder_obj['URN'][0]
+            pathway_urn = pathway_obj['URN'][0]
             pathway_local_id = 'P'+str(folder_object_counter)
             folder_pathway_node = et.SubElement(folder_nodes, 'node', {'local_id':pathway_local_id, 'urn':pathway_urn})
             et.SubElement(folder_pathway_node, 'attr', {'name': 'NodeType', 'value': 'Pathway'})
-            et.SubElement(folder_pathway_node, 'attr', {'name': 'Name', 'value': folder_obj['Name'][0]})
+            et.SubElement(folder_pathway_node, 'attr', {'name': 'Name', 'value': pathway_obj['Name'][0]})
             
             control_local_id = 'L'+str(folder_object_counter)
             member_control = et.SubElement(member_controls, 'control', {'local_id':control_local_id})
             et.SubElement(member_control, 'attr', {'name':'ControlType', 'value':'MemberOf'})
-            if folder_obj['IsSymlink'][0] == True:
+            if pathway_obj['IsSymlink'][0] == True:
                 et.SubElement(member_control, 'attr', {'name':'Relationship', 'value':'symlink'})
             et.SubElement(member_control, 'link', {'type':'in', 'ref':pathway_local_id})
             et.SubElement(member_control, 'link', {'type':'out', 'ref':folder_local_id})
@@ -527,14 +521,14 @@ class FolderContent (APISession):
         return new_pathway_counter, symlinks
 
 
-    def __make_cache_dir(self, root_folder_id):
+    def make_cache_dir(self, top_folder_id):
         """
         Creates
         -------
-        directory structure in self.data_dir mirroring foler structure in database
+        directory structure in self.data_dir mirroring foler structur in database
         """
-        subfolder_ids = self.load_subfolders([root_folder_id])
-        subfolders_dict = {root_folder_id:subfolder_ids} if subfolder_ids else dict()
+        subfolder_ids = self.get_subfolders([top_folder_id])
+        subfolders_dict = {top_folder_id:subfolder_ids} if subfolder_ids else dict()
 
         while subfolders_dict:
             subs = dict()
@@ -542,16 +536,16 @@ class FolderContent (APISession):
                 parent_folder_name = self.id2folder[parent_id]['Name']
                 self.dump_path(parent_folder_name)
                 for subfolder_id in subfolder_ids:
-                    subsub_folder_ids = self.load_subfolders([subfolder_id])
+                    subsub_folder_ids = self.get_subfolders([subfolder_id])
                     if subsub_folder_ids:
-                        subs.update({subfolder_id : self.load_subfolders([subfolder_id])})
+                        subs.update({parent_id : self.get_subfolders([subfolder_id])})
 
                     subfolder_name = self.id2folder[subfolder_id]['Name']
                     self.dump_path(subfolder_name,parent_folder_name)
             subfolders_dict = subs
 
 
-    def __subfolders_rnef(self, root_folder_name:str):
+    def __subfolders_rnef(self, top_folder_name:str):
         """
         Returns
         -------
@@ -559,9 +553,9 @@ class FolderContent (APISession):
 
         Writes 
         ------
-        folder tree in RNEF format to self.data_dir/root_folder_name
+        folder tree RNEF to self.data_dir/top_folder_name
         """
-        child2parent, parent2child = self.get_subfolder_tree(root_folder_name)
+        child2parent, parent2child = self.get_subfolder_tree(top_folder_name)
         subtree_xml = str()
 
         for parent_id, child_ids in parent2child.items():
@@ -586,76 +580,70 @@ class FolderContent (APISession):
                 et.SubElement(xml_control, 'link', {'type':'in', 'ref':child_local_id})
                 et.SubElement(xml_control, 'link', {'type':'out', 'ref':parent_local_id})
 
-            unpretty_xml = et.tostring(folder_resnet,encoding='utf-8',xml_declaration=False).decode("utf-8")
-            subtree_xml += self.pretty_xml(unpretty_xml,no_declaration=True)
+            subtree_xml = et.tostring(folder_resnet,encoding='utf-8',xml_declaration=False).decode("utf-8")
+            subtree_xml = self.pretty_xml(subtree_xml,no_declaration=True)
 
-        self.__make_cache_dir(self.__folder_id(root_folder_name))
-        self.rnefs2dump(subtree_xml,root_folder_name)
+            self.make_cache_dir(self.get_folder_id(top_folder_name))
+            self.rnefs2dump(subtree_xml,top_folder_name)
+
         return child2parent
 
 
-    def folder2rnef(self, root_folder_name:str,include_subfolders=True,add_props2rel=dict(),add_pathway_props=dict()):
+    def folder2rnef(self, top_folder_name:str,include_subfolders=True, add_props2rel:dict=None,add_pathway_props:dict=None):
         """
         Dumps
         -----
-        content of root_folder_name into RNEF file 'content of root_folder_name.rnef' located in 'self.data_dir'
+        content of top_folder_name into RNEF file 'content of top_folder_name.rnef' located in 'self.data_dir'
         """
         download_start_time = time.time()
         if not include_subfolders:
-            return self.folder_content(None,root_folder_name,add_props2rel=add_props2rel,add_pathway_props=add_pathway_props)
+            return self.folder_content(None,top_folder_name,add_props2rel=add_props2rel,add_pathway_props=add_pathway_props)
         else:
-            subfold2parentfold = self.__subfolders_rnef(root_folder_name)
+            child2parent = self.__subfolders_rnef(top_folder_name)
             #fetching pathways by subfolders
             download_counter = 0
             folder_counter = 0
             printed_pathway_ids = set()
             symlinks_ids = set()
         
-            for subfolder_id,parent_id in subfold2parentfold.items():
-            # child2parent has {top_folder_id:top_folder_id} to process pathways in root_folder_name
+            for folder_id,parent_id in child2parent.items():
+            # child2parent has {top_folder_id:top_folder_id} to process pathways in top_folder_name
                 parent_folder_name = self.id2folder[parent_id]['Name']
-                subfolder_name = self.id2folder[subfolder_id]['Name']
-                pathway_counter, symlinks = self.folder_content(subfolder_id,parent_folder_name,skip_id=printed_pathway_ids)
+                pathway_counter, symlinks = self.folder_content(folder_id,parent_folder_name,skip_id=printed_pathway_ids)
                 symlinks_ids.update(symlinks.keys())
                 download_counter += pathway_counter
                 folder_counter +=1
-                if pathway_counter:
-                    print('Downloaded %d pathways from %d out of %d folders in %s' % 
-                          (download_counter,folder_counter,len(subfold2parentfold),self.execution_time(download_start_time)))
-                    print('Relations cache has %d relations supported by %d references\n' % 
-                                     (self.Graph.number_of_edges(), self.Graph.weight()))
+                if pathway_counter > 0:
+                    print('Downloaded %d pathways from %d out of %d folders in %s' % (download_counter,folder_counter,len(child2parent),self.execution_time(download_start_time)))
+                    print('Relations cache has %d relations supported by %d references\n' % (self.Graph.number_of_edges(), self.Graph.weight()))
                 if self.Graph.weight() > self.reference_cache_size:
-                    print('Clearing cache due to large size: %d' % self.Graph.weight())
+                    print('Clearing cache due to size %d' % self.Graph.weight())
                     self.clear()
 
-            symlinks2print = symlinks_ids.difference(printed_pathway_ids)
-            if len(symlinks2print) > 0:
-                print('Will print %d pathways to support symlinks' % len(symlinks2print))
-                for pathway_id in symlinks2print:
-                    if pathway_id in self.id2pathway.keys():
-                        pathway_graph, pathway_xml = self.get_pathway(pathway_id, as_batch=False)
-                        self.rnefs2dump(pathway_xml,subfolder_name,parent_folder_name)
-                    elif pathway_id in self.id2group.keys():
-                        pathway_graph, group_xml = self.get_group(pathway_id, as_batch=False)
-                        self.rnefs2dump(group_xml,subfolder_name,parent_folder_name)
-                    elif pathway_id in self.id2result.keys():
-                        pathway_graph, result_xml = self.get_result(pathway_id, as_batch=False)
-                        self.rnefs2dump(result_xml,subfolder_name,parent_folder_name)
-                    else:
-                        continue
-            else:
-                print('No symlinks to print for folder %s' % subfolder_name)
-                
-            if subfolder_name == parent_folder_name:
-                self.close_rnef_dump(parent_folder_name)
-            else:
-                self.close_rnef_dump(subfolder_name,parent_folder_name)
+                symlinks2print = symlinks_ids.difference(printed_pathway_ids)
+                if len(symlinks2print) > 0:
+                    print('Will print %d pathways to support symlinks' % len(symlinks2print))
+                    for pathway_id in symlinks2print:
+                        if pathway_id in self.id2pathway.keys():
+                            pathway_graph, pathway_xml = self.get_pathway(pathway_id, as_batch=False)
+                            self.rnefs2dump(pathway_xml,top_folder_name,parent_folder_name)
+                        elif pathway_id in self.id2group.keys():
+                            pathway_graph, group_xml = self.get_group(pathway_id, as_batch=False)
+                            self.rnefs2dump(group_xml,top_folder_name,parent_folder_name)
+                        elif pathway_id in self.id2result.keys():
+                            pathway_graph, result_xml = self.get_result(pathway_id, as_batch=False)
+                            self.rnefs2dump(result_xml,top_folder_name,parent_folder_name)
+                        else:
+                            continue
+                else:
+                    print('No symlinks to print for folder %s' % top_folder_name)
+                self.close_rnef_dump(self.id2folder[folder_id]['Name'],parent_folder_name)
 
-        print("Complete download execution time: %s" % self.execution_time(download_start_time))
+        print("Total execution time: %s" % self.execution_time(download_start_time))
 
 
     @staticmethod
-    def __resnet_urns(rnef_file:str):
+    def __load_urns(rnef_file:str):
         urns = set()
         with open(rnef_file, "r", encoding='utf-8') as f:
             line = f.readline()
@@ -669,31 +657,28 @@ class FolderContent (APISession):
                         urn = line[urn_start:urn_end]
                         urns.add(urn)
                 line = f.readline()
-        print(f'Read \"{rnef_file}\" with {len(urns)} pathways')
+        print('Read \"%s\" with %d pathways' % (rnef_file,len(urns)))
         return urns
 
 
-    def resume_download(self, root_folder_name:str, last_downloaded_folder:str):
-        child2parent, parent2child = self.get_subfolder_tree(root_folder_name)
+    def resume_download(self, top_folder_name:str, last_downloaded_folder:str):
+        child2parent, parent2child = self.get_subfolder_tree(top_folder_name)
         subfolders = list(child2parent.keys())
         global_start = time.time()
         try:
-            last_downloaded_folder_id = self.__folder_id(last_downloaded_folder)
+            last_downloaded_folder_id = self.get_folder_id(last_downloaded_folder)
             start_folder_idx = subfolders.index(last_downloaded_folder_id)
             folder_counter = start_folder_idx+1
-            continue_from_dir =  self.filename4(root_folder_name)
-            listing = glob.glob(continue_from_dir+'*.rnef')
-            pathway_urns_printed = set()
-            [pathway_urns_printed.update(self.__resnet_urns(rnef)) for rnef in listing]
-            download_counter = len(pathway_urns_printed)
+            rnef_file_to_continue =  self.name_output(top_folder_name)
+            urns_printed = self.__load_urns(rnef_file_to_continue)
 
-            last_rnef = listing[-1]
-            print (f'Resuming download of {root_folder_name} folder from {last_rnef}')
+            download_counter = len(urns_printed)
+            print ('Resuming download of %s folder from %s' % (top_folder_name,last_downloaded_folder))
             symlinks_dict = dict()
-            with open(last_rnef, "a", encoding='utf-8') as f:
+            with open(rnef_file_to_continue, "a", encoding='utf-8') as f:
                 for i in range(start_folder_idx+1, len(subfolders)):
                     folder_id = subfolders[i]
-                    folder_xml, pathway_counter, symlinks = self.folder_content(folder_id,as_batch=False,skip_urn=pathway_urns_printed)
+                    folder_xml, pathway_counter, symlinks = self.folder_content(folder_id,as_batch=False,skip_urn=urns_printed)
                     f.write(folder_xml)
                     download_counter += pathway_counter
                     folder_counter +=1
@@ -701,14 +686,13 @@ class FolderContent (APISession):
                     if self.Graph.weight() > self.reference_cache_size:
                         print ('Clearing cache due to size %d' % self.Graph.weight())
                         self.clear()
-                    print('Downloaded %d pathways from %d out of %d folders in %s' % 
-                          (download_counter,folder_counter,len(child2parent),self.execution_time(global_start)))
+                    print('Downloaded %d pathways from %d out of %d folders in %s' % (download_counter,folder_counter,len(child2parent),self.execution_time(global_start)))
                     print('Graph cache has %d references\n' % self.Graph.weight())
 
                 symlinks_urns = set(symlinks_dict.values())
-                symlinks2print = symlinks_urns.difference(pathway_urns_printed)
+                symlinks2print = symlinks_urns.difference(urns_printed)
                 if len(symlinks2print) > 0:
-                    print(f'Will print {len(symlinks2print)} pathways to support symlinks')
+                    print('Will print %d pathways to support symlinks' % len(symlinks2print))
                     for pathway_urn in symlinks2print:
                         pathway_id = list(symlinks_dict.keys())[list(symlinks_dict.values()).index(pathway_urn)]
                         if pathway_id in self.id2pathway.keys():
@@ -725,7 +709,7 @@ class FolderContent (APISession):
                 else:
                     print('All pathways for symlinks were printed for other folders')
 
-                print(f'Resumed download was finished in {self.execution_time(global_start)}')
+                print('Resumed download was finished in %s' % self.execution_time(global_start))
                 f.write('</batch>')
         except ValueError:
             print ('Folder %s was not found in folder tree' % last_downloaded_folder)
@@ -736,7 +720,7 @@ class FolderContent (APISession):
         global_start = time.time()
         urn2pathway = self.load_containers(from_folders=from_folders) 
         # works 40 sec if "from_folders" is not specified
-        print(f'List of all pathways identifiers was retrieved in {self.execution_time(global_start)}')
+        print('List of all pathways identifiers was retrieved in %s' % self.execution_time(global_start))
         
         missedURNs = list()
         download_counter = 0
@@ -779,12 +763,8 @@ class FolderContent (APISession):
         return list(map(PSPathway.from_pathway,pathways2return))
 
 
-    def find_pathways(self, for_entities:list, in_folders:list):
+    def find_pathways(self, for_entity_ids:list, in_folders:list):
         """
-        Input
-        -----
-        [PSObject]
-
         Return
         -------
         {entity_id:PSObject},  where PSObject has 'Pathway ID' property
@@ -794,15 +774,15 @@ class FolderContent (APISession):
         self.id2pathway = {pathway_id:PSObject}.
         where PSObject['ObjTypeName'] == 'Pathway' with 'Folders' property containing folder names
         """
-        ent_dbids = list(map(str,ResnetGraph.dbids(for_entities)))
+        ent_ids = list(map(str,for_entity_ids))
         to_return = dict()
         for folder in in_folders:
-            folder_id = self.__folder_id(folder)
-            sub_folder_ids = self.subfolder_ids(folder_id)
+            folder_id = self.get_folder_id(folder)
+            sub_folder_ids = self.get_subfolders_recursively(folder_id)
             self.get_objects_from_folders(sub_folder_ids,self.entProps) # loads id2pathway
         
         for pathway_id in self.id2pathway.keys():
-            id2psobj = self.get_pathway_members([pathway_id],None,ent_dbids,['id'])
+            id2psobj = self.get_pathway_members([pathway_id],None,ent_ids,['id'])
             for id, psobj in id2psobj.items():
                 try:
                     to_return[id].update_with_value(PATHWAY_ID,pathway_id)
@@ -813,45 +793,33 @@ class FolderContent (APISession):
         return to_return
 
 
-    def folder2pspathways(self,folder_id_or_name:int or str,with_layout=True):
+    def folder2pspathways(self,folder_id_or_name:int or str):
         """
         Input
         -----
         Either "folder_id" or "folder_name" must be supplied. 
         If "folder_id" is supplied "folder_name" is retreived from database
+
         Returns
         -------
         list of PSPathway objects from folder_id_or_name annotated with 'resnet' and 'Folders' properties
         """
-        folder_id = self.__folder_id(folder_id_or_name) if isinstance(folder_id_or_name, str) else folder_id_or_name
+        folder_id = self.get_folder_id(folder_id_or_name) if isinstance(folder_id_or_name, str) else folder_id_or_name
         folder_name = self.id2folder[folder_id]['Name']
-        id2folder_obj = self.get_objects_from_folders([folder_id],self.entProps,with_layout)
+        id2folder_obj = self.get_objects_from_folders([folder_id],self.entProps,with_layout=True)
         if id2folder_obj:
             print('Start downloading %d pathways from \"%s\" folder' % (len(id2folder_obj),folder_name))
         else:
             print('Folder \"%s\" has no pathways' % folder_name)
             return list()
         
-        futures = list()
-        pathway_graphs = list()
-        thread_name = f'Loading_{len(id2folder_obj)}_pathways'
-        folder_objs = list()
-        with ThreadPoolExecutor(max_workers=len(id2folder_obj), thread_name_prefix=thread_name) as e: 
-            format = 'RNEF' if with_layout else ''
-            for dbid, folder_obj in id2folder_obj.items():
-                if folder_obj.objtype() == 'Pathway':
-                    futures.append(e.submit(self.get_pathway,dbid,'','',format,'',dict(),dict(),False))
-                    folder_objs.append(folder_obj)
-                
-            [pathway_graphs.append(f.result()) for f in futures]
-        
         pspathways2return = list()
-        for i in range(0,len(pathway_graphs)):
-            pathway_graph,pathway_xml = pathway_graphs[i]
-            folder_obj = folder_objs[i]
-            ps_pathway = PSPathway(dict(folder_obj),pathway_graph)
-            ps_pathway[RESNET] = pathway_xml
-            ps_pathway.update_with_value('Folders',folder_name)
-            pspathways2return.append(ps_pathway)
+        for pathway_id, pathway_obj in id2folder_obj.items():
+            if pathway_obj['ObjTypeName'][0] == 'Pathway':
+                pathway_graph, pathway_xml = self.get_pathway(pathway_id,as_batch=False)
+                ps_pathway = PSPathway(dict(pathway_obj),pathway_graph)
+                ps_pathway[RESNET] = pathway_xml
+                ps_pathway.update_with_value('Folders',folder_name)
+                pspathways2return.append(ps_pathway)
                 
         return pspathways2return

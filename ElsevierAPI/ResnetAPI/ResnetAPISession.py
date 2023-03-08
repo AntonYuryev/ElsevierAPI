@@ -1,19 +1,19 @@
-import time
-import math
-import os
-import glob
+import time, math, os, glob, json
+from shutil import copyfile
 import networkx as nx
 from .ZeepToNetworkx import PSNetworx, len
-from .ResnetGraph import ResnetGraph,PSObject,PSRelation,CHILDS,df,REFCOUNT
-from .PSPathway import PSPathway
+from .ResnetGraph import ResnetGraph,PSObject,PSRelation,df,REFCOUNT,CHILDS
 from .PathwayStudioGOQL import OQL
-from .Zeep2Experiment import Experiment,Sample
+from .Zeep2Experiment import Experiment
 from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PS_PROPS
 from xml.dom import minidom
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from zeep import exceptions
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import timedelta
 
-# options for "to_retrieve" parameter
+TO_RETRIEVE = 'to_retrieve'
+# options for TO_RETRIEVE parameter
 NO_REL_PROPERTIES = -2
 CURRENT_SPECS = -1 # keeps current retreival properties
 DO_NOT_CLONE = 0
@@ -26,10 +26,12 @@ ALL_PROPERTIES = 10
 
 NO_RNEF_REL_PROPS={'RelationNumberOfReferences','Name','URN'}
 
+SESSION_KWARGS = {'what2retrieve','connect2server','no_mess','data_dir',TO_RETRIEVE}
+
 
 class APISession(PSNetworx):
     '''
-    manages retreival from database
+    manages retrieval from database
     '''
     pass
     ResultRef = None
@@ -38,17 +40,16 @@ class APISession(PSNetworx):
     PageSize = 1000
     GOQLquery = str()
     add2self = True # if False will not add new graph to self.Graph
+    merge2self = True #if False will replace nodes and relations properties in self.Graph by properties from new graph
     __IsOn1st_page = True # to print header in dump file
     relProps = ['URN'] # URN is required for proper adding relations to ResnetGraph
-   # __relPropCache__ = relProps # for temporary caching relProps if props2load() was used
     entProps = ['Name'] # Name is highly recommended to make sense of the data
 
     reference_cache_size = 1000000 # max number of reference allowed in self.Graph. Clears self.Graph if exceeded
     resnet_size = 1000 # number of <node><control> sections in RNEF dump
     max_rnef_size = 100000000 # max size of RNEF XML dump file. If dump file exceeds max_file_size new file is opened with index++
     cache_dir = 'ElsevierAPI/ResnetAPI/__pscache__/'
-    cache_dict = PSObject() # {cache_name:[GOQLquery]}, [GOQLquery] - list of GOQL queries used to make the network in cache
-    # all cached networks are written into cache_dir as file named cache_name.rnef
+    # all cached networks are written into cache_dir as file named cache_name.to_rnefstr
 
     DumpFiles = []
     csv_delimeter = '\t'
@@ -57,14 +58,25 @@ class APISession(PSNetworx):
     __getLinks = True
     APIconfig = dict()
     data_dir = ''
-    debug = True
 
-    def __init__(self,APIconfig:dict,what2retrieve=NO_REL_PROPERTIES):
-        super().__init__(APIconfig['ResnetURL'],APIconfig['PSuserName'],APIconfig['PSpassword'])
-        self.APIconfig = APIconfig
+    def __init__(self,*args,**kwargs):
+        '''
+        Input
+        -----
+        APIconfig = args[0]\nwhat2retrieve - defaults NO_REL_PROPERTIES, other options -\n
+        [DATABASE_REFCOUNT_ONLY,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,SNIPPET_PROPERTIES,ONLY_REL_PROPERTIES,ALL_PROPERTIES]
+        no_mess - default True, if False your script becomes more verbose
+        connect2server - default True, set to False to run script using data in __pscache__ files instead of database
+        '''
+        self.APIconfig= dict(args[0])
+        my_kwargs = {'what2retrieve':NO_REL_PROPERTIES}
+        my_kwargs.update(kwargs)
+        super().__init__(self.APIconfig, **my_kwargs)
+        self.__retrieve(my_kwargs['what2retrieve'])
         self.DumpFiles = []
-        self.__retrieve(what2retrieve)
-
+        self.set_dir(kwargs.get('data_dir',''))
+        #self.no_mess = my_kwargs.get('no_mess',True)
+        
 ######################################  CONFIGURATION  ######################################
     def __retrieve(self,what2retrieve=CURRENT_SPECS):
         if what2retrieve == NO_REL_PROPERTIES:
@@ -85,19 +97,29 @@ class APISession(PSNetworx):
             return #keeps current self.relProps
             #use 
 
+    @staticmethod
+    def split_kwargs(kwargs:dict):
+        session_kwargs = {k:v for k,v in kwargs.items() if k in SESSION_KWARGS}
+        other_parameters = {k:v for k,v in kwargs.items() if k not in SESSION_KWARGS}
+        return session_kwargs,other_parameters
 
-    def _clone(self, to_retreive=CURRENT_SPECS):
+
+    def _clone_session(self,**kwargs):
         """
         used by self.process_oql to clone session 
         """
-        if to_retreive == CURRENT_SPECS:
-            new_session = APISession(self.APIconfig)
+        my_kwargs = dict(kwargs)
+        my_kwargs['what2retrieve'] = my_kwargs.pop(TO_RETRIEVE,CURRENT_SPECS)
+        if my_kwargs['what2retrieve'] == CURRENT_SPECS:  
+            new_session = APISession(self.APIconfig,**my_kwargs)
             new_session.entProps = list(self.entProps)
             new_session.relProps = list(self.relProps)
         else:
-            new_session = APISession(self.APIconfig, to_retreive)
-            new_session.__retrieve(to_retreive)
+            new_session = APISession(self.APIconfig,**my_kwargs)
             new_session.entProps = list(self.entProps)
+        
+        new_session.data_dir = self.data_dir
+        new_session.no_mess = my_kwargs.get('no_mess',self.no_mess)
         return new_session
 
 
@@ -112,6 +134,19 @@ class APISession(PSNetworx):
         self.ResultRef = None
 
 
+    def __add2self(self,other:'APISession'):
+        '''
+        needs relations to have dbid
+        works only with another graph from database
+        '''
+        if self.add2self:
+            if self.merge2self:
+                self.Graph.add_graph(other.Graph)
+            else:
+                self.Graph = self.Graph.compose(other.Graph)
+            self.dbid2relation.update(other.dbid2relation)
+
+
     def set_dir(self,dir:str):
         self.data_dir = dir
         if dir and dir[-1] != '/':
@@ -120,10 +155,6 @@ class APISession(PSNetworx):
     def _dir(self):
         return self.data_dir
 
-  #  def set_temp_relProp(self,new_props:list):
-  #      self.__relPropCache__ = list(self.relProps)
-  #      self.relProps = list(new_props)
-        # use restore_relProps() at the end of the function
 
     def start_download_from(self,result_position:int):
         self.ResultPos = result_position
@@ -149,341 +180,396 @@ class APISession(PSNetworx):
         self.__set_get_links()
         obj_props = self.relProps if self.__getLinks else self.entProps
         zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
-                                                                                                self.PageSize,
-                                                                                                obj_props,
-                                                                                                getLinks = self.__getLinks)
-
+                                                                                        self.PageSize,
+                                                                                        obj_props,
+                                                                                        getLinks = self.__getLinks)
         if first_iteration > 0:
             self.ResultPos = first_iteration
             print ('Resuming retrieval from %d position' % first_iteration)
-            return self.__get_next_page()                                                  
+            return self.__get_next_page(self.ResultPos)                                                  
 
         if type(zeep_data) != type(None):
             if self.__getLinks:
-                obj_ids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
-                zeep_objects = self.get_object_properties(obj_ids, self.entProps)
-                return self._load_graph(zeep_data, zeep_objects,self.add2self)
+                obj_dbids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
+                zeep_objects = self.get_object_properties(obj_dbids, self.entProps)
+                return self._load_graph(zeep_data, zeep_objects,self.add2self,self.merge2self)
             else:
-                return self._load_graph(None, zeep_data,self.add2self)
+                return self._load_graph(None, zeep_data,self.add2self,self.merge2self)
         else:
             return ResnetGraph()
 
         
-    def __get_next_page(self, no_mess=True):
+    def __get_next_page(self,result_pos:int):
+        '''
+        Input
+        -----
+        result_pos - resut position to begin download.  Has to be provided explicitly to initiate multithreading
+        '''
+        # current_pos does not change during multithreading initiation!!!!  
         if self.ResultPos < self.ResultSize:
-            if not no_mess:
-                print('fetched %d results out of %d' % (self.ResultPos, self.ResultSize))
-
             obj_props = self.relProps if self.__getLinks else self.entProps
-            zeep_data, self.ResultSize, self.ResultPos = self.get_session_page(self.ResultRef, self.ResultPos, self.PageSize,
-                                                                       self.ResultSize, obj_props ,getLinks=self.__getLinks)                                                                      
+            zeep_data, self.ResultSize, current_pos = self.get_session_page(self.ResultRef, result_pos, self.PageSize,
+                                                                       self.ResultSize,obj_props,getLinks=self.__getLinks)                                                          
             if type(zeep_data) != type(None):
                 if self.__getLinks and len(zeep_data.Links.Link) > 0:
-                    obj_ids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
-                    zeep_objects = self.get_object_properties(obj_ids, self.entProps)
-                    return self._load_graph(zeep_data, zeep_objects,self.add2self)
+                    obj_dbids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
+                    zeep_objects = self.get_object_properties(obj_dbids, self.entProps)
+                    return self._load_graph(zeep_data, zeep_objects,self.add2self,self.merge2self)
                 else:
-                    return self._load_graph(None, zeep_data,self.add2self)
+                    return self._load_graph(None, zeep_data,self.add2self,self.merge2self)
             else:
                 return ResnetGraph()
         else: return ResnetGraph()
 
 
-    def process_oql(self, oql_query, request_name='', flush_dump=False, debug=False, no_mess=True, 
-                    iteration_limit=1) -> ResnetGraph:
-
-        if flush_dump and self.ResultPos == 0:
-            self.flush_dump_files(no_mess)
-       
-        self.__replace_goql(oql_query)
-        global_start = time.time()
-        entire_graph = ResnetGraph()
-        reference_counter = 0
+    def __thread__(self,number_of_iterations:int,max_threads:int):
+        if not self.no_mess:
+            print(f'Retrieval starts from {self.ResultPos} result')
+            remaining_retrieval = self.ResultSize - self.ResultPos
+            next_download_size = min(number_of_iterations*self.PageSize, remaining_retrieval)
+            print(f'Begin retrieving next {next_download_size} results in {max_threads} threads')
         
+        entire_graph = ResnetGraph()
+        result_pos = self.ResultPos
+        with ThreadPoolExecutor(max_workers=max_threads, thread_name_prefix='process_oql') as e:
+            futures = list()
+            for i in range(0,number_of_iterations):          
+                futures.append(e.submit(self.__get_next_page,result_pos))
+                result_pos += self.PageSize
+            
+            for future in as_completed(futures):
+                try:
+                    entire_graph = entire_graph.compose(future.result())
+                except exceptions.TransportError:
+                    raise exceptions.TransportError
+            
+            self.ResultPos = result_pos
+            return entire_graph
+
+
+    def process_oql(self, oql_query, request_name='') -> ResnetGraph:
+        self.__replace_goql(oql_query)
         start_time = time.time()
         return_type = 'relations' if self.__getLinks else 'entities'
-        page_graph = self.__init_session()
-        number_of_iterations = math.ceil(self.ResultSize / self.PageSize)
-
-        my_request_name = request_name if request_name else self.GOQLquery[:100]
-        if number_of_iterations > 1:
-            print('\n\"%s\"\nrequest found %d %s. Begin retrieval in %d iterations' % 
-                (my_request_name,self.ResultSize,return_type, number_of_iterations))
-            if debug:
-                print("Processing GOQL query:\n\"%s\"\n" % (self.GOQLquery))
-            if no_mess:
-                print('Progress report is suppressed. Retrieval may take long time - be patient!')
-
-        while page_graph:
-            page_ref_count = page_graph.size(weight='weight')
-            reference_counter += page_ref_count
-            exec_time = self.execution_time(start_time)
-            iteration = math.ceil(self.ResultPos / self.PageSize) 
-            if not no_mess:           
-                edge_count = page_graph.number_of_edges()
-                node_count = page_graph.number_of_nodes()
-                print("Iteration %d in %d retrieved %d relations for %d nodes supported by %d references in %s seconds" %
-                     (iteration, number_of_iterations,edge_count,node_count,page_ref_count,exec_time))
-                start_time = time.time()
-            
-            self.Graph.add_graph(page_graph)
-            
-            if len(self.DumpFiles) > 0:
-                self.to_csv(self.DumpFiles[0], in_graph=page_graph, access_mode='a',debug=True)
-                self.__IsOn1st_page = False
-                if number_of_iterations > 1:
-                    print("With %d in %d iterations, %d %s in %d with %d references saved into \"%s\" file. Retrieval time: %s" % 
-                        (iteration,number_of_iterations,self.ResultPos,return_type,self.ResultSize,reference_counter,self.DumpFiles[0],exec_time))
-            else:
-                if number_of_iterations > 1:
-                    # progress report:
-                    print("With %d in %d iterations, %d %s in %d with %d references retrieved in: %s" % 
-                        (iteration,number_of_iterations,self.ResultPos,return_type,self.ResultSize,reference_counter,exec_time))
-
-            entire_graph = page_graph.compose(entire_graph)
-
-            if debug and number_of_iterations >= iteration_limit: break
-            if self.clear_graph_cache: self.clear()
-            page_graph = self.__get_next_page(no_mess)
-
-        if debug: print("GOQL query:\n \"%s\"\n was executed in %s in %d iterations" % 
-                 (self.GOQLquery, self.execution_time(global_start), number_of_iterations))
-            
-        if number_of_iterations == 1: 
-            print('"%s"\nwas retrieved in %s by %d iteration' % 
-                (my_request_name, self.execution_time(global_start), number_of_iterations))
-        else:
-            print('"%s"\nwas retrieved in %s by %d iterations' % 
-                (my_request_name, self.execution_time(global_start), number_of_iterations))
+        entire_graph = self.__init_session()
+        number_of_iterations = int(self.ResultSize / self.PageSize)
+        my_request_name = request_name if request_name else self.GOQLquery[:100]+'...'
+    
+        if number_of_iterations:
+            if not self.no_mess:
+                print('\n\"%s\"\nrequest found %d %s.\n%d is retrieved. Remaining %d results will be retrieved in %d parallel iterations' % 
+            (my_request_name,self.ResultSize,return_type,self.ResultPos,(self.ResultSize-self.PageSize),number_of_iterations))
+            try:
+                iterations_graph = self.__thread__(number_of_iterations,number_of_iterations)
+                entire_graph = entire_graph.compose(iterations_graph)
+            except exceptions.TransportError:
+                raise exceptions.TransportError('Table lock detected!!! Aborting operation!!!')
+           
+        if not self.no_mess:
+            print('"%s"\nretrieved %d nodes and %d edges in %s by %d parallel iterations' % 
+            (my_request_name, entire_graph.number_of_nodes(), entire_graph.number_of_edges(),
+                    self.execution_time(start_time), number_of_iterations+1),flush=True)
 
         self.ResultRef = ''
         self.ResultPos = 0
         self.ResultSize = 0
         self.__IsOn1st_page = True
         self.clone = False
-        #self.what2retrieve = CURRENT_SPECS
         return entire_graph
 
 
-    def __annotated_graph_by_ids__(self,id_only_graph:ResnetGraph,use_cache=True):
+    def __annotate_dbid_graph__(self,id_only_graph:ResnetGraph,use_cache=True,request_name=''):
         '''
         loads
         -----
         new relations to self.Graph by ids in id_only_graph
         '''
-        relation_ids2return = id_only_graph._relations_ids()
-        if relation_ids2return:
-            if use_cache:
-                relation_ids2retreive = relation_ids2return.difference(self.id2relation.keys())
-                nodes_ids2retreive = set(id_only_graph.nodes()).difference(set(self.Graph.nodes()))
-            else:
-                relation_ids2retreive = list(relation_ids2return)
-                nodes_ids2retreive = list(id_only_graph.nodes())
-
-            print('Retreiving additional graph by id with %d nodes and %d relations' % (len(nodes_ids2retreive),len(relation_ids2retreive)))
-            if nodes_ids2retreive:
-                entity_query = 'SELECT Entity WHERE id = ({ids})'
-                self.__iterate_id__(entity_query,list(nodes_ids2retreive))
-
-            if relation_ids2retreive:
-                rel_query = 'SELECT Relation WHERE id = ({ids})'
-                self.__iterate_id__(rel_query,list(relation_ids2retreive))
-    
-            # now all relation_ids2return should be in self.id2relation
-            rels4subgraph = [rel for i,rel in self.id2relation.items() if i in relation_ids2return]
-            assert(len(rels4subgraph) == len(relation_ids2return))
-            return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
-            return return_subgraph
+        req_name = f'Retrieving annotations for "{request_name}"'
+        relation_dbids2return = id_only_graph._relations_dbids()
+        node_dbids2return = id_only_graph.dbids4nodes()
+        
+        rels4subgraph = [rel for dbid,rel in self.dbid2relation.items() if dbid in relation_dbids2return]
+        return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
+        return_subgraph.add_psobjs(self.Graph.psobj_with_dbids(node_dbids2return))
+        
+        if use_cache:
+            relation_dbids2retreive = relation_dbids2return.difference(self.dbid2relation.keys())
+            nodes_dbids2retreive = set(node_dbids2return).difference(set(self.Graph.dbids4nodes()))
         else:
-            # case when id_only_graph has only nodes
-            nodes_ids2return = list(id_only_graph.nodes())
-            if use_cache:
-                nodes_ids2retreive = set(nodes_ids2return).difference(set(self.Graph.nodes()))
-            else:
-                nodes_ids2retreive = set(nodes_ids2return)
+            relation_dbids2retreive = set(relation_dbids2return)
+            nodes_dbids2retreive = set(node_dbids2return)
 
-            if nodes_ids2retreive:
-                entity_query = 'SELECT Entity WHERE id = ({ids})'
-                self.__iterate_id__(entity_query,list(nodes_ids2retreive))
+        if relation_dbids2retreive or nodes_dbids2retreive:
+            exist_nodes = len(node_dbids2return)-len(nodes_dbids2retreive)
+            exist_rels = len(relation_dbids2return)-len(relation_dbids2retreive)
+            print(f'{exist_nodes} nodes and {exist_rels} relations were downloaded from database previously')
+            print('%d nodes and %d relations will be loaded from database' % 
+                        (len(nodes_dbids2retreive),len(relation_dbids2retreive)))
+        
+        add2return = ResnetGraph()
+        if relation_dbids2retreive:
+            rel_query = 'SELECT Relation WHERE id = ({ids})'
+            rels_add2return = self.__iterate__(rel_query,relation_dbids2retreive,req_name,step=1000)
+            add2return = rels_add2return
+            nodes_dbids2retreive = nodes_dbids2retreive.difference(add2return.dbids4nodes())
+            
+        if nodes_dbids2retreive:
+            entity_query = 'SELECT Entity WHERE id = ({ids})'
+            nodes_add2return = self.__iterate__(entity_query,nodes_dbids2retreive,req_name,step=1000)
+            add2return = add2return.compose(nodes_add2return)
+        
+        return_subgraph = return_subgraph.compose(add2return)
+        assert(return_subgraph.number_of_nodes() == len(node_dbids2return))
+       # assert(return_subgraph.number_of_edges() >= len(relation_dbids2return))
+       # privately owned relations are not returned by API. 
+       # therfore, return_subgraph.number_of_edges() may have less relations than "relation_dbids2return"
+       # 
+       # return_subgraph may also contain more relations than "relation_dbids2return" 
+       # due to duplication of non-directional relations into both directions
+        return return_subgraph
+ 
 
-            nodes_graph = ResnetGraph()
-            nodes_graph.add_nodes({i:node for i,node in self.Graph.nodes(data=True) if i in nodes_ids2return})
-            assert(len(nodes_graph) == len(nodes_ids2return))
-            return nodes_graph
+    def __iterate__(self,oql_query:str,dbids:set,request_name='',step=1000):
+        '''
+        Input
+        -----
+        oql_query MUST contain string placeholder called {ids} to iterate dbids\n
+        oql_query MUST contain string placeholder called {props} to iterate other database properties
+        "step" - controls duration of request to avoid timeout during multithreading
 
-
-    def __iterate_id__(self,oql_query:str,id_list:list):
+        uses self.entProp and self.relProp to retrieve properties\n
+        use self.add2self and self.merge2self to control caching
+        '''
+        if not dbids: return ResnetGraph()
+        if oql_query.find('{ids',20) > 0:
+            my_oql = oql_query
+            def join_list (l:list):
+                return ','.join(map(str,l))
+        else:
+            my_oql = oql_query.replace('{props','{ids')
+            def join_list (l:list):
+                return OQL.join_with_quotes(l) 
+            
+        number_of_iterations = math.ceil(len(dbids)/step)  
+        # new sessions must be created to avoid ResultRef pointer overwriting
+        future_sessions = list()
         entire_graph = ResnetGraph()
-        step = 1000
-        for i in range(0,len(id_list), step):
-            ids = id_list[i:i+step]
-            oql_query_with_ids = oql_query.format(ids=','.join(map(str,ids)))
-            iter_graph = self.process_oql(oql_query_with_ids)
-            entire_graph.add_graph(iter_graph)
+        thread_name = f'Iterate_{len(dbids)}_ids'
+        print(f'Retreival of {len(dbids)} objects will be done in {number_of_iterations} parallel iterations' )
+        dbids_list = list(dbids)
+        with ThreadPoolExecutor(max_workers=number_of_iterations, thread_name_prefix=thread_name) as e:   
+            futures = list()
+            for i in range(0,len(dbids_list), step):
+                iter_dbids = dbids_list[i:i+step]
+                oql_query_with_dbids = my_oql.format(ids=join_list(iter_dbids))
+                iter_name = f'Iteration #{int(i/step)+1} out of {number_of_iterations} for "{request_name}" retrieving {len(iter_dbids)} ids'
+                future_session = self._clone_session()
+                futures.append(e.submit(future_session.process_oql,oql_query_with_dbids,iter_name))
+                future_sessions.append(future_session)
+            
+            for future in as_completed(futures):
+                entire_graph = entire_graph.compose(future.result())
+
+        for session in future_sessions:
+            self.__add2self(session)
+            session.close_connection()
+            
         return entire_graph 
 
 
-    def __iterate_oql4id__(self,oql_query:str,id_set:set):
-        # oql_query MUST contain string placeholder called {ids} 
+    def __iterate_oql__(self,oql_query:str,ids_or_props:set,request_name='',step=1000):
+        '''
+        Input
+        -----
+        oql_query MUST contain string placeholder called {ids} to iterate dbids\n
+        oql_query MUST contain string placeholder called {props} to iterate other database properties
+        "step" - controls duration of request to avoid timeout during multithreading
+
+        Returns
+        -------
+        ResnetGraph containing only dbids and no other properties
+        function does not add retrieved graph to self.Graph\n
+        and must be used togeter with APISession::__annotate_dbid_graph__ \n
+        '''
+        req_name = 'Retrieving database identifiers for '+request_name
         my_ent_props = list(self.entProps)
         my_rel_props = list(self.relProps)
 
         self.relProps.clear()
         self.entProps.clear()
+        old_add2self = self.add2self
         self.add2self = False
-        entire_id_graph = ResnetGraph()
-        entire_id_graph = self.__iterate_id__(oql_query, list(id_set))
+
+        dbidonly_graph = self.__iterate__(oql_query,ids_or_props,req_name,step)
 
         self.entProps = my_ent_props
         self.relProps = my_rel_props
-        self.add2self = True
-        return entire_id_graph
+        self.add2self = old_add2self 
+        return dbidonly_graph
 
 
-    def __iterate_oql4id_s__(self,oql_query:str,prop_set:set):
+    def __iterate2_singlethread_(self, oql_query:str, ids1:list, ids2:list,request_name='',threads=1):
         '''
-            # oql_query MUST contain string placeholder called {props} 
+        Input
+        -----
+        oql_query MUST contain string placeholder called {ids} to iterate dbids\n
+        oql_query MUST contain string placeholder called {props} to iterate other database properties
         '''
-        my_ent_props = list(self.entProps)
-        my_rel_props = list(self.relProps)
-
-        self.relProps.clear()
-        self.entProps.clear()
-        self.add2self = False
-
-        entire_id_graph = ResnetGraph()
-        prop_list = list(prop_set)
-        step = 950 # to mitigate oql_query length limitation 
-        for i in range(0,len(prop_list), step):
-            props = prop_list[i:i+step]
-            oql_query_with_props = oql_query.format(props=OQL.join_with_quotes(props))
-            iter_graph = self.process_oql(oql_query_with_props)
-            entire_id_graph.add_graph(iter_graph)
-
-        self.entProps = my_ent_props
-        self.relProps = my_rel_props
-        self.add2self = True
-        return entire_id_graph
-
-
-    def __iterate_oql4id_2__(self, oql_query:str, id_set1:set, id_set2:set):
-        '''
-        # oql_query MUST contain 2 string placeholders called {ids1} and {ids2}
-        '''
-        my_ent_props = list(self.entProps)
-        my_rel_props = list(self.relProps)
-
-        self.relProps.clear()
-        self.entProps.clear()
-        self.add2self = False
-
-        entire_id_graph = ResnetGraph()
-        id_list1 = list(id_set1)
-        id_list2 = list(id_set2)
-        step = 1000
-        number_of_iterations = math.ceil(len(id_set1)/step) * math.ceil(len(id_set2)/step)
-        print('\nConnecting %d with %d entities' % (len(id_set1), len(id_set2)))
+        if oql_query.find('{ids',20) > 0:
+            step = 1000
+            my_oql = oql_query
+            def join_list (l:list):
+                return ','.join(map(str,l))
+        else:
+            step = 950 # string properties can for too long oql queries
+            my_oql = oql_query.replace('{props','{ids')
+            def join_list (l:list):
+                return OQL.join_with_quotes(l)
+                             
+        number_of_iterations = math.ceil(len(ids1)/step) * math.ceil(len(ids2)/step)
+        print('Connecting %d with %d entities' % (len(ids1), len(ids2)))
         if number_of_iterations > 2:
             print('Query will be executed in %d iterations' % number_of_iterations)
-
+        entire_id_graph = ResnetGraph()
         iteration_counter = 1
         start  = time.time()
-        for i1 in range(0,len(id_list1), step):
-            ids1 = id_list1[i1:i1+step]
-            for i2 in range(0,len(id_list2), step):
-                ids2 = id_list2[i2:i2+step]
-                oql_query_with_ids = oql_query.format(ids1=','.join(map(str,ids1)),ids2=','.join(map(str,ids2)))
-                iter_graph = self.process_oql(oql_query_with_ids)
+        for i1 in range(0,len(ids1), step):
+            iter_ids1 = ids1[i1:i1+step]
+            for i2 in range(0,len(ids2), step):
+                iter_ids2 = ids2[i2:i2+step]
+                oql_query_with_dbids = my_oql.format(ids1=join_list(iter_ids1),ids2=join_list(iter_ids2))
+                iter_graph = self.process_oql(oql_query_with_dbids,request_name)
                 entire_id_graph.add_graph(iter_graph)
                 if number_of_iterations > 2:
                     print('Iteration %d out of %d performed in %s' % 
                         (iteration_counter,number_of_iterations,self.execution_time(start)))
                 iteration_counter +=1
 
-        self.entProps = my_ent_props
-        self.relProps = my_rel_props
-        self.add2self = True
         return entire_id_graph
+    
 
-
-    def __iterate_oql4id_2s__(self, oql_query:str, id_set1:set, id_set2:set):
+    def __iterate2__(self, oql_query:str, ids1:list, ids2:list,request_name='iteration1',step=500):
         '''
-        # oql_query MUST contain 2 string placeholders called {props1} and {props2}
+        Input
+        -----
+        oql_query MUST contain string placeholder called {ids} to iterate dbids\n
+        oql_query MUST contain string placeholder called {props} to iterate other database properties
         '''
-        my_ent_props = list(self.entProps)
-        my_rel_props = list(self.relProps)
-
-        self.relProps.clear()
-        self.entProps.clear()
-        self.add2self = False
-
-        entire_id_graph = ResnetGraph()
-        id_list1 = list(id_set1)
-        id_list2 = list(id_set2)
-        step = 950
-        number_of_iterations = math.ceil(len(id_set1)/step) * math.ceil(len(id_set2)/step)
-        print('\nConnecting %d with %d entities' % (len(id_set1), len(id_set2)))
+        
+        if oql_query.find('{ids',20) > 0:
+            id_oql = oql_query
+            hint = r'{ids}'
+            iteration1step = min(step, 1000)
+            iteration2step = min(2*iteration1step, 1000)
+            def join_list (l:list):
+                return ','.join(map(str,l))
+        else:
+            id_oql = oql_query.replace('{props','{ids')
+            hint = r'{props}'
+            iteration1step = min(step,950) # string properties can form long oql queries exceeding zeep limits
+            iteration2step = min(2*iteration1step, 950)
+            def join_list (l:list):
+                return OQL.join_with_quotes(l)
+                             
+        number_of_iterations = math.ceil(len(ids1)/step) * math.ceil(len(ids2)/iteration1step)
+        if not number_of_iterations: return ResnetGraph()
+        print(f'Iterating {len(ids1)} entities with {len(ids2)} entities for {request_name}')
         if number_of_iterations > 2:
-            print('Query will be executed in %d iterations' % number_of_iterations)
+            print('Query will be executed in %d iterations in parallel threads' % number_of_iterations)
 
-        iteration_counter = 1
-        start  = time.time()
-        for i1 in range(0,len(id_list1), step):
-            ids1 = id_list1[i1:i1+step]
-            for i2 in range(0,len(id_list2), step):
-                ids2 = id_list2[i2:i2+step]
-                oql_query_with_ids = oql_query.format(props1=','.join(map(str,ids1)),props2=','.join(map(str,ids2)))
-                iter_graph = self.process_oql(oql_query_with_ids)
-                entire_id_graph.add_graph(iter_graph)
-                if number_of_iterations > 2:
-                    print('Iteration %d out of %d performed in %s' % 
-                        (iteration_counter,number_of_iterations,self.execution_time(start)))
-                iteration_counter +=1
-
-        self.entProps = my_ent_props
-        self.relProps = my_rel_props
-        self.add2self = True
-        return entire_id_graph
-
-
-    def iterate_oql(self, oql_query:str,id_set:set,use_cache=True,request_name='',iterate_ids=True):
-        """
-        # oql_query MUST contain string placeholder called {ids} if iterate_ids==True\n
-        # oql_query MUST contain string placeholder called {props} if iterate_ids==False
-        """
-        print('Processing "%s" request\n' % request_name)
-        if iterate_ids:
-            id_only_graph = self.__iterate_oql4id__(oql_query,id_set)
+        entire_graph = ResnetGraph()
+        
+        if len(ids1) <= len(ids2):
+            number_of_iterations = math.ceil(len(ids1)/iteration1step)
+            for i1 in range(0,len(ids1), iteration1step):
+                iter_ids1 = ids1[i1:i1+iteration1step]
+                iter_oql_query = id_oql.format(ids1=join_list(iter_ids1),ids2=hint)
+                iter_graph = self.__iterate__(iter_oql_query,ids2,'iteration2',iteration2step)
+                entire_graph = entire_graph.compose(iter_graph)
+                print(f'Processed {min([i1+iteration1step,len(ids1)])} out of {len(ids1)} identifiers against {len(ids2)} identifiers')
         else:
-            id_only_graph = self.__iterate_oql4id_s__(oql_query,id_set)
-
-        return self.__annotated_graph_by_ids__(id_only_graph,use_cache)
-
-
-    def iterate_oql2(self,oql_query:str,id_set1:set,id_set2:set,use_cache=True,request_name='',iterate_ids=True):
-        """
-        # oql_query MUST contain 2 string placeholders called {ids1} and {ids2}
-        """
-        print('Processing "%s" request\n' % request_name)
-        if iterate_ids:
-            id_only_graph = self.__iterate_oql4id_2__(oql_query,id_set1,id_set2)
-        else:
-            id_only_graph = self.__iterate_oql4id_2s__(oql_query,id_set1,id_set2)
+            number_of_iterations = math.ceil(len(ids2)/iteration1step)
+            for i2 in range(0,len(ids2), iteration1step):
+                iter_ids2 = ids2[i2:i2+iteration1step]
+                iter_oql_query = id_oql.format(ids1=hint,ids2=join_list(iter_ids2))
+                iter_graph = self.__iterate__(iter_oql_query,ids1,'iteration2',iteration2step)
+                entire_graph = entire_graph.compose(iter_graph)
+                print(f'Processed {min([i2+iteration1step,len(ids2)])} out of {len(ids2)} identifiers against {len(ids1)} identifiers')
             
-        print('Will retrieve annotated graph with %d entities and %d relations' %(id_only_graph.number_of_nodes(),id_only_graph.number_of_edges()))
-        return self.__annotated_graph_by_ids__(id_only_graph,use_cache)
+        return entire_graph
+    
 
+    def __iterate_oql2__(self, oql_query:str, ids_or_props1:set, ids_or_props2:set, request_name='', step=500):
+        '''
+        Input
+        -----
+        oql_query MUST contain 2 string placeholders called {ids1} and {ids2} to iterate dbids1/2 as dbids
+        oql_query MUST contain 2 string placeholders called {props1} and {props2} to iterate other database properties
+
+        Return
+        ------
+        ResnetGraph containing only dbids and no other properties
+        function does not add retrieved graph to self.Graph\n
+        and must be used togeter with APISession::__annotate_dbid_graph__ \n
+        '''
+        my_ent_props = list(self.entProps)
+        my_rel_props = list(self.relProps)
+
+        self.relProps.clear()
+        self.entProps.clear()
+        old_add2self = self.add2self
+        self.add2self = False
+
+        entire_graph = self.__iterate2__(oql_query,list(ids_or_props1),list(ids_or_props2),request_name,step)
+
+        self.entProps = my_ent_props
+        self.relProps = my_rel_props
+        self.add2self = old_add2self
+        return entire_graph
+
+ 
+    def iterate_oql(self,oql_query:str,dbid_set:set,use_cache=True,request_name='',step=1000):
+        """
+        # oql_query MUST contain string placeholder called {ids} if iterable id_set contains dbids\n
+        # oql_query MUST contain string placeholder called {props} if iterable id_set contain property values other than database id
+        """
+        print('Processing "%s" request\n' % request_name)
+        dbid_only_graph = self.__iterate_oql__(oql_query,dbid_set,request_name,step)
+        if dbid_only_graph:
+            annoated_graph = self.__annotate_dbid_graph__(dbid_only_graph,use_cache,request_name)
+            return annoated_graph
+        else:
+            return ResnetGraph()
+   
+
+    def iterate_oql2(self,oql_query:str,dbid_set1:set,dbid_set2:set,use_cache=True,request_name='',step=500):
+        """
+        # oql_query MUST contain 2 string placeholders called {ids1} and {ids2}
+        # oql_query MUST contain 2 string placeholder called {props1} and {props2}\n
+        if iterable id_sets contain property values other than database id
+        """
+        print('Processing "%s" request' % request_name)
+        dbid_only_graph = self.__iterate_oql2__(oql_query,dbid_set1,dbid_set2,request_name,step)
+        
+        if dbid_only_graph:
+            print('Will retrieve annotated graph with %d entities and %d relations' 
+                        %(dbid_only_graph.number_of_nodes(),dbid_only_graph.number_of_edges()))
+            annoated_graph = self.__annotate_dbid_graph__(dbid_only_graph,use_cache,request_name)
+            return annoated_graph
+        else:
+            return ResnetGraph()
+     
 
     def clear(self):
         self.Graph.clear_resnetgraph()
-        self.id2relation.clear()
-        self.ID2Children.clear()
+        self.dbid2relation.clear()
+        #self.parent_dbid2children.clear()
 
 
-    def flush_dump_files(self, no_mess=True):
+    def flush_dump_files(self):
         for f in self.DumpFiles:
             open(f, 'w').close()
-            if not no_mess:
+            if not self.no_mess:
                 print('File "%s" was cleared before processing' % f)
 
 
@@ -519,39 +605,39 @@ class APISession(PSNetworx):
         for id, name in result_graph.nodes(data='Name'):
             self.ResultRef  = 'ID='+str(id)
             while self.ResultPos < self.ResultSize:
-                page_graph = self.__get_next_page()
+                page_graph = self.__get_next_page(self.ResultPos)
                 entire_graph = nx.compose(page_graph, entire_graph)
                 iteration = math.ceil(self.ResultPos / self.PageSize)
                 total_iterations = math.ceil(self.ResultSize/self.PageSize)
                 print ('%d out of %d iterations fetching %d objects from %s search results performed in %s' % 
-                (iteration, total_iterations, self.ResultSize, name[0], self.execution_time(start)))
+                (iteration, total_iterations, self.ResultSize, name[0], self.execution_time(start)[0]))
 
         return entire_graph
 
 
     def _get_ppi_graph(self,fout):
         # Build PPI network between proteins
-        graph_proteins = self.Graph.get_node_ids(['Protein'])
+        graph_proteins = self.Graph.dbids4nodes(['Protein'])
         print('Retrieving PPI network for %d proteins' % (len(graph_proteins)))
         start_time = time.time()
         ppi_graph = self.get_ppi(graph_proteins, self.relProps, self.entProps)
         self.to_csv(self.data_dir+fout, in_graph=ppi_graph)
         print("PPI network with %d relations was retrieved in %s ---" % (
-            ppi_graph.size(), self.execution_time(start_time)))
+            ppi_graph.size(), self.execution_time(start_time)[0]))
 
         return ppi_graph
 
 
-    def _get_network_graph(self, for_interactor_ids:set, connect_by_rel_types:list=None):
+    def _get_network_graph(self, for_interactor_dbids:set, connect_by_rel_types:list=None):
         #self = self.__clone() if self.clone else self
-        network2return = self.get_network(for_interactor_ids,connect_by_rel_types,
+        network2return = self.get_network(for_interactor_dbids,connect_by_rel_types,
                                             self.relProps,self.entProps)
         return network2return
 
 
-    def connect_nodes(self,node_ids1:set,node_ids2:set,
+    def connect_nodes(self,node_dbids1:set,node_dbids2:set,
                         by_relation_type=[],with_effect=[],in_direction='',
-                        use_relation_cache=True):
+                        use_relation_cache=True, step=500):
         """
         Input
         -----
@@ -559,7 +645,7 @@ class APISession(PSNetworx):
 
         Returns
         -----
-        ResnetGraph containing relations between node_ids1 and node_ids2
+        ResnetGraph containing relations between node_dbids1 and node_dbids2
         """
         oql_query = r'SELECT Relation WHERE '
         if in_direction:
@@ -583,8 +669,9 @@ class APISession(PSNetworx):
         else:
             reltype_str = 'all'
 
-        req_name = f'Connecting {str(len(node_ids1))} and {str(len(node_ids2))} entities by {reltype_str} relations and {effect_str} effects'
-        return self.iterate_oql2(f'{oql_query}',node_ids1,node_ids2,use_relation_cache,request_name=req_name)
+        req_name = f'Connecting {len(node_dbids1)} and {len(node_dbids2)} entities by {reltype_str} relations and {effect_str} effects'
+        return self.iterate_oql2(f'{oql_query}',node_dbids1,node_dbids2,use_relation_cache,request_name=req_name,step=step)
+    # step is set 250 to mitigate possible timeout during multithreading
 
 
     def get_group_members(self, group_names:list):
@@ -646,11 +733,11 @@ class APISession(PSNetworx):
     def child_graph(self, propValues:list, search_by_properties=[],include_parents=True):
         if not search_by_properties: search_by_properties = ['Name','Alias']
         oql_query = OQL.get_childs(propValues,search_by_properties,include_parents=include_parents)
-        request_name = 'Find ontology children for {}'.format(','.join(propValues))
+        prop_val_str = ','.join(propValues)
+        request_name = f'Find ontology children for {prop_val_str}'
         ontology_graph = self.process_oql(oql_query,request_name)
         print('Found %d ontology children' % len(ontology_graph))
         return ontology_graph
-
 
 
     def ontology_graph(self,members:list,add2parent:PSObject):
@@ -660,39 +747,23 @@ class APISession(PSNetworx):
         members - [PSObjects]
         """
         ontology_graph = ResnetGraph()
-        parent_id = add2parent.id()
-        ontology_graph.add1node(add2parent)
-        ontology_graph.add_nodes(members)
+        parent_id = add2parent.uid()
+        ontology_graph.add_psobj(add2parent)
+        ontology_graph.add_psobjs(members)
         for m in members:
-            child_id = m['Id'][0]
+            child_id = m.uid()
             rel = PSRelation({'ObjTypeName':['MemberOf'],'Relationship':['is-a'],'Ontology':['Pathway Studio Ontology']})
             rel.Nodes['Regulators'] = [(child_id,0,0)]
             rel.Nodes['Targets'] = [(parent_id,1,0)]
             rel.append_property('Id',child_id)
-            rel.append_property('URN', str(child_id)+'0') #fake URN
+            rel.append_property('URN', child_id.urn()) #fake URN
             ontology_graph.add_edge(child_id,parent_id,relation=rel)
 
         self.add_rel_props(['Relationship','Ontology'])
         return ontology_graph
 
 
-    def load_children(self,for_parent_ids=[],add_new_nodes=False):
-        """
-        slower than self.child_graph() but annotates each parent with CHILDS property
-        """
-        annotate_parent_ids = set(for_parent_ids) if for_parent_ids else set(self.Graph)
-        self.get_children(annotate_parent_ids)
-
-        if add_new_nodes:
-            [self.Graph.property2node(parent_id,CHILDS,self.ID2Children[parent_id]) for parent_id in annotate_parent_ids]
-        else:
-            for parent_id in annotate_parent_ids:
-                all_child_ids = set(self.ID2Children[parent_id])
-                graph_child_ids = all_child_ids.intersection(set(self.Graph))
-                self.Graph.property2node(parent_id,CHILDS,list(graph_child_ids))
-
-
-    def add_parents(self,for_child_ids=[],depth=1):
+    def add_parents(self,for_childs=[],depth=1):
         """
         Adds
         ----
@@ -703,28 +774,27 @@ class APISession(PSNetworx):
         -------
         [PSObject] - list of parents with CHILDS property
         """
-        if not for_child_ids:
-            for_child_ids = list(self.Graph)
+        my_childs = for_childs if for_childs else self.Graph._get_nodes()
+        child_dbids = ResnetGraph.dbids(my_childs)
 
         get_parent_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') inRange {steps} over (SELECT OntologicalNode WHERE id = ({ids}))'
-        oql_query = get_parent_query.format(steps=str(depth),ids=','.join(map(str,for_child_ids)))
-        request_name = 'Find parents of {count} nodes with depth {d}'.format(count = str(len(for_child_ids)), d=str(depth))
+        oql_query = get_parent_query.format(steps=str(depth),ids=','.join(map(str,child_dbids)))
+        request_name = f'Find parents of {len(my_childs)} nodes with depth {depth}'
         parent_graph = self.process_oql(oql_query,request_name)
-
-      #  if to_graph:
-       #     graph_registry[index].add_graph(parent_graph)
         
-        self.load_children(for_parent_ids=list(parent_graph))
+        self.load_children4(parent_graph._get_nodes())
         return self.Graph._get_nodes(list(parent_graph))
-
 
 
     def load_ontology(self, parent_ontology_groups:list):
         """
         Input
         -----
-        [Parent Name]
-        loads self.child2parent = {child_name:[ontology_parent_names]}
+        [List of Ontology Parent Names]
+        
+        Return
+        ------
+        self.child2parent = {child_name:[ontology_parent_names]}
         """
         self.child2parent = dict()
         self.add_ent_props(['Name'])
@@ -738,7 +808,8 @@ class APISession(PSNetworx):
                     self.child2parent[child_name] = [group_name]
 
 ###################################   WRITE, DUMP   ##############################################
-    def to_csv(self, file_out, in_graph: ResnetGraph=None, access_mode='w', debug=False):
+    def to_csv(self, file_out, in_graph: ResnetGraph=None, access_mode='w'):
+        debug = not self.no_mess
         if not isinstance(in_graph,ResnetGraph): in_graph = self.Graph
         in_graph.print_references(file_out, self.relProps, self.entProps, access_mode, printHeader=self.__IsOn1st_page,
                                 col_sep=self.csv_delimeter,debug=debug,single_rel_row=self.print_rel21row)
@@ -758,8 +829,8 @@ class APISession(PSNetworx):
 
 
     @staticmethod
-    def __make_file_name(folder_or_object_name: str):
-        new_str = list(folder_or_object_name)
+    def filename4(folder_or_object_named:str):
+        new_str = list(folder_or_object_named)
         for i in range(0, len(new_str)):
             if new_str[i] in {'>', '<', '|','/'}:
                 new_str[i] = '-'
@@ -768,58 +839,57 @@ class APISession(PSNetworx):
         return "".join(new_str)
 
 
-    def __find_folder(self, folder_name:str):
-        folder_name_ = self.__make_file_name(folder_name)
+    def __find_folder(self, folder_name:str, in_parent_folder=''):
+        folder_name_ = self.filename4(folder_name)
+        parent_name = self.filename4(in_parent_folder)
         longest_path = str()
-        for dirpath, dirnames, filenames in os.walk(self.data_dir):
+        for dirpath, dirnames, filenames in os.walk(os.path.abspath(self.data_dir)):
             for dirname in dirnames:
                 if dirname == folder_name_:
                     if len(dirpath+dirname)+1 > len(longest_path):
-                        longest_path = dirpath+'/'+dirname +'/'
+                        if in_parent_folder:
+                            if parent_name in dirpath:
+                                longest_path = dirpath+'/'+dirname +'/'
+                        else:
+                            longest_path = dirpath+'/'+dirname +'/'
 
         return longest_path
 
 
     def dump_path(self, of_folder:str, in2parent_folder=''):
-        # finding directory
-        my_dir = self.__find_folder(of_folder)
+        my_dir = self.__find_folder(of_folder,in2parent_folder)
         if not my_dir:
             if in2parent_folder:
-                parent_dir = self.__find_folder(in2parent_folder)
-                if parent_dir:
-                    my_dir = parent_dir+self.__make_file_name(of_folder)+'/'
-                    os.mkdir(my_dir) 
+                parent_path = self.__find_folder(in2parent_folder)
+                if parent_path:
+                    my_dir = parent_path+self.filename4(of_folder)+'/'
                 else:
-                    my_dir = self.data_dir+self.__make_file_name(in2parent_folder)+'/'+self.__make_file_name(of_folder)+'/'
-                    os.mkdir(my_dir)
+                    my_dir = self.data_dir+self.filename4(in2parent_folder)+'/'+self.filename4(of_folder)+'/'
             else:
-                my_dir = self.data_dir+self.__make_file_name(of_folder)+'/'
-                os.mkdir(my_dir)
-
+                my_dir = self.data_dir+self.filename4(of_folder)+'/'
+            try: os.mkdir(my_dir) 
+            except FileExistsError: pass
         return my_dir
 
 
-    def __count_dumpfiles(self, in_folder:str,in2parent_folder='', with_extension='rnef'):
+    def __count_dumpfiles(self, in_folder:str,in2parent_folder='', with_extension='to_rnefstr'):
         folder_path = self.dump_path(in_folder,in2parent_folder)
         listing = glob.glob(folder_path+'*.' + with_extension)
-        if listing:
-            return folder_path,len(listing)
-        else:
-            return folder_path,1
+        return folder_path,len(listing)
 
 
     def __dump_base_name(self,of_folder:str):
-        return 'content of '+ APISession.__make_file_name(of_folder)+'_'
+        return 'content of '+ APISession.filename4(of_folder)+'_'
 
 
-    def __make_dumpfile_name(self,of_folder:str,in2parent_folder='',new=False):
+    def __make_dumpfile_name(self,of_folder:str,in2parent_folder='',new=False,filecount=0):
         folder_path,file_count = self.__count_dumpfiles(of_folder,in2parent_folder)
-        if new:
-            file_count += 1
-        return folder_path + self.__dump_base_name(of_folder)+str(file_count)+'.rnef'
+        file_count += int(new)
+        if filecount: file_count = filecount
+        return folder_path + self.__dump_base_name(of_folder)+str(file_count)+'.to_rnefstr'
 
 
-    def str2rnefdump(self,rnef_xml:str,to_folder='',in2parent_folder='',can_close=True):
+    def rnefs2dump(self,rnef_xml:str,to_folder='',in2parent_folder='',can_close=True):
         '''
         Dumps
         -----
@@ -843,6 +913,7 @@ class APISession(PSNetworx):
                 f.write('<batch>\n')
             f.close()
         else:
+            write2 = self.__make_dumpfile_name(to_folder,in2parent_folder,new=True)
             with open(write2,'w',encoding='utf-8') as f:
                 f.write('<batch>\n'+rnef_xml)
 
@@ -856,46 +927,68 @@ class APISession(PSNetworx):
         '''
         my_graph = graph if graph else self.Graph
         rel_props = [p for p in self.relProps if p not in NO_RNEF_REL_PROPS]
-        return my_graph.rnef(self.entProps,rel_props,add_rel_props,add_pathway_props)
+        return my_graph.to_rnefstr(self.entProps,rel_props,add_rel_props,add_pathway_props)
 
 
     def graph2rnefdump(self,graph=ResnetGraph(),to_folder='',in_parent_folder='',can_close=True):
         '''
+        Input
+        -----
+        to_folder - name of the folder with downloaded RNEF data\n
+        in_parent_folder - name of the folder in "self.data_dir" containinig "to_folder". Use "in_parent_folder" to create structured dump mirroring the folder structure in database\n
+        By default "in_parent_folder" does not exist and "to_folder" is in "self.data_dir"\n
+        can_close - <batch> element in dump RNEF file can be closed if file size exceeds self.max_rnef_size to complete current RNEF XML and start  new file if necessary\n
+        set "can_close" to True to allow adding additional elements to RNEF XML, such as folder structure at the end of the dump
+
         Dumps
         -----
         large graph objects into several RNEF XML files
         '''
-        my_graph = graph if graph else self.Graph
-        rel_props = [p for p in self.relProps if p not in NO_RNEF_REL_PROPS]
-
-        resnet_sections = ResnetGraph()
+        dump_start = time.time()
+        my_graph = graph.copy() if graph else self.Graph.copy() 
+        # making input graph copy to release it for multithreading
+        section_rels = set()
         for regulatorID, targetID, e in my_graph.edges(data='relation'):
-            resnet_sections.copy_rel(e,my_graph)
-            if resnet_sections.number_of_edges() == self.resnet_size:
-                rnef_str = resnet_sections.rnef(ent_props=self.entProps,rel_props=rel_props)
+            section_rels.add(e)
+            if len(section_rels) == self.resnet_size:
+                resnet_section = my_graph.subgraph_by_rels(section_rels)
+                rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
                 rnef_str = self.pretty_xml(rnef_str,no_declaration=True)
-                self.str2rnefdump(rnef_str,to_folder,in_parent_folder,can_close)
-                resnet_sections.clear_resnetgraph()
-
-        rnef_str = resnet_sections.rnef(ent_props=self.entProps,rel_props=self.relProps)
+                # dumps section
+                self.rnefs2dump(rnef_str,to_folder,in_parent_folder,can_close)
+                resnet_section.clear_resnetgraph()
+                section_rels.clear()
+    
+        # dumps leftover resnet_section with size < self.resnet_size
+        resnet_section = my_graph.subgraph_by_rels(section_rels)
+        rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
         rnef_str = self.pretty_xml(rnef_str,no_declaration=True)
-        self.str2rnefdump(rnef_str,to_folder,in_parent_folder,can_close)
+        self.rnefs2dump(rnef_str,to_folder,in_parent_folder,can_close)
+        if not self.no_mess:
+            print('RNEF dump of "%s" graph into %s folder was done in %s' % 
+                  (my_graph.name,to_folder,self.execution_time(dump_start)),flush=True)
+        return time.time()-dump_start
 
 
-    def close_rnef_dump(self,to_folder='',in2parent_folder=''):
-        last_dump_file = self.__make_dumpfile_name(to_folder,in2parent_folder)
+    def close_rnef_dump(self,for_folder='',in_parent_folder=''):
+        last_dump_file = self.__make_dumpfile_name(for_folder,in_parent_folder)
         f = open(last_dump_file,'a',encoding='utf-8')
         f.write('</batch>')
         f.close()
 
 
-    def download_oql(self,oql_query,request_name:str,resume_page=0):
+    def download_oql(self,oql_query,request_name:str,resume_page=0,threads=25):
+        # Use for oql_query producing large results
         '''
-        Use for oql_query producing large results
-
+        Input
+        -----
+        threads - number of threads to use in one download iteration\n
+        Inreasing "threads" accelerates download but slows down writing cache file to disk\n
+        if cache file writing time exceeds 5 min (Apache default timeout) download will crash
+        
         Dumps
         -----
-        results of oql_query to folder in self.data_dir named "request_name.rnef".\n
+        results of oql_query to folder in self.data_dir named "request_name.to_rnefstr".\n
         Splits dump into small files smaller than self.max_rnef_size 
         '''
         self.__replace_goql(oql_query)
@@ -903,27 +996,27 @@ class APISession(PSNetworx):
         start_time = time.time()
         return_type = 'relations' if self.__getLinks else 'entities'
         resume_pos = resume_page*self.PageSize
-        page_graph = self.__init_session(resume_pos)
-        number_of_iterations = math.ceil(self.ResultSize / self.PageSize)
-        iterations_str = 'iteration' 
-        if number_of_iterations > 1:
-            iterations_str += 's'
-            print('\n\nrequest found %d %s. Begin download in %d iterations' % 
-                (self.ResultSize,return_type, number_of_iterations))
+        iterations_graph = self.__init_session(resume_pos)
+        self.clear()
+        number_of_iterations = int(self.ResultSize / self.PageSize)
+        if number_of_iterations:
+            print('\n\nrequest "%s" found %d %s. Begin download in %d %d-threads iterations' % 
+                (request_name,self.ResultSize,return_type, number_of_iterations/threads,threads))
+            for i in range(0,number_of_iterations,threads):
+                iterations_graph = iterations_graph.compose(self.__thread__(threads,threads))
+                self.graph2rnefdump(iterations_graph, request_name)
+                if not self.no_mess:
+                    page_ref_count = iterations_graph.weight()
+                    reference_counter += page_ref_count
+                    remaining_iterations = number_of_iterations-i-threads
+                    exec_time, remaining_time = self.execution_time(start_time,remaining_iterations,number_of_iterations) 
+                    print("With %d in %d iterations, %d %s out of %d results with %d references retrieved in %s using %d threads" % 
+                    (i+threads,number_of_iterations,self.ResultPos,return_type,self.ResultSize,reference_counter,exec_time,threads))
+                    print('Estimated remaining retrieval time %s: '% remaining_time)
+                self.clear()
+                iterations_graph.clear()
             
-        while page_graph:
-            page_ref_count = page_graph.weight()
-            reference_counter += page_ref_count
-            exec_time = self.execution_time(start_time)
-            iteration = math.ceil(self.ResultPos / self.PageSize)
-            print("With %d in %d %s, %d %s in %d with %d references retrieved in: %s" % 
-            (iteration,number_of_iterations,iterations_str,self.ResultPos,return_type,self.ResultSize,reference_counter,exec_time))
-                         
-            self.graph2rnefdump(in_graph=page_graph, to_folder=request_name)
-            self.clear()
-            page_graph = self.__get_next_page()
-
-        self.close_rnef_dump(to_folder=request_name)
+        self.close_rnef_dump(request_name)
         self.clear()
         self.ResultRef = ''
         self.ResultPos = 0
@@ -933,81 +1026,78 @@ class APISession(PSNetworx):
         return
 
 
+    def path2cache(self,cache_name:str,extension='.rnef'):
+        return self.cache_dir+cache_name+extension
+
+
     def load_cache(self,cache_name:str,oql_queries:list=[],ent_props=['Name'],rel_props=['URN'])->'ResnetGraph':
-        cache_file = self.cache_dir+cache_name+'.rnef'
+        my_cache_file = self.path2cache(cache_name)
         try:
-            return ResnetGraph.fromRNEF(cache_file)
+            return ResnetGraph.fromRNEF(my_cache_file)
         except FileNotFoundError:
-            database_graph = ResnetGraph.fromRNEFdir(self.cache_dir+cache_name)
+            raw_data_dir_name = cache_name + '_raw'
+            database_graph = ResnetGraph.fromRNEFdir(self.cache_dir+raw_data_dir_name+'/',merge=False)
             if not database_graph:
-                print('Cache %s was not found\nBegin downloading network from database' % cache_name)
-                my_session = self._clone(REFERENCE_IDENTIFIERS) #need identifiers to make graph simple
+                print('Cache "%s" was not found\nBegin caching network from database' % raw_data_dir_name)
+                my_session_kwargs = {
+                    TO_RETRIEVE:REFERENCE_IDENTIFIERS, 
+                    'connect2server':True,
+                    'no_mess' : self.no_mess}
+                
+                my_session = self._clone_session(**my_session_kwargs) #need identifiers to make graph simple
                 my_session.add_ent_props(ent_props)
                 my_session.add_rel_props(rel_props)
                 my_session.set_dir(self.cache_dir)
                 for oql_query in oql_queries:
-                    self.download_oql(oql_query,cache_name)
+                    my_session.download_oql(oql_query,raw_data_dir_name)
                 my_session.clear()
-                database_graph = ResnetGraph.fromRNEFdir(self.cache_dir+cache_name)
-                #  network4oql = my_session.process_oql(oql_query, f'Fetching {cache_name}')
-                #  downloaded_network = downloaded_network.compose(network4oql)
+                database_graph = ResnetGraph.fromRNEFdir(self.cache_dir+raw_data_dir_name+'/',merge=False)
             
-            downloaded_network = database_graph.make_simple()
-            network_psobj = PSPathway({'Name':[cache_name],'OQLs':oql_queries},downloaded_network)
-            network_xml_str = network_psobj.to_xml(ent_props,rel_props)
-            with open(cache_file,'w',encoding='utf-8') as f: 
-                f.write(network_xml_str)
+            database_graph.name = cache_name
+            simplified_network = database_graph.make_simple()
+            for ent_prop in ent_props:
+                if ent_prop[-3:] == ' ID':
+                    simplified_network = simplified_network.clean_version_number(ent_prop)
+            simplified_network.rnef2file(my_cache_file,ent_props,rel_props)
+            network_description = {'Name':[cache_name],'OQLs':oql_queries}
+            with open(self.cache_dir+cache_name+"_description.json", "w") as f:
+                json.dump(network_description, f)
             
-            print('%s with %d edges and %d nodes was downloaded from database in %s' 
-                % (cache_name,downloaded_network.number_of_edges(),downloaded_network.number_of_nodes(),self.execution_time(start)))
+            print('%s with %d edges and %d nodes was written into %s' 
+                % (cache_name,simplified_network.number_of_edges(),simplified_network.number_of_nodes(),my_cache_file))
             
-            return downloaded_network
+            return simplified_network
 
+
+    def replace_cache(self,cache_name:str,with_network:ResnetGraph,
+                      ent_props=['Name'],rel_props=['URN'],
+                      do_backup=True,replace_raw=False):
+        if replace_raw:
+            my_cache_dir = self.cache_dir+cache_name
+            listing = glob.glob(my_cache_dir+'*.rnef')
+            [os.remove(file) for file in listing]
+            self.graph2rnefdump(with_network,cache_name)
+        else:
+            my_cache_file = self.path2cache(cache_name)
+            if do_backup:
+                backup_cache = self.path2cache(cache_name,'_backup.rnef')
+                copyfile(my_cache_file, backup_cache)
+            
+            with_network.rnef2file(my_cache_file,ent_props,rel_props)
     
-    #####################   EXPERIMENT EXPERIMENT EXPERIMENT EXPERIMENT ###########################
+
+    ##################### EXPERIMENT EXPERIMENT EXPERIMENT EXPERIMENT ###########################
     def map_experiment(self, exp:Experiment):
         identifier_name = exp.identifier_name()
         identifier_names = identifier_name.split(',')
         identifiers = exp.list_identifiers()
         map2objtypes = exp['ObjTypeName']
         identifier2objs, objid2prop = self.map_props2objs(identifiers,identifier_names,map2objtypes)
-
-        unmapped_identifiers = set(identifiers).difference(set(identifier2objs.keys()))
-        print('Following experiment identifiers were not mapped:\n%s' % '\n'.join(unmapped_identifiers))
-
-        identifiers_columns = exp.identifiers.columns.to_list()
-        mapped_entities_pd = df(columns = [identifier_name,'URN'])
-        row = 0
-        for i, psobj_list in identifier2objs.items():
-            for psobj in psobj_list:
-                mapped_entities_pd.at[row,identifier_name] = i
-                mapped_entities_pd.at[row,'URN'] = psobj['URN'][0]
-                row += 1
-        
-        samples_pd = exp.samples2pd()
-        new_data = mapped_entities_pd.merge(samples_pd,'outer', on=identifier_name)
-        new_data = new_data.drop('URN_y', axis=1)
-        new_data.rename(columns={'URN_x':'URN'},inplace=True)
-        mapped_exp = Experiment(exp)
-        mapped_exp.identifiers = new_data[identifiers_columns]
-
-        column_counter = len(identifiers_columns)
-        for sample in exp.get_samples():
-            mapped_sample = Sample(sample)
-            mapped_sample.data['value'] = samples_pd.iloc[:,column_counter]
-            if sample.has_pvalue():
-                column_counter += 1
-                mapped_sample.data['pvalue'] = samples_pd.iloc[:,column_counter]
-            mapped_exp._add_sample(mapped_sample)
-
-        print('%d out of %d entities were mapped in %s'%
-                (len(identifier2objs), len(exp.identifiers),exp.name()))
-
-        return mapped_exp
+        return exp.map(identifier2objs)
 
 
-    def common_neighbors(self,with_entity_types:list,of_ids1:list,reltypes12:list,effect12:list,dir12:str,
-                                and_ids3:list,reltypes23:list,effect23:list,dir23:str):
+    def common_neighbors(self,with_entity_types:list,of_dbids1:list,reltypes12:list,effect12:list,dir12:str,
+                                and_dbids3:list,reltypes23:list,effect23:list,dir23:str):
         """
             Input
             -----
@@ -1015,7 +1105,7 @@ class APISession(PSNetworx):
 
             Returns
             -------
-            ResnetGraph with 1-->2-->3 relations, where nodes in position 1 are from "of_ids1" and nodes in position 3 are from "and_ids3"\n
+            ResnetGraph with 1-->2-->3 relations, where nodes in position 1 are from "of_dbids1" and nodes in position 3 are from "and_dbids3"\n
             if nodes in positon 1 and positon 3 are neighbors returns graph to complete 3-vertex cliques
         """
         sel_rels = 'SELECT Relation WHERE objectType = ({})'
@@ -1030,10 +1120,10 @@ class APISession(PSNetworx):
         find_neighbors_oql = find_neighbors_oql+' AND Connected by ('+sel_rels12+') to (SELECT Entity WHERE id = ({ids1}))'
         find_neighbors_oql += ' AND Connected by ('+sel_rels23+') to (SELECT Entity WHERE id = ({ids2}))'
 
-        r_n = f'Find entities common between {len(of_ids1)} and {len(and_ids3)} entities' 
-        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',of_ids1,and_ids3,request_name=r_n)
-        neighbors_ids = list(neighbors_entity_graph.nodes())
-        print('Found %d common neighbors' % len(neighbors_ids))
+        r_n = f'Find entities common between {len(of_dbids1)} and {len(and_dbids3)} entities' 
+        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',of_dbids1,and_dbids3,request_name=r_n)
+        neighbors_dbids = list(neighbors_entity_graph.dbids4nodes())
+        print('Found %d common neighbors' % len(neighbors_dbids))
 
         if dir12 == '>':
             sel_12_graph_oql = sel_rels12 + r' AND downstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND upstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
@@ -1041,8 +1131,7 @@ class APISession(PSNetworx):
             sel_12_graph_oql = sel_rels12 + r' AND upstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND downstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
         else:
             sel_12_graph_oql = sel_rels12 + r' AND NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
-        rn12 = f'Find 1-2 relations between {len(of_ids1)} entities in position 1 and {len(neighbors_ids)} common neighbors'
-        #graph12 = self.iterate_oql2(f'{sel_12_graph_oql}',of_ids1,neighbors_ids,request_name=rn12)
+        rn12 = f'Find 1-2 relations between {len(of_dbids1)} entities in position 1 and {len(neighbors_dbids)} common neighbors'
 
         if dir23 == '>':
             sel_23_graph_oql = sel_rels23 + r' AND upstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND downstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
@@ -1050,12 +1139,12 @@ class APISession(PSNetworx):
             sel_23_graph_oql = sel_rels23 + r' AND downstream NeighborOf (SELECT Entity WHERE id = ({ids1})) AND upstream NeighborOf (SELECT Entity WHERE id = ({ids2}))'
         else:
             sel_23_graph_oql = sel_rels23 + r' AND NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
-        rn23 = f'Find 2-3 relations between {len(and_ids3)} entities in position 3 and {len(neighbors_ids)} common neighbors'
-       # graph23 = self.iterate_oql2(f'{sel_23_graph_oql}',and_ids3,neighbors_ids,request_name=rn23)
+        rn23 = f'Find 2-3 relations between {len(and_dbids3)} entities in position 3 and {len(neighbors_dbids)} common neighbors'
+       # graph23 = self.iterate_oql2(f'{sel_23_graph_oql}',and_dbids3,neighbors_dbids,request_name=rn23)
 
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix='FindCommonNeighbors') as executor:
-            future12 = executor.submit(self.iterate_oql2,f'{sel_12_graph_oql}',of_ids1,neighbors_ids, True,rn12) 
-            future23 = executor.submit(self.iterate_oql2,f'{sel_23_graph_oql}',and_ids3,neighbors_ids, True,rn23)
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix='FindCommonNeighbors') as executor:
+            future12 = executor.submit(self.iterate_oql2,f'{sel_12_graph_oql}',of_dbids1,neighbors_dbids, True,rn12) 
+            future23 = executor.submit(self.iterate_oql2,f'{sel_23_graph_oql}',and_dbids3,neighbors_dbids, True,rn23)
             
             graph12 = future12.result()
             graph23 = future23.result()
@@ -1064,70 +1153,69 @@ class APISession(PSNetworx):
         return graph12
 
 
-    def common_neighbors_with_effect(self,with_entity_types:list,of_ids1:list,reltypes12:list,dir12:str,
-                                and_ids3:list,reltypes23:list,dir23:str,id_type='id'):
+    def common_neighbors_with_effect(self,with_entity_types:list,of_dbids1:list,reltypes12:list,dir12:str,
+                                and_dbids3:list,reltypes23:list,dir23:str,id_type='id')->"ResnetGraph":
         # written to circumvent bug in Patwhay Studio
         """
             Input
             -----
             dir12,dir23 must be '<','>' or empty string
+            specify "id_type" == 'id' to process databse identifiers in "of_dbids1" and "and_dbids3", otherwise they will be treated as list of properties
 
             Returns
             -------
-            ResnetGraph with 1-->2-->3 relations, where nodes in position 1 are from "of_ids1" and nodes in position 3 are from "and_ids3"\n
+            ResnetGraph with 1-->2-->3 relations, where nodes in position 1 are from "of_dbids1" and nodes in position 3 are from "and_dbids3"\n
             if nodes in positon 1 and positon 3 are neighbors returns graph to complete 3-vertex cliques
         """
+        hint = 'ids' if id_type == 'id' else 'props'
         sel_rels = 'SELECT Relation WHERE objectType = ({}) AND NOT Effect = unknown'
-
         sel_rels12 = sel_rels.format(','.join(reltypes12))
         sel_rels23 = sel_rels.format(','.join(reltypes23))
 
-        find_neighbors_oql = r'SELECT Entity objectType = ('+','.join(with_entity_types)+')'
+        find_neighbors_oql = 'SELECT Entity objectType = ('+','.join(with_entity_types)+')'
+        find_neighbors_oql = find_neighbors_oql+' AND Connected by ('+sel_rels12+') to (SELECT Entity WHERE '+id_type+' = ({'+ hint +'1}))'
+        find_neighbors_oql += ' AND Connected by ('+sel_rels23+') to (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
 
-        find_neighbors_oql = find_neighbors_oql+' AND Connected by ('+sel_rels12+') to (SELECT Entity WHERE '+id_type+' = ({ids1}))'
-        find_neighbors_oql += ' AND Connected by ('+sel_rels23+') to (SELECT Entity WHERE '+id_type+' = ({ids2}))'
-
-        r_n = f'Find entities common between {len(of_ids1)} and {len(and_ids3)} entities' 
-        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',of_ids1,and_ids3,request_name=r_n)
-        neighbors_ids = list(neighbors_entity_graph.nodes())
+        r_n = f'Find entities common between {len(of_dbids1)} and {len(and_dbids3)} entities' 
+        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',of_dbids1,and_dbids3,request_name=r_n)
+        
+        neighbors = neighbors_entity_graph._get_nodes()
+        if not neighbors: return ResnetGraph()
+        if id_type == 'id':
+            neighbors_ids = ResnetGraph.dbids(neighbors)
+        else:
+            neighbors_ids = [n[id_type][0] for n in neighbors]
         print('Found %d common neighbors' % len(neighbors_ids))
 
         if dir12 == '>':
-            sel_12_graph_oql = sel_rels12 + r' AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids1})) AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids2}))'
+            sel_12_graph_oql = sel_rels12 + ' AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'+1})) AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
         elif dir12 == '<':
-            sel_12_graph_oql = sel_rels12 + r' AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids1})) AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids2}))'
+            sel_12_graph_oql = sel_rels12 + ' AND upstream NeighborOf (SELECT Entity WHERE '+id_type+r' = ({'+hint+'1})) AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
         else:
-            sel_12_graph_oql = sel_rels12 + r' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids2}))'
-        rn12 = f'Find 1-2 relations between {len(of_ids1)} entities in position 1 and {len(neighbors_ids)} common neighbors'
-        #graph12 = self.iterate_oql2(f'{sel_12_graph_oql}',of_ids1,neighbors_ids,request_name=rn12)
+            sel_12_graph_oql = sel_rels12 + ' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
+        rn12 = f'Find 1-2 relations between {len(of_dbids1)} entities in position 1 and {len(neighbors_ids)} common neighbors'
+       
 
         if dir23 == '>':
-            sel_23_graph_oql = sel_rels23 + r' AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids1})) AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids2}))'
+            sel_23_graph_oql = sel_rels23 + ' AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
         elif dir12 == '<':
-            sel_23_graph_oql = sel_rels23 + r' AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids1})) AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids2}))'
+            sel_23_graph_oql = sel_rels23 + ' AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'}2))'
         else:
-            sel_23_graph_oql = sel_rels23 + r' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({ids2}))'
-        rn23 = f'Find 2-3 relations between {len(and_ids3)} entities in position 3 and {len(neighbors_ids)} common neighbors'
+            sel_23_graph_oql = sel_rels23 + ' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
+        rn23 = f'Find 2-3 relations between {len(and_dbids3)} entities in position 3 and {len(neighbors_ids)} common neighbors'
 
-        iterate_ids = True if id_type == 'id' else False
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix='FindCommonNeighbors') as executor:
-            session12 = self._clone()
-            future12 = executor.submit(session12.iterate_oql2,f'{sel_12_graph_oql}',of_ids1,neighbors_ids,True,rn12,iterate_ids) 
-            session23 = self._clone()
-            future23 = executor.submit(session23.iterate_oql2,f'{sel_23_graph_oql}',and_ids3,neighbors_ids,True,rn23,iterate_ids)
-            
-            graph12 = future12.result()
-            session12.close_connection()
-            graph23 = future23.result()
-            session23.close_connection()
-
+        graph12 = self.iterate_oql2(sel_12_graph_oql,of_dbids1,neighbors_ids,True,rn12)
+        graph23 = self.iterate_oql2(sel_23_graph_oql,and_dbids3,neighbors_ids,True,rn23)
         graph123 = graph12.compose(graph23)
+        # to remove relations with no Effect annotation:
+        rels_with_effect = graph123.psrels_with(['positive','negative'],['Effect']) 
+        graph123_effect = graph123.subgraph_by_rels(rels_with_effect)
         if self.add2self:
-            self.Graph = self.Graph.compose(graph123)
-        return graph123
+            self.Graph = self.Graph.compose(graph123_effect)
+        return graph123_effect
 
 
-    def gv2gene(self,gv_ids:list):
+    def gv2gene(self,gv_dbids:list):
         """
         Input
         -----
@@ -1138,10 +1226,10 @@ class APISession(PSNetworx):
         {gv_id:[gene_names]}
         """
         prot2gvs_graph = ResnetGraph()
-        print ('Finding genes for %d genetic variants' % len(gv_ids))
-        number_of_iterations = int(len(gv_ids)/1000)+1
-        for i in range(0, len(gv_ids),1000):
-            chunk = gv_ids[i: i+1000]
+        print ('Finding genes for %d genetic variants' % len(gv_dbids))
+        number_of_iterations = int(len(gv_dbids)/1000)+1
+        for i in range(0, len(gv_dbids),1000):
+            chunk = gv_dbids[i: i+1000]
             oql_query = OQL.expand_entity(PropertyValues=chunk, SearchByProperties=['id'], 
                                 expand_by_rel_types=['GeneticChange'],expand2neighbors=['Protein'])
             request_name = f'{str(int(i/1000)+1)} iteration out of {str(number_of_iterations)} to find genes linked to GVs'
@@ -1150,71 +1238,172 @@ class APISession(PSNetworx):
         # making gvid2genes for subsequent annotation
         gvid2genes = dict()
         for gv_id, protein_id, rel in prot2gvs_graph.edges.data('relation'):
-            protein_node = prot2gvs_graph._get_node(protein_id)
+            protein_node = prot2gvs_graph._psobj(protein_id)
             gene_name = protein_node['Name'][0]
             try:
                 gvid2genes[gv_id].append(gene_name)
             except KeyError:
                 gvid2genes[gv_id] = [gene_name]
 
-        #[nx.set_node_attributes(disease2gvs, {}) for gvid, gene_names in gvid2genes.items()]
         return gvid2genes
+    
+ 
+    def _props2psobj(self, propValues: list, search_by_properties=[], get_childs=True,
+                             only_obj_types=[], add2self=True):
+        '''
+        Annotates
+        -----
+        nodes in self.Graph with CHILDS property if get_childs == True  
 
-    '''
-    def unified_rel(self,merge2rel:PSRelation):
-        unified_rel = merge2rel.copy()
-        graph_between = ResnetGraph()
-        for regulator_id, target_id in merge2rel.get_regulators_targets():
-            graph_between.add_graph(self.connect_nodes([regulator_id],[target_id],in_direction='>'))
+        Returns
+        -------
+        {PSObject} containing all parents and children combined
+        '''
+        prop_names = search_by_properties if search_by_properties else ['Name','Alias']
+        prop_names_str = OQL.join_prop_names(prop_names)
+        oql_query =  f'SELECT Entity WHERE ({prop_names_str})'+ ' = ({props})'
+        if only_obj_types:
+            obj_types_str = OQL.join_with_quotes(only_obj_types)
+            oql_query = oql_query + ' AND objectType = (' + obj_types_str + ')'
 
-        positive_refs,negative_refs = graph_between._effect_counts__() 
-        if len(positive_refs) > len(negative_refs):
-            my_effect =  'activated'
-        elif len(negative_refs) > len(positive_refs):
-            my_effect = 'repressed'
+        rn = f'Retrieving objects from database using {len(propValues)} values for {prop_names} properties'
+        parents = self.iterate_oql(oql_query,propValues,request_name=rn,step=950)._get_nodes()
+        # step size is reduced to 950 to mitigate excessive length of oql_query string problem caused by zeep
+
+        if get_childs:
+            children = self.load_children4(parents,add2self)
+            parents += children
+        elif add2self:
+            self.Graph.add_psobjs(parents) 
+        
+        return parents
+
+
+    def load_dbids4(self,psobjs:list):
+        '''
+        Return
+        ------
+        mapped_objs,no_dbid_objs - [PSObject]
+        '''
+        print(f'Reterieving database identifiers for {len(psobjs)} entities using Name identifier')
+        kwargs = {TO_RETRIEVE:NO_REL_PROPERTIES}
+        my_session = self._clone_session(**kwargs)
+        names = ResnetGraph.names(psobjs)
+        db_nodes = self._props2psobj(names,['Name'],get_childs=False)
+        name2dbid = {n.name():n.dbid() for n in db_nodes}
+        mapped_objs = list()
+        no_dbid_objs = list()
+        for psobj in psobjs:
+            try:
+                my_dbid = name2dbid[psobj.name()]
+                psobj.update_with_value('Id',my_dbid)
+                mapped_objs.append(psobj)
+            except KeyError:
+                #print(f'Failed to find in database entity with Name\n{psobj.name()}' )
+                no_dbid_objs.append(psobj)
+                continue
+        
+        if no_dbid_objs:
+            urns_need_mapping = ResnetGraph.urns(no_dbid_objs)
+            db_nodes = self._props2psobj(urns_need_mapping,['URN'],get_childs=False)
+            urn2dbid = {n.urn():n.dbid() for n in db_nodes}
+            mapped_by_urn = list()
+            for psobj in no_dbid_objs:
+                try:
+                    my_dbid = urn2dbid[psobj.urn()]
+                    psobj.update_with_value('Id',my_dbid)
+                    mapped_by_urn.append(psobj)
+                except KeyError:
+                    continue
+
+            mapped_objs += mapped_by_urn
+            no_dbid_objs = [obj for obj in no_dbid_objs if obj not in mapped_by_urn]
+
+        urn2dbids = {n.urn():n['Id'] for n in mapped_objs}
+        self.Graph.set_node_annotation(urn2dbids,'Id')
+        print(f'Loaded {len(mapped_objs)} database identitiers for {len(psobjs)} entities')
+        my_session.close_connection()
+        return mapped_objs,no_dbid_objs
+
+
+    def __load_children(self,parent:PSObject,min_connectivity=0):
+            parent_dbid = parent.dbid()
+            if parent_dbid:
+                query_ontology = OQL.get_childs([parent_dbid],['id'])
+                if min_connectivity:
+                    query_ontology += f' AND Connectivity >= {min_connectivity}'
+
+                my_session = self._clone_session()
+                children_graph = my_session.process_oql(query_ontology,f'Retrieve ontology children for {parent.name()}')
+                my_session.close_connection()
+                
+                return parent, children_graph._get_nodes()
+            else:
+                print(f'Parent {parent.name()} has no database identifier. Its children cannot be loaded')
+                return parent,[]
+        
+
+    def load_children4(self,parents:list,add2self=True,min_connectivity=0):
+        '''
+        Input
+        -----
+        parents - [PSObject]
+
+        Return
+        ------
+        {PSObject} - set of all found children\n
+    
+        Updates
+        -------
+        parents in self.Graph with CHILDS properties as [PSObject] children
+        '''
+        process_start = time.time()
+        if parents:
+            annotate_parents = list(set(parents))
+            if add2self:
+                self.Graph.add_psobjs(parents)    
         else:
-            my_effect = 'unknown'
+            annotate_parents = self.Graph._get_nodes()
 
+        print(f'Loading ontology children for {len(annotate_parents)} entities')
 
-        def choose_type(rels:list):
-            type_ranks = ['DirectRegulation','Binding','ProtModification','PromoterBinding','Expression','MolTransport','MolSynthesis','Regulation']
-            for type in type_ranks:
-                for r in rels:
-                    if r.objtype() == type:
-                        return type
-            return NotImplemented
+        max_threads = 25 
+        # 4 threads perform a bit faster than 8 threads 
+        # 288 parents out of 288 were processed in 0:19:51.732684 by 8 threads
+        # 288 parents out of 288 were processed in 0:18:52.715937 by 4 threads
+        max_threaded_time = 0
+        need_children = list()
+        child_counter = set()
+        for p, parent in enumerate(annotate_parents):
+            try:
+                children = self.Graph.nodes[parent.uid()][CHILDS]
+                child_counter.update(children)
+            except KeyError:
+                need_children.append(parent)
+                if len(need_children) >= max_threads or p == len(annotate_parents)-1:       
+                    thread_start = time.time()
+                    with ThreadPoolExecutor(max_workers=len(need_children), thread_name_prefix='load_children') as e:
+                        futures = list()
+                        [futures.append(e.submit(self.__load_children, nc)) for nc in need_children]
 
-        rel_between = graph_between.get_relations()
-        if merge2rel.objtype() != 'ChemicalReaction':
-            my_type = choose_type(rel_between)
-        else:
-            my_type = 'ChemicalReaction'
+                        for future in as_completed(futures):
+                            f_parent, children = future.result()
+                            self.Graph.add_psobjs(children)
+                            nx.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
+                            child_counter.update(children)
+                            # set_node_attributes() does not update nodes that do not exist in Graph
+       
+                    threaded_time = time.time() - thread_start
+                    if threaded_time > max_threaded_time:
+                        max_threaded_time = threaded_time
+                        if max_threaded_time > 240:
+                            print(f'Longest {max_threads}-threaded time {"{}".format(str(timedelta(seconds=max_threaded_time)))} \
+                                  is close to Apache default 5 minutes transaction timeout !!!')
+                    if not self.no_mess:
+                        print (f'{p+1} parents out of {len(annotate_parents)} were processed in {self.execution_time(process_start)}')
+                    need_children.clear()
         
-        [unified_rel.merge_rel(r) for r in rel_between]
-        unified_rel.set_property('ObjTypeName',my_type)
-        unified_rel.set_property('Effect',my_effect)
-        return unified_rel
-        
-
-    def repair_graph(self,graph=ResnetGraph()):
-        my_graph = graph if graph else self.Graph
-        for regulator_id,target_id,rel in my_graph.edges(data='relation'):
-            if rel.get_reference_count() == 0:
-                new_rel = self.unified_rel(rel)
-                my_graph.remove_relation(rel)
-                my_graph.add_rel(new_rel)
-    '''
-
-        
-        
-
-
-
-
-        
-
-
-
-        
-
-
+        print(f'{len(child_counter)} children for {len(annotate_parents)} parent entities were found in database \
+              in {self.execution_time(process_start)}')
+        print(f'Longest {max_threads}-threaded time: {"{}".format(str(timedelta(seconds=max_threaded_time)))}')
+        return child_counter
