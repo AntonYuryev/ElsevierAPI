@@ -2,13 +2,12 @@ from ElsevierAPI import load_api_config
 import pandas as pd
 from ElsevierAPI.ETM_API.references import PUBYEAR
 from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL
-from ElsevierAPI.ResnetAPI.NetworkxObjects import GENETICVARIANT,FUNC_ASSOC,PS_ID_TYPES
+from ElsevierAPI.ResnetAPI.NetworkxObjects import GENETICVARIANT,FUNC_ASSOC,PS_REFIID_TYPES
 from ElsevierAPI.NCBI.dbsnp import minor_allele,dbsnp_hyperlink
 from ElsevierAPI.NCBI.pubmed import pubmed_hyperlink
 
-
 from ElsevierAPI.ResnetAPI.ResnetAPISession import APISession
-from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
+from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph, len
 DATA_DIR = 'D:/Python/PMI/'
 
 class TargetGenetics(APISession):
@@ -19,9 +18,9 @@ class TargetGenetics(APISession):
         self.PageSize = 1000
         self.snp2allele2freq = dict()
         self.gv2disease_graph = ResnetGraph()
-        self.gv_ids = list()
+        self.gv_dbids = list()
         
-        self.add_rel_props(PS_ID_TYPES+PUBYEAR)
+        self.add_rel_props(PS_REFIID_TYPES+PUBYEAR)
 
     def load_graph(self,target_name:str):
         oql_query = OQL.expand_entity(PropertyValues=[target_name], SearchByProperties=['Name','Alias'], expand_by_rel_types=['GeneticChange'],
@@ -35,14 +34,14 @@ class TargetGenetics(APISession):
         target2GV_graph = self.process_oql(oql_query,request_name)
 
 
-        self.gv_ids = target2GV_graph.get_entity_ids([GENETICVARIANT])
-        oql_query = OQL.expand_entity(PropertyValues=self.gv_ids, SearchByProperties=['id'], expand_by_rel_types=[FUNC_ASSOC],
+        self.gv_dbids = target2GV_graph.dbids4nodes([GENETICVARIANT])
+        oql_query = OQL.expand_entity(PropertyValues=self.gv_dbids, SearchByProperties=['id'], expand_by_rel_types=[FUNC_ASSOC],
                         expand2neighbors=['Disease'])
 
-        request_name = 'Find diseases for {} GVs'.format(str(len(self.gv_ids)))
+        request_name = 'Find diseases for {} GVs'.format(str(len(self.gv_dbids)))
         self.gv2disease_graph = self.process_oql(oql_query,request_name)
 
-        rs_ids = target2GV_graph.get_properties(self.gv_ids,'Name')
+        rs_ids = target2GV_graph.get_properties('Name',set(self.gv_dbids))
         rs_ids = [v[0] for v in rs_ids.values()]
         self.snp2allele2freq = minor_allele(rs_ids)
 
@@ -50,9 +49,9 @@ class TargetGenetics(APISession):
     def make_disease_pd(self):
         diseases_pd = pd.DataFrame(columns=['Disease','#Reference','#SNVs','refcount'])
         rownum = 0
-        for disease in self.Graph.get_objects(['Disease']):
+        for disease in self.Graph.psobjs_with(only_with_values=['Disease']):
             disease_name = disease['Name'][0]
-            disease_neighborhood = self.Graph.get_neighbors_graph(set(disease['Id']))
+            disease_neighborhood = self.Graph.neighborhood(set(disease['Id']))
             references = list(disease_neighborhood.load_references())
             references.sort(lambda x: int(x[PUBYEAR][0]), reverse=True)
             # references can be from GeneticChange or FunctionalAssociation
@@ -63,9 +62,9 @@ class TargetGenetics(APISession):
             else:
                 pubmed_link = ','.join([x._identifiers_str() for x in references])
 
-            GVs = disease_neighborhood.get_objects(['GeneticVariant'])
+            GVs = disease_neighborhood.psobjs_with(only_with_values=['GeneticVariant'])
             snp_count = len(GVs)
-            snp_names = disease_neighborhood.get_properties(self.gv_ids,'Name')
+            snp_names = disease_neighborhood.get_properties('Name',set(self.gv_dbids))
             rs_ids = [v[0] for v in snp_names.values()]
             snp_links = dbsnp_hyperlink(rs_ids) if rs_ids else '0'
 
@@ -80,9 +79,9 @@ class TargetGenetics(APISession):
     def make_snv_pd(self):
         gv_pd = pd.DataFrame(columns=['SNV','MAF','Disease','#Reference','refcount'])
         rownum = 0
-        for gv in self.gv2disease_graph.get_objects(['GeneticVariant']):
+        for gv in self.gv2disease_graph.psobjs_with(only_with_values=['GeneticVariant']):
             gv_id = gv['Id'][0]
-            gv_diseases = self.gv2disease_graph.get_neighbors_graph(set(gv['Id']))
+            gv_diseases = self.gv2disease_graph.neighborhood(set(gv['Id']))
             snp_name = gv['Name'][0]
             snp_link = dbsnp_hyperlink([snp_name],as_count=False)
             try:
@@ -91,7 +90,7 @@ class TargetGenetics(APISession):
                 maf = 'Minor allele frequency (MAF) is not found in dbSNP'
             for regulatorID, targetID, rel in gv_diseases.edges.data('relation'):
                 disease_id = regulatorID if regulatorID != gv_id else targetID
-                disease_obj = gv_diseases._get_node(disease_id)
+                disease_obj = gv_diseases._psobj(disease_id)
 
                 disease_name = disease_obj['Name'][0]
 

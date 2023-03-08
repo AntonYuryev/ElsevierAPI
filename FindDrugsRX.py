@@ -5,11 +5,12 @@ import ElsevierAPI.ReaxysAPI.Reaxys_API as RxAPI
 import argparse
 import textwrap
 from ElsevierAPI.ResnetAPI.NetworkxObjects import PSObject
+from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 
 start_time = time.time()
 def GOQLtoFindDrugs(TargetIds:list, TargetType = 'Protein', drugEffect=['negative']):
     if TargetType == 'Protein':
-        return OQL.get_drugs(for_targets_with_ids=TargetIds)
+        return OQL.drugs4(for_targets_with_ids=TargetIds)
     elif TargetType == 'Small Molecule':
         REL_TYPES = ['Regulation', 'MolSynthesis']
         OQLquery = OQL.expand_entity(PropertyValues=TargetIds, SearchByProperties=['id'], expand_by_rel_types=REL_TYPES, expand2neighbors=['Small Molecule'], direction='upstream')
@@ -47,7 +48,7 @@ if __name__ == "__main__":
 
 
     TargetType = args.target_type 
-    SearchPsProps = args.resnet_search_props.split(',')
+    SearchPSprops = args.resnet_search_props.split(',')
     drugEffect = [args.effect]
   
     if args.reaxys_prop:
@@ -60,7 +61,7 @@ if __name__ == "__main__":
         EntitiesToExpand = [line.rstrip('\n') for line in f]
 
     ps_api = open_api_session()
-    TargetIDs = ps_api._get_obj_ids_by_props(PropertyValues=EntitiesToExpand, SearchByProperties=SearchPsProps)
+    Targets = ps_api._props2psobj(EntitiesToExpand,SearchPSprops)
     PSdumpFile = str(args.infile)[:len(str(args.infile))-4]+'_psdump.tsv'
     ps_api.add_dump_file(PSdumpFile, replace_main_dump=True)
     ps_api.entProps = args.resnet_retreive_props.split(',')
@@ -68,7 +69,8 @@ if __name__ == "__main__":
   
     ps_api.relProps = ['Name','Sentence','PMID','DOI','PubYear','RelationNumberOfReferences']
     #Data dump columns will be ordered according to the order in this list
-    ps_api.process_oql(GOQLtoFindDrugs(TargetIDs, TargetType=TargetType, drugEffect=drugEffect))
+    target_dbids = ResnetGraph.dbids(Targets)
+    ps_api.process_oql(GOQLtoFindDrugs(target_dbids, TargetType=TargetType, drugEffect=drugEffect))
 
     if len(ReaxysFields) > 0:
         FoundDrugs = [PSObject(y) for x,y in ps_api.Graph.nodes(data=True) if ((ps_api.Graph.out_degree(x)>0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))]

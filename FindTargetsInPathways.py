@@ -37,7 +37,7 @@ def find_pathways(FoldersWithPathways: list, entity_pandas: pd.DataFrame, search
     id2members = dict()
 
     for PathwayFolder in FoldersWithPathways:
-        subFolders = ps_api.get_subfolders([PathwayFolder])
+        subFolders = ps_api.load_subfolders([PathwayFolder])
         if len(subFolders) == 0:
             print('Input folder has no subfolders. Will use only pathways from %s' % PathwayFolder)
         else:

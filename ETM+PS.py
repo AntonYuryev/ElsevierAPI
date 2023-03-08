@@ -14,9 +14,9 @@ def get_children(terms:list = None):
             term_id, term_name = term.split('\t')
             term_msid= str(term_id[1:])
             if term_msid.isdigit():
-                return ps_api._get_obj_ids_by_props([term_msid],['MedScan ID'])
+                return ps_api._props2psobj([term_msid],['MedScan ID'])
             else:
-                return ps_api._get_obj_ids_by_props([term_name],['Name','Alias'])
+                return ps_api._props2psobj([term_name],['Name','Alias'])
 
 if __name__ == "__main__":
     APIconfig = load_api_config()

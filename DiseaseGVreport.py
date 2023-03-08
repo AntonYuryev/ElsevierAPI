@@ -20,7 +20,7 @@ def get_disease_childs(disease_name:str):
 
 
 def map_gvid2genes(disease2gvs:ResnetGraph):
-    gv_ids = disease2gvs.get_node_ids(['GeneticVariant'])
+    gv_ids = disease2gvs.dbids4nodes(['GeneticVariant'])
     gvid2genes = ps_api.gv2gene(gv_ids)
     [nx.set_node_attributes(disease2gvs, {gvid:{'Gene':gene_names}}) for gvid, gene_names in gvid2genes.items()]
 
@@ -44,8 +44,8 @@ if __name__ == "__main__":
 
     row_counter = 1
     for node1id, node2id, rel in disease2gvs.edges.data('relation'):
-        node1 = disease2gvs._get_node(node1id)
-        node2 = disease2gvs._get_node(node2id)
+        node1 = disease2gvs._psobj(node1id)
+        node2 = disease2gvs._psobj(node2id)
         assert isinstance(rel,PSRelation)
         if node1['ObjTypeName'][0]=='Disease':
             disease_node = node1

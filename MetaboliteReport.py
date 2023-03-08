@@ -49,9 +49,9 @@ metabolite_ids = list(objid2input_names.keys())
 
 
 # find enzymes linked to ChemicalReactions and retreive their ontology children (proteins)
-enzymes = reactions_graph.get_objects(PROTEIN_TYPES)
+enzymes = reactions_graph.psobjs_with(only_with_values=PROTEIN_TYPES)
 enzymes_ids = [x['Id'][0] for x in enzymes]
-ps_api._get_obj_ids_by_props(enzymes_ids,['Id'], get_childs=True, only_obj_types=PROTEIN_TYPES) #loading ontology children for enzymes
+ps_api._props2psobj(enzymes_ids,['Id'], get_childs=True, only_obj_types=PROTEIN_TYPES) #loading ontology children for enzymes
 #retrieved children are stored in ps_api.ID2Children structure
 
 unique_rows= set() # duplicate row filter. Relations can be duplicated due to diffrent Owner,Effect,Mechanism
@@ -60,13 +60,13 @@ with open(temp_report_file, 'w', encoding='utf-8') as f:
     f.write('Metabolite input name'+'\t'+'Metabolite name in Database'+'\t'+'direction'+'\t'+'Substrate or Product'+'\t'+'gene'+'\n')
     for regulatorID, targetID, reaction in reactions_graph.edges.data('relation'):
         if regulatorID in metabolite_ids:
-            target = reactions_graph._get_node(targetID)
+            target = reactions_graph._psobj(targetID)
             if target['ObjTypeName'][0] == 'SmallMol' and target['Name'][0] not in COMMON_METABOLITES:
                 enzyme_objects, products = reactions_graph.find_nodes(for_relation=reaction,filter_by=PROTEIN_TYPES)# enzymes are always regulators in ChemicalReaction
                 gene_names = ps_api.get_children_props(for_psobjs=enzyme_objects,prop_name='Name')
                 gene_names = ','.join(gene_names)
                 
-                input_metabolite_obj = reactions_graph._get_node(regulatorID)
+                input_metabolite_obj = reactions_graph._psobj(regulatorID)
                 metabolite_input_name = objid2input_names[regulatorID]
                 metabolite_input_name = ','.join(metabolite_input_name)
                 metabolite_db_name = input_metabolite_obj['Name'][0]
@@ -74,13 +74,13 @@ with open(temp_report_file, 'w', encoding='utf-8') as f:
                 other_metabolite = target['Name'][0]
             else: continue
         elif targetID in metabolite_ids:
-            regulator = reactions_graph._get_node(regulatorID)
+            regulator = reactions_graph._psobj(regulatorID)
             if regulator['ObjTypeName'][0] == 'SmallMol' and regulator['Name'][0] not in COMMON_METABOLITES:
                 enzyme_objects, products = reactions_graph.find_nodes(for_relation=reaction,filter_by=PROTEIN_TYPES)
                 gene_names = ps_api.get_children_props(enzyme_objects,'Name')
                 gene_names = ','.join(gene_names)
 
-                target = reactions_graph._get_node(targetID)
+                target = reactions_graph._psobj(targetID)
                 metabolite_input_name = objid2input_names[targetID]
                 metabolite_input_name = ','.join(metabolite_input_name)
                 metabolite_db_name = target['Name'][0]

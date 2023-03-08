@@ -131,10 +131,10 @@ if __name__ == "__main__":
         print("\nBegin linking entities mapped from infile to %d concepts" % (concepts_count))
         for concept_idx in link2concepts.index:
             link2concept = link2concepts.iat[concept_idx,0]
-            concept_ids = search._get_obj_ids_by_props(
+            concepts = search._props2psobj(
                 propValues=[link2concept], search_by_properties=search_concept_by)
  
-            if len(concept_ids) == 0: print ('No entity %s found in database' % link2concept)
+            if len(concepts) == 0: print ('No entity %s found in database' % link2concept)
             else:
                 connect_by_rels = list()
                 rel_effect = list()
@@ -153,7 +153,7 @@ if __name__ == "__main__":
                     if pd.notna(dr): rel_dir = str(dr)
 
                 search.set_how2connect(connect_by_rels,rel_effect,rel_dir)
-                linked_entities_count= search.link2RefCountPandas(link2concept,list(concept_ids))
+                linked_entities_count= search.link2RefCountPandas(link2concept,list(concepts))
                 print("Total %d out of %d concepts interrogated in %s" % 
                      (concept_idx + 1, len(link2concepts), search.execution_time(global_start_time)))
 

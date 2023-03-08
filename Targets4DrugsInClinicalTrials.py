@@ -2,7 +2,7 @@ from ElsevierAPI.ResnetAPI.ResnetGraph import ResnetGraph
 import time
 from ElsevierAPI import open_api_session
 from ElsevierAPI.ResnetAPI.PathwayStudioGOQL import OQL 
-from ElsevierAPI.ResnetAPI.NetworkxObjects import BIBLIO_PROPS,PS_ID_TYPES
+from ElsevierAPI.ResnetAPI.NetworkxObjects import BIBLIO_PROPS,PS_REFIID_TYPES
 from  ElsevierAPI.ResnetAPI.rnef2sbgn import make_file_name
 import xml.etree.ElementTree as et
 from xml.dom import minidom
@@ -13,7 +13,7 @@ my_drug_list = working_dir + input_drug_list
 my_drug_list = None
 ps_api = open_api_session()
 ps_api.DumpFiles.clear()
-ps_api.add_rel_props(BIBLIO_PROPS+PS_ID_TYPES+['Effect','Mechanism'])
+ps_api.add_rel_props(BIBLIO_PROPS+PS_REFIID_TYPES+['Effect','Mechanism'])
 ps_api.PageSize = 1000
 
 def retreive_clinical_trials(drugs_name_file=None):
@@ -39,8 +39,8 @@ print('Found %d clinical trials with %d drugs' % (completed_trials.number_of_edg
 effect = 'negative' if search_antagonists else 'positive'
 oql_query = r'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = ({{ids}})) AND objectType = DirectRegulation AND Effect = {effect}'
 oql_query  = oql_query.format(effect=effect)
-drug_targets = ps_api.iterate_oql(f'{oql_query}', drug_ids)
-drug_with_targets = set(drug_targets.get_entity_ids(['SmallMol']))
+drug_targets_graph = ps_api.iterate_oql(f'{oql_query}', drug_ids)
+drug_with_targets = set(drug_targets_graph._psobjs_with('SmallMol','ObjTypeName'))
 print('Found %d drugs with targets and clinical trials' % len(drug_with_targets))
 
 drug_counter = 0
@@ -49,7 +49,7 @@ output_all_targets = False
 start = time.time()
 for drug in drug_with_targets:
     drug_counter += 1
-    target_ids = set(drug_targets.get_neighbors({drug}))
+    target_ids = set(drug_targets_graph.get_neighbors({drug}))
     indication_ids = completed_trials.get_neighbors({drug})
 
     effect = 'positive' if search_antagonists else 'negative'
@@ -57,8 +57,8 @@ for drug in drug_with_targets:
     if targets_indications.size() == 0: continue
 
     drug_target_indication = ResnetGraph()
-    drug_target_indication.add_graph(completed_trials.get_neighbors_graph({drug}))
-    drug_target_indication.add_graph(drug_targets.get_neighbors_graph({drug}))
+    drug_target_indication.add_graph(completed_trials.neighborhood({drug}))
+    drug_target_indication.add_graph(drug_targets_graph.neighborhood({drug}))
     drug_target_indication.add_graph(targets_indications)
     drug_target_indication.load_references()
     if not output_all_targets:

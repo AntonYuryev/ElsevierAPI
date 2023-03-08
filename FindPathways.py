@@ -28,13 +28,12 @@ def MapEntityToPathways(FilterBy:list):
 
 def FindPathways(FoldersWithPathways:list, EntityListFile:str):
     # loading id2pathways, id2folders into ps_api
-    for folder in FoldersWithPathways:
-        folder_id = ps_api.get_folder_id(folder)
-        sub_folder_ids = ps_api.get_subfolders_recursively([folder_id])
+    for folder_name in FoldersWithPathways:
+        sub_folder_ids = ps_api.subfolder_ids(folder_name)
         if len(sub_folder_ids) == 0:
-            print ('Input folder has no subfolders. Will use only pathways from %s' % folder)
+            print ('Input folder has no subfolders. Will use only pathways from %s' % folder_name)
         else:
-            print('Found %d subfolders in %s' %  (len(sub_folder_ids), folder))
+            print('Found %d subfolders in %s' %  (len(sub_folder_ids), folder_name))
 
         ps_api.get_objects_from_folders([sub_folder_ids])
 
@@ -67,8 +66,8 @@ if __name__ == "__main__":
 
     start_time = time.time()
     entities = [line.strip() for line in open(EntityListFile)]
-    entity_ids = ps_api._get_obj_ids_by_props(entities,SearchByProperty)
-    id2psobj = ps_api.find_pathways(entity_ids,SearchPathwaysInFolders)
+    entities = ps_api._props2psobj(entities,SearchByProperty)
+    id2psobj = ps_api.find_pathways(entities,SearchPathwaysInFolders)
     pathway_counter = set()
     # making {EntityName+'\t'+EntityURN : folderName + '\t' + PathwayName}
     foutName = EntityListFile[:len(EntityListFile)-4]+' Pathways from '+','.join(SearchPathwaysInFolders)+'.tsv'

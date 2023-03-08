@@ -28,7 +28,7 @@ ps_api.process_oql(
     OQL.expand_entity(PropertyValues=SearchEntitiesBy, SearchByProperties=['Name', 'Alias'], expand_by_rel_types=[],
                        expand2neighbors=['GeneticVariant']))
 
-SNPIds = ps_api.Graph.get_node_ids(['GeneticVariant'])
+SNPIds = ps_api.Graph.dbids4nodes(['GeneticVariant'])
 print("Finding Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDiseaseProteins, replace_main_dump=True)
 ps_api.process_oql(
@@ -52,11 +52,11 @@ for t in sorted_centrality:
 
 print(sorted_centrality_byName)
 
-DiseaseProteins = set(ps_api.Graph.get_node_ids(['Protein']))
+DiseaseProteins = set(ps_api.Graph.dbids4nodes(['Protein']))
 print("Finding Drugs for Proteins containing GeneticVariants linked to %s" % InputDiseaseNames)
 ps_api.add_dump_file(foutDrugsForDiseaseProteins, replace_main_dump=True)
 start_time = time.time()
-ps_api.process_oql(OQL.get_drugs(for_targets_with_ids=list(DiseaseProteins)), flush_dump=True)
+ps_api.process_oql(OQL.drugs4(for_targets_with_ids=list(DiseaseProteins)), flush_dump=True)
 DrugCount = set([x for x, y in ps_api.Graph.nodes(data=True) if
                  ((ps_api.Graph.out_degree(x) > 0) & (y['ObjTypeName'][0] in ['Small Molecule', 'SmallMol']))])
 FoundTargets = set(
