@@ -22,11 +22,14 @@ PATENT_APP_NUM = 'Patent Application Number'
 PATENT_GRANT_NUM = 'Patent Grant Number'
 EFFECT = 'Effect'
 RELEVANCE = 'Relevance'
+CITATION_INDEX = 'Citation index'
 LOINCID = 'LOINC ID'
 THRESHOLD = 'Threshold'
 hGRAPHID = 'hGraph ID'
 EDMID = 'EDM ID'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
+
+INT_PROPS = {RELEVANCE,CITATION_INDEX,PUBYEAR}
 
 PS_REFIID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID']
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
@@ -47,7 +50,10 @@ SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence']
 #also TextRef - used as key in Reference.Sentences
 RELATION_PROPS = {EFFECT,'Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
-ALL_PS_PROPS = list(RELATION_PROPS)+list(CLINTRIAL_PROPS)+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS+['TextRef']
+PS_REFERENCE_PROPS = list(CLINTRIAL_PROPS)+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS+['TextRef']
+ALL_PS_PROPS = list(RELATION_PROPS)+PS_REFERENCE_PROPS
+
+REFERENCE_PROPS = list(BIBLIO_PROPS)+list(CLINTRIAL_PROPS)+REF_ID_TYPES+SENTENCE_PROPS
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences, titles, abstracts
 
@@ -122,9 +128,11 @@ class Reference(dict):
         except KeyError: return NotImplemented
 
     def __hash__(self):
+        #__hash__ needs __eq__ to work properly
         return hash(self.__key())
 
     def __eq__(self, other):
+        #__hash__ needs __eq__ to work properly
         if isinstance(other, Reference):
             for id_type in REF_ID_TYPES:
                 try:
@@ -149,9 +157,14 @@ class Reference(dict):
     def get_equivalent(self, ref_list:set):
         for ref in ref_list:
             if ref == self: return ref
-
         return dict()
 
+
+    def my_sentence_props(self):
+        prop_names = set()
+        for prop2value in self.snippets.values():
+            prop_names.update(prop2value.keys())
+        return prop_names
 
     def update_with_value(self, PropId, PropValue:str):
         clean_prop = PropValue.strip(' .')
@@ -340,11 +353,13 @@ class Reference(dict):
     def _merge(self, other):
         if isinstance(other, Reference):
             for prop, values in other.items():
-                if isinstance(values[0], str):
-                    clean_vals = [v.strip(' .') for v in values]
+                if prop in INT_PROPS:
+                    clean_vals = {map(int,values)}
                 else:
-                    clean_vals = values
-                self.update_with_list(prop,clean_vals)
+                    clean_vals = {map(str,values)}
+                    clean_vals = [v.strip(' .') for v in values]
+
+                self.update_with_list(prop,list(clean_vals))
 
             self.Identifiers.update(other.Identifiers)
 

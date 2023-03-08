@@ -438,14 +438,13 @@ class ETMstat:
         return_pd.set_hyperlink_color([IDENTIFIER_COLUMN])
         return return_pd
 
-
-    @staticmethod
+    '''
     def __make_query(self,terms:list,operator='rel'):
-        '''
+        """
         Returns
         -------
         ETM query for either basic or advanced serach where "terms" are joined with AND operator
-        '''
+        """
         if self.request_type == '/search/basic?':
             return ';'.join(terms)
         else:
@@ -462,20 +461,26 @@ class ETMstat:
                 return operator+'('+' AND '.join(my_terms)+')'
             else:
                 return '{'+'};{'.join(terms)+'}'
+    '''
 
     @staticmethod
     def basic_query(entity1:str,entity2:str,add2query:list):
         '''
         Returns
         -------
-        ETM query for either basic serach where "terms" are joined with AND operator
+        ETM query for  basic serach where "terms" are joined with ";"
         '''
-        #return ';'.join([entity1,entity2]+add2query)
-        return '{'+'};{'.join([entity1,entity2]+add2query)+'}'
+        return ';'.join([entity1,entity2]+add2query)
+        #return '{'+'};{'.join([entity1,entity2]+add2query)+'}'
 
 
     @staticmethod
     def advanced_query(entity1:str,entity2:str,add2query:list):
+        '''
+        Returns
+        -------
+        ETM query for advanced serach where "terms" are joined with AND operator
+        '''
         return '{'+'} AND {'.join([entity1,entity2]+add2query)+'}'
 
 
@@ -665,6 +670,8 @@ class ETMstat:
 
     def __get_refs(self, entity_name:str, concepts2link:list,my_query,add2query=[]):
         references = set()
+  #      if entity_name == 'siltuximab':
+  #          print('')
         references, total_hits = self.__multiple_search(entity_name,concepts2link,my_query,add2query)
 
         references = list(references)
@@ -688,7 +695,7 @@ class ETMstat:
 
 
     @staticmethod
-    def __etm_ref_column_name(between_column:str, and_concepts:str or list):
+    def _etm_ref_column_name(between_column:str, and_concepts:str or list):
         if isinstance(and_concepts,str):
             return ETM_REFS_COLUMN + ' between '+between_column+' and '+and_concepts
         else:
@@ -702,8 +709,8 @@ class ETMstat:
             return 'DOIs' + ' between '+between_column+' and '+','.join(and_concepts)
 
 
-    def __add_etm_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,my_query,add2query=[]):
-        etm_ref_column_name = self.__etm_ref_column_name(between_names_in_col,and_concepts)
+    def add_etm_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,my_query,add2query=[]):
+        etm_ref_column_name = self._etm_ref_column_name(between_names_in_col,and_concepts)
         to_df[[etm_ref_column_name,'DOIs']] = to_df[between_names_in_col].apply(lambda x: self.__get_refs(x,and_concepts,my_query,add2query)).apply(pd.Series)
 
 
@@ -731,11 +738,11 @@ class ETMstat:
         df2 = df(my_df.iloc[one3rd : 2*one3rd])
         df3 = df(my_df.iloc[2*one3rd:])
 
-        t1 = Thread(target=etm1.__add_etm_refs, args=(df1,between_names_in_col,and_concepts,use_query,add2query),name='etm_demo')
+        t1 = Thread(target=etm1.add_etm_refs, args=(df1,between_names_in_col,and_concepts,use_query,add2query),name='etm_demo')
         t1.start()
-        t2 = Thread(target=etm2.__add_etm_refs, args=(df2,between_names_in_col,and_concepts,use_query,add2query),name='etm_discover')
+        t2 = Thread(target=etm2.add_etm_refs, args=(df2,between_names_in_col,and_concepts,use_query,add2query),name='etm_discover')
         t2.start()
-        t3 = Thread(target=etm3.__add_etm_refs, args=(df3,between_names_in_col,and_concepts,use_query,add2query),name='etm_research')
+        t3 = Thread(target=etm3.add_etm_refs, args=(df3,between_names_in_col,and_concepts,use_query,add2query),name='etm_research')
         t3.start()
 
         t1.join()
@@ -747,7 +754,7 @@ class ETMstat:
         [self._add2counter(ref) for ref in etm3.references()]
         
         annotated_df.copy_format(to_df)
-        etm_ref_column_name = self.__etm_ref_column_name(between_names_in_col,and_concepts)
+        etm_ref_column_name = self._etm_ref_column_name(between_names_in_col,and_concepts)
         self.etm_ref_column_name.append(etm_ref_column_name)
         annotated_df.add_column_format(etm_ref_column_name,'align','center')
         etm_doi_column_name = self.__etm_doi_column_name(between_names_in_col,and_concepts)
@@ -759,7 +766,7 @@ class ETMstat:
 
 
     def __etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[]):
-        etm_ref_column_name = self.__etm_ref_column_name(between_col,and_col)
+        etm_ref_column_name = self._etm_ref_column_name(between_col,and_col)
         for i in in_df.index:
             col1 = in_df.loc[i][between_col]
             col2 = in_df.loc[i][and_col]
@@ -797,7 +804,7 @@ class ETMstat:
         [self._add2counter(ref) for ref in etm2.references()]
         [self._add2counter(ref) for ref in etm3.references()]
 
-        etm_ref_column_name = self.__etm_ref_column_name(between_col,and_col)
+        etm_ref_column_name = self._etm_ref_column_name(between_col,and_col)
         self.etm_ref_column_name.append(etm_ref_column_name)
         annotated_df.add_column_format(etm_ref_column_name,'align','center')
         annotated_df.set_hyperlink_color([etm_ref_column_name,'DOIs'])
