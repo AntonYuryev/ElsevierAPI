@@ -7,7 +7,7 @@ parameters = {
         'sample_ids' : [1], #for DESeq2 output that has log2FC in the first column and pValue in the second
         'has_pvalue' : True,
         'find_drugs' : True,
-        'data_dir' : 'D:/Python/NEO7/NEO7US208CNMLN008 (melanoma)',
+        'data_dir' : 'D:/Python/NEO7/',
         'no_mess' : False
     }
 
@@ -22,7 +22,7 @@ def do_the_job(snea:SNEA):
 
 
 if __name__ == "__main__":
-    path2experiment = 'D:/Python/NEO7/NEO7US206MAGLB015/GTExvsNEO7US206MAGLB015.DESeq2.txt'
+    path2experiment = parameters['data_dir']+'GTExvsNEO7US206MAGLB015.DESeq2.txt'
     snea = SNEA.from_files(path2experiment,**parameters)
     if parameters['no_mess']:
         log_name = snea.report_path('log')
