@@ -7,7 +7,7 @@ from docx.enum.dml import MSO_THEME_COLOR_INDEX
 from docx.enum.style import WD_STYLE_TYPE, WD_BUILTIN_STYLE
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.table import _Cell
-import pypandoc 
+import pypandoc
 from os.path import exists
 import json
 from docx.text.paragraph import Paragraph
