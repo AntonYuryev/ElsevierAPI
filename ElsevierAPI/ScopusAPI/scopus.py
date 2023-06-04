@@ -3,6 +3,8 @@ import urllib.parse
 import urllib.error as http_error
 import json
 from time import sleep
+from ..ETM_API.references import Reference, SCOPUS_CI
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 AUTHOR_SEARCH = 0
 AUTHOR_RETRIEVAL = 1
@@ -32,11 +34,13 @@ class Scopus:
         result = json.loads(scopus_view.decode('utf-8'))
         sleep(0.34)
         return result
+    
 
 class AuthorRetreival(Scopus):
     def __init__(self,author_id:str, APIconfig:dict):
         self.url = super().url+'author/author_id/'+author_id+'?'
         super().__init__(APIconfig)
+
 
 class AuthorSearch(Scopus):
     author_cache = dict()
@@ -89,7 +93,12 @@ class AuthorSearch(Scopus):
     def authorid(author_info:tuple):
         return author_info[0][10:]
 
+
 class ScopusSearch(Scopus):
+
+    def add_query(self,query:str):
+        self.params.update({'query':query})
+
     def __init__(self,query:str,APIconfig:dict):
         add_param = {'query':query}
         super().__init__(APIconfig,add_param)
@@ -105,6 +114,7 @@ class ScopusSearch(Scopus):
             articles += list(result["search-results"]["entry"])
 
         return articles
+    
 
     @staticmethod
     def biblio_str(article):
@@ -115,7 +125,7 @@ class ScopusSearch(Scopus):
         pages = article['prism:pageRange']
         pub_date = article['prism:coverDisplayDate']
         return '"'+title+'" '+journal+' v.'+volume+':'+issue+'('+pages+'), '+pub_date
-
+    
 
 class CitationOverview(Scopus):
     def __init__(self,identifier_type:str,identifier:str,APIconfig:dict):
@@ -128,13 +138,10 @@ class CitationOverview(Scopus):
         return result["abstract-citations-response"]
 
 
-
-
 def g_index(APIconfig:dict,last_name:str,first_name:str,institution = ''):
     au = AuthorSearch(APIconfig)
     author_id = au.get_author_id(last_name,first_name,institution)
-    aid = au.authorid(author_id)
-    query = 'AU-ID({})'.format(aid)
+    query = f'AU-ID({au.authorid(author_id)})'
     search = ScopusSearch(query,APIconfig)
     author_articles = list(search._get_results())
     author_articles.sort(key=lambda x: int(x['citedby-count']), reverse=True)
@@ -150,6 +157,59 @@ def g_index(APIconfig:dict,last_name:str,first_name:str,institution = ''):
             break
     
     return gindex,len(author_articles),search.biblio_str(author_articles[0])
+
+
+def loadCI(APIconfig:dict, references:list):
+    '''
+    Input
+    -----
+    references - [Reference]
+    '''
+    pmid2ref = dict()
+    doi2ref = dict()
+    for ref in references:
+        try:
+            pmid2ref[ref.Identifiers['PMID']] = ref
+        except KeyError:
+            try:
+                doi2ref[ref.Identifiers['DOI']] = ref
+            except KeyError:
+                continue
+
+    pmids = list(pmid2ref.keys())
+    dois = list(doi2ref.keys())
+    with ThreadPoolExecutor(100, thread_name_prefix='ScopusCI') as e:
+        pmid_futures = list()
+        doi_futures = list()
+
+        for i in range(0,len(pmids),100):
+            query = 'PMID(' + ' OR '.join(pmids[i:i+100])+')'
+            search = ScopusSearch(query,APIconfig)
+            pmid_futures.append(e.submit(search._get_results))
+
+        for i in range(0,len(dois),100):
+            query = 'DOI(' + ' OR '.join(pmids[i:i+100])+')'
+            search = ScopusSearch(query,APIconfig)
+            doi_futures.append(e.submit(search._get_results))
+
+        articles_with_pmids = list()
+        [articles_with_pmids.append(f.result()) for f in as_completed(pmid_futures)]
+        articles_with_dois = list()
+        [articles_with_dois.append(f.result()) for f in as_completed(doi_futures)]
+
+        for a in articles_with_pmids:
+           a_pmid = a["pubmed-id"]
+           pmid2ref[a_pmid][SCOPUS_CI] = a['citedby-count']
+
+        for a in articles_with_dois:
+           a_doi = a["prism:doi"]
+           doi2ref[a_doi][SCOPUS_CI] = a['citedby-count']
+
+    articles_with_ci = set(doi2ref.values())|set(pmid2ref.values())
+    no_ci_articles = set(references).difference(articles_with_ci)
+
+    return articles_with_ci, no_ci_articles
+
 
 
 
