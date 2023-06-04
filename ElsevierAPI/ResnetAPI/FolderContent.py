@@ -7,7 +7,7 @@ from .PSPathway import PSPathway
 from .rnef2sbgn import rnef2sbgn_str, minidom
 import xml.etree.ElementTree as et
 from urllib.parse import quote
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor,as_completed
 
 PATHWAY_ID = 'Pathway ID'
 
@@ -213,7 +213,7 @@ class FolderContent (APISession):
             pathway_name = 'no_name'
         
         pathway_graph.load_references()
-        graph_xml = self.to_rnef(pathway_graph,add_props2rel,add_props2pathway)
+        graph_xml = self._2rnefs(pathway_graph,add_props2rel,add_props2pathway)
 
         import xml.etree.ElementTree as et
         rnef_xml = et.fromstring(graph_xml)
@@ -286,7 +286,7 @@ class FolderContent (APISession):
 
         oql_query = 'SELECT Entity WHERE MemberOf (SELECT Group WHERE Id = {})'.format(group_id)
         group_graph = self.load_graph_from_oql(oql_query,entity_props=self.entProps,get_links=False)
-        rnef_xml = et.fromstring(self.to_rnef(group_graph))
+        rnef_xml = et.fromstring(self._2rnefs(group_graph))
         rnef_xml.set('name', group_name)
         rnef_xml.set('urn', group_urn)
         rnef_xml.set('type', 'Group')
@@ -333,7 +333,7 @@ class FolderContent (APISession):
         result_name = result['Name'][0]
         result_graph = self._get_saved_results(result['Name'])
         result_graph.load_references()
-        rnef_xml = et.fromstring(self.to_rnef(result_graph,add_props2rel,add_props2pathway))
+        rnef_xml = et.fromstring(self._2rnefs(result_graph,add_props2rel,add_props2pathway))
         rnef_xml.set('name', result['Name'][0])
         rnef_xml.set('type', 'Pathway')
         pathway_urn = result['URN'][0]
@@ -616,6 +616,8 @@ class FolderContent (APISession):
                 parent_folder_name = self.id2folder[parent_id]['Name']
                 subfolder_name = self.id2folder[subfolder_id]['Name']
                 pathway_counter, symlinks = self.folder_content(subfolder_id,parent_folder_name,skip_id=printed_pathway_ids)
+                self.close_rnef_dump(subfolder_name,parent_folder_name)
+
                 symlinks_ids.update(symlinks.keys())
                 download_counter += pathway_counter
                 folder_counter +=1
@@ -643,14 +645,10 @@ class FolderContent (APISession):
                         self.rnefs2dump(result_xml,subfolder_name,parent_folder_name)
                     else:
                         continue
+                self.close_rnef_dump(subfolder_name,parent_folder_name)
             else:
                 print('No symlinks to print for folder %s' % subfolder_name)
                 
-            if subfolder_name == parent_folder_name:
-                self.close_rnef_dump(parent_folder_name)
-            else:
-                self.close_rnef_dump(subfolder_name,parent_folder_name)
-
         print("Complete download execution time: %s" % self.execution_time(download_start_time))
 
 
@@ -825,7 +823,9 @@ class FolderContent (APISession):
         """
         folder_id = self.__folder_id(folder_id_or_name) if isinstance(folder_id_or_name, str) else folder_id_or_name
         folder_name = self.id2folder[folder_id]['Name']
-        id2folder_obj = self.get_objects_from_folders([folder_id],self.entProps,with_layout)
+        sub_folder_ids = self.subfolder_ids(folder_name)
+        my_folders_ids = list(sub_folder_ids) + [folder_id]
+        id2folder_obj = self.get_objects_from_folders(my_folders_ids,self.entProps,with_layout)
         if id2folder_obj:
             print('Start downloading %d pathways from \"%s\" folder' % (len(id2folder_obj),folder_name))
         else:
@@ -843,7 +843,7 @@ class FolderContent (APISession):
                     futures.append(e.submit(self.get_pathway,dbid,'','',format,'',dict(),dict(),False))
                     folder_objs.append(folder_obj)
                 
-            [pathway_graphs.append(f.result()) for f in futures]
+            [pathway_graphs.append(f.result()) for f in as_completed(futures)]
         
         pspathways2return = list()
         for i in range(0,len(pathway_graphs)):

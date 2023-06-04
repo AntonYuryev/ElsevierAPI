@@ -1,12 +1,11 @@
-from .ResnetAPISession import APISession,NO_REL_PROPERTIES,OQL,PS_REFIID_TYPES, REFERENCE_IDENTIFIERS
+from .ResnetAPIcache import APIcache
+from .PathwayStudioGOQL import OQL
 from .ResnetGraph import ResnetGraph,EFFECT,REFCOUNT,PROTEIN_TYPES,PSObject
-import shutil
-from concurrent.futures import ThreadPoolExecutor
-import math
+
 
 CONSISTENCY = 'Consistency coefficient'
 
-class DrugTargetConsistency(APISession):
+class DrugTargetConsistency(APIcache):
     '''
     Class to calcuate
     self.drug_target_confidence = {(drug.uid(),target.uid(),effect):1 + consistency_coefficient},  where\n
@@ -169,10 +168,12 @@ class DrugTargetConsistency(APISession):
                 i = next1000(start, dt_need_consistency)
                 dt = dt_need_consistency[start:i]
                 self.annotate_network(dt)
-                print(f'\Calculated consistency coefficients for {i} out of {len(dt_need_consistency)} drug-target pairs')
+                print(f'Calculated consistency coefficients for {i} out of {len(dt_need_consistency)} drug-target pairs\n')
 
  
     def save_network(self):
+        example_node_name = 'aspirin'
+        self.example_node = self.network._psobjs_with(example_node_name)[0]
         if self.cache_was_modified:
             self.replace_cache(self.cache_name,self.network,self.cache_ent_props,self.cache_rel_props)
         return

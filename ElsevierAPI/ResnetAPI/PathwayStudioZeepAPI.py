@@ -1,15 +1,12 @@
 import pandas as pd
-import logging
-import sys
+import sys, os, json, time, logging
 from time import sleep
-import json
 from .PathwayStudioGOQL import OQL,len
-from zeep import exceptions
-import time
+from zeep import exceptions as zeep_exceptions
 from datetime import timedelta
-import requests.exceptions
-import os
+import requests.exceptions as req_exceptions
 
+CONNECTION_TIMEOUT = 10
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
@@ -57,7 +54,7 @@ class DataModel:
 
         self.IdToPropType = dict()
         self.IdtoObjectType = dict()
-        self.PropIdToDict = dict()
+        self.propId2dict = dict()
         self.RNEFnameToPropType = dict()
         self.no_mess = my_kwargs.get('no_mess',True)
         
@@ -81,14 +78,21 @@ class DataModel:
             #settings = zeep.Settings(extra_http_headers={'Authorization': 'Bearer ' + token})
             self.logger = configure_logging(logging.getLogger(__name__))
             if my_kwargs['connect2server']:
-                try:
-                    self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
-                    self.__load_model()
-                    if not self.no_mess:
-                        print('New connection to Pathway Studio API server:\n%s as %s' % (url,username))
-                except Exception as error:
-                    self.logger.error("Pathway Studio server connection failed: {error}".format(error=error))
-                    raise ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
+                for attempt in range(0,10):
+                    try:
+                        self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
+                        self.__load_model()
+                        if not self.no_mess:
+                            print(f'New connection to Pathway Studio API server:\n{url} as {username}')
+                        return
+                    except Exception as error:
+                        err_str = f"Pathway Studio server connection failed: {error}"
+                        self.logger.error(err_str)
+                        print(err_str)
+                        print(f'Pausing for {CONNECTION_TIMEOUT} seconds')
+                        sleep(CONNECTION_TIMEOUT)
+                        continue
+                raise req_exceptions.ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
 
 
     def __load_model(self):
@@ -114,7 +118,8 @@ class DataModel:
             self.IdToPropType[db_id] = property_types[i]
             self.RNEFnameToPropType[prop_type_name] = property_types[i]
 
-    def __object_types_by_class_id(self, classID):
+
+    def __id2objtype(self, classID):
         object_types = list()
         zeep_object_types = self.SOAPclient.service.GetObjectTypes()
         for i in range(0, len(zeep_object_types)):
@@ -125,11 +130,14 @@ class DataModel:
 
         return object_types
 
+
     def get_relation_types(self):
-        return self.__object_types_by_class_id(3)
+        return self.__id2objtype(3)
+
 
     def get_entity_types(self):
-        return self.__object_types_by_class_id(1)
+        return self.__id2objtype(1)
+
 
     def load_folder_tree(self):
         """
@@ -146,6 +154,7 @@ class DataModel:
         
         return id2folders
 
+
     def dump_prop_names(self, fileOut):
         id_prop_names_list = list({(p['DisplayName'], p['Name'], p['Id']) for p in self.IdToPropType.values()})
         id_prop_names_list.sort(key=lambda x: x[0])
@@ -155,6 +164,7 @@ class DataModel:
             for p in id_prop_names_list:
                 f.write(json.dumps(p) + '\n')
 
+
     def dump_object_names(self, fileOut):
         id_obj_type_list = list({(p['DisplayName'], p['Name'], p['Id']) for p in self.IdtoObjectType.values()})
         id_obj_type_list.sort(key=lambda x: x[0])
@@ -163,6 +173,7 @@ class DataModel:
             f.write("Format - [\'Name in PS UI\' ,\'Search string for GOQL\',\'ObjectType Id\']: \n")
             for o in id_obj_type_list:
                 f.write(json.dumps(o) + '\n')
+
 
     def map_property_names_to_id(self, PropertyNames: list):
         id_list = list()
@@ -175,82 +186,93 @@ class DataModel:
             id_list.append(self.IdToPropType['Name']['Id'])
         return id_list
 
-    def get_dictionary(self, idProperty, idDictFolder: int):
-        if idProperty not in self.PropIdToDict.keys():
-            dict_folder = self.SOAPclient.service.GetDictFolder(idDictFolder)
-            id_values_to_str = dict()
-            for val in dict_folder.Values.DictValue:
-                db_id = val['Id']
-                val = val['Value']
-                id_values_to_str[db_id] = val
-            self.PropIdToDict[idProperty] = id_values_to_str
-            self.PropIdToDict[dict_folder['Name']] = id_values_to_str
-        return self.PropIdToDict[idProperty]
 
-    def get_dict_value(self, IdProperty: int, DictIdValue: int):
-        if IdProperty not in self.PropIdToDict[IdProperty].keys():
-            id_dictionary = self.IdToPropType[IdProperty]['DictFolderID']
-            assert id_dictionary > 0
-            self.get_dictionary(IdProperty, id_dictionary)
-
-        return self.PropIdToDict[IdProperty][DictIdValue]
+    def __propid2name(self,idProperty:int,idDictFolder:int):
+        try:
+            return self.propId2dict[idProperty]
+        except KeyError:
+            for attempt in range(0,10):
+                try:
+                    dict_folder = self.SOAPclient.service.GetDictFolder(idDictFolder)
+                    id_values_to_str = dict()
+                    for val in dict_folder.Values.DictValue:
+                        db_id = val['Id']
+                        val = val['Value']
+                        id_values_to_str[db_id] = val
+                    self.propId2dict[idProperty] = id_values_to_str
+                    self.propId2dict[dict_folder['Name']] = id_values_to_str
+                    return self.propId2dict[idProperty]
+                except Exception as error:
+                    print(f'Pausing for {CONNECTION_TIMEOUT} seconds due to {error} on {attempt+1} attempt')
+                    sleep(CONNECTION_TIMEOUT)
+                    continue
+            raise req_exceptions.ConnectionError("Server connection failed after 10 attempts") 
+             
 
     def get_folder_objects(self, FolderId, result_param):
-        from zeep import exceptions
         for i in range (0,3):
             try:
                 result = self.SOAPclient.service.FolderGetObjects(FolderId, result_param)
                 return result
-            except exceptions.Fault: continue
+            except zeep_exceptions.Fault: continue
 
 
     def oql_response(self, OQLquery, result_param):
-        from zeep import exceptions
         timeout = 300 # 300 sec is default timeout in zeep
         max_iter = 10
         start = time.time()
-        for i in range (0,max_iter):
+        for attempt in range (0,max_iter):
             try:
                 result = self.SOAPclient.service.OQLSearch(OQLquery, result_param)
                 return result
-            except exceptions.TransportError as err:
+            except zeep_exceptions.TransportError as err:
                 if err.status_code == 504:
                     print('\nSOAPclient session timed out after %s on %d iteration out of %d with GOQL query:\n%s' % 
-                            (execution_time(start),i+1,max_iter,OQLquery[:100]),flush=True)
-                    timeout = (i+2)*300 # 300 - default timeout in zeep
-                    print(f'\nWill make attempt #{i+2} with the same query after {timeout} seconds')
+                            (execution_time(start),attempt+1,max_iter,OQLquery[:100]),flush=True)
+                    timeout = (attempt+2)*300 # 300 - default timeout in zeep
+                    print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds')
                     self.SOAPclient.transport.load_timeout = timeout
                     sleep(timeout)
                     continue
-            except requests.exceptions.ChunkedEncodingError as cherr:
+            except req_exceptions.ChunkedEncodingError as cherr:
                 chunk_timeout = 10
                 print(f'{cherr}\nWill try again in {chunk_timeout} seconds')
                 sleep(chunk_timeout)
                 continue
-            except exceptions.Fault:
-                connection_timeout = 10
+            except zeep_exceptions.Fault:
                 print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in %d sec' % 
-                                                                (OQLquery[:200],i+1,connection_timeout))
-                sleep(connection_timeout)
+                                                                (OQLquery[:200],attempt+1,CONNECTION_TIMEOUT))
+                sleep(CONNECTION_TIMEOUT)
                 continue
         
-        if self.SOAPclient.transport.load_timeout > 300:
-            t = self.SOAPclient.transport.load_timeout
-            raise exceptions.TransportError(f'Timed out on GOQL query {OQLquery} after {t} seconds',status_code=504)
+        tout = self.SOAPclient.transport.load_timeout
+        if tout > 300:   
+            raise zeep_exceptions.TransportError(f'Timed out on GOQL query {OQLquery} after {tout} seconds',status_code=504)
         else:
-            raise exceptions.Fault(f'Could not reconnect after 10 attempts while executing GOQL query {OQLquery}')
+            raise zeep_exceptions.Fault(f'Could not reconnect after 10 attempts while executing GOQL query "{OQLquery}"')
 
 
     def result_get_data(self, result_param):
-        for i in range (0,10):
+        start = time.time()
+        max_iter = 10
+        for attempt in range (0,10):
             try:
                 result = self.SOAPclient.service.ResultGetData(result_param)
                 return result
-            except exceptions.Fault:
+            except zeep_exceptions.Fault:
                 print('Connection error while retrieving results\n"%s"\nAttempt #%d to reconnect is in 10 sec' %
-                         (str(result_param.ResultRef),i+2))
+                         (str(result_param.ResultRef),attempt+2))
                 sleep(10)
-                continue   
+                continue
+            except zeep_exceptions.TransportError:
+                print('\nSOAPclient session timed out after %s on %d iteration out of %d' % 
+                            (execution_time(start),attempt+1,max_iter),flush=True)
+                timeout = (attempt+2)*300 # 300 - default timeout in zeep
+                print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds')
+                self.SOAPclient.transport.load_timeout = timeout
+                sleep(timeout)
+                continue
+
 
 
     def create_result_param(self, property_names=None):
@@ -311,13 +333,13 @@ class DataModel:
             prop['PropDisplayName'] = prop_display_name
             dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
             if dict_folder_id > 0:
-                dict_folder = self.get_dictionary(id_property, dict_folder_id)
+                dict_folder = self.__propid2name(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
                     id_dict_prop_value = int(prop['PropValues']['string'][i])
                     new_dict_value = dict_folder[id_dict_prop_value]
                     prop['PropValues']['string'][i] = new_dict_value
-
         return obj_props
+
 
     def get_folder_objects_props(self, FolderId, property_names=None):
         property_names = ['Name'] if property_names is None else property_names
@@ -348,7 +370,7 @@ class DataModel:
             prop['PropName'] = prop_name
             dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
             if prop['PropValues'] and dict_folder_id > 0:
-                dict_folder = self.get_dictionary(id_property, dict_folder_id)
+                dict_folder = self.__propid2name(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
                     id_dict_prop_value = prop['PropValues']['string'][i]
                     new_dict_value = dict_folder[id_dict_prop_value] if id_dict_prop_value in dict_folder else id_dict_prop_value
@@ -365,7 +387,7 @@ class DataModel:
                     return str(result['Attachment'].decode('utf-8')) 
                 else: 
                     return ''
-            except exceptions.Fault: continue
+            except zeep_exceptions.Fault: continue
 
         result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
         
@@ -400,7 +422,7 @@ class DataModel:
             prop['PropDisplayName'] = prop_display_name
             dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
             if dict_folder_id > 0:
-                dict_folder = self.get_dictionary(id_property, dict_folder_id)
+                dict_folder = self.__propid2name(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
                     id_dict_prop_value = int(prop['PropValues']['string'][i])
                     new_dict_value = dict_folder[id_dict_prop_value]
@@ -439,7 +461,7 @@ class DataModel:
             prop['PropDisplayName'] = prop_display_name
             dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
             if dict_folder_id > 0:
-                dict_folder = self.get_dictionary(id_property, dict_folder_id)
+                dict_folder = self.__propid2name(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
                     id_dict_prop_value = int(prop['PropValues']['string'][i])
                     new_dict_value = dict_folder[id_dict_prop_value]
@@ -481,7 +503,7 @@ class DataModel:
             prop['PropDisplayName'] = prop_display_name
             dict_folder_id = self.IdToPropType[id_property]['DictFolderId']
             if dict_folder_id > 0:
-                dict_folder = self.get_dictionary(id_property, dict_folder_id)
+                dict_folder = self.__propid2name(id_property, dict_folder_id)
                 for i in range(0, len(prop['PropValues']['string'])):
                     id_dict_prop_value = int(prop['PropValues']['string'][i])
                     new_dict_value = dict_folder[id_dict_prop_value]
@@ -651,7 +673,7 @@ class DataModel:
             try:
                 result = self.SOAPclient.service.GetExperiment(experiment_id)
                 return result
-            except exceptions.Fault: continue
+            except zeep_exceptions.Fault: continue
 
 
     def __get_experiment_identifiers(self,experiment_id:int, experiment_size:int):

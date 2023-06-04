@@ -3,6 +3,8 @@ import json
 import itertools
 import pickle
 import hashlib
+import datetime
+import math
 
 from ..ETM_API.references import Reference, len
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
@@ -19,6 +21,10 @@ GENETICVARIANT = 'GeneticVariant'
 FUNC_ASSOC = 'FunctionalAssociation'
 ENTITY_IDENTIFIERS = ["CAS ID","EC Number","Ensembl ID","LocusLink ID","GO ID","GenBank ID",
                       "HMDB ID","MedScan ID","Microarray ID","PharmaPendium ID","PubChem CID","miRBase ID"]
+
+CHEMICAL_PROPS = ["CAS ID","HMDB ID","IUPAC Name","InChIKey","LMSD ID","Alias",
+                        "Molecular Formula", "Molecular Weight","NCIm ID","PubChem CID","PubChem SID",
+                        "Reaxys ID","Rotatable Bond Count","XLogP","XLogP-AA","Description","PharmaPendium ID"]
 
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
@@ -103,11 +109,13 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             self[PropId] = [PropValue]
 
+
     def name(self):
         try:
             return self['Name'][0]
         except KeyError:
             raise KeyError
+
 
     def objtype(self):
         try:
@@ -132,14 +140,37 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     
 
     def get_prop(self,prop_name:str,value_index=-1,if_missing_return=''):
+        '''
+        Return
+        ------
+        if value_index >= 0 returns self[prop_name][value_index]\n
+        else returns self[prop_name] as list
+        '''
         try:
             values = self[prop_name]
             if value_index >= 0:
-                return values[value_index]
+                return str(values[value_index])
             else:
                 return values
         except KeyError:
             return if_missing_return
+
+
+    def get_props(self,prop_names:list):
+        '''
+        Return
+        ------
+        returns set of all values of prop_names
+        '''
+        my_props = set()
+        for prop_name in prop_names:
+            try:
+                values = self[prop_name]
+                my_props.update(values)
+            except KeyError:
+                continue
+
+        return my_props
 
 
     @staticmethod
@@ -161,7 +192,8 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def update_with_list(self, prop_id:str, new_values):
         try:
             values = self[prop_id]
-            if isinstance(values,list):
+            if isinstance(values,list): 
+            # list preserves order 
                 [values.append(x) for x in new_values if x not in values]
             elif isinstance(values,set):
                 [values.update(x) for x in new_values if x not in values]
@@ -172,8 +204,16 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             self[prop_id] = new_values
 
 
-    def merge_obj(self,other:'PSObject'):
+    def merge_obj(self,other:'PSObject',replace_unique=False):
+        '''
+        properties from "other" take precedent including URN
+        '''
         [self.update_with_list(prop_name,values) for prop_name,values in other.items()]
+        if replace_unique:
+            self['URN'] = other['URN']
+            self['Name'] = other['Name']
+            self['ObjTypeName'] = other['ObjTypeName']
+        return self
         
 
     def _prop2str(self, prop_id:str,cell_sep:str =';'):
@@ -241,9 +281,9 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             return ''
 
-    def _merge(self,with_other:"PSObject"):
-            for k, vlist in with_other.items():
-                self.update_with_list(k,vlist)
+ #   def _merge(self,with_other:"PSObject"):
+ #           for k, vlist in with_other.items():
+ #               self.update_with_list(k,vlist)
 
     def dump(self,to_file:str):
         with open(to_file+'.pickle', "wb") as outfile:
@@ -263,11 +303,6 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             raise FileNotFoundError
 
 
-    def merge_with_rel(self,rel:"PSRelation"):
-        self._merge(rel)
-        self.update_with_list('References',rel._get_refs())
-
-
     def transform(self, remap:dict, remove_unmapped_props=False):
         transformed_copy = PSObject(self)
         for old_prop, new_prop in remap.items():
@@ -275,7 +310,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
                 transformed_copy[new_prop] = transformed_copy.pop(old_prop)
             except KeyError:
                 try:
-                    references = transformed_copy['References']
+                    references = transformed_copy['RefDict']
                     ref_values = set()
                     for ref in references:
                         ref_props = ref.get_props(old_prop)
@@ -296,13 +331,15 @@ class PSRelation(PSObject):
     PropSetToProps = dict() # {PropSetID:{PropID:[values]}}
     Nodes = dict() # {"Regulators':[(entityID, 0, effect)], "Targets':[(entityID, 1, effect)]}
     # where 0,1 direction of linktype
-    References = dict() # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
+    RefDict = dict() # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
+    references = list() # list of unique references sorted by PUBYEAR
+
 
     def __init__(self, dic=dict()):
         super().__init__(dic)
         self.PropSetToProps = dict()  # {PropSetID:{PropID:[values]}}
         self.Nodes = dict()  # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
-        self.References = dict()  # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
+        self.RefDict = dict()  # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
 
 
     def __hash__(self):
@@ -347,8 +384,8 @@ class PSRelation(PSObject):
         tar_urns.sort()
         rel_urn = 'urn:agi-'+self.objtype()+':'
         if tar_urns:
-            rel_urn += 'out:'.join([u for u in tar_urns])
-            rel_urn += 'in-out:'.join([u for u in reg_urns])
+            rel_urn += 'out:'+'out:'.join(tar_urns)
+            rel_urn += ':in-out:'+'in-out:'.join(reg_urns)
             try:
                 rel_urn += ':'+ self[EFFECT][0]
             except KeyError: pass
@@ -356,19 +393,35 @@ class PSRelation(PSObject):
                 rel_urn += ':'+self['Mechanism'][0]
             except KeyError: pass
         else:
-            rel_urn += 'in-out:'.join([u for u in reg_urns])
+            rel_urn += 'in-out:'+'in-out:'.join([u for u in reg_urns])
 
         self.set_property('URN', rel_urn)
-        return rel_urn
+        return str(rel_urn)
     
 
-    def _add_refs(self, references:list):#list of Reference objects
-        self.load_references()
+    def __refDict2refs(self):
+        my_refs = list(set(self.RefDict.values()))
+        my_refs.sort(key=lambda r: r._sort_key(PUBYEAR), reverse=True)
+        self.references = my_refs
+        return  self.references
+    
+
+    def _add_refs(self, references:list):
+        '''
+        Input
+        -----
+        references = [Reference]
+
+        Return
+        ------
+        new list of references [Reference]
+        '''
+        self.load_refdict()
         for r in references:
             was_merged = False
             for id in PS_REFIID_TYPES:
                 try:
-                    self.References[r.Identifiers[id]]._merge(r)
+                    self.RefDict[r.Identifiers[id]]._merge(r)
                     was_merged = True
                     break
                 except KeyError:
@@ -376,34 +429,102 @@ class PSRelation(PSObject):
 
             if not was_merged:
                 for i in r.Identifiers.values():
-                    self.References[i] = r
+                    self.RefDict[i] = r
+
+        return self.__refDict2refs()
+        
+
+    def __load_refs(self):
+        '''
+        Input
+        -----
+        value of "with_id_type" must be from references.PS_REFIID_TYPES
+        "sort_by" value must be one of keys in Reference. Defaults to PUBYEAR
+
+        Return
+        -------
+        [Reference] sorted by "sort_by" in the order="reverse"
+        if max_refcount > 0 returns only first max_refcount references
+        '''
+        self.load_refdict()
+        return self.__refDict2refs()
+    
+
+    def refs(self, ref_limit=0):
+        '''
+        Return
+        -------
+        self.references sorted by PUBYEAR
+        '''
+        if not self.references:
+            self.references = list(self.__load_refs())
+
+        return self.references[:ref_limit] if ref_limit else self.references
+       
+
+    def pubage(self):
+        today = datetime.date.today()
+        this_year = today.year
+        last_pubyear = self.refs[0].pubyear()
+        return  this_year - last_pubyear
 
 
-    def _get_refs(self, only_with_id_type='',sort_by=PUBYEAR,reverse=True,ref_limit=0):
-        self.load_references()
-        all_refs = list(set(self.References.values()))
-        if only_with_id_type:
-            filter_refs = [ref for ref in all_refs if only_with_id_type in ref.Identifiers.keys()]
-            if sort_by:
-                filter_refs.sort(key=lambda r: r._sort_key(sort_by), reverse=reverse)
-            return filter_refs[:ref_limit] if ref_limit else filter_refs
-        else:
-            if sort_by:
-                all_refs.sort(key=lambda r: r._sort_key(sort_by), reverse=reverse)
-            return all_refs[:ref_limit] if ref_limit else all_refs
+    def qw(self):
+        '''
+        Return
+        -------
+        publication quality Qscore
+        '''
+        #beta = 0.23
+        return math.exp(-0.23*(self.pubage()))
 
+
+    def cr(self):
+        '''
+        Return
+        -------
+        Relation citation ratio
+        '''
+        my_refs = self.refs()
+        return float(len(my_refs))/float(self.pubage()+1)
+    
+
+    def cw(self):
+        '''
+        Return
+        ------
+        citation weight
+        '''
+        b = math.sqrt(3)/3
+        cr = self.cr()
+        cw = b*cr/math.sqrt(b*b*cr*cr +1)
+        return cw
+    
 
     def merge_rel(self, other:'PSRelation'):
         self.merge_obj(other)
-        self._add_refs(other._get_refs())
-     #   self.PropSetToProps.update(other.PropSetToProps)
+        self._add_refs(other.__load_refs())
+     #  self.PropSetToProps.update(other.PropSetToProps)
+
+    
+    def rel2psobj(self):
+        '''
+        Return
+        ------
+        PSObject with properties added from self\n
+        rel.references are added to self['references'] attribute
+        '''
+        new_psobj = PSObject(self)
+        new_psobj['references'] = self.refs()
+        return new_psobj
 
         
     def copy(self):
         copy = PSRelation(self)
         copy.PropSetToProps= dict(self.PropSetToProps)
         copy.Nodes= dict(self.Nodes)
-        copy.References = dict(self.References)
+        copy.RefDict = dict(self.RefDict)
+        copy.references = list(self.references)
         return copy
         
 
@@ -484,8 +605,10 @@ class PSRelation(PSObject):
             return to_return
 
 
-    def load_references(self):
-        if self.References: return
+    def load_refdict(self,refresh=False):
+        if self.RefDict:
+            if not refresh:
+                return
         for propSet in self.PropSetToProps.values():
             my_reference_tuples = list()
             for ref_id_type in PS_REFIID_TYPES:
@@ -498,15 +621,15 @@ class PSRelation(PSObject):
             if my_reference_tuples: # propSet is valid reference - resolving duplicates 
                 # case when reference have valid identifiers
                 article_identifiers = {x[1] for x in my_reference_tuples}
-                existing_ref = [r for i,r in self.References.items() if i in article_identifiers]
+                existing_ref = [r for i,r in self.RefDict.items() if i in article_identifiers]
                 if not existing_ref:  # case when reference is new
                     id_type, id_value = my_reference_tuples[0][0], my_reference_tuples[0][1]
                     ref = Reference(id_type, id_value)
-                    self.References[id_value] = ref
+                    self.RefDict[id_value] = ref
                     for Id in range(1, len(my_reference_tuples)):
                         id_type, id_value = my_reference_tuples[Id][0], my_reference_tuples[Id][1]
                         ref.Identifiers[id_type] = id_value
-                        self.References[id_value] = ref
+                        self.RefDict[id_value] = ref
                 else: 
                     ref = existing_ref[0]
                     if len(existing_ref) > 1:  # identifiers from one propset point to different references
@@ -514,7 +637,7 @@ class PSRelation(PSObject):
                         for i in range(1, len(existing_ref)):
                             ref._merge(existing_ref[i])
                             for id_value in dict(existing_ref[i].Identifiers).values():
-                                self.References[id_value] = ref
+                                self.RefDict[id_value] = ref
                         del existing_ref[1:]
 
             else: #propSet is not valid reference - trying to create one using Title or TexRef
@@ -522,17 +645,17 @@ class PSRelation(PSObject):
                     # trying id reference by title as a last resort since it does not have valid identifiers
                     propset_title = propSet['Title'][0]
                     try:
-                        ref = self.References[propset_title]
+                        ref = self.RefDict[propset_title]
                     except KeyError:
                         ref = Reference('Title', propset_title)
-                        self.References[propset_title] = ref
+                        self.RefDict[propset_title] = ref
                 except KeyError:
                     try:
                         txtref = propSet['TextRef'][0]
                         if txtref not in ['Admin imported','Customer imported']:
                             ref = Reference.from_textref(txtref)
                             for ref_id_type, ref_id in ref.Identifiers.items():
-                                self.References[ref_id] = ref
+                                self.RefDict[ref_id] = ref
                         else: continue #'Admin imported' references have no identifiers and ignored 
                     except KeyError: continue
 
@@ -564,6 +687,8 @@ class PSRelation(PSObject):
             else: 
                 ref.snippets[textref] = {'Sentence':[]} #load empty dict for data consistency
 
+        
+
 
     def filter_references(self, keep_prop2values:dict):
         '''
@@ -574,27 +699,27 @@ class PSRelation(PSObject):
         -----
         prop_names2values = {prop_name:[values]}
         '''
-        # self.References = {identifier:ref} contains reference duplications. Reference list needs compression for speed
-        all_refs = set(self.References.values())
+        # self.RefDict = {identifier:ref} contains reference duplications. Reference list needs compression for speed
+        all_refs = set(self.RefDict.values())
         ref2keep = {ref for ref in all_refs if ref.has_properties(keep_prop2values)}
-        self.References = {k:r for k,r in self.References.items() if r in ref2keep}
+        self.RefDict = {k:r for k,r in self.RefDict.items() if r in ref2keep}
         return
 
 
     def remove_reference(self, remove_prop2values:dict):
-        # self.References = {identifier:ref} contains reference duplications. Reference list needs compression for speed
-        all_refs = set(self.References.values()) 
+        # self.RefDict = {identifier:ref} contains reference duplications. Reference list needs compression for speed
+        all_refs = set(self.RefDict.values()) 
         ref2keep = {ref for ref in all_refs if not ref.has_properties(remove_prop2values)}
-        self.References = {k:r for k,r in self.References.items() if r in ref2keep}
+        self.RefDict = {k:r for k,r in self.RefDict.items() if r in ref2keep}
 
 
     def get_reference_count(self, count_abstracts=False):
-        self.load_references()
-        if self.References:
-            ref_count = len(self._get_refs())
+        self.load_refdict()
+        if self.RefDict:
+            ref_count = len(self.refs())
             self[REFCOUNT] = [ref_count]
             if count_abstracts:
-                ref_from_abstract = set([x for x in self.References.values() if x.is_from_abstract()])
+                ref_from_abstract = set([x for x in self.RefDict.values() if x.is_from_abstract()])
                 return len(ref_from_abstract)
             return ref_count
         else:
@@ -744,7 +869,7 @@ class PSRelation(PSObject):
 
     def to_json(self):
         str1 = '{"Relation Properties": ' + json.dumps(self) + '}'
-        strP = '{"Relation References": ' + json.dumps(self.PropSetToProps) + '}'
+        strP = '{"Relation RefDict": ' + json.dumps(self.PropSetToProps) + '}'
         strR = json.dumps(self.Nodes)
         return str1 + '\n' + strP + '\n' + strR + '\n'
 
@@ -758,10 +883,10 @@ class PSRelation(PSObject):
                     weight = proval2weight[v]
                     if weight > max_weight: max_weight = weight
                 except KeyError: continue
-            for ref in self.References.values():
+            for ref in self.RefDict.values():
                 ref.set_weight(max_weight)
         except KeyError:
-                for ref in self.References:
+                for ref in self.RefDict:
                     ref.set_weight(0.0)
 
     def effect_sign(self): 

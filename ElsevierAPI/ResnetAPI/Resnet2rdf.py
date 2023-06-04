@@ -245,7 +245,7 @@ class ResnetRDF(rdf.Graph):
 
     def add_triple(self, rel:PSRelation):
         regulators, targets = self.resnet.find_nodes(rel)
-        rel.load_references()
+        rel.refs()
         
         rel_uri = self.add_psrel(rel)
         self.add((rel_uri, rdf.RDF.predicate, self.__resnet_uri(rel['ObjTypeName'][0])))
@@ -266,7 +266,8 @@ class ResnetRDF(rdf.Graph):
                 self.add((rel_uri, rdf.RDF.object, node1uri))
                 self.add((rel_uri, rdf.RDF.object, node2uri))
 
-        [self.add_reference(ref, rel_uri) for ref in rel._get_refs()]
+        rel_refs = rel.refs()
+        [self.add_reference(ref, rel_uri) for ref in rel_refs]
 
     
     @staticmethod

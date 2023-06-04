@@ -1,11 +1,10 @@
-from .SemanticSearch import SemanticSearch,df,BIBLIO_PROPERTIES,COUNTS,RANK
-from ..ETM_API.etm import ETM_REFS_COLUMN
-from .ResnetAPISession import SNIPPET_PROPERTIES
+from .SemanticSearch import SemanticSearch,df,COUNTS,RANK
+from ..ETM_API.etm import ETM_REFS_COLUMN, ETMstat
+from .ResnetAPISession import SNIPPET_PROPERTIES,BIBLIO_PROPERTIES
 from .PathwayStudioGOQL import OQL
 from .NetworkxObjects import PSObject,REFCOUNT,CHILDS
 from ..ETM_API.references import JOURNAL_PROPS,JOURNAL
 from  .Resnet2rdf import ResnetGraph,ResnetRDF
-import numpy as np
 import time
 
 QUANTITATIVE_BIOMARKER_RELS = ['Biomarker','StateChange','QuantitativeChange','CellExpression']
@@ -52,9 +51,8 @@ class BiomarkerReport(SemanticSearch):
     
 
     def __init__(self, APIconfig,params:dict):
-        what2retrieve = SNIPPET_PROPERTIES if params['print_references'] else BIBLIO_PROPERTIES
-        super().__init__(APIconfig,what2retrieve)
-        self.add_params(params)
+        params['what2retrieve'] = SNIPPET_PROPERTIES if params['print_snippets'] else BIBLIO_PROPERTIES
+        super().__init__(APIconfig,**params)
         if self.params['biomarker_type'] == SOLUBLE: 
             self.add_rel_props(['Tissue'])
         if self.params['journal_filter_fname']:
@@ -63,27 +61,21 @@ class BiomarkerReport(SemanticSearch):
             self.add_rel_props(list(JOURNAL_PROPS))
             self.columns2drop += [self.__resnet_name__, self.__mapped_by__]
 
-        self.set_dir(self.params['data_dir'])
         self.columns2drop += [self.__mapped_by__, self.__resnet_name__]
 
 
     def find_diseases(self, disease_name:str):
-        mapping_prop = 'Name'
-        prop2obj = self.map_prop2entities([disease_name],mapping_prop,DISEASE_TYPES,get_childs=True)
-        if not prop2obj:
-            mapping_prop = 'Alias'
-            prop2obj = self.map_prop2entities([disease_name],mapping_prop,DISEASE_TYPES,get_childs=True)
-        
-        if prop2obj: # prop2obj = {propValue:{id:psObj}}
-            mapped_diseases = list(prop2obj[disease_name].values())
-            self.Disease = PSObject(mapped_diseases[0])
+        my_diseases = self._props2psobj([disease_name],['Name'])
+        if not my_diseases:
+             my_diseases = self._props2psobj([disease_name],['Alias'])
+
+        if my_diseases:
+            self.Disease = my_diseases[0]
         else:
             print('No diseases were found for %s' % disease_name)
             return
 
-        diseases = self.Disease[CHILDS] + [self.Disease]
-        children = self.load_children4(diseases)
-        self.diseases = list(set(diseases)|children)
+        self.diseases = self.Disease[CHILDS] + [self.Disease]
 
 
     def load_graph(self, disease_ids:list):
@@ -123,9 +115,11 @@ class BiomarkerReport(SemanticSearch):
             genes_with_gvs = {name for names in [names for names in gvid2genes.values()] for name in names}
             print('Found %d GeneticVariants linked to input disease in %d genes' % (len(gvid2genes),len(genes_with_gvs)))
 
+        biomarker_ids = list()
+        disease_ids = list()
+        graph_nodes = self.Graph._get_nodes()
+        [(biomarker_ids,disease_ids)[o.objtype() in DISEASE_TYPES].append(o.dbid()) for o in graph_nodes]
 
-        biomarker_ids = [y['Id'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] not in DISEASE_TYPES]
-        disease_ids =  [y['Id'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] in DISEASE_TYPES]
         oql_query = OQL.connect_ids(biomarker_ids,disease_ids,['Regulation'])
         self.process_oql(oql_query, 'Find Regulation between biomarkers and diseases')
 
@@ -141,27 +135,17 @@ class BiomarkerReport(SemanticSearch):
 
     def init_semantic_search (self, reset_pandas = False):
         not_biomarker_types = DISEASE_TYPES+['GeneticVariant']
-        BiomarkerNames =  [y['Name'][0] for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] not in not_biomarker_types]
-        BiomarkerScores = df()
-        BiomarkerScores['Name'] = np.array(BiomarkerNames)
-        print('Will score %d biomarkers linked to %s' % (len(BiomarkerScores),self.Disease['Name'][0]))
-        self.RefCountPandas = self.load_pandas(BiomarkerScores,prop_names_in_header=True) #maps entities in ['Name'] column
+        biomarkers = [PSObject(y) for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] not in not_biomarker_types]
+        self.RefCountPandas = self.load_df(biomarkers,10)
 
 
     def __input_disease_column(self):
-        return self._col_name_prefix+self.Disease['Name'][0]
+        return self._col_name_prefix+self.Disease.name()
 
 
     def semantic_search(self):
-        disease_name2ids = dict()
-        #all_disease_ids = set()
         for disease in self.diseases:
-            #dis_name = disease['Name'][0]
-            #finds children for disease:
-            self.load_children4(disease)
-        #    diseases = list(self._props2psobj(disease['Id'],["Id"],only_obj_types=DISEASE_TYPES))        
-         #   disease_name2ids[dis_name] = disease_ids
-         #   all_disease_ids.update(disease_ids)
+            self.load_children4([disease])
 
         if self.params['biomarker_type'] == GENETIC:
             biomarker_rel_types = QUANTITATIVE_BIOMARKER_RELS + GENETIC_BIOMARKER_RELS
@@ -204,24 +188,25 @@ class BiomarkerReport(SemanticSearch):
 
 
     def add_specificity(self, to_df:df):
-        if self.params['biomarker_type'] != GENETIC:
+        if self.params['biomarker_type'] == GENETIC:
             print('!!!!Biomarker specificity cannot be calculated for genetic biomarkers!!!!')
             return
         biomarker_count = len(to_df)
         message = f'Finding biomarker specificity for {str(biomarker_count)} biomarkers'
-        disease_ids = list()
+        #disease_ids = list()
         diseases4specificity = ','.join(self.params['add_specificity4diseases'])
         message = message + f' for {diseases4specificity}'
         limit2disease_graph = self.child_graph(self.params['add_specificity4diseases'],['Name','Alias'])
-        disease_ids = list(limit2disease_graph)
-        self.specificity_name = SPECIFICITY+' for '+ diseases4specificity
+        disease_dbids = list(limit2disease_graph.dbid2uid().keys())
+        specificity_colname = SPECIFICITY+' for '+ diseases4specificity
 
         print('Finding biomarker specificity for %d biomarkers' % biomarker_count)
 
         start_specificity = time.time()
-        to_df[self.specificity_name] = to_df[self.__temp_id_col__].apply(lambda x: self.biomarker_specificity(x,disease_ids))
+        to_df[specificity_colname] = to_df[self.__temp_id_col__].apply(lambda x: self.biomarker_specificity(x,disease_dbids))
         print ('Specificity for %d biomarkers was found in %s' %(biomarker_count, self.execution_time(start_specificity)))
-
+        return specificity_colname
+    
  
     def weighted_counts(self):
         self.drop_refcount_columns()
@@ -238,12 +223,12 @@ class BiomarkerReport(SemanticSearch):
 
     def make_report(self):
         counts_df = self.raw_data['counts']
+        input_disease_col = self.__input_disease_column()
         # decide what to add to the report
         try:
-            weighted_df = df(self.raw_data[WEIGHTED])
-            weighted_df.drop(columns=[self.__mapped_by__,'Resnet name'],inplace=True)
-            input_disease_col = self.__input_disease_column()
-            weighted_df['rank'] = weighted_df[input_disease_col]
+            weighted_df = self.raw_data[WEIGHTED]
+            #weighted_df.drop(columns=[self.__mapped_by__,'Resnet name'],inplace=True)
+            weighted_df[RANK] = weighted_df[input_disease_col]
             weighted_df.sort_values(by=[RANK],ascending=False, inplace=True)
             weighted_df.insert(2, RANK, weighted_df.pop(RANK))
             weighted_df.insert(3, input_disease_col, weighted_df.pop(input_disease_col))
@@ -253,13 +238,13 @@ class BiomarkerReport(SemanticSearch):
 
         if self.params['add_specificity4diseases']:
             if self.params['biomarker_type'] != GENETIC:
-                self.add_specificity(report_df)
-                normalized_score_col = input_disease_col+' normalized by '+self.specificity_name.lower()
-                report_df[normalized_score_col] = report_df[input_disease_col]/report_df[self.specificity_name]
+                specificity_colname = self.add_specificity(report_df)
+                normalized_score_col = input_disease_col+' normalized by '+specificity_colname.lower()
+                report_df[normalized_score_col] = report_df[input_disease_col]/report_df[specificity_colname]
                 report_df.sort_values(by=[normalized_score_col],ascending=False, inplace=True)
                 report_df.insert(2, normalized_score_col, report_df.pop(normalized_score_col))
                 report_df.insert(3, input_disease_col, report_df.pop(input_disease_col))
-                report_df.insert(4, self.specificity_name, report_df.pop(self.specificity_name)) 
+                report_df.insert(4, specificity_colname, report_df.pop(specificity_colname)) 
                 report_df.add_column_format(normalized_score_col,'align','center')
             else:
                 print('!!!!Biomarker specificity cannot be calculated for genetic biomarkers!!!!')
@@ -269,7 +254,7 @@ class BiomarkerReport(SemanticSearch):
         print ('Created %s table' % report_df._name_)
         self.add_ps_bibliography()
 
-        if self.params['print_references']:
+        if self.params['print_snippets']:
             ref_df = self.Graph.snippets2df()
             self.add2report(ref_df)
 
@@ -313,7 +298,7 @@ class BiomarkerReport(SemanticSearch):
             biomarker2disease = self.Graph.add_recent_refs(biomarker2disease,'Biomarker','Disease')
             #biomarker2disease.dropna(subset=['Recent PMIDs','Recent DOIs'],inplace=True, how='all')
         elif max_etm_row:
-            biomarker2disease=self.etm_counter.add_etm42columns(biomarker2disease,'Biomarker','Disease',add2etm_query)
+            biomarker2disease=self.etm_counter.add_etm42columns(biomarker2disease,'Biomarker','Disease',ETMstat.basic_query,add2etm_query)
             self.add_etm_bibliography()
 
         if self.params['print_rdf']:
@@ -370,5 +355,5 @@ class BiomarkerReport(SemanticSearch):
             ResnetRDF.fromResnetGraph(self.bm2dis_graph).to_json(jsonld_fname)
 
         super().print_rawdata(self.report_name(' raw data.xlsx'))
-        super().print_report(self.report_name(' .xlsx'))
+        super().print_report(self.report_name('.xlsx'))
         

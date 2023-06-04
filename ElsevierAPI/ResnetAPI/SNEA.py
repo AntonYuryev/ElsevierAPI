@@ -51,8 +51,8 @@ class SNEA(APISession):
         self.experiment = Experiment({'Name':[args[0]]})
         if my_kwargs['no_mess']:
             log_name = self.report_path('log')
-            print('Runtime messages are written to "%s"'%log_name)
-            with open(log_name, 'w') as fout:
+            print('Runtime messages for SNEA initialization will be added to "%s"'%log_name)
+            with open(log_name, 'a') as fout:
                 with redirect_stdout(fout):
                     self.__load_data__(**my_kwargs)
         else:
@@ -178,6 +178,8 @@ class SNEA(APISession):
                     annotated_targets.append(t)
                 except KeyError:
                     continue
+
+            if not subnetwork_values: continue
             sub_pd = df.from_dict({'value':subnetwork_values})
             abs_sub_pd = sub_pd['value'].abs()
             mw_results = stats.mannwhitneyu(x=abs_sample_distribution, y=abs_sub_pd, alternative = 'less') 
@@ -409,12 +411,17 @@ class SNEA(APISession):
 
         rank_columns = [c for c in drugs_df.columns.to_list() if c[:len(DRUG2TARGET_REGULATOR_SCORE)]==DRUG2TARGET_REGULATOR_SCORE]
         drugs_df.not_nulls(rank_columns)
-        drugs_df['Average regulator score'] = drugs_df[rank_columns].mean(axis=1)
-        drugs_df[RANK] = drugs_df['Average regulator score'] * drugs_df['Row count']/len(rank_columns)
-        drugs_df.sort_values(by=[RANK],ascending=False,inplace=True)
-        column_order = [PHARMAPENDIUM_ID,'Name',RANK,'Row count','Average regulator score']+rank_columns
+        if len(rank_columns) > 1:
+            drugs_df['Average regulator score'] = drugs_df[rank_columns].mean(axis=1)
+            drugs_df[RANK] = drugs_df['Average regulator score'] * drugs_df['Row count']/len(rank_columns)
+            drugs_df.sort_values(by=[RANK],ascending=False,inplace=True)
+            column_order = [PHARMAPENDIUM_ID,'Name',RANK,'Row count','Average regulator score']+rank_columns
+        else:
+            column_order = [PHARMAPENDIUM_ID,'Name']+rank_columns
+        
         if self.dt.add_targets2drugs_ws:
             column_order += ['Directly inhibited targets','Directly activated targets','Indirectly inhibited targets','Indirectly activated targets']
+        
         self.drugs_df = df(drugs_df[column_order])
         self.drugs_df.copy_format(drugs_df)
         self.drugs_df._name_ = 'Drugs'
@@ -451,7 +458,7 @@ class SNEA(APISession):
             self.drugs_df.make_header_vertical()
             self.drugs_df.df2excel(writer,'Drugs')
 
-        writer.save()
+        writer.close()
         print('Scored regulators are in %s file' % fout)
         
 
@@ -466,7 +473,7 @@ def test_run(APIconfig:dict,fast=True, find_drugs=True):
     test_samples = [1,2]
     input = test_samples if fast else no_outliers_samples
     experiment_name = 'PNOC003vsGSE120046'
-    snea = SNEA(APIconfig,experiment_name,sample_ids=input,find_drugs=find_drugs)
+    snea = SNEA(experiment_name,APIconfig,sample_ids=input,find_drugs=find_drugs)
     snea.set_dir('D:/Python/PBTA/')
     snea.expression_regulators()
     snea.activity_df()

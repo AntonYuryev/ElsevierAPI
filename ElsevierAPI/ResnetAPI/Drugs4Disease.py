@@ -1,7 +1,7 @@
 from .DiseaseTargets import DiseaseTargets,ResnetGraph
 from .DiseaseTargets import ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,REFERENCE_IDENTIFIERS,UNKNOWN_TARGETS_WS
-from .SemanticSearch import RANK,BIBLIO_PROPERTIES
-from .ResnetAPISession import APISession,NO_REL_PROPERTIES
+from .SemanticSearch import RANK
+from .ResnetAPISession import APISession,NO_REL_PROPERTIES,BIBLIO_PROPERTIES
 from ..pandas.panda_tricks import df,PSObject
 from numpy import NaN,nan_to_num
 import time
@@ -71,7 +71,7 @@ class Drugs4Targets(DiseaseTargets):
         dt_consist_kwargs['what2retrieve'] = NO_REL_PROPERTIES
         dt.dt_consist = DrugTargetConsistency(fake_config,**dt_consist_kwargs)
         return dt
-       
+
 ############################ service functions: read/write, load from database, cache######################################            
     def report_name(self):
         rep_pred = 'suggested' if self.params['strict_mode'] else 'predicted'
@@ -392,36 +392,41 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
 
         print('Linking %d drugs with %s by ClinicalTrial' % (len(drug_df),self._disease2str()),flush=True)
         colname = self._disease2str()+' clinical trials'
-        self.set_how2connect(['ClinicalTrial'],[],'',how2clone=REFERENCE_IDENTIFIERS)
-        linked_row_count,linked_entities,drug_df = self.link2concept(colname,self.input_diseases,drug_df)
+        self.set_how2connect(['ClinicalTrial'],[],'')
+        linked_row_count,linked_entities,drug_df = self.link2concept(
+            colname,self.input_diseases,drug_df,REFERENCE_IDENTIFIERS)
         print('%d drugs on clinical trials for %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[5] = list(drug_df.columns)[-1]
 
         print('Linking %d drugs with %s by Regulation' % (len(drug_df),self._disease2str()),flush=True)
         colname = 'regulation of '+ self._disease2str()
-        self.set_how2connect(['Regulation'],[],'',how2clone=REFERENCE_IDENTIFIERS)
-        linked_row_count,linked_entities,drug_df = self.link2concept(colname,self.input_diseases,drug_df)
+        self.set_how2connect(['Regulation'],[],'')
+        linked_row_count,linked_entities,drug_df = self.link2concept(
+            colname,self.input_diseases,drug_df,REFERENCE_IDENTIFIERS)
         print('%d drugs regulating %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[4] = list(drug_df.columns)[-1]
 
         print('Linking %d drugs with %d Symptoms linked to %s' % (len(drug_df),len(self.input_symptoms),self._disease2str()),flush=True)
         colname = 'symptoms for '+ self._disease2str()
-        self.set_how2connect(['Regulation'],[],'',how2clone=REFERENCE_IDENTIFIERS)
-        linked_row_count,linked_entities,drug_df = self.link2concept(colname,self.input_symptoms,drug_df)
+        self.set_how2connect(['Regulation'],[],'')
+        linked_row_count,linked_entities,drug_df = self.link2concept(
+            colname,self.input_symptoms,drug_df,REFERENCE_IDENTIFIERS)
         print('%d drugs linked to symptoms for %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[1] = list(drug_df.columns)[-1]
 
         print('Linking %d drugs with %d ClinicalParameters linked to %s' % (len(drug_df),len(self.input_clinpars),self._disease2str()),flush=True)
         colname = 'Clinical parameters for '+ self._disease2str()
-        self.set_how2connect(['Regulation'],[],'',how2clone=REFERENCE_IDENTIFIERS)
-        linked_row_count,linked_entities,drug_df = self.link2concept(colname,self.input_clinpars,drug_df)
+        self.set_how2connect(['Regulation'],[],'')
+        linked_row_count,linked_entities,drug_df = self.link2concept(
+            colname,self.input_clinpars,drug_df,REFERENCE_IDENTIFIERS)
         print('%d drugs linked to clnical parameters for %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[2] = list(drug_df.columns)[-1]
 
         print('Linking %d drugs with %d CellProcess linked to %s' % (len(drug_df),len(self.input_cellprocs),self._disease2str()),flush=True)
         colname = 'Cell processess affected by '+ self._disease2str()
-        self.set_how2connect(['Regulation'],[],'',how2clone=REFERENCE_IDENTIFIERS)
-        linked_row_count,linked_entities,drug_df = self.link2concept(colname,self.input_cellprocs,drug_df)
+        self.set_how2connect(['Regulation'],[],'')
+        linked_row_count,linked_entities,drug_df = self.link2concept(
+            colname,self.input_cellprocs,drug_df,REFERENCE_IDENTIFIERS)
         print('%d drugs linked to cell processes affected in %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[3] = list(drug_df.columns)[-1]
         return drug_df
@@ -431,7 +436,8 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
         '''
         Returns
         -------
-        df with ranked drugs
+        df with ranked drugs. df._name_ ='Drugs' if normalize, else 'rawDrugs'\n
+        SNEA "normalize" settings is False 
         '''
         start_time = time.time()
         self.load_target_ranks(self.report_pandas[AGONIST_TARGETS_WS],for_antagonists=False)
@@ -549,18 +555,17 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
 
     def make_report(self):
         start_time = time.time()
-        #dt_consist = DrugTargetConsistency(self.APIconfig)
         futures = list()
-        with ThreadPoolExecutor(max_workers=30, thread_name_prefix='RankTargets0_LoadDrugs1') as executor:
+        with ThreadPoolExecutor(max_workers=30, thread_name_prefix='RankTargets:0,LoadDrugs:1') as executor:
             futures.append(executor.submit(self.find_rank_targets)) # creating target ranking worksheets
             futures.append(executor.submit(self.dt_consist.load_cache))
             [future.result() for future in as_completed(futures)]
 
         if self.params['add_bibliography']:
-            with ThreadPoolExecutor(max_workers=20, thread_name_prefix='RankDrugs0_ETM4targets1') as executor:
+            with ThreadPoolExecutor(max_workers=20, thread_name_prefix='RankDrugs:0,ETM4targets:1') as executor:
                 future1 = executor.submit(self.init_load_score) #finds and scores drugs
                 future2 = executor.submit(self.add_etm_bibliography) # adds etm refs to target ranking worksheets
-                future1.result()           
+                future1.result()
                 future2.result()
         else:
             self.init_load_score()

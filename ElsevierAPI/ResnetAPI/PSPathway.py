@@ -144,7 +144,7 @@ class PSPathway(PSObject):
             f.write('<batch>\n') 
             props_str = self.props2rnef()
             f.write(props_str+'\n')
-            self.graph.rnef2sections(f,ent_props,rel_props,add_props2rel,self.graph.number_of_edges())
+            self.graph.dump2rnef(f,ent_props,rel_props,add_props2rel)
             f.write('</batch>') 
 
  

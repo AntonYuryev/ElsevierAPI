@@ -2,7 +2,7 @@ import networkx as nx
 from  .PathwayStudioGOQL import OQL
 from  .PathwayStudioZeepAPI import DataModel
 from  .NetworkxObjects import PSObject,PSRelation,len,REGULATORS,TARGETS,EFFECT
-from  .ResnetGraph import ResnetGraph, CHILDS 
+from  .ResnetGraph import ResnetGraph,REFCOUNT
 import math
 import time
 from datetime import timedelta
@@ -281,7 +281,7 @@ class PSNetworx(DataModel):
                          REL_PROPS=None, connect_by_rel_types=None, ENTITY_PROPS=None):
 
         if not isinstance(connect_by_rel_types,list): connect_by_rel_types = list()
-        rel_props = {'Name', 'RelationNumberOfReferences'} 
+        rel_props = {'Name', REFCOUNT} 
         if isinstance(REL_PROPS,list): rel_props.update(REL_PROPS)
         ent_props = {'Name'}
         if isinstance(ENTITY_PROPS,list): ent_props.update(ENTITY_PROPS)
@@ -395,7 +395,7 @@ class PSNetworx(DataModel):
         if relation_types is None:
             relation_types = ['DirectRegulation']
 
-        rel_props = ['Name', 'RelationNumberOfReferences', 'DOI', 'PMID', 'Source']
+        rel_props = ['Name', REFCOUNT, 'DOI', 'PMID', 'Source']
         rel_types = ','.join(relation_types)
         target_types = ','.join(target_types)
         drug_prop_names, drug_prop_values = OQL.get_search_strings(DrugSearchPropertyNames, DrugProps)
@@ -422,12 +422,13 @@ class PSNetworx(DataModel):
             else:
                 return ResnetGraph()
 
+
     def find_drug_toxicities(self, DrugIds: list, DrugSearchPropertyNames: list, min_ref_count=0,
                              relation_properties=None, entity_properties=None):
         if entity_properties is None:
             entity_properties = ['Name']
         if relation_properties is None:
-            relation_properties = ['Name', 'RelationNumberOfReferences']
+            relation_properties = ['Name', REFCOUNT]
 
         drug_prop_names, drug_prop_values = OQL.get_search_strings(DrugSearchPropertyNames, DrugIds)
         drug_query = 'Select Entity WHERE (' + drug_prop_names + ') = (' + drug_prop_values + ')'
@@ -486,7 +487,9 @@ class PSNetworx(DataModel):
                     entity_query = OQL.get_objects(list(new_nodes_ids))
                     self.load_graph_from_oql(entity_query,[],entprops2load,get_links=False)
         
-        rels4subgraph = [rel for i,rel in self.dbid2relation.items() if i in subgraph_relation_dbids]
+        my_dbid2relation = dict(self.dbid2relation) 
+        # need to make a copy of self.dbid2relation because it is mutating during multithreaded retreival
+        rels4subgraph = [rel for i,rel in my_dbid2relation.items() if i in subgraph_relation_dbids]
         return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
         return return_subgraph
     

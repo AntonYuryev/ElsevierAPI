@@ -21,7 +21,7 @@ class RepurposeDrug(Indications4targets):
                 }
         my_kwargs.update(kwargs)
 
-        super().__init__(APIconfig,**kwargs)
+        super().__init__(APIconfig,**my_kwargs)
         self.PageSize = 1000
         self.similar_drugs = list()
         self.drug_indications4agonists = set()
@@ -143,7 +143,7 @@ class RepurposeDrug(Indications4targets):
         if self.params['drug_effect'] == ACTIVATE: # == report is for toxicities
             # many clinical trials report their indications as toxicities testing if patient condition is not worsening after drug treatment
             if 'Disease' in self.params['indication_types']:
-                indications = self.indications4agonists|self.indications4antagonists
+                indications = self.drug_indications4agonists|self.drug_indications4antagonists
                 before_clean_indications_count = len(indications)
                 indication_childs = self.load_children4(indications)
                 all_indications = indications | indication_childs
@@ -247,11 +247,11 @@ class RepurposeDrug(Indications4targets):
         self.add2report(research_ref_pd)
   
 
-    def _worksheet_prefix(self):
+    def __ws_suffix(self,with_targets_names=False):
         indications = ','.join(self.params['indication_types'])
         targets = ','.join(self.params['target_names'])
         ef = 'Act.' if self.params['drug_effect'] == ACTIVATE else 'Inh.'
-        return ef+indications[:3]+'-'+targets
+        return targets[:10]+'-'+ef+indications[:3] if with_targets_names else ef+indications[:3]
 
 
     def load_drug_indications(self):
@@ -267,7 +267,7 @@ class RepurposeDrug(Indications4targets):
     def other_effects(self):
         drug = self.params['input_compound']
         indication_str = ','.join(self.params['indication_types'])
-        REQUEST_NAME = 'Find {inds} modulated by {drug} with unknown effect'.format(inds=indication_str,drug=drug)
+        REQUEST_NAME = f'Find {indication_str} modulated by {drug} with unknown effect'
         select_indications = 'SELECT Entity WHERE objectType = ({})'.format(indication_str)
         OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = unknown AND NeighborOf({select_target}) AND NeighborOf ({indications})'
         OQLquery = OQLquery.format(select_target=self.SELECTdrug, indications=select_indications)
@@ -302,9 +302,10 @@ class RepurposeDrug(Indications4targets):
             return ''
 
 
-    def make_report(self,for_targets_with_names:list):
+    def make_report(self,for_targets_with_names:list=[]):
         self.load_drug_indications()
-        self.params['target_names'] = for_targets_with_names
+        if for_targets_with_names:
+            self.params['target_names'] = for_targets_with_names
         self.load_indications4targets()
 
         if self.params['strict_mode'] == RANK_SUGGESTED_INDICATIONS:
@@ -313,27 +314,22 @@ class RepurposeDrug(Indications4targets):
         else:
             self.indications4agonists = self.indications4agonists|self.indications4agonists
             self.indications4antagonists = self.indications4antagonists|self.indications4antagonists
-            
-        self.set_targets()
-        self.set_partners()
-        self.get_pathway_componets()
 
         count_df_name = self.perform_semantic_search()
         if count_df_name:
-            ws_prefix = self._worksheet_prefix()
-            norm_df_name = ws_prefix+'ranked'
             try:
                 drop_empty_cols = self.params['drop_empty_columns_from_report']
             except KeyError:
-                drop_empty_cols = False
+                drop_empty_cols = []
 
+            ws_suffix = self.__ws_suffix()
+            norm_df_name = 'rnkd '+ws_suffix
             self.normalize(count_df_name,norm_df_name,drop_empty_columns=drop_empty_cols)
             self.add_parent_column(norm_df_name)
             ontology_df = self.add_ontology_df(norm_df_name)
-            
-            self.add_ps_bibliography(ws_prefix)
+            self.add_ps_bibliography(ws_suffix)
             self.add_etm_refs(norm_df_name,self.input_names())
-            biblio_df_name = self.add_etm_bibliography(ws_prefix)
+            biblio_df_name = self.add_etm_bibliography(ws_suffix)
             return norm_df_name, biblio_df_name, ontology_df._name_
         else:
             return '','',''

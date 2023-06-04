@@ -5,6 +5,7 @@ from .NetworkxObjects import PS_REFIID_TYPES
 import logging
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
+from neo4j import ManagedTransaction as tx
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -34,25 +35,38 @@ class nx2neo4j:
 
 
     @staticmethod
-    def _find_and_return_node(tx, node: PSObject):
+    def _find_and_return_node(tx:tx, node:PSObject):
         query = (
             'MATCH (n:{type}) WHERE n.URN = \"{urn}\"'
             'RETURN n.Name AS Name, n.URN as urn, labels(n) as ObjTypeName'
             # labels(n) returns list
         )
-        query = query.format(type=node['ObjTypeName'][0], urn=node['URN'][0])
-        result = tx.run(query)
-        return {(record["Name"], record["urn"], record['ObjTypeName'][0]) for record in result}
+        query = query.format(type=node.objtype(), urn=node.urn())
+        neo4j_result = tx.run(query)
+        return {(record["Name"], record["urn"], record['ObjTypeName'][0]) for record in neo4j_result}
+    
 
-
-    def find_node(self, node: PSObject):
+    def load_network(self,cypher_query:str, tx:tx):
+        new_resnet = ResnetGraph()
+        def convert2resnet(neo4j_result):
+            for record in neo4j_result:
+                new_resnet.add_graph()
+                return ResnetGraph()
+        
         with self.driver.session() as session:
-            result = session.read_transaction(self._find_and_return_node, node)
-            for record in result:
-                print(f"Found node: {record}")
+            neo4j_result = session.execute_read(tx.run(cypher_query))
+
+        return convert2resnet(neo4j_result)
 
 
-    def __create_node(self, tx, n: PSObject):
+ #   def find_node(self, node: PSObject):
+ #       with self.driver.session() as session:
+ #           neo4j_result = session.execute_read(self._find_and_return_node, node)
+ #           for record in neo4j_result:
+ #               print(f"Found node: {record}")
+
+
+    def __create_node(self, tx:tx, n: PSObject):
         node_found = self._find_and_return_node(tx, n)
         if len(node_found) > 0:
             return {(node[0], node[1], node[2][0]) for node in node_found}
@@ -61,9 +75,9 @@ class nx2neo4j:
             query = ('CREATE (n:' + node_type + '{' + self.__get_node_labels(n) + '})'
                                                                                   'RETURN n.Name as Name, n.URN as urn, labels(n) as ObjTypeName'
                      )  # labels(n) returns list
-            result = tx.run(query)
+            neo4j_result = tx.run(query)
             try:
-                return {(record["Name"], record["urn"], record['ObjTypeName'][0]) for record in result}
+                return {(record["Name"], record["urn"], record['ObjTypeName'][0]) for record in neo4j_result}
             # Capture any errors along with the query and data for traceability
             except ServiceUnavailable as exception:
                 logging.error(f"{query} raised an error:\n{exception}")
@@ -75,12 +89,12 @@ class nx2neo4j:
         with self.driver.session() as session:
             # Write transactions allow the driver to handle retries and transient errors
             for i, d in nodes:
-                result = session.write_transaction(self.__create_node, d)
-                for record in result:
+                neo4j_result = session.execute_write(self.__create_node, d)
+                for record in neo4j_result:
                     print(f'Neo4j got node: \"{record[0]}\" of type {record[2]} with URN={record[1]}')
     
     
-    def __create_nodes(self, tx, nodes:list):
+    def __create_nodes(self, tx:tx, nodes:list):
         create_node_count = 0
         for n in nodes:
             node_found = self._find_and_return_node(tx, n)
@@ -99,7 +113,7 @@ class nx2neo4j:
     def load_node_list(self, nodes:list):
         with self.driver.session() as session:
             # Write transactions allow the driver to handle retries and transient errors
-            create_node_count = session.write_transaction(self.__create_nodes, nodes)
+            create_node_count = session.execute_write(self.__create_nodes, nodes)
         return create_node_count
 
 
@@ -146,11 +160,11 @@ class nx2neo4j:
                 )
 
 
-    def __create_relation(self, tx, node1: PSObject, node2: PSObject, relation: PSRelation):
+    def __create_relation(self, tx:tx, node1: PSObject, node2: PSObject, relation: PSRelation):
         query = self.__create_rel_query(node1, node2, relation)
-        result = tx.run(query)
+        neo4j_result = tx.run(query)
         try:
-            return {(record['rName'], record['rel_type'], record['tName']) for record in result}
+            return {(record['rName'], record['rel_type'], record['tName']) for record in neo4j_result}
         # Capture any errors along with the query and data for traceability
         except ServiceUnavailable as exception:
             logging.error(f"{query} raised an error:\n{exception}")
@@ -161,16 +175,16 @@ class nx2neo4j:
         with self.driver.session() as session:
             rel_counter = 0
             for regulatorID, targetID, rel in resnet.edges.data('relation'):
-                result = session.write_transaction(self.__create_relation, resnet.nodes[regulatorID],
+                neo4j_result = session.execute_write(self.__create_relation, resnet.nodes[regulatorID],
                                                    resnet.nodes[targetID], rel)
-                for record in result:
+                for record in neo4j_result:
                     print(f"Created {record[1]}: {record[0]} -> {record[2]} relation")
                     rel_counter += 1
                     if rel_counter%10000 == 0:
                         print(f'\n\nImported {rel_counter} relations\n\n')
 
 
-    def __create_relations(self, tx, rel_tuples:list,resnet:ResnetGraph):
+    def __create_relations(self, tx:tx, rel_tuples:list,resnet:ResnetGraph):
         '''
         Input
         -----
@@ -185,8 +199,13 @@ class nx2neo4j:
 
 
     def load_relation_list(self, edge_tuples:list,resnet:ResnetGraph):
+        '''
+        Input
+        -----
+        rel_tuples = [(node1_id, node2_id, PSRelation)]
+        '''
         with self.driver.session() as session:
-            created_relation_count = session.write_transaction(self.__create_relations,edge_tuples,resnet)
+            created_relation_count = session.execute_write(self.__create_relations,edge_tuples,resnet)
         return int(created_relation_count)
             
 
