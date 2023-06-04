@@ -728,30 +728,37 @@ class ETMstat:
         """
         start_time = time.time()
         etm1 = self.clone('https://demo.elseviertextmining.com/api')
-        etm2 = self.clone('https://discover.elseviertextmining.com/api')
-        etm3 = self.clone('https://research.elseviertextmining.com/api')
+     #   etm2 = self.clone('https://discover.elseviertextmining.com/api')
+     #   etm3 = self.clone('https://research.elseviertextmining.com/api')
+        etm2 = self.clone('https://demo.elseviertextmining.com/api')
+        etm3 = self.clone('https://demo.elseviertextmining.com/api')
         my_df = to_df.copy_df(to_df)
         
         row_count = len(my_df)
-        one3rd = int(row_count/3)
-        df1 = df(my_df.iloc[:one3rd])
-        df2 = df(my_df.iloc[one3rd : 2*one3rd])
-        df3 = df(my_df.iloc[2*one3rd:])
+        if row_count > 9:
+            one3rd = int(row_count/3)
+            df1 = df(my_df.iloc[:one3rd])
+            df2 = df(my_df.iloc[one3rd : 2*one3rd])
+            df3 = df(my_df.iloc[2*one3rd:])
 
-        t1 = Thread(target=etm1.add_etm_refs, args=(df1,between_names_in_col,and_concepts,use_query,add2query),name='etm_demo')
-        t1.start()
-        t2 = Thread(target=etm2.add_etm_refs, args=(df2,between_names_in_col,and_concepts,use_query,add2query),name='etm_discover')
-        t2.start()
-        t3 = Thread(target=etm3.add_etm_refs, args=(df3,between_names_in_col,and_concepts,use_query,add2query),name='etm_research')
-        t3.start()
+            t1 = Thread(target=etm1.add_etm_refs, args=(df1,between_names_in_col,and_concepts,use_query,add2query),name='etm_demo')
+            t1.start()
+            t2 = Thread(target=etm2.add_etm_refs, args=(df2,between_names_in_col,and_concepts,use_query,add2query),name='etm_discover')
+            t2.start()
+            t3 = Thread(target=etm3.add_etm_refs, args=(df3,between_names_in_col,and_concepts,use_query,add2query),name='etm_research')
+            t3.start()
 
-        t1.join()
-        t2.join()
-        t3.join()
+            t1.join()
+            t2.join()
+            t3.join()
 
-        annotated_df = df(pd.concat([df1,df2,df3]),name=to_df._name_)
-        [self._add2counter(ref) for ref in etm2.references()]
-        [self._add2counter(ref) for ref in etm3.references()]
+            annotated_df = df(pd.concat([df1,df2,df3]),name=to_df._name_)
+            [self._add2counter(ref) for ref in etm1.references()]
+            [self._add2counter(ref) for ref in etm2.references()]
+            [self._add2counter(ref) for ref in etm3.references()]
+        else:
+            self.add_etm_refs(my_df,between_names_in_col,and_concepts,use_query,add2query)
+            annotated_df = my_df
         
         annotated_df.copy_format(to_df)
         etm_ref_column_name = self._etm_ref_column_name(between_names_in_col,and_concepts)

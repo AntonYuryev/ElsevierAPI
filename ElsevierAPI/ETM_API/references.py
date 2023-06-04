@@ -22,7 +22,8 @@ PATENT_APP_NUM = 'Patent Application Number'
 PATENT_GRANT_NUM = 'Patent Grant Number'
 EFFECT = 'Effect'
 RELEVANCE = 'Relevance'
-CITATION_INDEX = 'Citation index'
+CITATION_INDEX = 'ETM Citation index'
+SCOPUS_CI = 'Scopus Citation index'
 LOINCID = 'LOINC ID'
 THRESHOLD = 'Threshold'
 hGRAPHID = 'hGraph ID'
@@ -91,8 +92,22 @@ class Reference(dict):
                 except KeyError: continue
 
         return dict()
+    
 
-        
+    def _copy(self):
+        for i in REF_ID_TYPES:
+            try:
+                id_value = self.Identifiers[i]
+                my_copy = Reference(i,id_value)
+                my_copy.update(self)
+                my_copy.Identifiers = dict(self.Identifiers)
+                my_copy.snippets = dict(self.snippets)
+                my_copy.addresses = dict(self.addresses)
+                return my_copy
+            except KeyError: continue
+        return dict()
+    
+
     @staticmethod
     def __parse_textref(textref:str):
         #TexRef example: 'info:doi/10.1016/j.gendis.2015.05.001#body:49'
@@ -139,6 +154,7 @@ class Reference(dict):
                     return self.Identifiers[id_type] == other.Identifiers[id_type]
                 except KeyError:
                     continue
+        return False
 
 
     def get_doc_id(self):
@@ -306,6 +322,16 @@ class Reference(dict):
     def to_str(self,id_types:list=None,col_sep='\t',print_snippets=False,biblio_props=[],other_props=[]):
         row = self.to_list(id_types,print_snippets,biblio_props,other_props)
         return col_sep.join(row)
+    
+
+    def pubyear(self):
+        try:
+            return self[PUBYEAR][0]
+        except KeyError:
+            try:
+                year = self['Start'][0] # Clinical trials case
+                return year[-4:]
+            except KeyError: return '1812' # No PubYear case
 
     
     def _biblio_tuple(self):
@@ -320,7 +346,7 @@ class Reference(dict):
         except KeyError:
             title = 'No title available'
         try:
-            year = str(self[PUBYEAR][0])
+            year = str(self.pubyear())
         except KeyError:
             year = 'year unknown'
         try:
@@ -447,17 +473,8 @@ class Reference(dict):
             return 0.0
 
 
-    def _year(self):
-        try:
-            return self[PUBYEAR][0]
-        except KeyError:
-            try:
-                year = self['Start'][0] # Clinical trials case
-                return year[-4:]
-            except KeyError: return '1812' # No PubYear case
-
     def _sort_key(self, by_property, is_numerical=True):
-        if by_property == PUBYEAR: return self._year()
+        if by_property == PUBYEAR: return self.pubyear()
         else:
             try:
                 return float(self[by_property][0]) if is_numerical else str(self[by_property][0])
