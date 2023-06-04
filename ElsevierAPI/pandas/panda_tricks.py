@@ -106,7 +106,7 @@ class df(pd.DataFrame):
             newdf.__copy_attrs(other)
 
         if rename2:
-            newdf.rename(columns=rename2,inplace=True)
+            newdf = df(newdf.rename(columns=rename2))
         return newdf
 
 
@@ -198,6 +198,13 @@ class df(pd.DataFrame):
         #new_df = cls(pd.DataFrame(columns=[key_colname,value_colname]))
         new_df = df(pd.DataFrame.from_dict({key_colname:list(dic.keys()), value_colname:list(dic.values())}))
         return new_df
+    
+
+    @classmethod 
+    def from_pd(cls, d:pd.DataFrame,df_name=''):
+        new_pd = cls(d)
+        new_pd._name_ = df_name
+        return new_pd
 
 
     def merge_dict(self, dict2add:dict, new_col:str, map2column:str, add_all=False, case_sensitive_match=False):
