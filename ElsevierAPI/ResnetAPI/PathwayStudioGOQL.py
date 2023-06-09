@@ -108,8 +108,12 @@ class OQL:
 
 
     @staticmethod
-    def get_childs(PropertyValues: list, SearchByProperties: list, only_object_types=[],include_parents=False):
-        ontology_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE {entities})'
+    def get_childs(PropertyValues:list,SearchByProperties:list,only_object_types=[],include_parents=False,depth=0):
+        if depth:
+            ontology_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') inRange '+str(depth)+' under (SELECT OntologicalNode WHERE {entities})'
+        else:
+            ontology_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') under (SELECT OntologicalNode WHERE {entities})'
+        
         search_by_id = False
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
             entity_query = "id = (" + OQL.id2str(PropertyValues) + ')'

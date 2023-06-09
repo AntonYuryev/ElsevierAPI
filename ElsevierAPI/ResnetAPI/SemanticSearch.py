@@ -3,8 +3,8 @@ import math
 from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import Reference
 from .ResnetGraph import ResnetGraph,PSObject,EFFECT,df,CHILDS
-from .ResnetAPISession import CURRENT_SPECS, APISession,len
-from .ResnetAPISession import DO_NOT_CLONE,TO_RETRIEVE,BELONGS2GROUPS
+from .ResnetAPISession import  APISession,len
+from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,CURRENT_SPECS
 from ..ETM_API.etm import ETMstat
 import pandas as pd
 import numpy as np
@@ -61,6 +61,7 @@ class SemanticSearch (APISession):
         self.all_entity_dbids = set()
         self.weight_dict = dict()
         self.columns2drop = [self.__temp_id_col__] # columns to drop before printing pandas
+        self.max_ontology_parent = 11
 
 
     def reset(self):
@@ -81,7 +82,6 @@ class SemanticSearch (APISession):
         my_kwargs = dict(kwargs)
         api_session = self._clone_session(**my_kwargs)
         new_session = SemanticSearch(api_session.APIconfig,**my_kwargs)
-     #   new_session.__how2clone__ = my_kwargs.get('what2retrieve',CURRENT_SPECS)
         new_session.entProps = api_session.entProps
         new_session.relProps = api_session.relProps
         new_session.data_dir = self.data_dir
@@ -179,7 +179,7 @@ class SemanticSearch (APISession):
         db_entities = self._props2psobj(mapping_values,[map2column],get_childs=False)
         [o.update_with_value(self.__mapped_by__,o.name()) for o in db_entities]
         
-        children = self.load_children4(db_entities)
+        children = self.load_children4(db_entities,max_childs=self.max_ontology_parent)
         for c in children:
             self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
             self.Graph.nodes[c.uid()][self.__resnet_name__] = c.name()
@@ -211,7 +211,7 @@ class SemanticSearch (APISession):
             if from_entities[0].is_from_rnef():# database ids were not loaded
                 self.load_dbids4(from_entities)
 
-            children = self.load_children4(from_entities, min_connectivity=1)
+            children = self.load_children4(from_entities, min_connectivity=1,max_childs=self.max_ontology_parent)
             for c in children:
                 self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
                 self.Graph.nodes[c.uid()][self.__resnet_name__] = c.name()
@@ -338,7 +338,7 @@ class SemanticSearch (APISession):
                     prop2psobj[prop_val] = {psobj.dbid(): psobj}
 
         if get_childs:
-            children = self.load_children4(dbid2entity.values())
+            children = self.load_children4(dbid2entity.values(),max_childs=self.max_ontology_parent)
             dbid2entity.update({child.dbid():child for child in children})
             for c in children:
                 self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
@@ -349,13 +349,18 @@ class SemanticSearch (APISession):
         return prop2psobj
 
 
-    def __refcount_by_dbids(self, node1ids:list, node2ids:list, step=500) -> "ResnetGraph":
+    def __refcount_by_dbids(self, node1dbids:list, node2dbids:list, step=500) -> "ResnetGraph":
+        '''
+        step - regulates the speed of retrieval:\n
+        iteration through node1ids is done by step size\n
+        inetration through node2ids is done 2*step size in parallele threads
+        '''
         start_time = time.time()
         if self.__boost_with__:
             reltypes2load = list(set(self.__connect_by_rels__+self.__boost_with__))
-            cumulative = self.connect_nodes(set(node1ids),set(node2ids),reltypes2load,step=step)
+            cumulative = self.connect_nodes(set(node1dbids),set(node2dbids),reltypes2load,step=step)
         else:
-            cumulative = self.connect_nodes(set(node1ids),set(node2ids),self.__connect_by_rels__,self.__rel_effect__,self.__rel_dir__,step=step)
+            cumulative = self.connect_nodes(set(node1dbids),set(node2dbids),self.__connect_by_rels__,self.__rel_effect__,self.__rel_dir__,step=step)
         
         print('%d nodes were linked by %d relations supported by %d references in %s' %
              (cumulative.number_of_nodes(), cumulative.number_of_edges(), cumulative.weight(),self.execution_time(start_time)))
@@ -430,7 +435,7 @@ class SemanticSearch (APISession):
         linked_entities_counter = set()
         start_time  = time.time()
         concepts_db_ids = ResnetGraph.dbids(concepts)
-        all_entity_dbids = self._all_dbids(my_df)
+        all_entity_dbids = list(self._all_dbids(my_df))
         relations_graph = self.__refcount_by_dbids(concepts_db_ids, all_entity_dbids,self.iteration_step)
    
         if relations_graph.size() > 0:
@@ -717,6 +722,9 @@ class SemanticSearch (APISession):
 
     def etm_ref_column_name(self,between_names_in_col,and_concepts):
         return self.etm_counter._etm_ref_column_name(between_names_in_col,and_concepts)
+    
+    def etm_doi_column_name(self,between_names_in_col,and_concepts):
+        return self.etm_counter._etm_doi_column_name(between_names_in_col,and_concepts)
 
 
     def etm_refs2df(self,to_df:df,input_names:list,entity_name_col:str='Name',add2query=[]):
@@ -725,15 +733,18 @@ class SemanticSearch (APISession):
         return self.etm_counter.add_etm_references(to_df,entity_name_col,input_names,ETMstat.basic_query,add2query)
 
 
-    def add_etm_refs(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[]):
+    def add_etm_refs(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True):
         """
         Adds
         ----
-        columns etm.ETM_REFS_COLUMN, 'DOIs' to df with name "to_df_name" from self.report_pandas
+        columns etm.ETM_REFS_COLUMN, etm._etm_doi_column_name() to df with name "to_df_name" from self.report_pandas
         """
-        rank_counts_df = self.report_pandas[to_df_named]
+        rank_counts_df = df.copy_df(self.report_pandas[to_df_named])
         rank_counts_df = self.etm_refs2df(rank_counts_df,input_names,entity_name_col,add2query)
-        self.add2report(rank_counts_df)
+        if add2report:
+            self.add2report(rank_counts_df)
+
+        return rank_counts_df
 
 
     def add_etm_bibliography(self,suffix=''):
@@ -749,37 +760,32 @@ class SemanticSearch (APISession):
         return biblio_df._name_
   
 
-    def add_ps_bibliography(self,suffix='',from_graph=ResnetGraph()):
+    def add_ps_bibliography(self,suffix='',from_graph=ResnetGraph(),add2report=True):
         my_graph = from_graph if from_graph else self.Graph
         ref_df_name = PS_BIBLIOGRAPHY+'-'+suffix
         ref_df_name = ref_df_name[:31]
         ref_df = my_graph.refs2df(ref_df_name)
-        self.add2report(ref_df)
+        if add2report:
+            self.add2report(ref_df)
+
+        return ref_df
 
 
-    def add_parent_column(self,to_report_named:str, for_entities_in_column='Name', map_by_graph_property='Name',ontology_depth=3):
+    def id2paths(self,to_report_named:str, for_entities_in_column='Name', map_by_graph_property='Name',ontology_depth=3):
         to_df = self.report_pandas[to_report_named]
         id2child_objs = self.entities(to_df,for_entities_in_column,map_by_graph_property)
-        list_of_objlists = list(id2child_objs.values())
-        children = PSObject.unpack(list_of_objlists)
-        super().add_parents(children,depth=ontology_depth)
-        ontology_graph = self.Graph.ontology_graph()
-        id2paths = dict()
-        path_sep = '->'
-        for id_in_column, childs in id2child_objs.items():
-            for child in childs:
-                all_parent_paths = ontology_graph.all_paths_from(child)
-                for path in all_parent_paths:
-                    parent_path_names = [x.name() for x in path]
-                    try:
-                        id2paths[id_in_column] += '\n'+path_sep+path_sep.join(parent_path_names[1:])
-                        # first path component == id_in_column
-                    except KeyError:
-                        id2paths[id_in_column] = path_sep+path_sep.join(parent_path_names[1:])
+        return self.ontopaths2(id2child_objs,ontology_depth)
 
-        new_df = df.copy_df(to_df)
-        new_df = new_df.merge_dict(id2paths,'Ontology parents',for_entities_in_column)
-        self.add2report(new_df)
+
+    def add_parent_column(self,to_report_named:str, _4entities_in_column='Name', map_by_graph_property='Name',ontology_depth=3):
+        '''
+        DEPRICATED
+        '''
+        id2paths = self.id2paths(to_report_named,_4entities_in_column,map_by_graph_property,ontology_depth)
+
+        new_df = df.copy_df(self.report_pandas[to_report_named])
+        new_df = new_df.merge_dict(id2paths,'Ontology parents',_4entities_in_column)
+        #self.add2report(new_df)
         return new_df
     
 
@@ -823,7 +829,7 @@ class SemanticSearch (APISession):
         return new_df
 
 
-    def add_ontology_df(self, for_df_name=''):
+    def add_ontology_df(self, for_df_name='', add2report=True):
         '''
         Return
         ------
@@ -835,18 +841,18 @@ class SemanticSearch (APISession):
         disease_ontology_groups = [x.strip() for x in open(disease_ontology, 'r').readlines()]
 
         query_node = OQL.get_entities_by_props(disease_ontology_groups, ['Name'])
-        disease_ontology_groups = self.process_oql(query_node)._get_nodes()
-        #disease_ontology_groups = disease_ontology_groups_graph._get_nodes()
-        self.load_children4(disease_ontology_groups)
+        new_session = self._clone_session() #to avoid mutating self.Graph in parallel calculations
+        disease_ontology_groups = new_session.process_oql(query_node)._get_nodes()
+        new_session.load_children4(disease_ontology_groups)
 
-        all_diseases = self.Graph._psobjs_with('Disease','ObjTypeName')
         try:
             scored_disease_names = my_df[self.__resnet_name__].to_list()
         except KeyError:
             # df made by load_df does not have self.__resnet_name__
             scored_disease_names = my_df['Name'].to_list()
-        scored_diseases = [x for x in all_diseases if x.name() in scored_disease_names]
 
+        all_diseases = self.Graph._psobjs_with('Disease','ObjTypeName')
+        scored_diseases = [x for x in all_diseases if x.name() in scored_disease_names]
         ontology_stats = {'All diseases': len(scored_diseases)}
         all_scored_children_counter = set()
         for parent_disease in disease_ontology_groups:
@@ -862,7 +868,11 @@ class SemanticSearch (APISession):
 
         ontology_df.sort_values(by='Number of diseases',ascending=False,inplace=True)
         print('Created "Ontology analysis" table')
-        self.add2report(ontology_df)
+
+        if add2report:
+            self.add2report(ontology_df)
+
+        new_session.close_connection()
         return ontology_df
 
 

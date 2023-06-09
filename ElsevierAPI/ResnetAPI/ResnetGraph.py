@@ -2595,7 +2595,7 @@ class ResnetGraph (nx.MultiDiGraph):
         """
         Input
         -----
-        members - [PSObjects]
+        children - [PSObjects]
         """
         resnet = ResnetGraph()
         resnet.add_psobj(add2parent)
@@ -2614,11 +2614,18 @@ class ResnetGraph (nx.MultiDiGraph):
         '''
         Input
         -----
-        nodes in self are annotated with [CHILD_UIDS] property
+        nodes in self must be annotated with [CHILDS] property
         '''
         ontology_graph = ResnetGraph()
         parents = self.psobjs_with([CHILDS])
-        [ontology_graph.add_graph(self.__ontology_resnet(p[CHILDS],p)) for p in parents]
+        for p in parents:
+            ontology_graph.add_psobj(p)
+            ontology_graph.add_psobjs(p[CHILDS])
+            for child in p[CHILDS]:
+                rel = PSRelation({'ObjTypeName':['MemberOf'],'Relationship':['is-a'],'Ontology':['Pathway Studio Ontology']})
+                rel.Nodes[REGULATORS] = [(child.uid(),0,0)]
+                rel.Nodes[TARGETS] = [(p.uid(),1,0)]
+                ontology_graph.add_rel(rel,merge=False)
         return ontology_graph
 
 

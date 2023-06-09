@@ -46,7 +46,7 @@ class Indications4targets(SemanticSearch):
     # if 'pathway_name_must_include_target' False all pathways containing both Targets and Partners will be considered
                  'strict_mode':True,
     # if strict mode algorithm only ranks indications suggetsed in the literarure without predicting new indications
-    # if not strict mode algorithm also predicts and rank additional indications based on target expression or genetic profiles in disease
+    # if not in strict mode algorithm also predicts and rank additional indications based on target expression or genetic profiles in disease
                  'data_dir':'',
                  'add_bibliography' : True,
                  'what2retrieve':BIBLIO_PROPERTIES
@@ -56,6 +56,11 @@ class Indications4targets(SemanticSearch):
         super().__init__(APIconfig,**my_kwargs)
         self.add_rel_props([EFFECT])
         self.columns2drop += [self.__resnet_name__,self.__mapped_by__]
+        self.max_ontology_parent = 11
+        self.max_threads4ontology = 10
+        # 4 threads perform a bit faster than 8 threads 
+        # 288 disease parents out of 288 were processed in 0:19:51.732684 by 8 threads
+        # 288 disease parents out of 288 were processed in 0:18:52.715937 by 4 threads
 
 
     def _target_names(self):
@@ -64,6 +69,7 @@ class Indications4targets(SemanticSearch):
         return values may be different from self.input_names()
         """
         return ','.join(self.params['target_names'])
+
 
     def input_names(self):
         """
@@ -108,6 +114,7 @@ class Indications4targets(SemanticSearch):
     def __is_strict(self):
         return self.params['strict_mode']
   
+
     def set_targets(self):
         try:
             target_objtype_str = str(','.join(self.params['target_objtypes']))
@@ -273,7 +280,7 @@ class Indications4targets(SemanticSearch):
         effect = 'positive'
         select_indications_by_type = self.__oql4indications_type()
         
-        REQUEST_NAME = 'Find indications {effect}ly modulated by {target}'.format(effect=effect, target=t_n)
+        REQUEST_NAME = f'Find indications {effect}ly modulated by {t_n}'
         OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {effect} AND \
             NeighborOf({target}) AND NeighborOf ({indications})' 
         OQLquery =  OQLquery.format(target=f_t,effect = effect,indications=select_indications_by_type)  
@@ -350,27 +357,30 @@ class Indications4targets(SemanticSearch):
         
         # now find indications for modulators found on previous step
         if modulators:
-            indication_type=','.join(self.params['indication_types'])
-            modulators_dbids = ResnetGraph.dbids(modulators)
-            get_modulators=OQL.get_objects(modulators_dbids)
-            effect_type = 'negative' if find_indications else 'positive'
+            if self.__is_strict():
+                all_indications = list()
+            else:
+                indication_type=','.join(self.params['indication_types'])
+                modulators_dbids = ResnetGraph.dbids(modulators)
+                get_modulators=OQL.get_objects(modulators_dbids)
+                effect_type = 'negative' if find_indications else 'positive'
 
-            REQUEST_NAME = f'Find indications for substances {with_effect_on_target}ly regulating {t_n} by {reltype_str}'
-            OQLquery = f'SELECT Relation WHERE objectType = Regulation AND Effect = {effect_type} AND \
-                NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf ({get_modulators})'
-            InhibitorsIndicationNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-            indication_by_regulation = InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types'])
-            print('Found %d indications for %d substances %sly regulating %s by %s relations' %  
-                (len(indication_by_regulation), len(modulators),with_effect_on_target,t_n,reltype_str))
+                REQUEST_NAME = f'Find indications for substances {with_effect_on_target}ly regulating {t_n} by {reltype_str}'
+                OQLquery = f'SELECT Relation WHERE objectType = Regulation AND Effect = {effect_type} AND \
+                    NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf ({get_modulators})'
+                InhibitorsIndicationNetwork = self.process_oql(OQLquery,REQUEST_NAME)
+                indication_by_regulation = InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types'])
+                print('Found %d indications for %d substances %sly regulating %s by %s relations' %  
+                    (len(indication_by_regulation), len(modulators),with_effect_on_target,t_n,reltype_str))
 
-            REQUEST_NAME = f'Find clinical trials for substances {with_effect_on_target}ly regulating {t_n} by {reltype_str}'
-            OQLquery = f'SELECT Relation WHERE objectType = ClinicalTrial AND \
-                NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf ({get_modulators})'
-            InhibitorsIndicationNetwork.add_graph(self.process_oql(OQLquery,REQUEST_NAME))
+                REQUEST_NAME = f'Find clinical trials for substances {with_effect_on_target}ly regulating {t_n} by {reltype_str}'
+                OQLquery = f'SELECT Relation WHERE objectType = ClinicalTrial AND \
+                    NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf ({get_modulators})'
+                InhibitorsIndicationNetwork.add_graph(self.process_oql(OQLquery,REQUEST_NAME))
 
-            all_indications = InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types'])
-            print('Found %d indications on clinical trials with %d substances %sly regulating %s by %s relations' %  
-                (len(all_indications)- len(indication_by_regulation), len(modulators),with_effect_on_target,t_n,reltype_str))
+                all_indications = InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types'])
+                print('Found %d indications on clinical trials with %d substances %sly regulating %s by %s relations' %  
+                    (len(all_indications)- len(indication_by_regulation), len(modulators),with_effect_on_target,t_n,reltype_str))
 
             return modulators, all_indications
         else:
@@ -422,6 +432,7 @@ class Indications4targets(SemanticSearch):
         PartnerIndicationNetwork4anatagonists = self.iterate_oql(OQLquery,indications_dbids,request_name=REQUEST_NAME)
         indications = PartnerIndicationNetwork4anatagonists.psobjs_with(only_with_values=self.params['indication_types'])
         self.indications4antagonists.update(indications)
+        self.indications4antagonists_strict.update(indications)
         print('Found %d indications for %d %s %ss' %  
                 (len(indications), len(self.partners),t_n,self.partner_class.lower()))
 
@@ -430,6 +441,7 @@ class Indications4targets(SemanticSearch):
         PartnerIndicationNetwork4agonists = self.iterate_oql(OQLquery,indications_dbids,request_name=REQUEST_NAME)
         indications = PartnerIndicationNetwork4agonists.psobjs_with(only_with_values=self.params['indication_types'])
         self.indications4agonists.update(indications)
+        self.indications4agonists_strict.update(indications)
 
         new_indication_count = len(self.__indications()) - exist_indication_count
         print('%d indications for %d %s %ss were not found by previous searches' %  
@@ -442,21 +454,24 @@ class Indications4targets(SemanticSearch):
         t_n = self._target_names()
         exist_indication_count = len(self.__indications())
 
-        REQUEST_NAME = 'Find indications linked to cells secreting the {target}'.format(target=t_n)
+        REQUEST_NAME = f'Find cells secreting {t_n}'
         OQLquery = 'SELECT Relation WHERE objectType = (CellExpression,MolTransport) AND NeighborOf ({select_targets}) AND NeighborOf (SELECT Entity WHERE objectType = Cell)'
         cells_make_target = self.process_oql(OQLquery.format(select_targets=self.oql4targets),REQUEST_NAME)
         self.ProducingCells = cells_make_target._psobjs_with('CellType','ObjTypeName')
         print('Found %d cell types producing %s' % (len(self.ProducingCells),t_n))
-        ProducingCells_dbids = ResnetGraph.dbids(self.ProducingCells)
 
-        if self.params['strict_mode']: return # no further predictions
-        REQUEST_NAME = f'Find indications linked to cell secrteing {t_n}'
+        if self.__is_strict(): # no further predictions of indications
+            return # found Cells will be used for target ranking
+            
+        ProducingCells_dbids = ResnetGraph.dbids(self.ProducingCells)
+        REQUEST_NAME = f'Find indications positively linked to cell secreting {t_n}'
         OQLtemplate = 'SELECT Relation WHERE Effect = {effect} AND NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf (SELECT Entity WHERE id = ({cell_ids}))'
         OQLquery = OQLtemplate.format(effect='positive',cell_ids=OQL.id2str(ProducingCells_dbids),indication_type=','.join(self.params['indication_types']))
         CellDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
         indications = CellDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
         self.indications4antagonists.update(indications)
 
+        REQUEST_NAME = f'Find indications negatively linked to cell secreting {t_n}'
         OQLquery = OQLtemplate.format(effect='negative',cell_ids=OQL.id2str(ProducingCells_dbids),indication_type=','.join(self.params['indication_types']))
         CellDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
         indications = CellDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
@@ -650,9 +665,11 @@ class Indications4targets(SemanticSearch):
         ------
         adds score columns to "in_worksheet" from self.raw_data
         """
-        t_n = self._target_names()   
+        t_n = self._target_names()
+        target_in_header = t_n if len(t_n) < 45 else 'targets'
         colname = 'Activated by ' if target_effect_on_indication == 'positive' else 'Inhibited by '
-        colname += t_n
+        colname += target_in_header
+
         indication_df = self.raw_data[in_worksheet]
         score4antagonists = True if target_effect_on_indication == 'positive' else False
 
@@ -669,12 +686,12 @@ class Indications4targets(SemanticSearch):
         link_effect, drug_class, concepts = self.__drug_connect_params(True,score4antagonists)
         if concepts:
             # references suggesting that known drugs for the target as treatments for indication
-            colname = t_n+' '+drug_class+' clin. trials'
+            colname = target_in_header+' '+drug_class+' clin. trials'
             self.set_how2connect(['ClinicalTrial'],[],'')
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,concepts,indication_df)
             print('Linked %d clinical trial indictions for %s %s' % (linked_row_count,t_n,drug_class))
 
-            colname = t_n+' '+drug_class
+            colname = target_in_header+' '+drug_class
             self.set_how2connect(['Regulation'],[link_effect],'',['Regulation'])
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,concepts,indication_df)
             print('Linked %d indications for %s %s' % (linked_row_count,t_n,drug_class))
@@ -682,7 +699,7 @@ class Indications4targets(SemanticSearch):
         #references reporting target agonists exacerbating indication or causing indication as adverse events
         link_effect, drug_class, concepts = self.__drug_tox_params(True,score4antagonists)
         if concepts:
-            colname = t_n+' '+drug_class
+            colname = target_in_header+' '+drug_class
             self.set_how2connect(['Regulation'],[link_effect],'',['Regulation'])
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,concepts,indication_df)
             print('Linked %d indications as toxicities for %s %s' % (linked_row_count,t_n,drug_class))
@@ -690,7 +707,7 @@ class Indications4targets(SemanticSearch):
     
         #references where target expression or activity changes in the indication
         colname = ' is upregulated' if target_effect_on_indication == 'positive' else ' is downregulated'
-        colname = t_n + colname
+        colname = target_in_header + colname
         self.set_how2connect(['QuantitativeChange'],[target_effect_on_indication],'',['Biomarker','StateChange'])
         linked_row_count,linked_ent_ids,indication_df= self.link2concept(colname,self.targets,indication_df)
         print('%d indications %sly regulate %s' % (linked_row_count,target_effect_on_indication,t_n))
@@ -698,7 +715,7 @@ class Indications4targets(SemanticSearch):
         #references suggesting target partners as targets for indication
         if self.partners:
             p_cl = self.partner_class if self.partner_class else 'partner'
-            colname = f'{t_n} {p_cl}s'
+            colname = f'{target_in_header} {p_cl}s'
             self.set_how2connect(['Regulation'],[target_effect_on_indication],'',['Regulation'])
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,self.partners,indication_df)
             print('Linked %d indications for %d %s %ss' % (linked_row_count,len(self.partners),t_n,p_cl))
@@ -706,7 +723,7 @@ class Indications4targets(SemanticSearch):
         # references reporting that cells producing the target linked to indication  
         # only used if taregts are secretred ligands
         if hasattr(self, 'ProducingCells'):
-            colname = '{target_name} producing cells'.format(target_name=t_n)
+            colname = f'{target_in_header} producing cells'
             self.set_how2connect(['Regulation'],[target_effect_on_indication],'',['Regulation'])
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,self.ProducingCells,indication_df)
             print('Liked %d indications linked %d cells producing %s' % (linked_row_count,len(self.ProducingCells),t_n))
@@ -714,14 +731,14 @@ class Indications4targets(SemanticSearch):
         link_effect, drug_class, concepts = self.__drug_connect_params(False,score4antagonists)
         if concepts:
             # references suggesting that known drugs for the target as treatments for indication
-            colname = t_n+' '+drug_class+' clin. trials'
+            colname = target_in_header+' '+drug_class+' clin. trials'
             self.set_how2connect(['ClinicalTrial'],[],'')
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             linked_row_count,linked_ent_ids,indication_df = new_session.link2concept(colname,concepts,indication_df)
             print('Linked %d clinical trial indications for %s %s' % (linked_row_count,t_n,drug_class))
             new_session.close_connection()
 
-            colname = t_n+' '+drug_class
+            colname = target_in_header+' '+drug_class
             self.set_how2connect(['Regulation'],[link_effect],'',['Regulation'])
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             linked_row_count,linked_ent_ids,indication_df = new_session.link2concept(colname,concepts,indication_df)
@@ -731,7 +748,7 @@ class Indications4targets(SemanticSearch):
         #references reporting target agonists exacerbating indication or causing indication as adverse events
         link_effect, drug_class, concepts = self.__drug_tox_params(False,score4antagonists)
         if concepts:
-            colname = t_n+' '+drug_class
+            colname = target_in_header+' '+drug_class
             self.set_how2connect(['Regulation'],[link_effect],'',['Regulation'])
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             linked_row_count,linked_ent_ids,indication_df = new_session.link2concept(colname,concepts,indication_df)
@@ -740,8 +757,8 @@ class Indications4targets(SemanticSearch):
         
         if hasattr(self, 'PathwayComponents'):
             #references linking target pathway to indication
-            colname = t_n + ' pathway components'
-            self.set_how2connect(['Regulation'],[target_effect_on_indication],'',step=250)
+            colname = target_in_header + ' pathway components'
+            self.set_how2connect(['Regulation'],[target_effect_on_indication],'',step=125)
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             linked_row_count,linked_ent_ids,indication_df = new_session.link2concept(colname,list(self.PathwayComponents),indication_df)
             print('Linked %d indications to %s pathway components' % (linked_row_count,t_n))
@@ -795,6 +812,7 @@ class Indications4targets(SemanticSearch):
         self.set_partners()
 
         self.find_target_indications()
+        #return  #uncomment to enable fast downstream testing
         self.indications4partners()
 
         if self.target_class == 'Ligand':

@@ -49,6 +49,8 @@ class DiseaseTargets(SemanticSearch):
         self.add_rel_props([EFFECT])
         self.entProps = ['Name', 'Class'] #'Class' is for target partners retrieval
         self.columns2drop += [self.__resnet_name__,self.__mapped_by__,'State in Disease']
+        self.max_threads4ontology = 50
+
         self.input_diseases = list()
         self.input_symptoms = set()
         self.input_clinpars = set()

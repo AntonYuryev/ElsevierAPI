@@ -1,5 +1,7 @@
 from .TargetIndications import Indications4targets,OQL,df,DF4ANTAGONISTS,DF4AGONISTS,ResnetGraph
 from .TargetIndications import RANK_SUGGESTED_INDICATIONS,PREDICT_RANK_INDICATIONS,BIBLIO_PROPERTIES
+from concurrent.futures import ThreadPoolExecutor
+from .SemanticSearch import RANK
 import time
 INHIBIT = 0 # indication must be inhibited by a drug
 ACTIVATE = 1 # indication must be activated by a drug
@@ -103,6 +105,13 @@ class RepurposeDrug(Indications4targets):
     def input_names(self):
        # drugs = self.Graph._get_nodes(self.drug_ids)
         return [x.name() for x in self.drugs]
+    
+
+    def __etm_ref_column_name(self):
+        return self.etm_counter._etm_ref_column_name('Name',self.input_names())
+    
+    def __etm_doi_column_name(self):
+        return self.etm_counter._etm_doi_column_name('Name',self.input_names())
 
 
     def find_indications4similars(self):
@@ -172,6 +181,7 @@ class RepurposeDrug(Indications4targets):
         else:
             indication_df = self.raw_data[DF4ANTAGONISTS]
 
+        #self.etm_refs2df(indication_df,self.input_names(),'Name',[]) # for speed testing etm
         colname = self.params['input_compound'] + ' clinical trials'
         self.set_how2connect(['ClinicalTrial'],[],'')
         linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname, self.drugs,indication_df)
@@ -257,8 +267,9 @@ class RepurposeDrug(Indications4targets):
     def load_drug_indications(self):
         self.flush_dump_files()
         start_time = time.time()
-        self.set_drug() 
+        self.set_drug()
         self.find_drug_indications()
+        #return #uncomment for fast downstream testing
         self.find_indications4similars()
         self.clean_indications()
         print("Drug indications were loaded in %s" % self.execution_time(start_time))
@@ -291,6 +302,11 @@ class RepurposeDrug(Indications4targets):
         start_time = time.time()
         if self.init_semantic_search():
             indication_df = self.score_drug_semantics()
+
+            # for testing parent path only:
+     #       id2child_objs = self.entities(indication_df)
+     #       self.ontopaths2(id2child_objs,3)
+
             target_effect_on_indication = 'positive' if self.params['to_inhibit'] else 'negative'
             self.semantic_score(indication_df._name_,target_effect_on_indication)
 
@@ -325,10 +341,31 @@ class RepurposeDrug(Indications4targets):
             ws_suffix = self.__ws_suffix()
             norm_df_name = 'rnkd '+ws_suffix
             self.normalize(count_df_name,norm_df_name,drop_empty_columns=drop_empty_cols)
-            self.add_parent_column(norm_df_name)
-            ontology_df = self.add_ontology_df(norm_df_name)
-            self.add_ps_bibliography(ws_suffix)
-            self.add_etm_refs(norm_df_name,self.input_names())
+
+            with ThreadPoolExecutor(max_workers=3, thread_name_prefix='Report annotation') as e:
+                etm_biblio_future = e.submit(self.add_etm_refs, norm_df_name,self.input_names(),'Name',[],False)
+                ontology_df_future = e.submit(self.add_ontology_df,norm_df_name)
+                add_parent_future = e.submit(self.id2paths,norm_df_name)
+                ps_biblio_future = e.submit(self.add_ps_bibliography,ws_suffix)
+                
+            norm_df = df.copy_df(self.report_pandas[norm_df_name])
+            id2paths = add_parent_future.result()
+            norm_df = norm_df.merge_dict(id2paths,'Ontology parents','Name')
+
+            ontology_df = ontology_df_future.result()
+            ps_biblio_future.result()
+
+            etm_refs_df = etm_biblio_future.result()
+            norm_df = norm_df.merge_df(etm_refs_df,on='Name',columns=[self.__etm_ref_column_name(),self.__etm_doi_column_name()])
+            
+            columns = norm_df.columns.to_list()
+            columns.remove('URN')
+            columns.append('URN')
+            columns.remove(RANK)
+            columns.insert(1,RANK)
+            norm_df = norm_df.reorder(columns)
+            self.add2report(norm_df)
+
             biblio_df_name = self.add_etm_bibliography(ws_suffix)
             return norm_df_name, biblio_df_name, ontology_df._name_
         else:

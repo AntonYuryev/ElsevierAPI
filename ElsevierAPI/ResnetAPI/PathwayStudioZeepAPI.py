@@ -228,20 +228,20 @@ class DataModel:
             except zeep_exceptions.TransportError as err:
                 if err.status_code == 504:
                     print('\nSOAPclient session timed out after %s on %d iteration out of %d with GOQL query:\n%s' % 
-                            (execution_time(start),attempt+1,max_iter,OQLquery[:100]),flush=True)
+                            (execution_time(start),attempt+1,max_iter,OQLquery[:100]))
                     timeout = (attempt+2)*300 # 300 - default timeout in zeep
-                    print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds')
+                    print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds',flush=True)
                     self.SOAPclient.transport.load_timeout = timeout
                     sleep(timeout)
                     continue
             except req_exceptions.ChunkedEncodingError as cherr:
                 chunk_timeout = 10
-                print(f'{cherr}\nWill try again in {chunk_timeout} seconds')
+                print(f'{cherr}\nWill try again in {chunk_timeout} seconds',flush=True)
                 sleep(chunk_timeout)
                 continue
             except zeep_exceptions.Fault:
                 print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in %d sec' % 
-                                                                (OQLquery[:200],attempt+1,CONNECTION_TIMEOUT))
+                                                                (OQLquery[:200],attempt+1,CONNECTION_TIMEOUT),flush=True)
                 sleep(CONNECTION_TIMEOUT)
                 continue
         
@@ -261,14 +261,14 @@ class DataModel:
                 return result
             except zeep_exceptions.Fault:
                 print('Connection error while retrieving results\n"%s"\nAttempt #%d to reconnect is in 10 sec' %
-                         (str(result_param.ResultRef),attempt+2))
+                         (str(result_param.ResultRef),attempt+2),flush=True)
                 sleep(10)
                 continue
             except zeep_exceptions.TransportError:
                 print('\nSOAPclient session timed out after %s on %d iteration out of %d' % 
-                            (execution_time(start),attempt+1,max_iter),flush=True)
+                            (execution_time(start),attempt+1,max_iter))
                 timeout = (attempt+2)*300 # 300 - default timeout in zeep
-                print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds')
+                print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds',flush=True)
                 self.SOAPclient.transport.load_timeout = timeout
                 sleep(timeout)
                 continue

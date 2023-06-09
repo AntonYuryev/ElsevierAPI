@@ -29,6 +29,7 @@ ALL_PROPERTIES = 10
 NO_RNEF_REL_PROPS={'RelationNumberOfReferences','Name','URN'}
 
 SESSION_KWARGS = {'what2retrieve','connect2server','no_mess','data_dir',TO_RETRIEVE,'use_cache'}
+MAX_SESSIONS = 50 # by default sessions_max=200 in Oracle 
 
 
 class APISession(PSNetworx):
@@ -82,6 +83,7 @@ class APISession(PSNetworx):
         self.DumpFiles = []
         self.set_dir(kwargs.get('data_dir',''))
         self.use_cache = my_kwargs.get('use_cache',False)
+        self.max_threads4ontology = 10
     
 
     @staticmethod
@@ -134,6 +136,7 @@ class APISession(PSNetworx):
         
         new_session.data_dir = self.data_dir
         new_session.no_mess = my_kwargs.get('no_mess',self.no_mess)
+        new_session.max_threads4ontology = self.max_threads4ontology
         return new_session
 
 
@@ -187,7 +190,12 @@ class APISession(PSNetworx):
         self.DumpFiles.append(dump_fname)
 
 #########################  MULTITHREADED PROCESSING, RETRIEVAL   ##################################
-    def __init_session(self, first_iteration=0):
+    def __init_session(self, first_iteration=0,max_result=0):
+        '''
+        Return
+        ------
+        empty ResnetGraph if number of results > max_result
+        '''
         self.__set_get_links()
         obj_props = self.relProps if self.__getLinks else self.entProps
         zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
@@ -197,7 +205,10 @@ class APISession(PSNetworx):
         if first_iteration > 0:
             self.ResultPos = first_iteration
             print ('Resuming retrieval from %d position' % first_iteration)
-            return self.__get_next_page(self.ResultPos)                                                  
+            return self.__get_next_page(self.ResultPos)
+
+        if max_result and self.ResultSize > max_result:
+            return ResnetGraph()
 
         if type(zeep_data) != type(None):
             if self.__getLinks:
@@ -259,23 +270,32 @@ class APISession(PSNetworx):
         return entire_graph
 
 
-    def process_oql(self, oql_query, request_name='') -> ResnetGraph:
+    def process_oql(self, oql_query, request_name='',max_result=0) -> ResnetGraph:
+        '''
+        Return
+        ------
+        if number of results excees max_result returns int = self.ResultSize
+        '''
         self.__replace_goql(oql_query)
         start_time = time.time()
         return_type = 'relations' if self.__getLinks else 'entities'
-        entire_graph = self.__init_session()
-        number_of_iterations = int(self.ResultSize / self.PageSize)
-        my_request_name = request_name if request_name else self.GOQLquery[:100]+'...'
-    
-        if number_of_iterations:
-            if not self.no_mess:
-                print('\n\"%s\"\nrequest found %d %s.\n%d is retrieved. Remaining %d results will be retrieved in %d parallel iterations' % 
-            (my_request_name,self.ResultSize,return_type,self.ResultPos,(self.ResultSize-self.PageSize),number_of_iterations))
-            try:
-                iterations_graph = self.__thread__(number_of_iterations,process_name=request_name)
-                entire_graph = entire_graph.compose(iterations_graph)
-            except exceptions.TransportError:
-                raise exceptions.TransportError('Table lock detected!!! Aborting operation!!!')
+        entire_graph = self.__init_session(max_result=max_result)
+
+        if max_result and self.ResultSize > max_result:
+            return self.ResultSize
+
+        if entire_graph:
+            number_of_iterations = int(self.ResultSize / self.PageSize)
+            if number_of_iterations:
+                my_request_name = request_name if request_name else self.GOQLquery[:100]+'...'
+                if not self.no_mess:
+                    print('\n\"%s\"\nrequest found %d %s.\n%d is retrieved. Remaining %d results will be retrieved in %d parallel iterations' % 
+                (my_request_name,self.ResultSize,return_type,self.ResultPos,(self.ResultSize-self.PageSize),number_of_iterations))
+                try:
+                    iterations_graph = self.__thread__(number_of_iterations,process_name=request_name)
+                    entire_graph = entire_graph.compose(iterations_graph)
+                except exceptions.TransportError:
+                    raise exceptions.TransportError('Table lock detected!!! Aborting operation!!!')
 
         if not self.no_mess:
             print('"%s"\nretrieved %d nodes and %d edges in %s by %d parallel iterations' % 
@@ -360,16 +380,16 @@ class APISession(PSNetworx):
         else:
             my_oql = oql_query.replace('{props','{ids')
             def join_list (l:list):
-                return OQL.join_with_quotes(l) 
+                return OQL.join_with_quotes(l)
             
         number_of_iterations = math.ceil(len(dbids)/step)  
         # new sessions must be created to avoid ResultRef pointer overwriting
         future_sessions = list()
         entire_graph = ResnetGraph()
-        thread_name = f'Iterate_{len(dbids)}_ids'
+        thread_name = f'Iterate_{len(dbids)}_ids_by_{step}'
         print(f'Retrieval of {len(dbids)} objects will be done in {number_of_iterations} parallel iterations' )
         dbids_list = list(dbids)
-        with ThreadPoolExecutor(max_workers=number_of_iterations, thread_name_prefix=thread_name) as e:   
+        with ThreadPoolExecutor(max_workers=MAX_SESSIONS, thread_name_prefix=thread_name) as e:   
             futures = list()
             for i in range(0,len(dbids_list), step):
                 iter_dbids = dbids_list[i:i+step]
@@ -471,8 +491,8 @@ class APISession(PSNetworx):
         if oql_query.find('{ids',20) > 0:
             id_oql = oql_query
             hint = r'{ids}'
-            iteration1step = min(step, 1000)
-            iteration2step = min(2*iteration1step, 1000)
+            iteration1step = min(step, 1000) # cannot exceed 1000
+            iteration2step = min(2*iteration1step, 1000) # cannot exceed 1000
             def join_list (l:list):
                 return ','.join(map(str,l))
         else:
@@ -483,27 +503,28 @@ class APISession(PSNetworx):
             def join_list (l:list):
                 return OQL.join_with_quotes(l)
                              
-        number_of_iterations = math.ceil(len(ids1)/step) * math.ceil(len(ids2)/iteration1step)
+        number_of_iterations = math.ceil(len(ids1)/iteration1step) * math.ceil(len(ids2)/iteration2step)
         if not number_of_iterations: return ResnetGraph()
         print(f'Iterating {len(ids1)} entities with {len(ids2)} entities for {request_name}')
         if number_of_iterations > 2:
-            print('Query will be executed in %d iterations in parallel threads' % number_of_iterations)
+            print(f'Query will be executed in {number_of_iterations} iterations in {MAX_SESSIONS} threads')
 
         entire_graph = ResnetGraph()
-        
         if len(ids1) <= len(ids2):
-            number_of_iterations = math.ceil(len(ids1)/iteration1step)
             for i1 in range(0,len(ids1), iteration1step):
                 iter_ids1 = ids1[i1:i1+iteration1step]
+
                 iter_oql_query = id_oql.format(ids1=join_list(iter_ids1),ids2=hint)
+
                 iter_graph = self.__iterate__(iter_oql_query,ids2,'iteration2',iteration2step)
                 entire_graph = entire_graph.compose(iter_graph)
                 print(f'Processed {min([i1+iteration1step,len(ids1)])} out of {len(ids1)} identifiers against {len(ids2)} identifiers')
         else:
-            number_of_iterations = math.ceil(len(ids2)/iteration1step)
             for i2 in range(0,len(ids2), iteration1step):
                 iter_ids2 = ids2[i2:i2+iteration1step]
+
                 iter_oql_query = id_oql.format(ids1=hint,ids2=join_list(iter_ids2))
+                
                 iter_graph = self.__iterate__(iter_oql_query,ids1,'iteration2',iteration2step)
                 entire_graph = entire_graph.compose(iter_graph)
                 print(f'Processed {min([i2+iteration1step,len(ids2)])} out of {len(ids2)} identifiers against {len(ids1)} identifiers')
@@ -560,7 +581,7 @@ class APISession(PSNetworx):
         # oql_query MUST contain 2 string placeholder called {props1} and {props2}\n
         if iterable id_sets contain property values other than database id
         """
-        print('Processing "%s" request' % request_name)
+        print(f'Processing "{request_name}" request')
         dbid_only_graph = self.__iterate_oql2__(oql_query,dbid_set1,dbid_set2,request_name,step)
         
         if dbid_only_graph:
@@ -753,24 +774,30 @@ class APISession(PSNetworx):
         return propval2objs, objid2propval
 
 ################################# ONTOLOGY  ONTOLOGY ############################################
-    def __load_children(self,parent:PSObject,min_connectivity=0):
+    def __load_children(self,parent:PSObject,min_connectivity=0,depth=0,max_childs=0):
             parent_dbid = parent.dbid()
             if parent_dbid:
-                query_ontology = OQL.get_childs([parent_dbid],['id'])
+                query_ontology = OQL.get_childs([parent_dbid],['id'],depth=depth)
                 if min_connectivity:
                     query_ontology += f' AND Connectivity >= {min_connectivity}'
 
                 my_session = self._clone_session()
-                children_graph = my_session.process_oql(query_ontology,f'Retrieve ontology children for {parent.name()}')
+                request_name = f'Retrieve ontology children for {parent.name()}'
+                children_graph = my_session.process_oql(query_ontology,request_name,max_result=max_childs)
+          #      if parent.name() == 'physical illness':
+          #          print('')
                 my_session.close_connection()
-                
-                return parent, children_graph._get_nodes()
+                if isinstance(children_graph,int):
+                    return parent, [PSObject()]*children_graph 
+                    # fake list of empty children to enable downstream remove_high_level_entities()
+                else:
+                    return parent, children_graph._get_nodes()
             else:
                 print(f'Parent {parent.name()} has no database identifier. Its children cannot be loaded')
                 return parent,[]
         
 
-    def load_children4(self,parents:list,add2self=True,min_connectivity=0):
+    def load_children4(self,parents:list,add2self=True,min_connectivity=0,depth=0,max_childs=0):
         '''
         Input
         -----
@@ -793,14 +820,18 @@ class APISession(PSNetworx):
             annotate_parents = self.Graph._get_nodes()
 
         print(f'Loading ontology children for {len(annotate_parents)} entities')
-
-        max_threads = 50 
+        max_threads = self.max_threads4ontology
+        # by default sessions_max=200 in Oracle 
+        # for Disease optimal max_threads = 5
+        # for Protein+FunctionalCLass+Complex optimal max_threads = 50 
+        thread_name_prefix = f'Childs 4 {len(parents)} prnts in {max_threads} thrds-'
         # 4 threads perform a bit faster than 8 threads 
-        # 288 parents out of 288 were processed in 0:19:51.732684 by 8 threads
-        # 288 parents out of 288 were processed in 0:18:52.715937 by 4 threads
+        # 288 disease parents out of 288 were processed in 0:19:51.732684 by 8 threads
+        # 288 disease parents out of 288 were processed in 0:18:52.715937 by 4 threads
         max_threaded_time = 0
         need_children = list()
         child_counter = set()
+        iteration_counter = 0
         for p, parent in enumerate(annotate_parents):
             try:
                 children = self.Graph.nodes[parent.uid()][CHILDS]
@@ -809,16 +840,22 @@ class APISession(PSNetworx):
                 need_children.append(parent)
                 if len(need_children) >= max_threads or p == len(annotate_parents)-1:       
                     thread_start = time.time()
-                    with ThreadPoolExecutor(max_workers=len(need_children), thread_name_prefix='load_children') as e:
+                    iteration_counter += 1
+                    thread_name = thread_name_prefix+str(iteration_counter) + 'iter'
+                    with ThreadPoolExecutor(max_workers=len(need_children), thread_name_prefix=thread_name) as e:
                         futures = list()
-                        [futures.append(e.submit(self.__load_children, nc)) for nc in need_children]
+                        [futures.append(e.submit(self.__load_children,nc,min_connectivity,depth,max_childs)) for nc in need_children]
 
                         for future in as_completed(futures):
                             f_parent, children = future.result()
+                            if max_childs:
+                                if len(children) > max_childs: # children has empty PSObjects
+                                    nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
+                                    continue
                             self.Graph.add_psobjs(children)
                             nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
                             child_counter.update(children)
-                            # set_node_attributes() does not update nodes that do not exist in Graph
+                                # set_node_attributes() does not update nodes that do not exist in Graph
        
                     threaded_time = time.time() - thread_start
                     if threaded_time > max_threaded_time:
@@ -869,7 +906,7 @@ class APISession(PSNetworx):
         return ontology_graph
 
 
-    def add_parents(self,for_childs=[],depth=1):
+    def __ontology_graph(self,for_childs=[],depth=1):
         """
         Adds
         ----
@@ -883,13 +920,17 @@ class APISession(PSNetworx):
         my_childs = for_childs if for_childs else self.Graph._get_nodes()
         child_dbids = ResnetGraph.dbids(my_childs)
 
+        my_session = self._clone_session(what2retrieve=NO_REL_PROPERTIES)
+        my_session.max_threads4ontology = 25
         get_parent_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') inRange {steps} over (SELECT OntologicalNode WHERE id = ({ids}))'
         oql_query = get_parent_query.format(steps=str(depth),ids=','.join(map(str,child_dbids)))
         request_name = f'Find parents of {len(my_childs)} nodes with depth {depth}'
-        parent_graph = self.process_oql(oql_query,request_name)
+        parent_graph = my_session.process_oql(oql_query,request_name)
         
-        self.load_children4(parent_graph._get_nodes())
-        return self.Graph._get_nodes(list(parent_graph))
+        my_session.load_children4(parent_graph._get_nodes(),depth=1)
+        # loading only immediate children for all parents to not create shortcuts path in ontology graph
+        my_session.close_connection()
+        return my_session.Graph.ontology_graph()
 
 
     def load_ontology(self, parent_ontology_groups:list):
@@ -912,6 +953,37 @@ class APISession(PSNetworx):
                     self.child2parent[child_name].append(group_name)
                 except KeyError:
                     self.child2parent[child_name] = [group_name]
+
+
+    def ontopaths2(self,name2childs:dict, ontology_depth:int):
+        '''
+        Input
+        -----
+        name2childs = {name:[PSObject]}, where name is the concept name with ontology children in [PSObject]
+        name2childs is generated by SemanticSearch class
+
+        Return
+        ------
+        name2paths = {name:[path]}, where path has format 
+        '''
+        list_of_objlists = list(name2childs.values())
+        children = PSObject.unpack(list_of_objlists)
+        ontology_graph = self.__ontology_graph(children,ontology_depth)
+
+        name2paths = dict()
+        path_sep = '->'
+        for concept_name, childs in name2childs.items():
+            for child in childs:
+                all_parent_paths = ontology_graph.all_paths_from(child)
+                for path in all_parent_paths:
+                    parent_path_names = [x.name() for x in path]
+                    try:
+                        name2paths[concept_name] += '\n'+path_sep+path_sep.join(parent_path_names[1:])
+                        # first elemnt in component path == concept_name
+                    except KeyError:
+                        name2paths[concept_name] = path_sep+path_sep.join(parent_path_names[1:])
+
+        return name2paths
 
 
 ###################################  WRITE DUMP  CACHE, WRITE, DUMP  CACHE, WRITE DUMP  CACHE ##############################################
