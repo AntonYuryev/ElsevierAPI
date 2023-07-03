@@ -17,8 +17,14 @@ baseURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
 #query= '("lewy body" OR "lewy bodies" OR protofibrils OR protofibril)'
 #query='(infection OR infectious OR pathogen OR parasite) AND (1989 [dp] OR 1994 [dp] OR 1999 [dp] OR 2004 [dp] OR 2009 [dp] OR 2014 [dp] OR 2019 [dp]) AND aug NOT (virus OR viral)'
 #query = 'MAIT OR "Mucosa-associated invariant T" OR "Mucosa-associated invariant T cells" OR "Mucosa-associated invariant T cell"'
-#query = 'Clostridium AND ("2020/10/22"[Date - Create] : "3000"[Date - Create])'
-#query = 'bacillus OR subtilis AND ("2020/10/22"[Date - Create] : "3000"[Date - Create])'
+#query = 'bacillus OR subtilis AND ("2021/10/21"[Date - Create] : "3000"[Date - Create])'
+#qname = 'Bsubtilis_since10212021'
+#query = 'Clostridium AND ("2021/10/21"[Date - Create] : "3000"[Date - Create])'
+#qname = 'Clostridium_since10212021'
+#query = 'Cupriavidus OR necator AND ("2021/10/21"[Date - Create] : "3000"[Date - Create])'
+#qname = 'Cnecator_since10212021'
+query = 'escherichia OR coli AND ("2021/10/21"[Date - Create] : "3000"[Date - Create])'
+qname = 'Ecoli_since10212021'
 #query = 'H3K27M OR (K27M AND histone)'
 #query = '(mutant OR mutated OR mutation OR mutations) AND (p53 OR tp53)'
 #query = '("2019/11/29"[Date - Entry] : "3000"[Date - Entry])'
@@ -26,7 +32,7 @@ baseURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
 #query = 'paxalisib OR GDC0084 OR "GDC-0084" OR P5DKZ70636 OR "EX-A1019"'
 #query = '(sulfoquinovosyl OR monogalactosylmonoacylglycerol OR digalactosyldiacylglycerol OR monogalactosyldiacylglycerol OR digalactosylmonoacylglycerol OR monogalactosylmonoacylglycerol OR digalactosyldiacylglycerols OR monogalactosyldiacylglycerols OR digalactosylmonoacylglycerols) AND (human OR sapiens OR mammal OR rat OR mouse)'
 #query = 'serine OR threonine OR tyrosine OR histidine'
-query = 'escherichia OR coli'
+
 
 def download_pubmed(query:str, query_name:str):
     """
@@ -45,10 +51,10 @@ def download_pubmed(query:str, query_name:str):
     count = int(response.find('./Count').text)
 
     json_id_dum = query_name+'.json'
-    if json_id_dum:
+    try:
         all_pmids = json.load(open(json_id_dum,'r'))
         print('Loaded %d PMIDs from pmidlist.json' % len(all_pmids))
-    else:
+    except FileNotFoundError:
         all_pmids = list()
         params.update({'retmax':100000})
         for retstart in range(0, count, 100000):
@@ -103,7 +109,10 @@ def pubmed_hyperlink(pmids:list,display_str:int or str='',as_excel_formula=True)
         data = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         return PUBMED_URL+data
 
+if __name__ == "__main__":
+    download_pubmed(query,qname)
 
+'''
 def minor_allele(rsids:list):
     """
     Input
@@ -150,3 +159,4 @@ def minor_allele(rsids:list):
                 snp2allele2freq['rs'+snp_id] = alele_freqs
 
     return snp2allele2freq
+'''
