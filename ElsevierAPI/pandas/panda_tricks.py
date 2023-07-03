@@ -28,23 +28,24 @@ class df(pd.DataFrame):
                     #'fg_color': '#D7E4BC',
                     #'border': 1,
                     }
-
-    column2format = dict() # {column_index:{'font_color':'blue'}}
-    conditional_frmt = dict() # {area:{conditional_format}}
-    
+    column2format = dict() # need to declare format dict explicitly to avoid pd.DataFrame warning
+    conditional_frmt = dict()
+    tab_format = dict()
 
     def __init__(self, *args, **kwargs):
         df_name = kwargs.pop('name','')  
         pd.DataFrame.__init__(self, *args, **kwargs)
         self._name_ = df_name
-        self.column2format = dict()
-        self.conditional_frmt = dict()
+        self.column2format = dict() # {column_index:{'font_color':'blue'}}
+        self.conditional_frmt = dict() # {area:{conditional_format}}
+        self.tab_format = dict()
 
-        
+
     def copy_format(self, from_df:'df'):
         self.header_format = from_df.header_format
         self.column2format = from_df.column2format
         self.conditional_frmt = from_df.conditional_frmt
+        self.tab_format = from_df.tab_format
 
 
     def add_format(self, from_df:'df'):
@@ -148,7 +149,9 @@ class df(pd.DataFrame):
             kwargs.pop('sheet_name','')
             kwargs.pop('read_formula',False)
             try:
-                _df = df(pd.read_csv(fname,sep='\t', **kwargs))
+                my_kwargs = dict(kwargs)
+                my_kwargs['sep'] = '\t'
+                _df = df(pd.read_csv(*args,**my_kwargs))
                 _df._name_ = df_name
                 return _df
             except FileNotFoundError:
@@ -157,7 +160,9 @@ class df(pd.DataFrame):
             kwargs.pop('sheet_name','')
             kwargs.pop('read_formula',False)
             try:
-                _df = df(pd.read_csv(fname,sep=',', **kwargs))
+                my_kwargs = dict(kwargs)
+                my_kwargs['sep'] = ','
+                _df = df(pd.read_csv(*args,sep=',', **my_kwargs))
                 _df._name_ = df_name
                 return _df
             except FileNotFoundError:
@@ -224,29 +229,46 @@ class df(pd.DataFrame):
             in2pd[map2column].apply(lambda x: str(x).lower())
 
         how = 'outer' if add_all else 'left'
-        merged_df = df(in2pd.merge(pd2merge,how, on=map2column))
+        merged_df = df.from_pd(in2pd.merge(pd2merge,how, on=map2column))
         merged_df.__copy_attrs(self)
         return merged_df
 
 
     def append_df(self, other:'df'):
-        merged_df = df(pd.concat([self,other],ignore_index=True),name=self._name_)
+        merged_pd = pd.concat([self,other],ignore_index=True)
+        merged_pd = merged_pd.reindex()
+        merged_df = df(merged_pd,name=self._name_)
         return merged_df
+    
+
+    @staticmethod
+    def concat_df(dfs:list, df_name=''):
+        merged_pd = pd.concat(dfs,ignore_index=True)
+        merged_pd = merged_pd.reindex()
+        merged_df = df(merged_pd,name=df_name)
+        return merged_df
+    
+    
+    def reindex_df(self):
+        reindexed_pd = self.reindex()
+        reindexed_df = df(reindexed_pd,name=self._name_)
+        reindexed_df.copy_format(self)
+        return reindexed_df
 
 
     def merge_df(self, *args, **kwargs):
         '''
         Input
         -----
-        right df = args[0]
-        non pd.DataFrame kwargs: 'name','columns'
+        right df = args[0]\n
+        non pd.DataFrame kwargs: 'name','columns'\n
         "on" kwarg has to specify column in both self and right df
 
         Return
         ------
         df merged using "on" kwarg with columns added from right df specified by 'columns'\n
-        if 'columns' were not specified will merge all columns from right df
-        Format of "self" takes precedent 
+        if 'columns' were not specified will merge all columns from right df\n
+        Format of "self" takes precedent
         '''
         df_name = kwargs.pop('name',self._name_)
         columns2copy = kwargs.pop('columns',[])
@@ -254,13 +276,13 @@ class df(pd.DataFrame):
         my_args = list(args)
         if columns2copy:
             columns2copy.append(merge_on_column)
-            copy_df = df(args[0][columns2copy])
-            copy_df.copy_format(my_args[0])
+            copy_df = df.from_pd(args[0][columns2copy])
+            copy_df.copy_format(from_df=my_args[0])
             my_args[0] = copy_df
 
         merged_pd = df(self.merge(*my_args, **kwargs),name=df_name)
-        merged_pd.add_format(args[0])
-        merged_pd.add_format(self)
+        merged_pd.add_format(from_df=args[0])
+        merged_pd.add_format(from_df=self)
         return merged_pd
 
 
@@ -351,10 +373,12 @@ class df(pd.DataFrame):
         self.header_format.pop('valign','not_found')
 
 
-    def df2excel(self, writer:ExcelWriter,sheet_name:str):
+    def df2excel(self,writer:ExcelWriter,sheet_name:str):
         '''
         Column format specifications must be in self.column2format\n
         Header format specification must be in self.header_format\n
+        Tab format specification must be in tab_format
+
         Parameters
         ----------
         height,width,wrap_text,inch_width\n
@@ -388,6 +412,12 @@ class df(pd.DataFrame):
 
         for area, fmt in self.conditional_frmt.items():
             worksheet.conditional_format(area, fmt)
+
+        try:
+            tab_color = self.tab_format['tab_color']
+            worksheet.set_tab_color(tab_color)
+        except KeyError:
+            pass
 
 
     def clean(self):
@@ -622,7 +652,7 @@ class df(pd.DataFrame):
 
 
     def reorder(self,columns_in_new_order:list):
-        copy_df = df(self[columns_in_new_order])
+        copy_df = df.from_pd(self[columns_in_new_order])
         copy_df.copy_format(self)
         copy_df._name_ = self._name_
         return copy_df
