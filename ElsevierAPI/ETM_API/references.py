@@ -22,7 +22,8 @@ PATENT_APP_NUM = 'Patent Application Number'
 PATENT_GRANT_NUM = 'Patent Grant Number'
 EFFECT = 'Effect'
 RELEVANCE = 'Relevance'
-CITATION_INDEX = 'ETM Citation index'
+ETM_CITATION_INDEX = 'ETM Citation index'
+PS_CITATION_INDEX = 'Resnet Citation index'
 SCOPUS_CI = 'Scopus Citation index'
 LOINCID = 'LOINC ID'
 THRESHOLD = 'Threshold'
@@ -30,7 +31,7 @@ hGRAPHID = 'hGraph ID'
 EDMID = 'EDM ID'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
-INT_PROPS = {RELEVANCE,CITATION_INDEX,PUBYEAR}
+INT_PROPS = {RELEVANCE,PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX}
 
 PS_REFIID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID']
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
@@ -265,11 +266,18 @@ class Reference(dict):
             except KeyError: 
                 continue
         return '',''
-
+    
 
     def _identifiers_str(self):
         id_type, identifier = self._identifier()
         return id_type  +':'+identifier
+    
+
+    def identifier(self,identifier_type):
+        try:
+            return self.Identifiers[identifier_type]
+        except KeyError:
+            return ''
     
 
     def to_list(self,id_types=list(),print_snippets=False,biblio_props=list(),other_props=list(),with_hyperlinks=False):
@@ -281,7 +289,7 @@ class Reference(dict):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         for p in other_props:
             try:
-                prop_values_str = ';'.join(map(str,self[p]))
+                prop_values_str = ';'.join(list(map(str,self[p])))
                 row.append(prop_values_str)
             except KeyError:
                 row.append('')
@@ -303,17 +311,16 @@ class Reference(dict):
                 
         for prop_id in biblio_props:
             try:
-                prop_values_str = ';'.join(self[prop_id])
+                prop_values_str = ';'.join(list(map(str,self[prop_id])))
                 if prop_id in ['Title', 'Abstract']:
-                    prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', prop_values_str)
+                    prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE,' ',prop_values_str)
             except KeyError:
                 prop_values_str = ''
-            
             row.append(prop_values_str)
 
         if print_snippets:
-            sentence_props =  json.dumps(self.snippets)
-            sentence_props = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', sentence_props)
+            sentence_props = json.dumps(self.snippets)
+            sentence_props = re.sub(NOT_ALLOWED_IN_SENTENCE,' ',sentence_props)
             row.append(sentence_props)
 
         return row
@@ -326,14 +333,20 @@ class Reference(dict):
 
     def pubyear(self):
         try:
-            return self[PUBYEAR][0]
+            return int(self[PUBYEAR][0])
         except KeyError:
             try:
                 year = self['Start'][0] # Clinical trials case
-                return year[-4:]
-            except KeyError: return '1812' # No PubYear case
+                return int(year[-4:])
+            except KeyError: return 1812 # No PubYear case
 
     
+    def is_clinical_trial(self):
+        try:
+            return self.Identifiers['NCT ID']
+        except KeyError:
+            return ''
+
     def _biblio_tuple(self):
         """
         Returns
@@ -380,9 +393,9 @@ class Reference(dict):
         if isinstance(other, Reference):
             for prop, values in other.items():
                 if prop in INT_PROPS:
-                    clean_vals = {map(int,values)}
+                    clean_vals = set(map(int,values))
                 else:
-                    clean_vals = {map(str,values)}
+                    clean_vals = set(map(str,values))
                     clean_vals = [v.strip(' .') for v in values]
 
                 self.update_with_list(prop,list(clean_vals))
