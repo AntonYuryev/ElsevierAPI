@@ -1,10 +1,11 @@
-from .ResnetAPISession import APISession, time, math, NO_REL_PROPERTIES
+from .ResnetAPISession import time, math, NO_REL_PROPERTIES
+from .ResnetAPIcache import APIcache
 from .ResnetGraph import REFCOUNT, ResnetGraph, nx, EFFECT,NUMBER_OF_TARGETS,PROTEIN_TYPES
 from ..pandas.panda_tricks import df, ExcelWriter
 from .Drugs4Disease import Drugs4Targets
 from .Drugs4Disease import ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,RANK,DRUG2TARGET_REGULATOR_SCORE,PHARMAPENDIUM_ID
 from .Zeep2Experiment import Experiment, Sample
-import scipy.stats as stats
+from scipy.stats._mannwhitneyu import mannwhitneyu
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
@@ -15,10 +16,7 @@ ACTIVATION_IN = 'activation in '
 EXPRESSION = ['Expression','PromoterBinding']
 
 
-class SNEA(APISession):
-    __regulators__ = dict() # = {sample_name:[regulator_uids]}}
-    __sample2drugs__ = dict() # = {sample_name:[PSObject]}} stores only drugs having negative activation score
-    __my_psobjs__ = list()
+class SNEA(APIcache):
 
     def __init__(self,*args,**kwargs):
         '''
@@ -38,13 +36,21 @@ class SNEA(APISession):
             'sample_names':[],
             'sample_ids':[],
             'find_drugs':False,
-            'connect2server':True
+            'connect2server':True,
+            #'limitDrugs2expression_regulators':True
             }
         my_kwargs.update(kwargs)
+        session_kwargs, self.params = self.split_kwargs(my_kwargs)
 
         APIconfig = dict(args[1]) if my_kwargs['connect2server'] else dict()
         self.set_dir(my_kwargs['data_dir'])
+        self.diffexp_pvalue_cutoff = self.params.pop('max_diffexp_pval',0.05)
+        #self.limit2expr_regs = self.params.pop('limitDrugs2expression_regulators',True)
 
+        self.__regulators__ = dict() # = {sample_name:[regulator_uids]}}
+        self.__sample2drugs__ = dict() # = {sample_name:[PSObject]}} stores only drugs having negative activation score
+        self.__my_psobjs__ = list()
+        
         super().__init__(APIconfig,**my_kwargs)
         self.PageSize = 1000
         self.DumpFiles = []
@@ -72,7 +78,7 @@ class SNEA(APISession):
             expression_network = self.__load_network(PPERNET)
             mapping_id_name = exp.identifier_name()
             self.experiment = exp.map2(expression_network,mapping_id_name)
-            
+
         if my_kwargs['find_drugs']:
             dt_kwargs = {'experiment':experiment_name,
                     'add_bibliography' : False,
@@ -81,6 +87,7 @@ class SNEA(APISession):
                     'strict_mode' : False,
                     'clone': False,
                     'what2retrieve' : NO_REL_PROPERTIES,
+                    'cache_dir' : self.cache_dir
                     }
             
             dt_kwargs['connect2server'] = my_kwargs.get('connect2server',True)
@@ -93,7 +100,6 @@ class SNEA(APISession):
             self.dt_future = e.submit(self.dt.dt_consist.load_cache)
 
         self.Graph.clear_resnetgraph() # in case graph was downloaded from database
-        self.diffexp_pvalue_cutoff = 0.05
         self.experiment = self.experiment.mask_by_pval(self.diffexp_pvalue_cutoff)
         self.Graph = self.experiment.annotated_subnetwork(expression_network)
 
@@ -151,68 +157,85 @@ class SNEA(APISession):
         return self.load_cache(network_name,[oql_query],ent_props,rel_props)
 
 
-    def __regulators4sample(self,sample:Sample,regulomes:dict,from_graph=ResnetGraph(),target_annotation_prefix=''):
-        '''
-        Input
-        -----
-        regulomes = {regulator_id : [targets]} made by ResnetGraph.regulome_dict()
+    def activity(self,_in:Sample,_4reg_uid:int,with_targets:list,according2:ResnetGraph):
+            '''
+            Input
+            -----
+            with_targets - [PSObject]"annotated_with_sample"
 
-        Return
-        ------
-        [uids] - uids of regulators 
-        regulator objects in self.Graph are annotated with SNEA activation score and p-value calculated from "sample" 
-        '''
-        my_graph = from_graph if from_graph else self.Graph
-
-        sample_start = time.time()
-        abs_sample_distribution = sample.data['value'].abs()
-        abs_sample_distribution = abs_sample_distribution.dropna(how='all')
-        sample_regulator_uids = set()
-        annotation = target_annotation_prefix+self.experiment.name4annotation(sample)
-        for regulator_uid, targets in regulomes.items():
-            subnetwork_values = list()
-            annotated_targets = list()
-            for t in targets:
+            Return
+            ------
+            regulator_activation_score,regulome_values,effect_target_counter
+            '''
+            annotated_with_sample = self.experiment.name4annotation(_in)
+            regulator_activation_score = 0.0
+            effect_target_counter = 0
+            regulome_values = list()
+            for target in with_targets:
                 try:
-                    subnetwork_values.append(t[annotation][0][0])
-                    annotated_targets.append(t)
-                except KeyError:
-                    continue
-
-            if not subnetwork_values: continue
-            sub_pd = df.from_dict({'value':subnetwork_values})
-            abs_sub_pd = sub_pd['value'].abs()
-            mw_results = stats.mannwhitneyu(x=abs_sample_distribution, y=abs_sub_pd, alternative = 'less') 
-            """
-            'two-sided': the distributions are not equal, i.e. F(u) ≠ G(u) for at least one u.
-            'less': the distribution underlying x is stochastically less than the distribution underlying y, i.e. F(u) > G(u) for all u.
-            'greater': the distribution underlying x is stochastically greater than the distribution underlying y, i.e. F(u) < G(u) for all u.
-            One-sided alternative hypothesis tests median from one group can be greater or lesser than other group.
-            """
-            mv_pvalue = mw_results[1]
-
-            if mv_pvalue <= self.subnet_pvalue_cutoff:
-                regulator_activation_score = 0.0
-                effect_target_counter = 0
-                for target in annotated_targets:
-                    target_exp_value = target[annotation][0][0]
-                    target_exp_pvalue = target[annotation][0][1]
+                    target_exp_value, target_exp_pvalue = target[annotated_with_sample][0]
+                    regulome_values.append(target_exp_value)
                     if target_exp_pvalue < 0.05 or (str(target_exp_pvalue) == str(np.nan) and abs(target_exp_value) >= 1.0):
-                        reg2target_rels = my_graph._psrels4(regulator_uid,target.uid())
+                        reg2target_rels = according2._psrels4(_4reg_uid,target.uid())
                         rel = reg2target_rels[0]
                         sign = rel.effect_sign()
                         if sign != 0:
                             regulator_activation_score = regulator_activation_score + sign*target_exp_value
                             effect_target_counter += 1
+                except KeyError:
+                    continue
 
-                subnet_size = len(abs_sub_pd)
-                if subnet_size >= self.min_subnet_size and effect_target_counter > 0:
-                    regulator_activation_score = regulator_activation_score/math.sqrt(effect_target_counter)
-                else:
-                    regulator_activation_score = np.nan
+            if len(regulome_values) >= self.min_subnet_size and effect_target_counter > 0:
+                regulator_activation_score = regulator_activation_score/math.sqrt(effect_target_counter)
+            else:
+                regulator_activation_score = np.nan
+            return regulator_activation_score, regulome_values, effect_target_counter
 
+
+    def __regulators4sample(self,sample:Sample,regulomes:dict,from_graph=ResnetGraph(),target_annotation_prefix=''):
+        '''
+        Input
+        -----
+        regulomes = {regulator_id:[PSObject]} made by ResnetGraph.regulome_dict(),\n
+        where [PSObject] are targets of regulator_id
+
+        Return
+        ------
+        [uids] - uids of regulators 
+        regulators in self.Graph are annotated with SNEA activation score and p-value calculated from "sample" 
+        '''
+        my_graph = from_graph if from_graph else self.Graph
+        sample_annotation_name = target_annotation_prefix+self.experiment.name4annotation(sample)
+
+        sample_start = time.time()
+        abs_sample_distribution = sample.data['value'].abs()
+        abs_sample_distribution = abs_sample_distribution.dropna(how='all')
+        sample_regulator_uids = set()
+        
+        for regulator_uid, targets in regulomes.items():
+            regulator_activation_score,subnetwork_values,effect_target_counter = self.activity(sample,
+                                            regulator_uid,targets,my_graph)
+
+            if not subnetwork_values: continue
+            sub_pd = df.from_dict({'value':subnetwork_values})
+            abs_sub_pd = sub_pd['value'].abs()
+
+            if regulator_activation_score > 0 or regulator_activation_score == np.nan:
+                mw_stats,mv_pvalue = mannwhitneyu(x=abs_sub_pd, y=abs_sample_distribution, alternative = 'greater')
+            else:
+                mw_stats,mv_pvalue = mannwhitneyu(x=abs_sub_pd, y=abs_sample_distribution, alternative = 'less')
+            """
+            # alternative hypothesis: abs_sample_distribution is less than abs_sub_pd
+            'two-sided': the distributions are not equal, i.e. F(u) ≠ G(u) for at least one u.
+            'less': the distribution underlying x is stochastically less than the distribution underlying y, i.e. F(u) > G(u) for all u.
+            'greater': the distribution underlying x is stochastically greater than the distribution underlying y, i.e. F(u) < G(u) for all u.
+            One-sided alternative hypothesis tests median from one group can be greater or lesser than other group.
+            """
+        #    if from_graph._get_node(regulator_uid).name() == 'FOXM1':
+        #        print('')
+            if mv_pvalue <= self.subnet_pvalue_cutoff:
                 new_prop_name = self.__sample_annotation(sample)
-                prp_value = list((regulator_activation_score,mv_pvalue,effect_target_counter))
+                prp_value = [float(regulator_activation_score),float(mv_pvalue),int(effect_target_counter)]
                 nx.set_node_attributes(my_graph, {regulator_uid:{new_prop_name:prp_value}})
                 sample_regulator_uids.add(regulator_uid)
 
@@ -251,13 +274,19 @@ class SNEA(APISession):
     
 
     def __regulators(self, sample_name='', from_graph=ResnetGraph()):
+        '''
+        Return
+        ------
+        if sample_name provided returns [PSobject] containing regulators for sample in self.__regulators__\n
+        otherwise returns [PSobject] with regulators from all samples in self.__regulators__
+        '''
         my_graph = from_graph if from_graph else self.Graph
-        all_regulators_uids = set()
+        regulators_uids = set()
         if sample_name:
-            all_regulators_uids.update(self.__regulators__[sample_name])
+            regulators_uids.update(self.__regulators__[sample_name])
         else:
-            [all_regulators_uids.update(reg_uids) for reg_uids in self.__regulators__.values()]
-        return  my_graph._get_nodes(all_regulators_uids)
+            [regulators_uids.update(reg_uids) for reg_uids in self.__regulators__.values()]
+        return  my_graph._get_nodes(regulators_uids)
 
 
     def activity_df(self):
@@ -315,7 +344,20 @@ class SNEA(APISession):
         return [c for c in self.activity_matrix.columns if c[:13] == 'activation in']
 
 
-    def find_drugs(self):
+    def loadDPERNET(self):
+        '''
+        Return
+        ------
+        'drug-protein expression regulatory network'(DPERNET) ResnetGraph annotated with self.experiment values
+        '''
+        drug_target_network = self.dt_future.result()
+        drug_target_expression_network = drug_target_network.subgraph_by_relprops(['Expression'])
+        DPERNET4experiment = self.experiment.annotated_subnetwork(drug_target_expression_network,self.__my_sample_names__)
+        self.Graph = self.Graph.compose(DPERNET4experiment)
+        return DPERNET4experiment
+
+
+    def find_drugs(self,DPERNET4experiment:ResnetGraph):
         '''
         Output
         ------
@@ -326,29 +368,34 @@ class SNEA(APISession):
         [PSObject]
         '''
         print('Finding drugs inhibiting differential expression for each sample')
-        drug_target_network = self.dt_future.result()
-        drug_target_expression_network = drug_target_network.subgraph_by_relprops(['Expression'])
-        #DPERNET4experiment = self.network4experiment(drug_target_expression_network)
-        DPERNET4experiment = self.experiment.annotated_subnetwork(drug_target_expression_network,self.__my_sample_names__)
-
         all_drugs = set()
         drug2proteins_regulomes = DPERNET4experiment.regulome_dict(['SmallMol'],min_size=2)
-        self.expression_regulators(drug2proteins_regulomes,DPERNET4experiment)
         for sample in self.__my_samples():
-            drugs4sample = self.__regulators(sample.name(),from_graph=DPERNET4experiment)
-            sample_annotation_prop = self.__sample_annotation(sample)
-            drugs_inhibiting_sample = [drug for drug in drugs4sample if drug.get_prop(sample_annotation_prop,0,0)<0]
-            self.__sample2drugs__[sample.name()] = drugs_inhibiting_sample
-            all_drugs.update(drugs_inhibiting_sample)
-
-        self.Graph = self.Graph.compose(DPERNET4experiment) 
+            drugs4sample = list() 
+            for drug_uid,targets in drug2proteins_regulomes.items():
+                drug_activation_score = self.activity(sample,drug_uid,targets,DPERNET4experiment)[0]
+                if drug_activation_score < 0:
+                    drugs4sample.append(DPERNET4experiment._get_node(drug_uid))
+            
+            self.__sample2drugs__[sample.name()] = drugs4sample
+            all_drugs.update(drugs4sample)
         # to make sure all ranked targets are in self.Graph which is required by Drugs4Targets::load_target_ranks() 
         return all_drugs
 
 
     def make_drugs_df(self):
         self.dt.__targets__ = self.__regulators()
-        self.find_drugs()
+        remove_targets_names = {'cytokine','inflammatory cytokine','anti-inflammatory cytokine','protein tyrosine kinase',
+                          'mitogen-activated protein kinase kinase','mitogen-activated protein kinase','mixed lineage kinases',
+                          'F-box domain'}
+        
+        DPERNET4experiment = self.loadDPERNET()
+        self.find_drugs(DPERNET4experiment)
+
+        remove_targets = {o for o in self.dt.__targets__ if o.name() in remove_targets_names}
+        before_len = len(self.dt.__targets__)
+        [self.dt.__targets__.remove(o) for o in remove_targets]
+        print(f'{before_len-len(self.dt.__targets__)} unwanted regulators were removed before finding drugs')
         # SNEA is run using RNEF files only no dbids required
         mapped_targets_df = self.dt.load_df(self.dt.__targets__)
         self.dt.columns2drop = [self.dt.__temp_id_col__,self.dt.__resnet_name__,self.dt.__mapped_by__]
@@ -364,10 +411,11 @@ class SNEA(APISession):
         for i, col in enumerate(activation_scores_columns):
             sample_name = col[14:]
             drugs_inhibit_sample = self.__sample2drugs__[sample_name]
+            
             self.dt.load_drugs(limit2drugs=drugs_inhibit_sample)
             self.dt.init_drug_df(drugs_inhibit_sample)
-            print('Ranking %d drugs for %s sample' % (len(drugs_inhibit_sample),sample_name))
             
+            print('Ranking %d drugs for %s sample' % (len(drugs_inhibit_sample),sample_name))
             self.dt.params['sample'] = sample_name
             target_df = df(self.activity_matrix[['Regulator',col]])
             target_df.rename(columns={col:RANK,'Regulator':'Name'},inplace=True)

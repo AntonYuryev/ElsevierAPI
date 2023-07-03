@@ -49,15 +49,15 @@ class DataModel:
         connect2server - default True, set to False to run script using data in __pscache__ files instead of database
         '''
         APIconfig = dict(args[0])
-        my_kwargs = {'connect2server':True,'no_mess':True}
+        my_kwargs = {'connect2server':True,'no_mess':True,'load_model':True}
         my_kwargs.update(kwargs)
-
+        self.no_mess = my_kwargs.get('no_mess',True)
+        
         self.IdToPropType = dict()
         self.IdtoObjectType = dict()
         self.propId2dict = dict()
         self.RNEFnameToPropType = dict()
-        self.no_mess = my_kwargs.get('no_mess',True)
-        
+           
         if my_kwargs['connect2server']:
             if not APIconfig: 
                 APIconfig = load_api_config()
@@ -81,7 +81,8 @@ class DataModel:
                 for attempt in range(0,10):
                     try:
                         self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
-                        self.__load_model()
+                        if my_kwargs['load_model']:
+                            self.__load_model()
                         if not self.no_mess:
                             print(f'New connection to Pathway Studio API server:\n{url} as {username}')
                         return
@@ -116,6 +117,7 @@ class DataModel:
             self.IdToPropType[prop_type_name] = property_types[i]
             self.IdToPropType[prop_type_display_name] = property_types[i]
             self.IdToPropType[db_id] = property_types[i]
+            
             self.RNEFnameToPropType[prop_type_name] = property_types[i]
 
 
@@ -191,7 +193,7 @@ class DataModel:
         try:
             return self.propId2dict[idProperty]
         except KeyError:
-            for attempt in range(0,10):
+            for attempt in range(1,10):
                 try:
                     dict_folder = self.SOAPclient.service.GetDictFolder(idDictFolder)
                     id_values_to_str = dict()
@@ -203,7 +205,7 @@ class DataModel:
                     self.propId2dict[dict_folder['Name']] = id_values_to_str
                     return self.propId2dict[idProperty]
                 except Exception as error:
-                    print(f'Pausing for {CONNECTION_TIMEOUT} seconds due to {error} on {attempt+1} attempt')
+                    print(f'Pausing for {CONNECTION_TIMEOUT} seconds due to {error} on {attempt} attempt')
                     sleep(CONNECTION_TIMEOUT)
                     continue
             raise req_exceptions.ConnectionError("Server connection failed after 10 attempts") 
@@ -214,7 +216,8 @@ class DataModel:
             try:
                 result = self.SOAPclient.service.FolderGetObjects(FolderId, result_param)
                 return result
-            except zeep_exceptions.Fault: continue
+            except zeep_exceptions.Fault: 
+                continue
 
 
     def oql_response(self, OQLquery, result_param):
@@ -236,17 +239,17 @@ class DataModel:
                     continue
             except req_exceptions.ChunkedEncodingError as cherr:
                 chunk_timeout = 10
-                print(f'{cherr}\nWill try again in {chunk_timeout} seconds',flush=True)
+                print(f'{cherr} on GOQL query {OQLquery}\n Will try again in {chunk_timeout} seconds',flush=True)
                 sleep(chunk_timeout)
                 continue
             except zeep_exceptions.Fault:
                 print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in %d sec' % 
-                                                                (OQLquery[:200],attempt+1,CONNECTION_TIMEOUT),flush=True)
+                                                                (OQLquery[:200],attempt,CONNECTION_TIMEOUT),flush=True)
                 sleep(CONNECTION_TIMEOUT)
                 continue
         
         tout = self.SOAPclient.transport.load_timeout
-        if tout > 300:   
+        if tout > 300:
             raise zeep_exceptions.TransportError(f'Timed out on GOQL query {OQLquery} after {tout} seconds',status_code=504)
         else:
             raise zeep_exceptions.Fault(f'Could not reconnect after 10 attempts while executing GOQL query "{OQLquery}"')
@@ -262,7 +265,7 @@ class DataModel:
             except zeep_exceptions.Fault:
                 print('Connection error while retrieving results\n"%s"\nAttempt #%d to reconnect is in 10 sec' %
                          (str(result_param.ResultRef),attempt+2),flush=True)
-                sleep(10)
+                sleep(CONNECTION_TIMEOUT)
                 continue
             except zeep_exceptions.TransportError:
                 print('\nSOAPclient session timed out after %s on %d iteration out of %d' % 
@@ -271,6 +274,11 @@ class DataModel:
                 print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds',flush=True)
                 self.SOAPclient.transport.load_timeout = timeout
                 sleep(timeout)
+                continue
+            except req_exceptions.ChunkedEncodingError as cherr:
+                chunk_timeout = 10
+                print(f'{cherr} on retrieval of result {str(result_param.ResultRef)}\nWill try again in {chunk_timeout} seconds',flush=True)
+                sleep(chunk_timeout)
                 continue
 
 
@@ -387,9 +395,8 @@ class DataModel:
                     return str(result['Attachment'].decode('utf-8')) 
                 else: 
                     return ''
-            except zeep_exceptions.Fault: continue
-
-        result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
+            except zeep_exceptions.Fault: 
+                continue
         
 
     def get_data(self, OQLrequest, retrieve_props:list=None, getLinks=True):
@@ -471,6 +478,11 @@ class DataModel:
 
 
     def get_session_page(self, ResultRef, ResultPos, PageSize, ResultSize, property_names=None, getLinks=True):
+        '''
+        Return
+        ------
+        tuple zeep_data, ResultSize, ResultPos
+        '''
         property_names = ['Name'] if property_names is None else property_names
 
         rp = self.create_result_param(property_names)
@@ -485,10 +497,10 @@ class DataModel:
         obj_props = self.result_get_data(rp)
 
         if type(obj_props) == type(None):
-            return None, 0, 0
+            return None, int(0), int(0)
         if type(obj_props.Objects) == type(None):
             # print('Your SOAP response is empty! Check your OQL query and try again\n')
-            return None,obj_props.ResultSize, obj_props.ResultPos
+            return None,int(obj_props.ResultSize), int(obj_props.ResultPos)
         
         for obj in obj_props.Objects.ObjectRef:
             obj_type_id = obj['ObjTypeId']
@@ -512,7 +524,7 @@ class DataModel:
         if rp.ResultPos >= rp.ResultSize:
             self.SOAPclient.service.ResultRelease(rp.ResultRef)
 
-        return obj_props, obj_props.ResultSize, obj_props.ResultPos
+        return obj_props, int(obj_props.ResultSize), int(obj_props.ResultPos)
 
     def put_experiment(self, dataframe: pd, expName, expType, entityType, map_entities_by, has_pvalue=True, description=''):
         # PSexp = self.SOAPclient.service('ns0:GetExperiment')
@@ -673,7 +685,8 @@ class DataModel:
             try:
                 result = self.SOAPclient.service.GetExperiment(experiment_id)
                 return result
-            except zeep_exceptions.Fault: continue
+            except zeep_exceptions.Fault: 
+                continue
 
 
     def __get_experiment_identifiers(self,experiment_id:int, experiment_size:int):

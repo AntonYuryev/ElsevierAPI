@@ -9,7 +9,6 @@ class APIcache(APISession):
     manages work with cache files
     '''
     pass
-    cache_dir = 'ElsevierAPI/ResnetAPI/__pscache__/'
     reference_cache_size = 1000000 # max number of reference allowed in self.Graph. Clears self.Graph if exceeded
     resnet_size = 1000 # number of <node><control> sections in RNEF dump
     max_rnef_size = 100000000 # max size of RNEF XML dump file. If dump file exceeds max_file_size new file is opened with index++
@@ -27,6 +26,12 @@ class APIcache(APISession):
         '''
         my_kwargs = dict(kwargs)
         super().__init__(*args, **my_kwargs)
+        try:
+            self.cache_dir = my_kwargs['cache_dir']
+            if self.cache_dir[-1] != '/':
+                self.cache_dir = self.cache_dir + '/' 
+        except KeyError:
+            self.cache_dir = 'ElsevierAPI/ResnetAPI/__pscache__/'
 
 
     def __path2cache(self,cache_name:str,extension='.rnef'):
@@ -54,7 +59,8 @@ class APIcache(APISession):
         """
         my_cache_file = self.__path2cache(cache_name)
         try:
-            return ResnetGraph.fromRNEF(my_cache_file,prop2values=prop2values)
+            cached_graph = ResnetGraph.fromRNEF(my_cache_file,prop2values=prop2values)
+            return cached_graph
         except FileNotFoundError:
             raw_data_dir_name = cache_name + '_raw'
             database_graph = ResnetGraph.fromRNEFdir(self.cache_dir+raw_data_dir_name+'/',merge=False)

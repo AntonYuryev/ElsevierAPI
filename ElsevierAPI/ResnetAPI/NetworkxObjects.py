@@ -19,12 +19,18 @@ CHILDS = 'Childs'
 #enums for objectypes to avoid misspeling
 GENETICVARIANT = 'GeneticVariant'
 FUNC_ASSOC = 'FunctionalAssociation'
+DBID = 'Id'
 ENTITY_IDENTIFIERS = ["CAS ID","EC Number","Ensembl ID","LocusLink ID","GO ID","GenBank ID",
                       "HMDB ID","MedScan ID","Microarray ID","PharmaPendium ID","PubChem CID","miRBase ID"]
 
 CHEMICAL_PROPS = ["CAS ID","HMDB ID","IUPAC Name","InChIKey","LMSD ID","Alias",
                         "Molecular Formula", "Molecular Weight","NCIm ID","PubChem CID","PubChem SID",
                         "Reaxys ID","Rotatable Bond Count","XLogP","XLogP-AA","Description","PharmaPendium ID"]
+
+STATE = "state"
+ACTIVATED = 1
+REPRESSED = -1
+UNKNOWN_STATE = 0
 
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
@@ -74,7 +80,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
     def dbid(self):
         try:
-            return self['Id'][0]
+            return self[DBID][0]
         except KeyError:
             return 0
 
@@ -112,28 +118,50 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
     def name(self):
         try:
-            return self['Name'][0]
+            return str(self['Name'][0])
         except KeyError:
             raise KeyError
 
 
     def objtype(self):
         try:
-            return self['ObjTypeName'][0]
+            return str(self['ObjTypeName'][0])
         except KeyError:
             raise KeyError
 
 
     def descr(self):
         try:
-            return self['Description'][0]
+            return str(self['Description'][0])
         except KeyError:
             return ''
+        
+
+    def notes(self):
+        try:
+            return str(self['Notes'][0])
+        except KeyError:
+            return ''
+        
+    
+    def set_state(self, state:int):
+        assert (state in [ACTIVATED,REPRESSED,UNKNOWN_STATE])
+        try:
+            self[STATE] += state
+        except KeyError:
+            self[STATE] = state
+
+
+    def state(self):
+        try:
+            return self[STATE]
+        except KeyError:
+            return UNKNOWN_STATE
 
 
     def is_from_rnef(self):
         try:
-            database_id = self['Id'[0]]
+            database_id = self[DBID[0]]
             return False
         except KeyError:
             return True
@@ -251,7 +279,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         try:
             search_in = self[with_prop]
             if having_values:
-                if case_sensitive or with_prop in {'Id','id','ID'}:
+                if case_sensitive or with_prop in {DBID,'id','ID'}:
                     search_set = set(having_values)   
                 else:
                     search_in  = set(map(lambda x: x.lower(),search_in))
@@ -277,7 +305,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def prop_values2str(self, prop_name:str, sep=','):
         try:
             prop_values = self[prop_name]
-            return sep.join(map(str,prop_values))
+            return sep.join(list(map(str,prop_values)))
         except KeyError:
             return ''
 
@@ -504,6 +532,7 @@ class PSRelation(PSObject):
     def merge_rel(self, other:'PSRelation'):
         self.merge_obj(other)
         self._add_refs(other.__load_refs())
+        return self
      #  self.PropSetToProps.update(other.PropSetToProps)
 
     
@@ -571,12 +600,12 @@ class PSRelation(PSObject):
 
     def _prop2str(self, prop_id, cell_sep:str =';'):
         try:
-            return cell_sep.join(map(str, self[prop_id]))
+            return cell_sep.join(list(map(str, self[prop_id])))
         except KeyError:
             prop_set_values = []
             for prop in self.PropSetToProps.values():
                 try:
-                    prop_set_values.append(cell_sep.join(map(str, prop[prop_id])))
+                    prop_set_values.append(cell_sep.join(list(map(str, prop[prop_id]))))
                 except KeyError:
                     continue
             
@@ -762,9 +791,9 @@ class PSRelation(PSObject):
             targetIDs = str()
             for k, v in self.Nodes.items():
                 if k == REGULATORS:
-                    regulatorIDs = ','.join(map(str, [x[0] for x in v]))
+                    regulatorIDs = ','.join([str(x[0]) for x in v])
                 else:
-                    targetIDs = ','.join(map(str, [x[0] for x in v]))
+                    targetIDs = ','.join([str(x[0]) for x in v])
 
             for r in range(0, rowCount):
                 table[r][col_count-2] = regulatorIDs
@@ -811,9 +840,9 @@ class PSRelation(PSObject):
             targetIDs = str()
             for k, v in self.Nodes.items():
                 if k == REGULATORS:
-                    regulatorIDs = ','.join(map(str, [x[0] for x in v]))
+                    regulatorIDs = ','.join([str(x[0]) for x in v])
                 else:
-                    targetIDs = ','.join(map(str, [x[0] for x in v]))
+                    targetIDs = ','.join([str(x[0]) for x in v])
 
                 table[col_count-2] = regulatorIDs
                 table[col_count-1] = targetIDs
@@ -888,6 +917,7 @@ class PSRelation(PSObject):
         except KeyError:
                 for ref in self.RefDict:
                     ref.set_weight(0.0)
+
 
     def effect_sign(self): 
         try:

@@ -330,12 +330,15 @@ class OQL:
 
 
     @staticmethod
-    def get_ppi(obj_ids1: set, obj_ids2: set):
-        regulators = [str(integer) for integer in obj_ids1]
-        targets = [str(integer) for integer in obj_ids2]
-        reg_ids = ",".join(regulators)
-        target_ids = ",".join(targets)
+    def get_ppi(between_dbids1:set, and_dbids2:set):
+        '''
+        PPI relation types: Binding, DirectRegulation, ProtModification
+        '''
+        regulators = [str(dbid) for dbid in between_dbids1]
+        targets = [str(dbid) for dbid in and_dbids2]
+        reg_ids_str = ",".join(regulators)
+        target_ids_str = ",".join(targets)
         oql_query = "SELECT Relation WHERE objectType = (Binding, DirectRegulation, ProtModification) "
-        oql_query += "AND NeighborOf (SELECT Entity WHERE id = (" + reg_ids + ")) "
-        oql_query += "AND NeighborOf (SELECT Entity WHERE id = (" + target_ids + "))"
+        oql_query += f"AND NeighborOf (SELECT Entity WHERE id = ({reg_ids_str})) "
+        oql_query += f"AND NeighborOf (SELECT Entity WHERE id = ({target_ids_str}))"
         return oql_query

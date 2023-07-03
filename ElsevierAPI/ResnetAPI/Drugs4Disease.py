@@ -9,25 +9,13 @@ import networkx as nx
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .DrugTargetConfidence import DrugTargetConsistency
 
-
 PATHWAY_REGULATOR_SCORE = 'Disease model regulator score'
 DRUG2TARGET_REGULATOR_SCORE = 'Regulator score'
-PHARMAPENDIUM_ID = 'FDA-approved name'
+PHARMAPENDIUM_ID = 'Marketed Drugs'
 
 
 class Drugs4Targets(DiseaseTargets):
     pass
-    #drugs2targets = ResnetGraph() # minimumal graph for drug ranking 
-    # calculation made by self.dt_consist.load_drug_graph(self.__targets__,limit2drugs)
-    # moved to DiseaseTargets to support target ranking from cache files
-
-    target_uid2rank = dict() # {target_dbid:rank}
-    column_ranks = dict() # {column rank:column name} rank defines the column position in Drugs df and consequently its weight
-    direct_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
-    indirect_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
-    add_targets2drugs_ws = True
-
-
     def __init__(self,*args,**kwargs):
         """
         Input
@@ -57,6 +45,11 @@ class Drugs4Targets(DiseaseTargets):
         dt_consist_kwargs = dict(my_kwargs)
         dt_consist_kwargs['what2retrieve'] = REFERENCE_IDENTIFIERS
         self.dt_consist = DrugTargetConsistency(self.APIconfig,**dt_consist_kwargs)
+        self.target_uid2rank = dict() # {target_dbid:rank}
+        self.column_ranks = dict() # {column rank:column name} rank defines the column position in Drugs df and consequently its weight
+        self.direct_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
+        self.indirect_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
+        self.add_targets2drugs_ws = True
 
 
     @classmethod
@@ -302,7 +295,7 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
                 # to skip WEIGHTS row in df
                 missing_targets_counter += 1
                 continue
-        print(f'{missing_targets_counter} targets were not found in self.Graph')
+        print(f'{missing_targets_counter} targets out of {len(my_targets)} were not found in self.Graph')
 
         if for_antagonists:
             self.targets4antagonists = list(df_targets)
@@ -338,20 +331,10 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
             except KeyError:
                continue
 
-        drug_df = self.load_df(clean_drugs,max_children_count=0) 
+        drug_df = self.load_df(clean_drugs,max_child_count=None,max_threads=50) 
         # drug children for semantic refcount are loaded by "link2disease_concepts" function
         self.RefCountPandas = drug_df.merge_dict(drug2pharmapendium_id,new_col=PHARMAPENDIUM_ID,map2column='Name')
         print('Initialized "Drugs" worksheet with %d drugs from database for ranking' % len(self.RefCountPandas))
-
-        '''
-        if load_from_db:
-            # case for drug repurposing using disease model
-            mapped_drugs,no_dbid_drugs = self.load_dbids4(clean_drugs)
-            drug_df = self.load_df(mapped_drugs,max_children_count=0) # not loading dbids at this point for speed
-        else:
-            # case of SNEA that does not need semantic refcount
-            drug_df = self.load_df(drugs)
-        '''
 
 
     def regulatory_rank(self):
@@ -392,41 +375,41 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
 
         print('Linking %d drugs with %s by ClinicalTrial' % (len(drug_df),self._disease2str()),flush=True)
         colname = self._disease2str()+' clinical trials'
-        self.set_how2connect(['ClinicalTrial'],[],'')
+        how2connect = self.set_how2connect(['ClinicalTrial'],[],'')
         linked_row_count,linked_entities,drug_df = self.link2concept(
-            colname,self.input_diseases,drug_df,REFERENCE_IDENTIFIERS)
+            colname,self.input_diseases,drug_df,how2connect,REFERENCE_IDENTIFIERS)
         print('%d drugs on clinical trials for %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[5] = list(drug_df.columns)[-1]
 
         print('Linking %d drugs with %s by Regulation' % (len(drug_df),self._disease2str()),flush=True)
         colname = 'regulation of '+ self._disease2str()
-        self.set_how2connect(['Regulation'],[],'')
+        how2connect = self.set_how2connect(['Regulation'],[],'')
         linked_row_count,linked_entities,drug_df = self.link2concept(
-            colname,self.input_diseases,drug_df,REFERENCE_IDENTIFIERS)
+            colname,self.input_diseases,drug_df,how2connect,REFERENCE_IDENTIFIERS)
         print('%d drugs regulating %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[4] = list(drug_df.columns)[-1]
 
         print('Linking %d drugs with %d Symptoms linked to %s' % (len(drug_df),len(self.input_symptoms),self._disease2str()),flush=True)
         colname = 'symptoms for '+ self._disease2str()
-        self.set_how2connect(['Regulation'],[],'')
+        how2connect = self.set_how2connect(['Regulation'],[],'')
         linked_row_count,linked_entities,drug_df = self.link2concept(
-            colname,self.input_symptoms,drug_df,REFERENCE_IDENTIFIERS)
+            colname,self.input_symptoms,drug_df,how2connect,REFERENCE_IDENTIFIERS)
         print('%d drugs linked to symptoms for %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[1] = list(drug_df.columns)[-1]
 
         print('Linking %d drugs with %d ClinicalParameters linked to %s' % (len(drug_df),len(self.input_clinpars),self._disease2str()),flush=True)
         colname = 'Clinical parameters for '+ self._disease2str()
-        self.set_how2connect(['Regulation'],[],'')
+        how2connect = self.set_how2connect(['Regulation'],[],'')
         linked_row_count,linked_entities,drug_df = self.link2concept(
-            colname,self.input_clinpars,drug_df,REFERENCE_IDENTIFIERS)
+            colname,self.input_clinpars,drug_df,how2connect,REFERENCE_IDENTIFIERS)
         print('%d drugs linked to clnical parameters for %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[2] = list(drug_df.columns)[-1]
 
         print('Linking %d drugs with %d CellProcess linked to %s' % (len(drug_df),len(self.input_cellprocs),self._disease2str()),flush=True)
         colname = 'Cell processess affected by '+ self._disease2str()
-        self.set_how2connect(['Regulation'],[],'')
+        how2connect = self.set_how2connect(['Regulation'],[],'')
         linked_row_count,linked_entities,drug_df = self.link2concept(
-            colname,self.input_cellprocs,drug_df,REFERENCE_IDENTIFIERS)
+            colname,self.input_cellprocs,drug_df,how2connect,REFERENCE_IDENTIFIERS)
         print('%d drugs linked to cell processes affected in %s' % (linked_row_count,self._disease2str()),flush=True)
         self.column_ranks[3] = list(drug_df.columns)[-1]
         return drug_df
@@ -471,13 +454,11 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
 
             #reordering drug df columns:
             drugdf_columns = list(ranked_drugs_df.columns)
-            drugdf_columns.remove(RANK)
-            drugdf_columns.remove('URN')
             drugdf_columns.remove(PHARMAPENDIUM_ID)
-
-            drugdf_columns.insert(1,RANK)
-            drugdf_columns = [PHARMAPENDIUM_ID]+drugdf_columns+['URN']
+            drugdf_columns = [PHARMAPENDIUM_ID]+drugdf_columns
             ranked_drugs_df = ranked_drugs_df.reorder(drugdf_columns)
+            
+            ranked_drugs_df.tab_format['tab_color'] = 'green'
             self.report_pandas['Drugs'] = ranked_drugs_df
 
             print("Drug ranking was done in %s" % self.execution_time(start_time)[0], flush=True)

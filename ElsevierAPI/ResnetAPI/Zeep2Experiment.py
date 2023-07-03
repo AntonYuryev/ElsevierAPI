@@ -6,6 +6,8 @@ from  .PathwayStudioZeepAPI import DataModel
 import scipy.stats as stats
 from datetime import timedelta
 
+HAS_PVALUE = 'hasPvalue'
+
 class Sample(PSObject):
 
     def __init__(self,dic=dict()):
@@ -24,10 +26,10 @@ class Sample(PSObject):
 
     def has_pvalue(self):
         try:
-            return self['hasPvalue']
+            return self[HAS_PVALUE]
         except KeyError:
             haspval = not self.data['pvalue'].dropna().empty
-            self['hasPvalue'] = [haspval]
+            self[HAS_PVALUE] = [haspval]
             return haspval
 
 
@@ -227,9 +229,9 @@ class Experiment(PSObject):
 
         if phenotype_rows: 
             exp_df = df.read(experiment_file_name,skiprows=phenotype_rows,header=header)
-            phenotypes_pd = df.read(experiment_file_name,header=header, nrows=len(phenotype_rows))
+            phenotypes_pd = df.read(experiment_file_name,header=header, nrows=len(phenotype_rows),index_col=False)
         else:
-            exp_df = df.read(experiment_file_name,header=header)
+            exp_df = df.read(experiment_file_name,header=header,index_col=False)
 
         experiment_name = experiment_file_name[:experiment_file_name.rfind('.')]
         experiment_name = experiment_name[experiment_name.rfind('/')+1:]
@@ -327,6 +329,8 @@ class Experiment(PSObject):
 
     def map2(self,network:ResnetGraph,using_original_id2:str):
         original_id2psobjs, uid2original_id = network.get_prop2obj_dic(using_original_id2)
+        if len(original_id2psobjs) < 2:
+            print(f'Mapping using {using_original_id2} has failed!!!')
         return self.map(original_id2psobjs)
 
 
@@ -346,7 +350,7 @@ class Experiment(PSObject):
         identifier_name = self.identifier_name()
 
         sample_name = case_phenotype+'/'+control_phenotype
-        logfc_sample = Sample({'Name':[sample_name],'hasPvalue':[True]})
+        logfc_sample = Sample({'Name':[sample_name],HAS_PVALUE:[True]})
         logfc_sample.data['value'] = log2FCs
         logfc_sample.data['pvalue'] = ttest_pvalue
 
@@ -359,10 +363,20 @@ class Experiment(PSObject):
 
 ############################ PSObject ANNOTATION PSObject ANNOTATION PSObject ANNOTATION ################################
     def prefix4annotation(self):
-        return self['Name'][0]
+        '''
+        Return
+        ------
+        Experiment name
+        '''
+        return self.name()
 
 
     def name4annotation(self, s:Sample):
+        '''
+        Return
+        ------
+        Experiment name : sample name
+        '''
         return s.name(self.prefix4annotation())
 
 

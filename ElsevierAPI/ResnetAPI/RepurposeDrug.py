@@ -1,16 +1,14 @@
 from .TargetIndications import Indications4targets,OQL,df,DF4ANTAGONISTS,DF4AGONISTS,ResnetGraph
-from .TargetIndications import RANK_SUGGESTED_INDICATIONS,PREDICT_RANK_INDICATIONS,BIBLIO_PROPERTIES
+from .TargetIndications import ANTAGONIST,AGONIST,BIBLIO_PROPERTIES,PS_SENTENCE_PROPS
 from concurrent.futures import ThreadPoolExecutor
 from .SemanticSearch import RANK
 import time
-INHIBIT = 0 # indication must be inhibited by a drug
+
+INHIBIT = -1 # indication must be inhibited by a drug
 ACTIVATE = 1 # indication must be activated by a drug
+ALL_EFFECTS = 0
 
-ANTAGONIST = 0 # drug inhibits its targets
-AGONIST = 1 # drug activates its targets
 pct = '%'
-
-
 class RepurposeDrug(Indications4targets):
     pass
     def __init__(self, *args, **kwargs):
@@ -24,11 +22,26 @@ class RepurposeDrug(Indications4targets):
         my_kwargs.update(kwargs)
 
         super().__init__(APIconfig,**my_kwargs)
-        self.PageSize = 1000
+     #   self.PageSize = 1000
         self.similar_drugs = list()
-        self.drug_indications4agonists = set()
-        self.drug_indications4antagonists = set()
+        self.drug_indications = set()
+        self.directly_inh = set() 
+        self.directly_act = set() 
+        self.indirectly_inh = set() 
+        self.indirectly_act = set() 
         
+
+    def target2indication_effect(self):
+        if self.params['drug_effect'] == INHIBIT and self.params['mode_of_action'] == ANTAGONIST:
+            return 'positive' #most often case for drugs and their disease indications
+        elif self.params['drug_effect'] == ACTIVATE and self.params['mode_of_action'] == ANTAGONIST:
+            return 'negative' # can be used only with CellProcess
+        elif self.params['drug_effect'] == ACTIVATE and self.params['mode_of_action'] == AGONIST:
+            return 'positive' # can be used only with CellProcess
+        elif self.params['drug_effect'] == INHIBIT and self.params['mode_of_action'] == AGONIST:
+            return 'negative' #find disease indications for drugs that are agonist of their target(s)
+
+
 
     def set_drug(self):
         self.SELECTdrug = OQL.get_childs([self.params['input_compound']],['Name,Alias'],include_parents=True)
@@ -37,24 +50,12 @@ class RepurposeDrug(Indications4targets):
         self.drugs = drug_graph._get_nodes()
         self.drugs.sort(key=lambda x: int(x['Connectivity'][0]), reverse=True)
         
-        if self.params['drug_effect'] == INHIBIT and self.params['mode_of_action'] == ANTAGONIST:
-            self.params['to_inhibit'] = True #most often case for drugs and their disease indications
-        elif self.params['drug_effect'] == ACTIVATE and self.params['mode_of_action'] == ANTAGONIST:
-            self.params['to_inhibit'] = False # can be used only with CellProcess
-        elif self.params['drug_effect'] == ACTIVATE and self.params['mode_of_action'] == AGONIST:
-            self.params['to_inhibit'] = True # can be used only with CellProcess
-        elif self.params['drug_effect'] == INHIBIT and self.params['mode_of_action'] == AGONIST:
-            self.params['to_inhibit'] = False #find disease indications for drugs that are agonist of their target(s)
+ 
 
-
-    def __get_effect_str(self):
+    def __effect_str(self):
         if self.params['drug_effect'] == INHIBIT: return 'negative'
         if self.params['drug_effect'] == ACTIVATE: return 'positive'
         return 'unknown'
-
-
-    def input_names(self):
-        return [x['Name'][0] for x in self.drugs]
 
 
     def needs_clinical_trial(self):
@@ -94,24 +95,19 @@ class RepurposeDrug(Indications4targets):
         indications2return.update(found_indications)
         print('Found %d indications reported in scientific literature for %s' % (len(found_indications), self.params['input_compound']))
  
-        if self.params['mode_of_action'] == ANTAGONIST:
-            self.drug_indications4antagonists.update(indications2return)
-        else:
-            self.drug_indications4agonists.update(indications2return)
-
+        self.drug_indications.update(indications2return)
         return list(indications2return)
 
     
-    def input_names(self):
-       # drugs = self.Graph._get_nodes(self.drug_ids)
+    def input_drug_names(self):
         return [x.name() for x in self.drugs]
     
 
     def __etm_ref_column_name(self):
-        return self.etm_counter._etm_ref_column_name('Name',self.input_names())
+        return self.etm_counter._etm_ref_column_name('Name',self.input_drug_names())
     
     def __etm_doi_column_name(self):
-        return self.etm_counter._etm_doi_column_name('Name',self.input_names())
+        return self.etm_counter._etm_doi_column_name('Name',self.input_drug_names())
 
 
     def find_indications4similars(self):
@@ -140,22 +136,19 @@ class RepurposeDrug(Indications4targets):
         print('Found %d indications reported in scientific literature or drugs similar to %s' % (len(found_indications), self.params['input_compound']))
         #self.drug_indications4strictmode.update(indications2return)
 
-        if self.params['mode_of_action'] == ANTAGONIST:
-            self.drug_indications4antagonists.update(indications2return)
-        else:
-            self.drug_indications4agonists.update(indications2return)
-
+        self.drug_indications.update(indications2return)
         return list(indications2return)
 
 
     def clean_indications(self):
         if self.params['drug_effect'] == ACTIVATE: # == report is for toxicities
-            # many clinical trials report their indications as toxicities testing if patient condition is not worsening after drug treatment
+# clinical trials report their indications as toxicities testing 
+# to check if patient condition is not worsening after drug treatment
             if 'Disease' in self.params['indication_types']:
-                indications = self.drug_indications4agonists|self.drug_indications4antagonists
-                before_clean_indications_count = len(indications)
-                indication_childs = self.load_children4(indications)
-                all_indications = indications | indication_childs
+                #indications = self.drug_indications
+                before_clean_indications_count = len(self.drug_indications)
+                indication_childs, parents_with_children = self.load_children4(self.drug_indications)
+                all_indications = self.drug_indications | indication_childs
 
                 all_drugs = self.drugs+self.similar_drugs
                 oql_query = 'SELECT Entity WHERE objectType = Disease AND id = ({ids1}) AND Connected by (SELECT Relation WHERE objectType = ClinicalTrial)  \
@@ -168,51 +161,50 @@ class RepurposeDrug(Indications4targets):
                 clinical_trial_indications += list(clintrial_indication_parents)
 
                 #removing clinical_trial_indications from the list of indications for target drugs
-                self.drug_indications4agonists = self.drug_indications4agonists.difference(clinical_trial_indications)
-                self.drug_indications4antagonists = self.drug_indications4antagonists.difference(clinical_trial_indications)
-                after_clean_indications_count = len(self.drug_indications4agonists|self.drug_indications4antagonists)
+                self.drug_indications = self.drug_indications.difference(clinical_trial_indications)
+                after_clean_indications_count = len(self.drug_indications)
                 print('%d toxicities were removed because they are indications for %s in clinical trials' % 
-                        (before_clean_indications_count-after_clean_indications_count,self.input_names()))
+                        (before_clean_indications_count-after_clean_indications_count,self.input_drug_names()))
             
 
-    def score_drug_semantics(self):
-        if self.params['mode_of_action'] == AGONIST:
+    def semscore4drugs(self):
+        if self._4agonist():
             indication_df = self.raw_data[DF4AGONISTS]
         else:
             indication_df = self.raw_data[DF4ANTAGONISTS]
 
-        #self.etm_refs2df(indication_df,self.input_names(),'Name',[]) # for speed testing etm
+        #self.etm_refs2df(indication_df,self.input_drug_names(),'Name',[]) # for speed testing etm
         colname = self.params['input_compound'] + ' clinical trials'
-        self.set_how2connect(['ClinicalTrial'],[],'')
-        linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname, self.drugs,indication_df)
+        how2connect = self.set_how2connect (['ClinicalTrial'],[],'')
+        linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname, self.drugs,indication_df,how2connect)
         print('%s has clinical trials for %d indications' % (self.params['input_compound'], linked_entities_count))
 
         if self.params['drug_effect'] == INHIBIT:
             colname = 'Inhibited by ' + self.params['input_compound']
-            self.set_how2connect(['Regulation'],['negative'],'',['Regulation'])
+            how2connect = self.set_how2connect (['Regulation'],['negative'],'',['Regulation'])
             regulated = 'inhibited'
         else:
             colname = 'Activated by ' + self.params['input_compound']
-            self.set_how2connect(['Regulation'],['positive'],'',['Regulation'])
+            how2connect = self.set_how2connect (['Regulation'],['positive'],'',['Regulation'])
             regulated = 'activated'
 
-        linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname, self.drugs,indication_df)
+        linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname, self.drugs,indication_df,how2connect)
         print('%d indications %s by %s' % (linked_entities_count, regulated, self.params['input_compound']))
         self.drugcolname = self._col_name_prefix+colname
         
         if hasattr(self,'similar_drugs'):
             colname = 'similar drugs clinical trials'
-            self.set_how2connect(['ClinicalTrial'],[],'')
-            linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname, self.similar_drugs,indication_df)
+            how2connect = self.set_how2connect (['ClinicalTrial'],[],'')
+            linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname, self.similar_drugs,indication_df,how2connect)
             print('%s has clinical trials for %s indications' % (','.join(self.params['similars']), linked_entities_count))
 
             if self.params['drug_effect'] == INHIBIT:
                 colname = 'Inhibited by similar drugs'
-                self.set_how2connect(['Regulation'],['negative'],'')
+                how2connect = self.set_how2connect (['Regulation'],['negative'],'')
             else:
                 colname = 'Activated by similar drugs'
-                self.set_how2connect(['Regulation'],['positive'],'',['Regulation'])
-            linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname,self.similar_drugs,indication_df)
+                how2connect = self.set_how2connect (['Regulation'],['positive'],'',['Regulation'])
+            linked_entities_count, linked_entity_ids, indication_df = self.link2concept(colname,self.similar_drugs,indication_df,how2connect)
             print('%d indications %s by %s' % (linked_entities_count, regulated, ','.join(self.params['similars'])))
 
         self.add2raw(indication_df)
@@ -232,11 +224,9 @@ class RepurposeDrug(Indications4targets):
             return str(rep_pred+indics+regulate+self.params['input_compound'])
 
 
-    def report_path(self,extension='.xlsx'):
-        '''
-        extension - str must have "."
-        '''
-        return self.data_dir+self.report_name()+extension
+    def report_path(self,suffix='',extension='.xlsx'):
+        ext = '.'+extension if extension[0] != '.' else extension    
+        return str(self.data_dir+self.report_name()+suffix+ext)
 
 
     def add_drug_indication_refs(self):
@@ -249,7 +239,7 @@ class RepurposeDrug(Indications4targets):
         
         print('Printing research articles')
         research_graph = self.Graph.subgraph_by_relprops(['Regulation'])
-        effect_str = self.__get_effect_str()
+        effect_str = self.__effect_str()
         research_graph = self.Graph.subgraph_by_relprops([effect_str],['Effect'])
         research_ref_pd = self.Graph.snippets2df(research_graph)
 
@@ -279,36 +269,27 @@ class RepurposeDrug(Indications4targets):
         drug = self.params['input_compound']
         indication_str = ','.join(self.params['indication_types'])
         REQUEST_NAME = f'Find {indication_str} modulated by {drug} with unknown effect'
-        select_indications = 'SELECT Entity WHERE objectType = ({})'.format(indication_str)
-        OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = unknown AND NeighborOf({select_target}) AND NeighborOf ({indications})'
-        OQLquery = OQLquery.format(select_target=self.SELECTdrug, indications=select_indications)
+        old_rel_prop = list(self.relProps)
+        self.add_rel_props(PS_SENTENCE_PROPS)
+        select_indications = f'SELECT Entity WHERE objectType = ({indication_str})'
+        OQLquery = f'SELECT Relation WHERE objectType = Regulation AND Effect = unknown AND \
+            NeighborOf({self.SELECTdrug}) AND NeighborOf ({select_indications})'
         to_return = self.process_oql(OQLquery,REQUEST_NAME)
+        self.relProps = old_rel_prop
         return to_return
-
-
-    def clear(self):
-        super().clear()
-        self.RefCountPandas = df()
-
-
-    def _get_report_name(self):
-        indics = ','.join(self.params['indication_types'])
-        effect = ' inhibited by ' if self.params['drug_effect'] == ANTAGONIST else ' activated by '
-        rep_pred = 'suggested ' if self.params['strict_mode'] == RANK_SUGGESTED_INDICATIONS else 'suggested,predicted ' 
-        return self.params['data_dir']+rep_pred+ indics+'s'+effect+ self.params['input_compound']
 
 
     def perform_semantic_search(self):
         start_time = time.time()
         if self.init_semantic_search():
-            indication_df = self.score_drug_semantics()
+            indication_df = self.semscore4drugs()
 
             # for testing parent path only:
      #       id2child_objs = self.entities(indication_df)
      #       self.ontopaths2(id2child_objs,3)
 
-            target_effect_on_indication = 'positive' if self.params['to_inhibit'] else 'negative'
-            self.semantic_score(indication_df._name_,target_effect_on_indication)
+            target_effect_on_indication = self.target2indication_effect()
+            self.semscore4targets(indication_df._name_,target_effect_on_indication)
 
             trgts = ','.join(self.params['target_names'])
             print("%s repurposing using %s as targets was done in %s" % 
@@ -324,12 +305,18 @@ class RepurposeDrug(Indications4targets):
             self.params['target_names'] = for_targets_with_names
         self.load_indications4targets()
 
-        if self.params['strict_mode'] == RANK_SUGGESTED_INDICATIONS:
-            self.indications4agonists_strict = self.drug_indications4agonists.intersection(self.indications4agonists_strict)
-            self.indications4antagonists_strict = self.drug_indications4antagonists.intersection(self.indications4antagonists_strict)
+        if self._is_strict():
+            if self._4agonist():
+                self.indications4agonists_strict = self.drug_indications.intersection(self.indications4agonists_strict)
+                self.indications4antagonists_strict.clear()
+            else:
+                self.indications4antagonists_strict = self.drug_indications.intersection(self.indications4antagonists_strict)
+                self.indications4agonists_strict.clear()
         else:
-            self.indications4agonists = self.indications4agonists|self.indications4agonists
-            self.indications4antagonists = self.indications4antagonists|self.indications4antagonists
+            if self._4agonist():
+                self.indications4agonists = self.drug_indications|self.indications4agonists
+                self.indications4antagonists.clear()
+            self.indications4antagonists = self.drug_indications|self.indications4antagonists
 
         count_df_name = self.perform_semantic_search()
         if count_df_name:
@@ -343,7 +330,7 @@ class RepurposeDrug(Indications4targets):
             self.normalize(count_df_name,norm_df_name,drop_empty_columns=drop_empty_cols)
 
             with ThreadPoolExecutor(max_workers=3, thread_name_prefix='Report annotation') as e:
-                etm_biblio_future = e.submit(self.add_etm_refs, norm_df_name,self.input_names(),'Name',[],False)
+                etm_biblio_future = e.submit(self.add_etm_refs, norm_df_name,self.input_drug_names(),'Name',[],False)
                 ontology_df_future = e.submit(self.add_ontology_df,norm_df_name)
                 add_parent_future = e.submit(self.id2paths,norm_df_name)
                 ps_biblio_future = e.submit(self.add_ps_bibliography,ws_suffix)

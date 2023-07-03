@@ -133,7 +133,7 @@ class PSNetworx(DataModel):
                 rel_id = l['RelationId']
                 direction = l['Dir'] # 0:no arrow, 1:arrow to entity from relation, -1:arrow from entity to relation
                 graph_node = id2psobj[l['EntityId']]
-                #link = (l['EntityId'], direction, l[EFFECT])
+                # link = (l['EntityId'], direction, l[EFFECT])
                 link = (graph_node.uid(), direction, l[EFFECT])
 
                 if direction == 1:
@@ -179,7 +179,7 @@ class PSNetworx(DataModel):
             if type(zeep_relations) != type(None):
                 obj_id_list = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
                 zeep_objects = self.get_object_properties(obj_id_list, list(entity_props))
-                return self._load_graph(zeep_relations, zeep_objects,add2self)
+                return self._load_graph(zeep_relations,zeep_objects,add2self)
             else: return ResnetGraph()
         else:
             zeep_objects = self.get_data(oql_query, list(entity_props), getLinks=False)
@@ -194,64 +194,6 @@ class PSNetworx(DataModel):
         else:
             return set()
 
-    '''
-    def __oql2psobjs(self, oql_query:str):
-        """
-        Return
-        ------
-        {dbid:PSObject}
-        """
-        zeep_objects = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
-        if type(zeep_objects) != type(None):
-            return self._zeep2psobj(zeep_objects)
-        else:
-            return dict()
-
-
-
-        
-    def __get_obj_by_props(self,propValues:list,search_by_properties=[],get_childs=True,only_obj_types=[]):
-        
-        obj_dbids = self.__get_obj_dbids_by_props(propValues,search_by_properties,get_childs,only_obj_types)
-        return self.get
-
-    
-    def __parent_dbid2children_(self,parent_dbids:list):
-        """
-        Returns
-        -------
-        parent2children = {parent_id:[children_ids]}
-
-        Updates
-        -------
-        self.parent_dbid2children with parent2children
-        """
-        parent2children = dict()
-        for parent_id in parent_dbids:
-            query_ontology = OQL.get_childs([parent_id],['id'])
-            children_ids = list(self._db_id_by_oql(query_ontology))
-            parent2children[parent_id] = children_ids
-
-        self.parent_dbid2children.update(parent2children)
-        return parent2children
-
-        
-    def __load_children_props(self, for_psobjs:list, prop_name:str):
-        """
-        finds children of for_psobjs and then returns their annotation by prop_name together with for_psobjs annotation
-        used to get gene names of members of FunctionalClass or any other complex entity
-        """
-        psobjs_prop_lists = [x[prop_name] for x in for_psobjs] 
-        psobjs_props = [prop for x in psobjs_prop_lists for prop in x]
-        children_props = list()
-        psobjs_ids = [x.id()for x in for_psobjs]
-        children_ids = self.load_children4(psobjs_ids) # finds children in cache for the enzyme
-        if children_ids:
-            children_prop_lists = [x[prop_name] for nodeid,x in self.Graph.nodes(data=True) if x.id() in children_ids]
-            children_props = [prop for x in children_prop_lists for prop in x]
-                  
-        return list(set(psobjs_props + children_props))
-    '''
 
     def find_drugs(self, for_targets_with_ids: list, REL_PROPS: list, ENTITY_PROPS: list):
         oql_query = OQL.drugs4(for_targets_with_ids)
@@ -297,26 +239,26 @@ class PSNetworx(DataModel):
         else:
             return ResnetGraph()
 
-
-    def get_ppi(self, InteractorIdList:set, REL_PROPS:list, ENTITY_PROPS:list):
+    '''
+    def get_ppi(self, interactors_dbids:set, REL_PROPS:list, ENTITY_PROPS:list,add2self=True):
+        """
+        PPI relation types: Binding, DirectRegulation, ProtModification
+        """
         splitter = list() #holds lists of ids splits 
-        splitter.append(list(InteractorIdList))
-        number_of_splits = int(math.log2(len(InteractorIdList)))
+        splitter.append(list(interactors_dbids))
+        number_of_splits = int(math.log2(len(interactors_dbids)))
         ppi_keeper = ResnetGraph()
         for s in range(1, number_of_splits):
             new_splitter = list()
             half = int(len(splitter[0]) / 2)
+            #futures = list()
             for split in splitter:
                 uq_list1 = split[0:half]
                 uq_list2 = split[half:]
+                
                 oql_query = OQL.get_ppi(set(uq_list1), set(uq_list2))
-                zeep_relations = self.get_data(oql_query, REL_PROPS)
-                if type(zeep_relations) != type(None):
-                    obj_ids = list(set([x['EntityId'] for x in zeep_relations.Links.Link]))
-                    zeep_objects = self.get_object_properties(obj_ids, ENTITY_PROPS)
-                    new_ps_relations = self._load_graph(zeep_relations, zeep_objects)
-                    ppi_keeper.add_graph(new_ps_relations)
-
+                new_ps_relations = self.load_graph_from_oql(oql_query,REL_PROPS,ENTITY_PROPS,add2self=add2self)
+                ppi_keeper = ppi_keeper.compose(new_ps_relations)
                 new_splitter.append(uq_list1)
                 new_splitter.append(uq_list2)
 
@@ -324,7 +266,7 @@ class PSNetworx(DataModel):
             s += 1
 
         return ppi_keeper
-
+        '''
 
     def get_network(self, InteractorIdList:set, connect_by_rel_types:list=None, REL_PROPS:list=None, ENTITY_PROPS:list=None):
         splitter = list() #holds lists of ids splits 
@@ -347,7 +289,7 @@ class PSNetworx(DataModel):
                 new_splitter.append(uq_list2)
 
             oql_query = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
-            oql_query = oql_query.format(ids1=','.join(map(str,ids1)), ids2=','.join(map(str,ids2)))
+            oql_query = oql_query.format(ids1=','.join(list(map(str,ids1))), ids2=','.join(list(map(str,ids2))))
             if isinstance(connect_by_rel_types,list):
                 oql_query = oql_query +  'AND objectType = ({rel_types})'.format(rel_types=','.join(connect_by_rel_types))
 
@@ -461,16 +403,14 @@ class PSNetworx(DataModel):
         """
         Returns
         -------
-        ResnetGraph containing graphs merged from all pathways found\n
-        with by_pathway_props+in_prop_type
+        ResnetGraph containing graphs merged from all pathways found with "by_pathway_props" "in_prop_type"
         """
          
         rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = \'{pathway}\')'
         subgraph_relation_dbids = set()
+        loaded_node_ids = set(self.Graph.dbids4nodes())
+        loaded_relation_ids = set(self.Graph.dbids4nodes())
         for pathway_prop in by_pathway_props:
-            loaded_node_ids = set(self.Graph.dbids4nodes())
-            loaded_relation_ids = set(self.Graph.dbids4nodes())
-
             rel_q = rel_query.format(propName=in_prop_type,pathway=pathway_prop)
             pathway_id_only_graph = self.load_graph_from_oql(rel_q,[],[],get_links=True,add2self=False)
             pathway_relation_dbids = set(pathway_id_only_graph.relation_dbids())
