@@ -434,7 +434,12 @@ class df(pd.DataFrame):
 
 
     def greater_than(self, value:float, in_column:str):
-        return df(self[self[in_column] > value])
+        old_len = len(self)
+        new_pd = self[self[in_column] > value]
+        removed_rows = old_len - len(new_pd)
+        print(f'{removed_rows} rows were removed from {self._name_} because "{in_column}" value was smaller than {value}')
+        return df.from_pd(new_pd)
+    
     
     def smaller_than(self, value:float, in_column:str):
         return df(self[self[in_column] < value])
