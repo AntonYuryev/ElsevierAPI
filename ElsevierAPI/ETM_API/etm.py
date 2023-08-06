@@ -3,26 +3,42 @@ from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_
 import urllib.request
 import urllib.parse
 from urllib.error import HTTPError
-import json
-import time
+import json, http.client, time, xlsxwriter, os, math
 from datetime import datetime,timedelta
-import xlsxwriter
-import os
-import math
 from ..ScopusAPI.scopus import Scopus
 from ..pandas.panda_tricks import pd, df
-from threading import Thread
-from concurrent.futures import ThreadPoolExecutor,as_completed
+from concurrent.futures import ThreadPoolExecutor
+
 
 SCOPUS_AUTHORIDS = 'scopusAuthors'
 ETM_REFS_COLUMN = 'Number of references. Link opens most relevant articles in PubMed'
 IDENTIFIER_COLUMN = 'Document identifier: PMID or DOI'
 MAX_ETM_SESSIONS = 5 #ETM performance deteriorates if number of concurrent sessions is too big
 DEFAULT_ETM = 'https://covid19-services.elseviertextmining.com/api'
+DEFAULT_APICONFIG = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
+
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
 
+
+def load_api_config(api_config_file=''):# file with your API keys and API URLs
+    #cur_dir = os.getcwd()
+    default_apiconfig = DEFAULT_APICONFIG
+    if not api_config_file:
+        print('No API config file was specified\nWill use default %s instead'% default_apiconfig)
+        api_config_file = default_apiconfig
+    try:
+        return dict(json.load(open(api_config_file)))
+    except FileNotFoundError:
+        print("Cannot find API config file: %s" % api_config_file)
+        if api_config_file != default_apiconfig:
+            print('Cannot open %s config file\nWill use default %s instead'% (api_config_file, default_apiconfig))
+            return dict(json.load(open(default_apiconfig)))
+        else:
+            print('No working API server was specified!!! Goodbye')
+            return None
+        
 class ETMjson(DocMine):
 
     @staticmethod
@@ -49,6 +65,25 @@ class ETMjson(DocMine):
                 article_ids[id_type] = id_value
         
         return is_article, article_ids
+
+
+    @staticmethod
+    def __parse_category(article:dict):
+        try:
+            categories = article['article']['front']['article-meta']['article-categories']['subj-group']['subject']
+            if isinstance(categories,list):
+                clean_categories = set()
+                for category in categories:
+                    category = str(category).title()
+                    if category == 'Article':
+                        category = 'Journal Article'
+                    clean_categories.add(category)
+                return list(clean_categories)
+            else:
+                categories = str(categories).title()
+                return [categories]
+        except KeyError:
+            return list()
 
 
     @staticmethod
@@ -81,8 +116,13 @@ class ETMjson(DocMine):
             except KeyError:
                 try:
                     scs = paragraph['sec']['sec'] if isinstance(paragraph['sec'], dict) else paragraph['sec']
+                    if isinstance(scs,dict):
+                        scs = [scs]
                     for s in scs:
-                        abstract_sentences.append(str(s['addressOrAlternativesOrArray']['p']))
+                        try:
+                            abstract_sentences.append(str(s['addressOrAlternativesOrArray']['p']))
+                        except KeyError:
+                            continue
                 except KeyError: continue
                         
         return abstract_sentences
@@ -249,8 +289,8 @@ class ETMjson(DocMine):
         is_article, article_ids = self.__parse_ids(article)
         if isinstance(scopus_api,Scopus): 
             self.scopusInfo = dict()
-        if not is_article: 
-            return None
+        if not is_article:
+            return None # __init__ must return None not dict()
         else:
             id_type, id_value = article_ids.popitem()
             if id_type == 'ELSEVIER': id_type = 'PII'
@@ -281,6 +321,8 @@ class ETMjson(DocMine):
             journal = 'Grant application'
         self.append_property(JOURNAL, journal)
 
+        self['categories'] = self.__parse_category(article)
+
         text_ref = self._make_textref()
         snippet, self.term_ids, self.keywords = self.__parse_snippet(article) #term_ids = {term_id+'\t'+term_name}
         self.add_sentence_prop(text_ref, SENTENCE, snippet)
@@ -296,16 +338,20 @@ class ETMstat:
     def __base_url(self): return self.url+self.request_type
     min_relevance = 0
     
-    def __init__(self,APIconfig:dict, limit=5, add_param=dict()):
+
+    def __init__(self,APIconfig=dict(), limit=5, add_param=dict()):
         """
         self.ref_counter = {str(id_type+':'+identifier):(ref,count)}
         """
-        self.url = APIconfig['ETMURL']
+        myAPIconfig = APIconfig if APIconfig else load_api_config()
+
+        self.url = myAPIconfig['ETMURL']
         self.params = {
             'searchTarget': 'full_index',
-            'apikey':APIconfig['ETMapikey'],
+            'apikey':myAPIconfig['ETMapikey'],
             'limit': limit,
-            'so_p':'ffb~' # excluding NIH reporter
+            'so_c':'17~' #  filter by Publication Source excluding NIH reporter
+            #'so_p':'ffb~' # filter by Publication Type
             }
         self.params.update(add_param)       
         self.ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
@@ -314,7 +360,9 @@ class ETMstat:
         self.hit_count = 0
 
 
-    def clone(self, to_url:str):
+    def clone(self, to_url=''):
+        if not to_url:
+            to_url = self.url
         myApiconfig = {'ETMURL':to_url,'ETMapikey':self.params['apikey']}
         newEtMstat =  ETMstat(myApiconfig,self._limit(),self.params)
         newEtMstat.page_size = self.page_size
@@ -366,15 +414,27 @@ class ETMstat:
         if page_start: self.params['start'] = page_start
         if need_snippets:
             self.params.update({'snip': '1.desc'})
-        try:
-            the_page = urllib.request.urlopen(self._url_request()).read()
-            if the_page:
-                result = json.loads(the_page.decode('utf-8'))
-                return list(result['article-data']), int(result['total-hits='])
-            else:
-                return [],int(0)
-        except HTTPError:
-            return [],int(0)
+        for attempt in range(1, 11):
+            try:
+                the_page = urllib.request.urlopen(self._url_request()).read()
+                if the_page:
+                    result = json.loads(the_page.decode('utf-8'))
+                    if attempt > 1:
+                        print(f'ETM connection was restored on the {attempt} attempt')
+                    return list(result['article-data']), int(result['total-hits='])
+                else:
+                    return list(),int(0)
+            except HTTPError:
+                tiout = 10
+                print(f'HTTPError. Will attempt to reconnect in {tiout}')
+                time.sleep(tiout)
+            except http.client.IncompleteRead:
+                tiout = 10
+                print(f'IncompleteRead. Will attempt to reconnect in {tiout}')
+                time.sleep(tiout)
+
+        print(f'Cannot connect to {self.__base_url()} after 10 attempts')
+        return list(),int(0)
 
 
     def _add2counter(self, ref:Reference):
@@ -385,6 +445,7 @@ class ETMstat:
                 try:
                     count_exist = self.ref_counter[counter_key][1]
                     self.ref_counter[counter_key] = (ref, count_exist+1)
+                    self.ref_counter[counter_key][0][RELEVANCE][0] += ref.relevance()
                 except KeyError:
                     self.ref_counter[counter_key] = (ref,1)
                 return id_type,identifier
@@ -595,8 +656,24 @@ class ETMstat:
     @staticmethod
     def _sort_dict(dic:dict, sort_by_value = True, reverse = True):
         item_idx = 1 if sort_by_value else 0
-        return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))           
+        return dict(sorted(dic.items(), key=lambda item: item[item_idx],reverse=reverse))  
 
+
+    def basic_search(self,search4concepts:list):
+        '''
+        Return
+        ------
+        Tuple:
+            [0] hit_count - TOTAL number of reference found by ETM basic search 
+            [1] ref_ids = {id_type:[identifiers]}, where len(ref_ids) == ETMstat.params['limit']\n
+            id_type is from [PMID, DOI, 'PII', 'PUI', 'EMBASE','NCT ID']\n
+            [2] references = [ref] list of Reference objects sorted by ETM relevance. len(references) == ETMstat.params['limit'] 
+            Relevance score is stored in ref['Relevance'] for every reference
+        '''
+        query = ';'.join(search4concepts)       
+        self._set_query(query)
+        return self.__get_stats()
+    
     
     def __multiple_search(self,for_entity:str,and_concepts:list,my_query,add2query=[]):
         references = set()
@@ -657,10 +734,10 @@ class ETMstat:
         etm_ref_column_name = self._etm_ref_column_name(between_names_in_col,and_concepts)
         doi_ref_column_name = self._etm_doi_column_name(between_names_in_col,and_concepts)
         my_df[[etm_ref_column_name,doi_ref_column_name]] = my_df[between_names_in_col].apply(lambda row: self.__get_refs(row,and_concepts,my_query,add2query)).apply(pd.Series)
-        return my_df
+        return my_df,self.ref_counter # need to return self.ref_counter to concatenate ref_counters during cloning
 
 
-    def add_etm_references(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[]):
+    def add_etm_references(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[],max_row=0):
         """
         Input
         -----
@@ -674,25 +751,36 @@ class ETMstat:
         """
         if to_df.empty: return to_df
         start_time = time.time()
-        my_df = to_df.copy_df(to_df)
-        row_count = len(my_df)
-        partition_size = 100
-
-        thread_name = f'ETM refs 4 {len(to_df)} rows in {MAX_ETM_SESSIONS} threads'
-        futures = list()
-        if row_count > 9:
-            with ThreadPoolExecutor(max_workers=MAX_ETM_SESSIONS, thread_name_prefix=thread_name) as e:
-                for i in range(0,len(my_df),partition_size):
-                    df_part = df.from_pd(my_df.iloc[i:i+partition_size])
-                    futures.append(e.submit(self. __add_refs1,df_part,between_names_in_col,and_concepts,use_query,add2query))
-
-            dfs2concat = list()
-            [dfs2concat.append(f.result()) for f in futures]
-            # cannot use as_completed here to ensure the same order for concatenation
-            annotated_df = df.concat_df(dfs2concat,to_df._name_)
+        if max_row:
+            df2annotate = df.from_pd(to_df.iloc[:max_row])
+            unannoated_rows = df.from_pd(to_df.iloc[max_row:])
         else:
-            self. __add_refs1(my_df,between_names_in_col,and_concepts,use_query,add2query)
-            annotated_df = my_df
+            df2annotate = df.copy_df(to_df)
+            unannoated_rows = df()
+        #my_df = to_df.copy_df(to_df)
+        row_count = len(to_df)
+        
+        if row_count > 9:
+            thread_name = f'ETM refs 4 {len(df2annotate)} rows in {MAX_ETM_SESSIONS} threads'
+            partition_size = 100
+            with ThreadPoolExecutor(max_workers=MAX_ETM_SESSIONS, thread_name_prefix=thread_name) as e:
+                futures = list()
+                for i in range(0,len(df2annotate),partition_size):
+                    df_part = df.from_pd(df2annotate.iloc[i:i+partition_size])
+                    new_session = self.clone() # need to clone here to avoid self.ref_counter mutation
+                    futures.append(e.submit(new_session.__add_refs1,df_part,between_names_in_col,and_concepts,use_query,add2query))
+
+                dfs2concat = list()
+                for f in futures: # cannot use as_completed here to ensure the same order for concatenation
+                    session_df, session_refcounter = f.result()
+                    dfs2concat.append(session_df)
+                    [self._add2counter(t[0]) for t in session_refcounter.values()] # combine references from all futures
+                
+                dfs2concat.append(unannoated_rows)
+                annotated_df = df.concat_df(dfs2concat,to_df._name_)
+                
+        else:
+            annotated_df = self. __add_refs1(to_df,between_names_in_col,and_concepts,use_query,add2query)[0]
         
         annotated_df.copy_format(to_df)
         etm_ref_column_name = self._etm_ref_column_name(between_names_in_col,and_concepts)
@@ -701,11 +789,13 @@ class ETMstat:
         etm_doi_column_name = self._etm_doi_column_name(between_names_in_col,and_concepts)
         self.etm_doi_column_name.append(etm_ref_column_name)
         annotated_df.set_hyperlink_color([etm_ref_column_name,etm_doi_column_name])
+        
+        rows_annotated = max_row if max_row else len(to_df)
         print('Annotated with ETM references %d rows from %s in %s' % 
-                (len(to_df),to_df._name_,execution_time(start_time)))
+                (rows_annotated,to_df._name_,execution_time(start_time)))
         return annotated_df
 
-
+    '''
     def add_etm_refsOLD(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[]):
         """
         Input
@@ -760,7 +850,7 @@ class ETMstat:
         print('Annotated %d rows from %s with ETM references in %s' % 
                 (len(to_df),to_df._name_,execution_time(start_time)))
         return annotated_df
-
+    '''
 
 
     def __etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[]):
@@ -774,7 +864,7 @@ class ETMstat:
             my_df.at[i,etm_ref_column_name] = hyperlink2pubmed
             my_df.at[i,doi_ref_column_name] = hyperlink2doi
 
-        return my_df
+        return my_df,self.ref_counter
 
 
     def add_etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[],max_row=0):
@@ -786,18 +876,23 @@ class ETMstat:
             df2annotate = df.copy_df(in_df)
             unannoated_rows = df()
 
-        partition_size = 100
-        futures = list()
         thread_name = f'Retrieve {partition_size} ETM references'
+        dfs2concat = list()
         with ThreadPoolExecutor(max_workers=MAX_ETM_SESSIONS, thread_name_prefix=thread_name) as e:
+            partition_size = 100
+            futures = list()
             for i in range(0,len(df2annotate),partition_size):
                 df_part = df(df2annotate.iloc[i:i+partition_size])
-                futures.append(e.submit(self.__etm42columns,df_part,between_col,and_col,my_query,add2query))
+                new_session = self.clone() # need to clone here to avoid self.ref_counter mutation
+                futures.append(e.submit(new_session.__etm42columns,df_part,between_col,and_col,my_query,add2query))
 
-        dfs2concat = list()
-        [dfs2concat.append(f.result()) for f in futures]
-        dfs2concat.append(unannoated_rows)
-        # cannot use as_completed here to ensure the same order for concatenation
+            for f in futures: # cannot use as_completed here to ensure the same order for concatenation
+                session_df, session_refcounter = f.result()
+                dfs2concat.append(session_df)
+                [self._add2counter(t[0]) for t in session_refcounter.values()] # combine references from all futures 
+
+            dfs2concat.append(unannoated_rows)
+
         annotated_df = df.concat_df(dfs2concat,in_df._name_)
         
         etm_ref_column_name = self._etm_ref_column_name(between_col,and_col)
@@ -819,20 +914,24 @@ class ETMcache (ETMstat):
     """
     pass
     request_type = '/search/advanced?'
-    search_name = str()
-    etm_results_dir = ''
-    etm_stat_dir = ''
+    etm_results_dir = 'ElsevierAPI\ETM_API\__etmcache__'
+    etm_stat_dir = 'ElsevierAPI\ETM_API\__etmcache__'
     
-    def __init__(self,query,search_name,APIconfig:dict,etm_dump_dir='',etm_stat_dir='',add_params={}):
+    def __init__(self,query,search_name,APIconfig=dict(),etm_dump_dir='',etm_stat_dir='',add_params={}):
         super().__init__(APIconfig,add_param=add_params)
         self.params.pop('limit')
         self._set_query(query)
-        articles, self.hit_count = self._get_articles()
+        self.hit_count = self._get_articles()[1]
         self.search_name = search_name
-        self.etm_results_dir = etm_dump_dir
-        self.etm_stat_dir = etm_stat_dir
+        self.etm_results_dir = etm_dump_dir if etm_dump_dir else 'ElsevierAPI\ETM_API\__etmcache__'
+        self.etm_stat_dir = etm_stat_dir if etm_stat_dir else 'ElsevierAPI\ETM_API\__etmcache__'
         self.statistics = dict() # {prop_name:{prop_value:count}}
         self.scopusAPI = None
+
+
+    def set_query(self,query:str,search_name:str):
+        super()._set_query(query)
+        self.search_name = search_name
 
 
     def set_stat_props(self,stat_props:list):
@@ -841,17 +940,25 @@ class ETMcache (ETMstat):
             self.statistics[p] = dict()
         
 
-    def __download(self):
+    def __download(self,cached_articles=[],dump_date_create=''):
         print('\nPerforming ETM search "%s"' % self.search_name)
-        print ('Query: %s found %d results' % (self._query(),self.hit_count))
-        start = time.time()
-        articles = list()
-        for page_start in range(0,self.hit_count,self.page_size):
-            more_articles, discard = self._get_articles(page_start=page_start)
-            articles += more_articles
-            download_count = len(articles)
-            print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
-        return articles
+        articles, self.hit_count = self._get_articles(need_snippets=False)
+        print (f'Query: "{self._query()}" found {self.hit_count} results' )
+        if  self.hit_count > len(cached_articles): # self.hit_count 1-based index !!!
+            print('Today ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(articles)))
+            start = time.time()
+            if dump_date_create:
+                self.params.update({'so_d':dump_date_create}) # format: 2003-03-19
+            for page_start in range(0,self.hit_count,self.page_size):
+                more_articles = self._get_articles(page_start=page_start)[0]
+                articles += more_articles
+                download_count = len(articles)
+                print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
+            self.params.pop('so_d','')
+            return articles
+        else:
+            print('No new articles found. Will use articles from cache')
+            return []
 
 
     def __dumps(self, articles:list, into_file:str):
@@ -866,7 +973,10 @@ class ETMcache (ETMstat):
 
     def load_from_json(self,use_cache=True):
         if use_cache:
-            dumpfile_name = self.etm_results_dir+self.search_name+'.json'
+            dir_name = self.etm_results_dir
+            if dir_name[-1] != '/':
+                dir_name += '/'
+            dumpfile_name = dir_name+self.search_name+'.json'
             try:
                 # attepts to find json file with ETM results saved after ETM API call below
                 f = open(dumpfile_name,'r')
@@ -878,16 +988,12 @@ class ETMcache (ETMstat):
                     path_end = dumpfile_name.rfind('\\')
                 fname = dumpfile_name[path_end+1:]
                 cache_path = dumpfile_name[:path_end]
-                print('Found "%s" file in "%s" cache with %d articles. Will use it to load results' % (fname,cache_path,len(articles)))
-                
-                if (self.hit_count > len(articles)): # hit_count is 1-based index!!!
-                    print('Today ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(articles)))
-                    d =  datetime.strptime(time.ctime(os.path.getctime(dumpfile_name)), "%c")
-                    local_time =  d.strftime('%Y-%m-%d')
-                    self.params.update({'so_d':local_time}) #2003-03-19
-                    update_articles = self.__download()
-                    articles = articles + update_articles
-                    self.__dumps(articles,dumpfile_name)
+                print('Found "%s" file in "%s" cache with %d articles. Will use it to load results' % (fname,cache_path,len(articles))) 
+                d =  datetime.strptime(time.ctime(os.path.getctime(dumpfile_name)), "%c")
+                dump_create_date =  d.strftime('%Y-%m-%d')
+                update_articles = self.__download(articles,dump_create_date)
+                articles = articles + update_articles
+                self.__dumps(articles,dumpfile_name)
             except FileNotFoundError:
                 #if json dump file is not found new ETM search is initiated
                 articles = self.__download()
@@ -897,9 +1003,9 @@ class ETMcache (ETMstat):
 
         for article in articles:
             etm_ref = ETMjson(article,self.scopusAPI)
-            relevance_score = float(article['score'])
-            etm_ref[RELEVANCE] = [relevance_score]
-            if hasattr(etm_ref,"Identifiers"):
+            if etm_ref: # etm_ref can be empty if it is conference proceedings
+                relevance_score = float(article['score'])
+                etm_ref[RELEVANCE] = [relevance_score]
                 self._add2counter(etm_ref)
 
         

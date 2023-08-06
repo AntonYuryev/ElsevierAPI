@@ -46,7 +46,7 @@ PS_BIBLIO_PROPS = {TITLE, PUBYEAR, AUTHORS, JOURNAL, MEDLINETA,'Start'} # contai
 BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
 REF_ID_TYPES = PS_REFIID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
-PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD]
+PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD,'pX']
 SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence']
 # SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.Sentences
@@ -183,8 +183,8 @@ class Reference(dict):
             prop_names.update(prop2value.keys())
         return prop_names
 
-    def update_with_value(self, PropId, PropValue:str):
-        clean_prop = PropValue.strip(' .')
+    def update_with_value(self, PropId, PropValue:int|str):
+        clean_prop = PropValue.strip(' .\n') if isinstance(PropValue,str) else PropValue
         try:
             my_props = self[PropId]
             self[PropId] = list(set(my_props).add(clean_prop))
@@ -224,6 +224,14 @@ class Reference(dict):
         except KeyError:
             self.snippets[text_ref] = {propID:prop_values}
 
+
+    def has_property(self, prop_name:str):
+        # prop_names2values = {prop_name:[values]}
+        for prop2values in self.snippets.values():
+            if prop_name in prop2values.keys():
+                return True
+        return prop_name in self.keys()
+    
 
     def has_properties(self, prop_names2values:dict,case_sensitive=False):
         # prop_names2values = {prop_name:[values]}
@@ -340,7 +348,14 @@ class Reference(dict):
                 return int(year[-4:])
             except KeyError: return 1812 # No PubYear case
 
+
+    def relevance(self):
+        try:
+            return float(self[RELEVANCE][0])
+        except KeyError:
+            return float(0.0)
     
+
     def is_clinical_trial(self):
         try:
             return self.Identifiers['NCT ID']
@@ -385,8 +400,8 @@ class Reference(dict):
 
     
     def get_biblio_str(self, sep='\t'):
-        biblio, journal, id_type,identifier = self._biblio_tuple()
-        return biblio+sep+journal+sep+id_type+':'+identifier
+        biblio, id_type,identifier = self._biblio_tuple()
+        return biblio+sep+id_type+':'+identifier
 
 
     def _merge(self, other):
