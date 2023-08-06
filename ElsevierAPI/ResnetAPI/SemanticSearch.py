@@ -56,7 +56,7 @@ class SemanticSearch (APISession):
         self.__connect_by_rels__= list()
         self.__rel_effect__ = list()
         self.references = dict() # {identifier:Reference} made by self.Graph.citation_index()
-        self.etm_counter = ETMstat(self.APIconfig,limit=5)
+        self.etm_counter = ETMstat(self.APIconfig,limit=10)
         self.etm_counter.min_relevance = self.min_etm_relevance
         self.all_entity_dbids = set()
         self.weight_dict = dict()
@@ -81,7 +81,7 @@ class SemanticSearch (APISession):
 
     def _clone(self, **kwargs):
         my_kwargs = dict(kwargs)
-        api_session = self._clone_session(**my_kwargs)
+        api_session = self._clone_session(**my_kwargs) # cannot use copy_graph here
         new_session = SemanticSearch(api_session.APIconfig,**my_kwargs)
         new_session.entProps = api_session.entProps
         new_session.relProps = api_session.relProps
@@ -96,6 +96,9 @@ class SemanticSearch (APISession):
         if self.__rel_effect__:
             new_session.add_rel_props([EFFECT])
         
+        new_session.Graph = self.Graph  # need to copy self.Graph to enable using cache in link2concept
+        new_session.add2self = False 
+        # cloning is done to avoid adding data to self.Graph to avoid irrelevant references in PS_Bibliography worksheet
         return new_session
 
 
@@ -292,7 +295,7 @@ class SemanticSearch (APISession):
             MappedEntitiesByProp = MappedEntitiesByProp[MappedEntitiesByProp[self.__temp_id_col__].notnull()]
             df2return = df2return.append_df(MappedEntitiesByProp)
 
-        ex_time = self.execution_time(start_mapping_time)
+        ex_time = self.execution_time(start_mapping_time)[0]
         print ('Mapped %d out of %d identifiers to entities in database in %s\n' % 
               (len(df2return), len(EntityPandas.index), ex_time))
         
@@ -325,7 +328,7 @@ class SemanticSearch (APISession):
             if type(zeep_entities) != type(None):
                 dbid2entity_chunk = self._zeep2psobj(zeep_entities)
                 dbid2entity.update(dbid2entity_chunk)
-                ex_time = self.execution_time(start_time)
+                ex_time = self.execution_time(start_time)[0]
                 print("%d in %d iteration found %d entities for %d %s identifiers in %s" % 
                     (i / step + 1, iteration_counter, len(dbid2entity_chunk), len(propval_chunk), propName, ex_time))
 
@@ -368,19 +371,8 @@ class SemanticSearch (APISession):
         start_time = time.time()
         graph_connects = how2connect(node1dbids,node2dbids)
         print('%d nodes were linked by %d relations supported by %d references in %s' %
-             (len(graph_connects),graph_connects.number_of_edges(),graph_connects.weight(),self.execution_time(start_time)))
+             (len(graph_connects),graph_connects.number_of_edges(),graph_connects.weight(),self.execution_time(start_time)[0]))
         return graph_connects
-    
-        start_time = time.time()
-        if self.__boost_with__:
-            reltypes2load = list(set(self.__connect_by_rels__+self.__boost_with__))
-            cumulative = self.connect_nodes(set(node1dbids),set(node2dbids),reltypes2load,step=self.iteration_step)
-        else:
-            cumulative = self.connect_nodes(set(node1dbids),set(node2dbids),self.__connect_by_rels__,self.__rel_effect__,self.__rel_dir__,step=self.iteration_step)
-        
-        print('%d nodes were linked by %d relations supported by %d references in %s' %
-             (cumulative.number_of_nodes(),cumulative.number_of_edges(),cumulative.weight(),self.execution_time(start_time)))
-        return cumulative
 
 
     def set_how2connect(self,connect_by_rels:list,with_effects:list,in_dir:str,boost_by_reltypes=list(),step=500):
@@ -446,10 +438,11 @@ class SemanticSearch (APISession):
         else:
             my_df = df.from_pd(to_entities)
 
-        if (len(concepts) > 500 and len(my_df) > 500):
-            print('"%s" concept has %d ontology children! Linking may take a while, be patient' % (ConceptName,len(concepts)-1))
+        number_of_childs = len(concepts)-1 if concepts else 0
+        if (len(concepts) > 501 and len(my_df) > 500):
+            print(f'"{ConceptName}" concept has {number_of_childs} ontology children! Linking may take a while, be patient' )
         else:
-            print('\nLinking row entities to \"%s\" concept column which has %d ontology children' % (ConceptName,len(concepts)-1))
+            print(f'\nLinking row entities to "{ConceptName}" column which has {number_of_childs} ontology children')
         
         new_column = self._col_name_prefix + ConceptName
         try:
@@ -502,7 +495,7 @@ class SemanticSearch (APISession):
 
             effecStr = ','.join(self.__rel_effect__) if len(self.__rel_effect__)>0 else 'all'
             relTypeStr = ','.join(self.__connect_by_rels__) if len(self.__connect_by_rels__)>0 else 'all'
-            exec_time = self.execution_time(start_time)
+            exec_time = self.execution_time(start_time)[0]
             if linked_row_count:
                 print("Concept \"%s\" is linked to %d entities by %s relations of type \"%s\" supported by %d references with effect \"%s\" in %s" %
                     (ConceptName,linked_row_count, connection_graph.number_of_edges(),relTypeStr,len(ref_sum),effecStr,exec_time))
@@ -535,7 +528,7 @@ class SemanticSearch (APISession):
         wrapper for backward compatibility
         '''
         if clone2retrieve:
-            my_session = self._clone(to_retrive=clone2retrieve)
+            my_session = self._clone(to_retrieve=clone2retrieve)
             linked_row_count,linked_entity_ids,self.RefCountPandas = my_session.link2concept(
                                             to_concept_named,concepts,self.RefCountPandas,how2connect)
             my_session.close_connection()
@@ -773,10 +766,10 @@ class SemanticSearch (APISession):
         return self.etm_counter._etm_doi_column_name(between_names_in_col,and_concepts)
 
 
-    def etm_refs2df(self,to_df:df,input_names:list,entity_name_col:str='Name',add2query=[]):
-        print('Finding %d most relevant articles in ETM for %d rows in %s and %s' 
+    def etm_refs2df(self,to_df:df,input_names:list,entity_name_col:str='Name',add2query=[],max_row=300):
+        print('Finding %d most relevant articles in ETM for %d rows in "%s" worksheet and %s' 
                 % (self.etm_counter._limit(),len(to_df),to_df._name_,input_names), flush=True)
-        return self.etm_counter.add_etm_references(to_df,entity_name_col,input_names,ETMstat.basic_query,add2query)
+        return self.etm_counter.add_etm_references(to_df,entity_name_col,input_names,ETMstat.basic_query,add2query,max_row)
 
 
     def add_etm_refs(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True,skip1strow=True):
@@ -795,14 +788,14 @@ class SemanticSearch (APISession):
             rank_counts_df = df.from_pd(rank_counts_df.drop(0, axis=0), self.report_pandas[to_df_named]._name_)
             if rank_counts_df.empty: return rank_counts_df
             rank_counts_df.copy_format(self.report_pandas[to_df_named])
-            rank_counts_df = self.etm_refs2df(rank_counts_df,input_names,entity_name_col,add2query)
+            rank_counts_df = self.etm_refs2df(rank_counts_df,input_names,entity_name_col,add2query,max_row=len(rank_counts_df))
 
             #rank_counts_pd = rank_counts_df.sort_values(RANK,ascending=False)
             rank_counts_pd = pd.concat([weights, rank_counts_df]).reset_index(drop=True)
             rank_counts_df = df.from_pd(rank_counts_pd,self.report_pandas[to_df_named]._name_)     
             rank_counts_df.copy_format(self.report_pandas[to_df_named])
         else:
-            rank_counts_df = self.etm_refs2df(rank_counts_df,input_names,entity_name_col,add2query)
+            rank_counts_df = self.etm_refs2df(rank_counts_df,input_names,entity_name_col,add2query,max_row=len(rank_counts_df))
             
         if add2report:
             self.add2report(rank_counts_df)

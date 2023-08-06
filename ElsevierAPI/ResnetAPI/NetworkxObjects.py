@@ -27,10 +27,17 @@ CHEMICAL_PROPS = ["CAS ID","HMDB ID","IUPAC Name","InChIKey","LMSD ID","Alias",
                         "Molecular Formula", "Molecular Weight","NCIm ID","PubChem CID","PubChem SID",
                         "Reaxys ID","Rotatable Bond Count","XLogP","XLogP-AA","Description","PharmaPendium ID"]
 
+DIRECT_RELTYPES = {'DirectRegulation','Binding','ChemicalReaction','ProtModification','PromoterBinding'}
+        
+
 STATE = "state"
 ACTIVATED = 1
 REPRESSED = -1
 UNKNOWN_STATE = 0
+MINREF4DIRECTREL = 5
+MINAFFINITY4DIRECT = 6.0
+DIRECT = 1
+INDIRECT = 0
 
 
 class PSObject(dict):  # {PropId:[values], PropName:[values]}
@@ -407,6 +414,18 @@ class PSRelation(PSObject):
             return ''
         
 
+    def has_properties(self,prop_names:set):
+        has_props = super().has_propeties(prop_names)
+        if not has_props:
+            my_refs = self.refs()
+            for prop in prop_names:
+                for ref in my_refs:
+                    if ref.has_property(prop):
+                        return True
+                    
+        return has_props
+        
+
     def make_urn(self,reg_urns:list,tar_urns:list):
         reg_urns.sort()
         tar_urns.sort()
@@ -756,10 +775,11 @@ class PSRelation(PSObject):
                 refcount = self[REFCOUNT]
                 # case when REFCOUNT was loaded from RNEF dump that did not contain references
                 # e.g. for loading network from __pscache__
-                refcount2merge = list(map(int,refcount))
-                max_refcount = max(refcount2merge)
-                self[REFCOUNT] = [max_refcount]
-                return max_refcount
+                if len(refcount) > 1:
+                    refcount2merge = list(map(int,refcount))
+                    max_refcount = max(refcount2merge)
+                    self[REFCOUNT] = [max_refcount] 
+                return int(self[REFCOUNT][0])
             except KeyError:
                 self[REFCOUNT] = [0]
                 return 0
@@ -879,7 +899,7 @@ class PSRelation(PSObject):
         """
         Returns
         -------
-        regulator,target pairs for directional self
+        [(regulator_uid,target_uid)] pairs for directional self
         all possible pairwise combinations for non-directional self
         """
         if len(self.Nodes) > 1:
@@ -889,11 +909,18 @@ class PSRelation(PSObject):
             try:
                 # for non-directions relations
                 objIdList = [x[0] for x in self.Nodes[REGULATORS]]
-                return itertools.combinations(objIdList, 2)
+                pairs = list(itertools.combinations(objIdList, 2))
+                plus_reverse = list(pairs)
+                [plus_reverse.append((p[1],p[0])) for p in pairs] 
+                # non-directional relations are added in both direction into MultiDiGraph
+                return plus_reverse
             except KeyError:
                 # for wiered cases
                 objIdList = [x[0] for x in self.Nodes[TARGETS]]
-                return itertools.combinations(objIdList, 2)
+                pairs = list(itertools.combinations(objIdList, 2))
+                plus_reverse = list(pairs)
+                [plus_reverse.append((p[1],p[0])) for p in pairs]
+                return plus_reverse
 
 
     def to_json(self):
@@ -930,5 +957,88 @@ class PSRelation(PSObject):
                 return 0
         except KeyError: 
             return 0
+        
 
-    
+    def _affinity(self):
+        try:
+            return float(self['Affinity'][0])
+        except KeyError:
+            try:
+               return float(self['pX'][0]) 
+            except KeyError:
+                return -1.0
+
+    '''
+    @staticmethod
+    def is_direct(rel:'PSRelation'):
+        my_affinity = rel._affinity()
+        if my_affinity >= MINAFFINITY4DIRECT:
+            return True
+        elif rel.objtype() in DIRECT_RELTYPES and rel.get_reference_count() >= MINREF4DIRECTREL:
+            return True
+        else:
+            return False
+
+
+    @staticmethod
+    def is_indirect(rel:'PSRelation'):
+        indirect_reltypes={'Regulation','MolTransport','Expression','MolSynthesis'}
+        if rel.objtype() in indirect_reltypes:
+            return True
+        elif rel.objtype() in DIRECT_RELTYPES and rel.get_reference_count() < MINREF4DIRECTREL:
+            return True
+        elif rel._affinity() < MINAFFINITY4DIRECT and rel._affinity() > 0.0:
+            return True
+        else:
+            return False
+        '''
+
+    def isdirect(self):
+        my_affinity = self._affinity()
+        if my_affinity >= MINAFFINITY4DIRECT:
+            return DIRECT
+        elif my_affinity > 0.0:
+            return INDIRECT
+        
+        objtype = self.objtype()
+        if objtype in DIRECT_RELTYPES:
+            return DIRECT if self.get_reference_count() >= MINREF4DIRECTREL else INDIRECT
+        elif objtype in {'Regulation','MolTransport','Expression','MolSynthesis'}:
+            return INDIRECT
+        
+        return -100
+
+
+    def _refprop2rel(self,ref_prop:str,relprop:str,min_max=0):
+        '''
+        Input
+        -----
+        if min_max < 0 assigns single value to relprop that is the minimum of all ref_prop values
+        if min_max > 0 assigns single value to relprop that is the maximum of all ref_prop values
+        min_max works only if ref_prop values are numerical
+        '''
+        propvals = set()
+        for ref in self.refs():
+            try:
+                prop_val = ref[ref_prop]
+                propvals.add(prop_val)
+            except KeyError:
+                try:
+                    prop_val = ref.Identifiers[ref_prop]
+                    propvals.add(prop_val)
+                except KeyError:
+                    for prop2values in ref.snippets.values():
+                        try:
+                            prop_val = prop2values[ref_prop]
+                            propvals.update(prop_val)
+                        except KeyError:
+                            continue
+        if propvals:
+            if min_max:
+                propvals = list(map(float,propvals))
+                propvals.sort()
+           #     if len(propvals) > 1:
+           #         print('')
+                propvals = [propvals[0]] if min_max < 0 else [propvals[-1]]
+
+            self.update_with_list(relprop, list(propvals))

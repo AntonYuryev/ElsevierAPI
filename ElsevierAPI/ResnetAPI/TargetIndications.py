@@ -720,9 +720,9 @@ class Indications4targets(SemanticSearch):
         score4antagonists = True if target_effect_on_indication == 'positive' else False
 
         if self._is_strict():
-            booster_reltypes = ['Regulation','Biomarker','GeneticChange','QuantitativeChange','StateChange']
+            booster_reltypes = ['Regulation','Biomarker','GeneticChange','QuantitativeChange','StateChange','FunctionalAssociation']
         else:
-            booster_reltypes = ['Regulation','GeneticChange']
+            booster_reltypes = ['Regulation','GeneticChange','FunctionalAssociation']
         how2connect = self.set_how2connect (['Regulation'],[target_effect_on_indication],'',booster_reltypes)
         linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,self.targets,indication_df,how2connect)
         print('%d indications are %sly regulated by %s' % (linked_row_count,target_effect_on_indication,t_n))
@@ -738,7 +738,7 @@ class Indications4targets(SemanticSearch):
             print('Linked %d clinical trial indictions for %s %s' % (linked_row_count,t_n,drug_class))
 
             colname = target_in_header+' '+drug_class
-            how2connect = self.set_how2connect (['Regulation'],[link_effect],'',['Regulation'])
+            how2connect = self.set_how2connect (['Regulation'],[link_effect],'',['Regulation','FunctionalAssociation'])
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,concepts,indication_df,how2connect)
             print('Linked %d indications for %s %s' % (linked_row_count,t_n,drug_class))
 
@@ -746,7 +746,7 @@ class Indications4targets(SemanticSearch):
         link_effect, drug_class, concepts = self.__drug_tox_params(True,score4antagonists)
         if concepts:
             colname = target_in_header+' '+drug_class
-            how2connect = self.set_how2connect (['Regulation'],[link_effect],'',['Regulation'])
+            how2connect = self.set_how2connect (['Regulation'],[link_effect],'',['Regulation','FunctionalAssociation'])
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,concepts,indication_df,how2connect)
             print('Linked %d indications as toxicities for %s %s' % (linked_row_count,t_n,drug_class))
 
@@ -754,7 +754,7 @@ class Indications4targets(SemanticSearch):
         #references where target expression or activity changes in the indication
         colname = ' is upregulated' if target_effect_on_indication == 'positive' else ' is downregulated'
         colname = target_in_header + colname
-        how2connect = self.set_how2connect (['QuantitativeChange'],[target_effect_on_indication],'',['Biomarker','StateChange'])
+        how2connect = self.set_how2connect (['QuantitativeChange'],[target_effect_on_indication],'',['Biomarker','StateChange','FunctionalAssociation'])
         linked_row_count,linked_ent_ids,indication_df= self.link2concept(colname,self.targets,indication_df,how2connect)
         print('%d indications %sly regulate %s' % (linked_row_count,target_effect_on_indication,t_n))
 
@@ -762,7 +762,7 @@ class Indications4targets(SemanticSearch):
         if self.partners:
             p_cl = self.partner_class if self.partner_class else 'partner'
             colname = f'{target_in_header} {p_cl}s'
-            how2connect = self.set_how2connect (['Regulation'],[target_effect_on_indication],'',['Regulation'])
+            how2connect = self.set_how2connect (['Regulation'],[target_effect_on_indication],'',['Regulation','FunctionalAssociation'])
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,self.partners,indication_df,how2connect)
             print('Linked %d indications for %d %s %ss' % (linked_row_count,len(self.partners),t_n,p_cl))
 
@@ -770,7 +770,7 @@ class Indications4targets(SemanticSearch):
         # only used if taregts are secretred ligands
         if hasattr(self, 'ProducingCells'):
             colname = f'{target_in_header} producing cells'
-            how2connect = self.set_how2connect (['Regulation'],[target_effect_on_indication],'',['Regulation'])
+            how2connect = self.set_how2connect (['Regulation'],[target_effect_on_indication],'',['Regulation','FunctionalAssociation'])
             linked_row_count,linked_ent_ids,indication_df = self.link2concept(colname,self.ProducingCells,indication_df,how2connect)
             print('Liked %d indications linked %d cells producing %s' % (linked_row_count,len(self.ProducingCells),t_n))
 

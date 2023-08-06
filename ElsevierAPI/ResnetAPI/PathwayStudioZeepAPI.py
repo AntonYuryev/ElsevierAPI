@@ -7,6 +7,7 @@ from datetime import timedelta
 import requests.exceptions as req_exceptions
 
 CONNECTION_TIMEOUT = 10
+DEFAULT_APICONFIG = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
@@ -23,12 +24,11 @@ def configure_logging(logger):
 
 
 def load_api_config(api_config_file=''):# file with your API keys and API URLs
-    cur_dir = os.getcwd()
-    default_apiconfig = cur_dir+'/ElsevierAPI/APIconfig.json'
+    #cur_dir = os.getcwd()
+    default_apiconfig = DEFAULT_APICONFIG
     if not api_config_file:
         print('No API config file was specified\nWill use default %s instead'% default_apiconfig)
         api_config_file = default_apiconfig
-        
     try:
         return dict(json.load(open(api_config_file)))
     except FileNotFoundError:
@@ -48,7 +48,7 @@ class DataModel:
         no_mess - default True, if False your script becomes more verbose\n
         connect2server - default True, set to False to run script using data in __pscache__ files instead of database
         '''
-        APIconfig = dict(args[0])
+        APIconfig = dict(args[0]) if args else dict()
         my_kwargs = {'connect2server':True,'no_mess':True,'load_model':True}
         my_kwargs.update(kwargs)
         self.no_mess = my_kwargs.get('no_mess',True)
@@ -205,7 +205,7 @@ class DataModel:
                     self.propId2dict[dict_folder['Name']] = id_values_to_str
                     return self.propId2dict[idProperty]
                 except Exception as error:
-                    print(f'Pausing for {CONNECTION_TIMEOUT} seconds due to {error} on {attempt} attempt')
+                    print(f'Pausing for {CONNECTION_TIMEOUT} seconds due to "{error}" on {attempt} attempt')
                     sleep(CONNECTION_TIMEOUT)
                     continue
             raise req_exceptions.ConnectionError("Server connection failed after 10 attempts") 
@@ -224,9 +224,11 @@ class DataModel:
         timeout = 300 # 300 sec is default timeout in zeep
         max_iter = 10
         start = time.time()
-        for attempt in range (0,max_iter):
+        for attempt in range (1,max_iter):
             try:
                 result = self.SOAPclient.service.OQLSearch(OQLquery, result_param)
+                if attempt > 1:
+                    print(f'{OQLquery[:100]} was succesful on {attempt} attempt')
                 return result
             except zeep_exceptions.TransportError as err:
                 if err.status_code == 504:

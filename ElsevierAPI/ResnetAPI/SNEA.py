@@ -154,7 +154,7 @@ class SNEA(APIcache):
             AND NeighborOf upstream ({get_targets}) AND NeighborOf downstream ({get_regulators})'
 
         rel_props = ['URN',EFFECT,REFCOUNT]
-        return self.load_cache(network_name,[oql_query],ent_props,rel_props)
+        return self.load_cache(network_name,[(oql_query,f'downloading {network_name}')],ent_props,rel_props)
 
 
     def activity(self,_in:Sample,_4reg_uid:int,with_targets:list,according2:ResnetGraph):

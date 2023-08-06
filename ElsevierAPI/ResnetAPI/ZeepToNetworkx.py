@@ -77,7 +77,7 @@ class PSNetworx(DataModel):
                 remaining_time = delta*remaining_iterations
                 return "{}".format(str(timedelta(seconds=delta))), "{}".format(str(timedelta(seconds=remaining_time)))
         else:
-            return "{}".format(str(timedelta(seconds=delta)))
+            return "{}".format(str(timedelta(seconds=delta))),str(0)
     
 
     def __psrel2dict(self,rels:dict):
@@ -239,34 +239,6 @@ class PSNetworx(DataModel):
         else:
             return ResnetGraph()
 
-    '''
-    def get_ppi(self, interactors_dbids:set, REL_PROPS:list, ENTITY_PROPS:list,add2self=True):
-        """
-        PPI relation types: Binding, DirectRegulation, ProtModification
-        """
-        splitter = list() #holds lists of ids splits 
-        splitter.append(list(interactors_dbids))
-        number_of_splits = int(math.log2(len(interactors_dbids)))
-        ppi_keeper = ResnetGraph()
-        for s in range(1, number_of_splits):
-            new_splitter = list()
-            half = int(len(splitter[0]) / 2)
-            #futures = list()
-            for split in splitter:
-                uq_list1 = split[0:half]
-                uq_list2 = split[half:]
-                
-                oql_query = OQL.get_ppi(set(uq_list1), set(uq_list2))
-                new_ps_relations = self.load_graph_from_oql(oql_query,REL_PROPS,ENTITY_PROPS,add2self=add2self)
-                ppi_keeper = ppi_keeper.compose(new_ps_relations)
-                new_splitter.append(uq_list1)
-                new_splitter.append(uq_list2)
-
-            splitter = new_splitter
-            s += 1
-
-        return ppi_keeper
-        '''
 
     def get_network(self, InteractorIdList:set, connect_by_rel_types:list=None, REL_PROPS:list=None, ENTITY_PROPS:list=None):
         splitter = list() #holds lists of ids splits 

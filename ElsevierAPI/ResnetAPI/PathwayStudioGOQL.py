@@ -231,7 +231,7 @@ class OQL:
 
     @staticmethod
     def select_drugs():
-        return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = drugs)"
+        return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = (drugs,'plant medicinal product'))"
 
 
     @staticmethod
