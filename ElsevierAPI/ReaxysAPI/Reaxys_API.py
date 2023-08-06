@@ -19,9 +19,31 @@
 # A.1. Added optional arguments dbname and context, that are required to formulate group by statements
 #Change Log 1.2.0-beta.1, January 29th, 2021
 
-import os, http.cookiejar, xml.dom.minidom, string, sys, re
+import http.cookiejar, xml.dom.minidom, re
 from urllib.request import Request, urlopen
+from urllib.error import URLError
+import http.client
+from time import sleep
 import json
+
+DEFAULT_APICONFIG = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
+
+def load_api_config(api_config_file=''):# file with your API keys and API URLs
+    #cur_dir = os.getcwd()
+    default_apiconfig = DEFAULT_APICONFIG
+    if not api_config_file:
+        print('No API config file was specified\nWill use default %s instead'% default_apiconfig)
+        api_config_file = default_apiconfig
+    try:
+        return dict(json.load(open(api_config_file)))
+    except FileNotFoundError:
+        print("Cannot find API config file: %s" % api_config_file)
+        if api_config_file != default_apiconfig:
+            print('Cannot open %s config file\nWill use default %s instead'% (api_config_file, default_apiconfig))
+            return dict(json.load(open(default_apiconfig)))
+        else:
+            print('No working API server was specified!!! Goodbye')
+            return None
 
 
 class Reaxys_API:
@@ -39,6 +61,7 @@ class Reaxys_API:
         self.port = port
         #specify here the location of your API session file:
         self.ReaxysAPIjson = 'ElsevierAPI/ReaxysAPI/RxAPIsession.json'
+        self.APIconfig = dict()
 
         # Set True for verbose output:
         self.debug = False
@@ -225,8 +248,19 @@ class Reaxys_API:
             print('-----------------------\nQuery from select:')
             print(payload)
 
-        response = urlopen(request)
-        response_xml = response.read()
+        try:
+            response = urlopen(request)
+            response_xml = response.read()
+        except URLError:
+            sleep(60)
+            self.OpenSession()
+            response = urlopen(request)
+            response_xml = response.read()
+        except http.client.RemoteDisconnected:
+            sleep(60)
+            self.OpenSession()
+            response = urlopen(request)
+            response_xml = response.read()
         
         if self.debug:
             print('-----------------------\nResponse headers from select:')
@@ -398,7 +432,10 @@ class Reaxys_API:
         print("New %s session file was created" % self.ReaxysAPIjson)
 
 
-    def OpenSession(self,APIconfig:dict):
+    def OpenSession(self,APIconfig:dict=dict()):
+        if not APIconfig:
+            APIconfig = load_api_config()
+
         if self.__read_from_json() == FileNotFoundError:
             self._start_new_session(APIconfig['ReaxysURL'],APIconfig['ReaxysUsername'],APIconfig['ReaxysPassowrd'],APIconfig['ReaxysAPIkey'])
     
@@ -410,8 +447,9 @@ class Reaxys_API:
         FieldToValues = dict()
         #move next line to the function that calls this one for speed
         #self.OpenSession()
+        ctx = 'S'
         for Id in CompoundIDs:
-            self.select(dbname="RX", context="S", where_clause=CompIdType+" = '"+str(Id)+"'",order_by="",options="WORKER,NO_CORESULT")
+            self.select(dbname="RX", context=ctx, where_clause=CompIdType+" = '"+str(Id)+"'",order_by="",options="WORKER,NO_CORESULT")
             if type(self.resultsize) != type(None):
                 selectItems = {f.split('.')[0] for f in Fields}
                 response = self.retrieve(self.resultname, list(selectItems), str(1),str(self.resultsize), "", "", "", retrive_options)
@@ -427,4 +465,60 @@ class Reaxys_API:
 
         #self.disconnect() #move this line to the function that calls this one for speed
         return FieldToValues
+    
+
+    def GetTargetProps(self,target_names:list,Fields:list,retrive_options=''):
+        FieldToValues = dict()
+        #move next line to the function that calls this one for speed
+        #self.OpenSession()
+        ctx = 'DPI'
+        query = "DAT.TNAME='{}'"
+        for name in target_names:
+            q_t = query.format(name)
+            self.select(dbname="RX", context=ctx, where_clause=q_t,order_by="",options="WORKER,NO_CORESULT")
+            if type(self.resultsize) != type(None):
+                selectItems = {f.split('.')[0] for f in Fields}
+                response = self.retrieve(self.resultname,list(selectItems),str(1),str(self.resultsize),"", "", "", "")
+                for field in Fields:
+                    values = set(self.get_field_content(response, field))
+                    try:
+                        v = set(FieldToValues[field])
+                        v.update(values)
+                        FieldToValues[field] = list(v)
+                    except KeyError:
+                        if len(values) > 0:
+                            FieldToValues[field] = list(values)
+
+        #self.disconnect() #move this line to the function that calls this one for speed
+        return FieldToValues
+    
+
+
+    def getpX(self,drug_name:str,target_name:str):
+        '''
+        Return
+        ------
+        max pX for drug-target pair
+        '''
+
+        #move next line to the function that calls this one for speed
+        #self.OpenSession()
+        ctx = 'DPI'
+        #fields = ['DAT.PAUREUS']
+        q = f"IDE.CN={drug_name} and DAT.TNAME='{target_name}' and DAT.CATEG = 'in vitro (efficacy)'"
+
+        self.select(dbname="RX", context=ctx, where_clause=q,order_by="DAT.PAUREUS desc",options="WORKER,NO_CORESULT")
+        if type(self.resultsize) != type(None):
+            #selectItems = {f.split('.')[0] for f in fields}
+            response = self.retrieve(self.resultname, ["DAT"], "1", str(self.resultsize), "", "", "", "")
+            values = set(self.get_field_content(response, 'DAT.PAUREUS'))
+            if values:
+                max_pX = max(list(map(float,values)))
+                return max_pX
+            else:
+                return 0
+
+    
+
+
         
