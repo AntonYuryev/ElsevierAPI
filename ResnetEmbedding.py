@@ -55,8 +55,6 @@ def resnet2tfg(resnet:ResnetGraph):
     train_edge_rows = list()
     test_neg_edge_rows = list()
     test_edge_rows  = list()
-    
-    my_graph = set_negative_edges(resnet)
 
     def node_idx(n:PSObject,in_df:pd.DataFrame):
         pdcopy = in_df.copy()
@@ -77,11 +75,11 @@ def resnet2tfg(resnet:ResnetGraph):
 
     edge_rows = list()
     rel_idx = 0
-    for r,t,urn,e in my_graph.edges.data(keys=True):
+    for r,t,urn,e in resnet.edges.data(keys=True):
         psrel = e['relation']
         if isinstance(psrel,PSRelation):
-            regulator = my_graph._get_node(r)
-            target = my_graph._get_node(t)
+            regulator = resnet._get_node(r)
+            target = resnet._get_node(t)
 
             active_regulator_idx,repressed_regulator_idx,node_pd = node_idx(regulator,node_pd)
             active_target_idx,repressed_target_idx,node_pd = node_idx(target,node_pd)
@@ -113,10 +111,10 @@ def resnet2tfg(resnet:ResnetGraph):
                     if reltype == 'ClinicalTrial':
                         train_edge_rows += my_rt_tup
                     elif reltype == 'Regulation':
-                        test_edge_rows += my_rt_tup
-                    else:
-                        assert(reltype == 'EdgeNotExist')
-                        test_neg_edge_rows += my_rt_tup
+                        if effect_sign < 0:
+                            test_edge_rows += my_rt_tup
+                        elif effect_sign > 0:
+                            test_neg_edge_rows += my_rt_tup
 
             rel_idx += 1
     
@@ -153,8 +151,8 @@ and {graph.num_edges} edges')
     print (f'Training graph contains {train_graph.num_nodes} nodes with {train_graph.num_features} features,\
 and {train_graph.num_edges} ClinicalTrial edges from Resnet')
     
-    print (f'Dataset has {len(set(test_edge_index[1]))/2} diseases for postive test. These diseases are linked to drug by Regulation in Resnet')
-    print (f'Dataset has {len(set(test_neg_edge_index[1]))/2} diseases for negative test. These diseases are not liked to drug in Resnet.')
+    print (f'Dataset has {len(set(test_edge_index[1]))/2} diseases for postive test. These diseases are linked to drug by negative Regulation in Resnet.\n')
+    print (f'Dataset has {len(set(test_neg_edge_index[1]))/2} diseases for negative test. These diseases are linked to drug by positive Regulation in Resnet.\n')
     
     return graph, train_graph, test_edge_index, test_neg_edge_index
 
