@@ -1,8 +1,9 @@
 import pandas as pd
+import numpy as np
 from numpy import NaN
 from pandas.api.types import is_numeric_dtype
 from pandas import ExcelWriter as ExcelWriter
-import rdfpandas
+import rdfpandas,xlsxwriter
 from ..ResnetAPI.NetworkxObjects import PSObject
 import string
 from openpyxl import load_workbook
@@ -12,10 +13,6 @@ from pandas.api.types import is_string_dtype,is_numeric_dtype
 MIN_COLUMN_WIDTH = 0.65 # in inches
 NUMBER_OF_REFERENCE = 'Number of references'
 
-def make_hyperlink(identifier:str,url:str,display_str=''):
-        # hyperlink in Excel does not work with long URLs, 
-        display_str = display_str if display_str else identifier
-        return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
 
 class df(pd.DataFrame):
     pass
@@ -31,14 +28,23 @@ class df(pd.DataFrame):
     column2format = dict() # need to declare format dict explicitly to avoid pd.DataFrame warning
     conditional_frmt = dict()
     tab_format = dict()
+    _name_ = ''
+
 
     def __init__(self, *args, **kwargs):
-        df_name = kwargs.pop('name','')  
-        pd.DataFrame.__init__(self, *args, **kwargs)
-        self._name_ = df_name
+        dfname = kwargs.pop('name','')  
+        pd.DataFrame.__init__(self,*args, **kwargs)
+        self._name_ = dfname
         self.column2format = dict() # {column_index:{'font_color':'blue'}}
         self.conditional_frmt = dict() # {area:{conditional_format}}
         self.tab_format = dict()
+
+
+    @classmethod 
+    def from_pd(cls,d:pd.DataFrame,dfname=''):
+        new_df = cls(d)
+        new_df._name_ = dfname
+        return new_df
 
 
     def copy_format(self, from_df:'df'):
@@ -47,6 +53,33 @@ class df(pd.DataFrame):
         self.conditional_frmt = from_df.conditional_frmt
         self.tab_format = from_df.tab_format
 
+
+    def __copy_attrs(self,from_df:'df'):
+        self._name_ = from_df._name_
+        self.copy_format(from_df)
+
+
+    @classmethod
+    def copy_df(cls, other:'df',only_columns:list=[], rename2:dict=dict()) ->'df':
+        if only_columns:
+            newdf = df.from_pd(pd.DataFrame.from_records(other, columns=only_columns))
+            newdf.header_format = other.header_format
+            newdf.column2format = {k:v for k,v in other.column2format if k in only_columns}
+        else:
+            newdf = df.from_pd(other.copy(),other._name_)
+            newdf.copy_format(other)
+
+        if rename2:
+            newdf = df.from_pd(newdf.rename(columns=rename2),other._name_)
+        return newdf
+    
+
+    @staticmethod
+    def _hyperlink(identifier:str,url:str,display_str=''):
+        # hyperlink in Excel does not work with long URLs, 
+        display_str = display_str if display_str else identifier
+        return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
+    
 
     def add_format(self, from_df:'df'):
         self.header_format.update(from_df.header_format)
@@ -58,7 +91,7 @@ class df(pd.DataFrame):
         self.column2format = fmt
 
 
-    def add_column_format(self,column_name:str,fmt_property:str,fmt_value:str):
+    def add_column_format(self,column_name:str,fmt_property:str,fmt_value):
         try:
             self.column2format[column_name].update({fmt_property:fmt_value})
         except KeyError:
@@ -69,12 +102,7 @@ class df(pd.DataFrame):
         [self.add_column_format(column_name,'font_color','blue') for column_name in column_names]
 
 
-    def __copy_attrs(self,from_df:'df'):
-        self._name_ = from_df._name_
-        self.copy_format(from_df)
-
-
-    def inch_width(self,col:str or int):
+    def inch_width(self,col:str|int):
         my_column = col if isinstance(col,str) else str(self.columns[col])
         try:
             return self.column2format[my_column]['inch_width']
@@ -97,21 +125,6 @@ class df(pd.DataFrame):
 
 
     @classmethod
-    def copy_df(cls, other:'df',only_columns:list=[], rename2:dict=dict()) ->'df':
-        if only_columns:
-            newdf = df(pd.DataFrame.from_records(other, columns=only_columns))
-            newdf.header_format = other.header_format
-            newdf.column2format = {k:v for k,v in other.column2format if k in only_columns}
-        else:
-            newdf = df(other.copy())
-            newdf.__copy_attrs(other)
-
-        if rename2:
-            newdf = df(newdf.rename(columns=rename2))
-        return newdf
-
-
-    @classmethod
     def read(cls, *args, **kwargs):
         '''
         Input
@@ -130,43 +143,47 @@ class df(pd.DataFrame):
                     sheet = wb[kwargs['sheet_name']]  
                 except KeyError:
                     sheet_names = wb.get_sheet_names()
-                    sheet = wb[sheet_names[0]]
+                    sheet = wb[str(sheet_names[0])]
 
                 header_pos = kwargs.pop('header',0)
                 skiprows = kwargs.pop('skiprows',0)
-                _df = df(pd.DataFrame(sheet.values))
-                _df.columns = _df.iloc[header_pos].to_list()
-                _df = df(_df[header_pos+1+skiprows:])
-                _df._name_ = df_name if df_name else sheet
+                _dfname_ = df_name if df_name else sheet
+                _pd = pd.DataFrame(list(sheet.values))
+                _pd.columns = _pd.iloc[header_pos].to_list()
+                _df = df.from_pd(_pd[header_pos+1+skiprows:],str(_dfname_))
                 return _df
             try:
-                _df = df(pd.read_excel(*args, **kwargs))
-                _df._name_ = df_name
+                _df = df.from_pd(pd.read_excel(*args, **kwargs),df_name)
+               # _df._name_ = df_name
                 return _df
             except FileNotFoundError: 
-                raise FileNotFoundError
+                print(FileNotFoundError)
+                return df()
         elif extension in ('tsv','txt'):
             kwargs.pop('sheet_name','')
             kwargs.pop('read_formula',False)
             try:
                 my_kwargs = dict(kwargs)
                 my_kwargs['sep'] = '\t'
-                _df = df(pd.read_csv(*args,**my_kwargs))
-                _df._name_ = df_name
+                _df = df.from_pd(pd.DataFrame(pd.read_csv(*args,**my_kwargs)),df_name)
+                #_df._name_ = df_name
                 return _df
             except FileNotFoundError:
-                raise FileNotFoundError
+                print(FileNotFoundError)
+                return df()
         elif extension == ('csv'):
             kwargs.pop('sheet_name','')
             kwargs.pop('read_formula',False)
             try:
                 my_kwargs = dict(kwargs)
                 my_kwargs['sep'] = ','
-                _df = df(pd.read_csv(*args,sep=',', **my_kwargs))
-                _df._name_ = df_name
+                _df = df.from_pd(pd.concat(pd.read_csv(*args,sep=',', **my_kwargs),ignore_index=True),df_name)
+                #_df._name_ = df_name
                 return _df
             except FileNotFoundError:
-                raise FileNotFoundError
+                print(FileNotFoundError)
+                return df()
+        return df()
 
 
     def pandas2rdf(self, remap:dict):
@@ -177,7 +194,10 @@ class df(pd.DataFrame):
 
 
     def apply_and_concat(self, field, func, column_names):
-            return pd.concat((self,self[field].apply(lambda cell: pd.Series(func(field,cell),index=column_names))),axis=1)
+            merged_pd = pd.concat((self,self[field].apply(lambda cell: pd.Series(func(field,cell),index=column_names))),axis=1)
+            to_return = df.from_pd(merged_pd)
+            to_return.__copy_attrs(self)
+            return to_return
 
     #not yet tested
     def apply_and_concat2(self, concept_name, func, column_names):
@@ -186,31 +206,27 @@ class df(pd.DataFrame):
     @classmethod 
     def from_dict(cls, dic:dict,*args, **kwargs):
         df_name = kwargs.pop('name','')
-        new_pd = cls(pd.DataFrame.from_dict(dic,*args, **kwargs))
+        new_pd = cls.from_pd(pd.DataFrame.from_dict(dic,*args, **kwargs))
         new_pd._name_ = df_name
         return new_pd
 
 
     @classmethod 
-    def from_rows(cls, rows:set or list, header:list):
+    def from_rows(cls, rows:set|list, header:list):
+        '''
+        rows - list/set of lists/tuples
+        '''
         dic  = {i:list(row) for i,row in enumerate(rows)}
-        new_pd = cls(pd.DataFrame.from_dict(dic,orient='index',columns=header))
+        new_pd = cls.from_pd(pd.DataFrame.from_dict(dic,orient='index',columns=header))
         return new_pd
 
 
     @classmethod
     def from_dict2(cls,dic:dict, key_colname:str, value_colname:str)->'df':
         #new_df = cls(pd.DataFrame(columns=[key_colname,value_colname]))
-        new_df = df(pd.DataFrame.from_dict({key_colname:list(dic.keys()), value_colname:list(dic.values())}))
+        new_df = df.from_pd(pd.DataFrame.from_dict({key_colname:list(dic.keys()), value_colname:list(dic.values())}))
         return new_df
     
-
-    @classmethod 
-    def from_pd(cls, d:pd.DataFrame,df_name=''):
-        new_pd = cls(d)
-        new_pd._name_ = df_name
-        return new_pd
-
 
     def merge_dict(self, dict2add:dict, new_col:str, map2column:str, add_all=False, case_sensitive_match=False):
         '''
@@ -237,32 +253,33 @@ class df(pd.DataFrame):
     def append_df(self, other:'df'):
         merged_pd = pd.concat([self,other],ignore_index=True)
         merged_pd = merged_pd.reindex()
-        merged_df = df(merged_pd,name=self._name_)
+        merged_df = df.from_pd(merged_pd,dfname=self._name_)
         return merged_df
     
 
     @staticmethod
-    def concat_df(dfs:list, df_name=''):
+    def concat_df(dfs:list, dfname=''):
         merged_pd = pd.concat(dfs,ignore_index=True)
         merged_pd = merged_pd.reindex()
-        merged_df = df(merged_pd,name=df_name)
+        merged_df = df.from_pd(merged_pd,dfname=dfname)
         return merged_df
     
     
     def reindex_df(self):
         reindexed_pd = self.reindex()
-        reindexed_df = df(reindexed_pd,name=self._name_)
+        reindexed_df = df.from_pd(reindexed_pd,dfname=self._name_)
         reindexed_df.copy_format(self)
         return reindexed_df
 
 
-    def merge_df(self, *args, **kwargs):
+    def merge_df(self, df2merge:'df', **kwargs):
         '''
         Input
         -----
         right df = args[0]\n
         non pd.DataFrame kwargs: 'name','columns'\n
         "on" kwarg has to specify column in both self and right df
+        "how" - {"left", "right", "outer", "inner", "cross"}, default "inner"
 
         Return
         ------
@@ -271,31 +288,32 @@ class df(pd.DataFrame):
         Format of "self" takes precedent
         '''
         df_name = kwargs.pop('name',self._name_)
-        columns2copy = kwargs.pop('columns',[])
+        columns2copy = list(kwargs.pop('columns',[]))
         merge_on_column = kwargs.get('on')
-        my_args = list(args)
         if columns2copy:
             columns2copy.append(merge_on_column)
-            copy_df = df.from_pd(args[0][columns2copy])
-            copy_df.copy_format(from_df=my_args[0])
-            my_args[0] = copy_df
+            copy_df = df.from_pd(df2merge[columns2copy])
+            copy_df.copy_format(from_df=df2merge)
+            my_df2merge = copy_df
+        else:
+            my_df2merge = df2merge
 
-        merged_pd = df(self.merge(*my_args, **kwargs),name=df_name)
-        merged_pd.add_format(from_df=args[0])
-        merged_pd.add_format(from_df=self)
-        return merged_pd
+        merged_df = df.from_pd(self.merge(my_df2merge, **kwargs),dfname=df_name)
+        merged_df.add_format(from_df=df2merge)
+        merged_df.add_format(from_df=self)
+        return merged_df
 
 
     @classmethod
-    def psobj2pd(cls,obj:PSObject,key_colname:str,value_colname:str,df_name=str()):
+    def psobj2df(cls,obj:PSObject,key_colname:str,value_colname:str,dfname=str()):
         key_col = list()
         value_col = list()
         for k,v_list in obj.items():
             key_col += [k]*len(v_list)
             value_col += v_list
-            
-        new_df = cls(pd.DataFrame(columns=[key_colname,value_colname]))
-        new_df = df(pd.DataFrame.from_dict({key_colname:key_col,value_colname:value_col}),name=df_name)
+        
+        new_df = cls.from_dict({key_colname:key_col,value_colname:value_col})
+        new_df._name_= dfname
         return new_df
 
 
@@ -315,9 +333,9 @@ class df(pd.DataFrame):
             in2pd =  in2pd.merge_dict(merge_dict,new_col,map2column,add_all)
             in2pd[map2column] = self[map2column]
         else:          
-            obj_df = df.psobj2pd(obj,map2column,new_col)
+            obj_df = df.psobj2df(obj,map2column,new_col)
             how = 'outer' if add_all else 'left'
-            in2pd = in2pd.merge_df(obj_df,how, on=map2column)
+            in2pd = in2pd.merge_df(obj_df,how=how,on=map2column)
         
         in2pd.__copy_attrs(self)
         return in2pd
@@ -338,9 +356,10 @@ class df(pd.DataFrame):
         with open(dump_fname, 'w') as jsonout:
             self.reset_index(inplace=True)
             jsonout.write(self.to_json(None,indent=2, orient='index'))
-
+   
 
     def __worksheet_area4(self, first_col:str,last_col:str,first_row=2,last_row=0):
+        # only area in the dformat A1:Z100 works as argument in conditional format()
         first_col_idx = self.columns.to_list().index(first_col)
         last_col_idx = self.columns.to_list().index(last_col)
 
@@ -356,8 +375,9 @@ class df(pd.DataFrame):
         return area
 
     
-    def set_conditional_frmt(self,conditional_format:dict, for_first_col:str,and_last_col:str,for_first_row=2,and_last_row=0):
-        area = self.__worksheet_area4(for_first_col,and_last_col,for_first_row,and_last_row)
+    def set_conditional_frmt(self,conditional_format:dict, for_first_col:str,and_last_col:str,for_first_row=1,and_last_row=0):
+        lr = and_last_row if and_last_row else len(self)+1
+        area = self.__worksheet_area4(for_first_col,and_last_col,for_first_row,lr)
         self.conditional_frmt[area] = conditional_format
 
 
@@ -385,15 +405,17 @@ class df(pd.DataFrame):
         other format parameters are at https://xlsxwriter.readthedocs.io/format.html
         '''
         self.to_excel(writer, sheet_name=sheet_name, startrow=1, header=False, index=False, float_format='%g')
-        workbook  = writer.book
-        worksheet = writer.sheets[sheet_name]
+        assert isinstance(writer.book,xlsxwriter.workbook.Workbook)
 
+        my_worksheet = writer.sheets[sheet_name]
+        assert isinstance(my_worksheet,xlsxwriter.workbook.Worksheet)
         # writing header
         header_height = self.header_format.pop('height',15)
-        format = workbook.add_format(self.header_format)
-        worksheet.set_row(0,header_height,format)
+        
+        format = writer.book.add_format(self.header_format)
+        my_worksheet.set_row(0,header_height,format)
         for col_num, value in enumerate(self.columns.values):
-            worksheet.write(0, col_num, value,format)
+            writer.sheets[sheet_name].write(0, col_num, value,format)
 
         # formating columns
         for idx, column_name in enumerate(self.columns.to_list()):
@@ -401,21 +423,22 @@ class df(pd.DataFrame):
                 col_fmt_dic = dict(self.column2format[column_name])
                 width = col_fmt_dic.pop('width', 20)
                 wrap = col_fmt_dic.pop('wrap_text', False)
-                inch_width = col_fmt_dic.pop('inch_width', 1)
-                column_format = workbook.add_format(col_fmt_dic)
+                col_fmt_dic.pop('inch_width', 1)
+                column_format = writer.book.add_format(col_fmt_dic)
                 if wrap:
                     column_format.set_text_wrap()
-                worksheet.set_column(idx, idx, width, column_format)
-                # set_column(first_col, last_col, width, cell_format, options)
+                my_worksheet.set_column(idx, idx, width, column_format)
             except KeyError:
                 continue
 
         for area, fmt in self.conditional_frmt.items():
-            worksheet.conditional_format(area, fmt)
+            #_1row,_1col,last_row,last_col = list(area)
+            #my_worksheet.conditional_format(_1row,_1col,last_row,last_col,fmt)
+            my_worksheet.conditional_format(area, fmt) # only area in format A1:Z100 works here
 
         try:
             tab_color = self.tab_format['tab_color']
-            worksheet.set_tab_color(tab_color)
+            my_worksheet.set_tab_color(tab_color)
         except KeyError:
             pass
 
@@ -424,13 +447,13 @@ class df(pd.DataFrame):
         clean_pd = self.dropna(how='all',subset=None)
         clean_pd = clean_pd.drop_duplicates()
         clean_pd = clean_pd.fillna('')
-        clean_df = df(clean_pd, name=self._name_)
+        clean_df = df.from_pd(clean_pd, dfname=self._name_)
         clean_df.copy_format(self)
         return clean_df
 
 
     def filter_by(self,values:list, in_column:str):
-        return df(self[self[in_column].isin(values)])
+        return df.from_pd(self[self[in_column].isin(values)])
 
 
     def greater_than(self, value:float, in_column:str):
@@ -442,7 +465,7 @@ class df(pd.DataFrame):
     
     
     def smaller_than(self, value:float, in_column:str):
-        return df(self[self[in_column] < value])
+        return df.from_pd(self[self[in_column] < value])
 
 
     def drop_empty_columns(self, max_abs=0.00000000000000001, subset=list()):
@@ -450,7 +473,7 @@ class df(pd.DataFrame):
         my_numeric_columns = subset if subset else [x for x in my_columns if is_numeric_dtype(self[x])]
         no_value_cols = list()
         [no_value_cols.append(col) for col in my_numeric_columns if abs(self[col].max()) < max_abs]
-        no_empty_cols = df(self.drop(columns = no_value_cols),name=self._name_)
+        no_empty_cols = df.from_pd(self.drop(columns = no_value_cols),dfname=self._name_)
         no_empty_cols.copy_format(self)
         print('%s columns were dropped  because they have all values = 0' % no_value_cols)
         return no_empty_cols
@@ -516,18 +539,18 @@ class df(pd.DataFrame):
 
     def sort_columns_by_list(self,only_columns:list):
         my_columns = [c for c in only_columns if c in self.columns]
-        new_df = df(self[my_columns])
+        new_df = df.from_pd(self[my_columns])
         new_df.copy_format(self)
         return new_df
 
 
-    def clean4doc(self,max_row:int=None,only_columns=[],ref_limit=dict(), as_str=True):    
+    def clean4doc(self,max_row=int(),only_columns=[],ref_limit=dict(), as_str=True):    
         clean_df = self.sort_columns_by_list(only_columns) if only_columns else df.copy_df(self)
         clean_df.dropna(how='all',subset=None,inplace=True)
         clean_df.drop_duplicates(inplace=True)
         clean_df.fillna('', inplace=True)
 
-        if max_row: clean_df = df(clean_df.head(max_row))
+        if max_row: clean_df = df.from_pd(clean_df.head(max_row))
 
         if ref_limit:
             for col_name, cutoff in ref_limit.items():
@@ -587,7 +610,7 @@ class df(pd.DataFrame):
 
 
     def remove_rows_by(self, values:list, in_column:str):
-        clean_df = df(self[~self[in_column].isin(values)])
+        clean_df = df.from_pd(self[~self[in_column].isin(values)])
         clean_df.__copy_attrs(self)
         return clean_df
 
@@ -640,18 +663,18 @@ class df(pd.DataFrame):
                 return new_value
             elif how2replace == 'merge':
                 if exist_value:
-                    return ';'.join(set(exist_value,new_value)) if new_value else exist_value
+                    return ';'.join({exist_value,new_value}) if new_value else exist_value
                 else:
-                    return new_value if new_value else NaN
+                    return new_value if new_value else np.NaN
             else:
                 # if how2replace='false' - do not replace
                 if exist_value:
                     return exist_value
                 else:
-                    return new_value if new_value else NaN
+                    return new_value if new_value else np.NaN
 
         copy_df = df.copy_df(self)
-        if copy2column not in copy_df.columns: copy_df[copy2column] = NaN
+        if copy2column not in copy_df.columns: copy_df[copy2column] = np.NaN
         copy_df[copy2column] = copy_df.apply(__my_value, axis=1)
         return copy_df
 
@@ -661,4 +684,35 @@ class df(pd.DataFrame):
         copy_df.copy_format(self)
         copy_df._name_ = self._name_
         return copy_df
+    
+
+    def l2norm(self,columns:list|dict=[]):
+        '''
+        Input
+        -----
+        columns = {column2normalize:column_with_normalization}
+        '''
+        my_cols = columns if columns else self.columns
+        copy_df = df.copy_df(self)
+        for col in my_cols:
+            if is_numeric_dtype(copy_df[col]):
+                vec = copy_df[[col]].to_numpy(float)
+                veclen =  np.sqrt(np.sum(vec**2))
+                new_col = my_cols[col] if isinstance(my_cols,dict) else col
+                copy_df[new_col] = vec / veclen
+        
+        return copy_df
+    
+
+    def split(self,num_parts:int):
+        split_dataframes = np.array_split(self, num_parts)
+        splits = list()
+        for d in split_dataframes:
+            part = df.from_pd(pd.DataFrame(d,columns=self.columns.to_list()))
+            part.__copy_attrs(self)
+            splits.append(part)
+        
+        return splits
+
+
 
