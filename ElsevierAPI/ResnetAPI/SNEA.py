@@ -1,6 +1,6 @@
 from .ResnetAPISession import time, math, NO_REL_PROPERTIES
 from .ResnetAPIcache import APIcache
-from .ResnetGraph import REFCOUNT, ResnetGraph, nx, EFFECT,NUMBER_OF_TARGETS,PROTEIN_TYPES
+from .ResnetGraph import REFCOUNT, ResnetGraph, nx, EFFECT,NUMBER_OF_TARGETS,PROTEIN_TYPES,execution_time
 from ..pandas.panda_tricks import df, ExcelWriter
 from .Drugs4Disease import Drugs4Targets
 from .Drugs4Disease import ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,RANK,DRUG2TARGET_REGULATOR_SCORE,PHARMAPENDIUM_ID
@@ -31,37 +31,39 @@ class SNEA(APIcache):
         connect2server - default True, set to False to run script using data in __pscache__ files instead of database
         '''
         my_kwargs = {
-            'data_dir':'',
             'no_mess':True,
             'sample_names':[],
             'sample_ids':[],
             'find_drugs':False,
             'connect2server':True,
+            'load_cache' : False
             #'limitDrugs2expression_regulators':True
             }
         my_kwargs.update(kwargs)
         session_kwargs, self.params = self.split_kwargs(my_kwargs)
 
-        APIconfig = dict(args[1]) if my_kwargs['connect2server'] else dict()
-        self.set_dir(my_kwargs['data_dir'])
+        #APIconfig = dict(args[1]) if my_kwargs['connect2server'] else dict()
         self.diffexp_pvalue_cutoff = self.params.pop('max_diffexp_pval',0.05)
         #self.limit2expr_regs = self.params.pop('limitDrugs2expression_regulators',True)
 
         self.__regulators__ = dict() # = {sample_name:[regulator_uids]}}
         self.__sample2drugs__ = dict() # = {sample_name:[PSObject]}} stores only drugs having negative activation score
         self.__my_psobjs__ = list()
-        
-        super().__init__(APIconfig,**my_kwargs)
-        self.PageSize = 1000
-        self.DumpFiles = []
+
+        self.experiment_dir = str(self.params.pop('experiment_dir',""))
+        if self.experiment_dir[-1:] != '/':
+            self.experiment_dir += '/'
+
         self.experiment = Experiment({'Name':[args[0]]})
         if my_kwargs['no_mess']:
             log_name = self.report_path('log')
             print('Runtime messages for SNEA initialization will be added to "%s"'%log_name)
             with open(log_name, 'a') as fout:
                 with redirect_stdout(fout):
-                    self.__load_data__(**my_kwargs)
+                   super().__init__(**my_kwargs)
+                   self.__load_data__(**my_kwargs)
         else:
+            super().__init__(**my_kwargs)
             self.__load_data__(**my_kwargs)
         
 
@@ -70,13 +72,13 @@ class SNEA(APIcache):
         if my_kwargs['connect2server']:
             with ThreadPoolExecutor(max_workers=4, thread_name_prefix='Initializing SNEA') as executor:
                 future1 = executor.submit(Experiment.download,experiment_name,self.APIconfig)
-                future2 = executor.submit(self.__load_network,PPERNET)
+                future2 = executor.submit(self.__load_network,PPERNET,**my_kwargs)
                 self.experiment = future1.result()
                 expression_network = future2.result()
         else:
             exp = Experiment.from_file(experiment_name,**my_kwargs)
-            expression_network = self.__load_network(PPERNET)
-            mapping_id_name = exp.identifier_name()
+            expression_network = self.__load_network(PPERNET,**my_kwargs)
+            mapping_id_name = str(exp.identifier_name())
             self.experiment = exp.map2(expression_network,mapping_id_name)
 
         if my_kwargs['find_drugs']:
@@ -87,17 +89,18 @@ class SNEA(APIcache):
                     'strict_mode' : False,
                     'clone': False,
                     'what2retrieve' : NO_REL_PROPERTIES,
-                    'cache_dir' : self.cache_dir
-                    }
+                    'data_dir' : 'D:/Python/ENTELLECT_API/ElsevierAPI/ResnetAPI/__pscache__/'
+                    }      
             
             dt_kwargs['connect2server'] = my_kwargs.get('connect2server',True)
+            dt_kwargs['load_cache'] = False
             if dt_kwargs['connect2server']:
-                self.dt = Drugs4Targets(self.APIconfig,dt_kwargs)
+                self.dt = Drugs4Targets(dt_kwargs)
             else:
                 self.dt = Drugs4Targets.from_files(**dt_kwargs)
             
             e = ThreadPoolExecutor(max_workers=4, thread_name_prefix='Reading drug-target network')
-            self.dt_future = e.submit(self.dt.dt_consist.load_cache)
+            self.dt_future = e.submit(self.dt.dt_consist._load_cache,'drug2target',**dt_kwargs)
 
         self.Graph.clear_resnetgraph() # in case graph was downloaded from database
         self.experiment = self.experiment.mask_by_pval(self.diffexp_pvalue_cutoff)
@@ -112,7 +115,7 @@ class SNEA(APIcache):
         
         self.subnet_pvalue_cutoff = 0.05
         self.min_subnet_size = 2
-          
+
     
     @classmethod
     def from_files(cls,path2experiment:str,**kwargs):
@@ -145,7 +148,7 @@ class SNEA(APIcache):
         return ACTIVATION_IN+sample.name()
 
 
-    def __load_network(self,network_name:str)->'ResnetGraph':
+    def __load_network(self,network_name:str, **kwargs)->'ResnetGraph':
         get_regulators = f'SELECT Entity WHERE objectType = ({PROTEIN_TYPES})'
         ent_props = ['Name','Ensembl ID'] # Ensembl ID to support DESeq2 output
 
@@ -153,8 +156,17 @@ class SNEA(APIcache):
         oql_query = f'SELECT Relation WHERE objectType = ({EXPRESSION}) \
             AND NeighborOf upstream ({get_targets}) AND NeighborOf downstream ({get_regulators})'
 
-        rel_props = ['URN',EFFECT,REFCOUNT]
-        return self.load_cache(network_name,[(oql_query,f'downloading {network_name}')],ent_props,rel_props)
+        get_regulators = f'SELECT Entity WHERE objectType = ({PROTEIN_TYPES})'
+        get_targets = f'SELECT Entity WHERE objectType = ({PROTEIN_TYPES})'
+        oql_query = f'SELECT Relation WHERE objectType = ({EXPRESSION}) \
+            AND NeighborOf upstream ({get_targets}) AND NeighborOf downstream ({get_regulators})'
+        
+        my_kwargs = dict(kwargs)
+        my_kwargs['oql_queries'] = [(oql_query,f'downloading {network_name}')]
+        my_kwargs['ent_props'] = ['Name','Ensembl ID'] # Ensembl ID to support DESeq2 output
+        my_kwargs['rel_props'] = ['URN',EFFECT,REFCOUNT]
+
+        return self._load_cache(network_name,**my_kwargs)
 
 
     def activity(self,_in:Sample,_4reg_uid:int,with_targets:list,according2:ResnetGraph):
@@ -239,7 +251,7 @@ class SNEA(APIcache):
                 nx.set_node_attributes(my_graph, {regulator_uid:{new_prop_name:prp_value}})
                 sample_regulator_uids.add(regulator_uid)
 
-        sample_time = self.execution_time(sample_start)
+        sample_time = execution_time(sample_start)
         print('Found %d regulators with pvalue < %.2f in %s'
                 % (len(sample_regulator_uids),self.subnet_pvalue_cutoff,sample_time),flush=True)
 
@@ -269,7 +281,7 @@ class SNEA(APIcache):
             sample_regulators_uids = self.__regulators4sample(sample,my_regulomes,my_graph,prefix4target_annotation)
             self.__regulators__[sample.name()] = sample_regulators_uids
 
-        print('SNEA execution time: %s' % self.execution_time(start_time))
+        print('SNEA execution time: %s' % execution_time(start_time))
         return
     
 
@@ -384,7 +396,7 @@ class SNEA(APIcache):
 
 
     def make_drugs_df(self):
-        self.dt.__targets__ = self.__regulators()
+        self.dt.__targets__ = set(self.__regulators())
         remove_targets_names = {'cytokine','inflammatory cytokine','anti-inflammatory cytokine','protein tyrosine kinase',
                           'mitogen-activated protein kinase kinase','mitogen-activated protein kinase','mixed lineage kinases',
                           'F-box domain'}
@@ -397,9 +409,9 @@ class SNEA(APIcache):
         [self.dt.__targets__.remove(o) for o in remove_targets]
         print(f'{before_len-len(self.dt.__targets__)} unwanted regulators were removed before finding drugs')
         # SNEA is run using RNEF files only no dbids required
-        mapped_targets_df = self.dt.load_df(self.dt.__targets__)
+        mapped_targets_df = self.dt.load_df(list(self.dt.__targets__))
         self.dt.columns2drop = [self.dt.__temp_id_col__,self.dt.__resnet_name__,self.dt.__mapped_by__]
-            
+
         self.dt_future.result()
         drugs_df = df(columns=['Name',PHARMAPENDIUM_ID])
         activation_scores_columns = self.__activity_columns()
@@ -477,12 +489,12 @@ class SNEA(APIcache):
 
 
     def report_path(self,extension:str):
-        return self.data_dir+self.experiment.name()+' SNEA.'+extension
+        return self.experiment_dir+self.experiment.name()+' SNEA.'+extension
 
 
     def report(self,to_file=''):
         self.activity_matrix.fillna('', inplace=True)
-        fout = self.data_dir+to_file+'.xlsx' if to_file else self.report_path('xlsx')
+        fout = self.experiment_dir +to_file+'.xlsx' if to_file else self.report_path('xlsx')
         writer = ExcelWriter(fout, engine='xlsxwriter')
         abs_scores = self.activity_matrix['Average activation score'].abs()
         max_abs = abs_scores.max()
@@ -498,7 +510,8 @@ class SNEA(APIcache):
                         'min_type': "num",
                         'max_type': "num"
                         }
-        self.activity_matrix.set_conditional_frmt(cond_format,'Average activation score','Average activation score')
+        self.activity_matrix.set_conditional_frmt(cond_format,
+                'Average activation score','Average activation score')
         self.activity_matrix.make_header_vertical()
         self.activity_matrix.df2excel(writer,'activity')
 

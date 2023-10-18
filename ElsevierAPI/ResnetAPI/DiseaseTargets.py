@@ -1,10 +1,10 @@
-from .ResnetGraph import PROTEIN_TYPES,EFFECT,PHYSICAL_INTERACTIONS,ResnetGraph,CLOSENESS
+from .ResnetGraph import PROTEIN_TYPES,EFFECT,PHYSICAL_INTERACTIONS,ResnetGraph,CLOSENESS,CHILDS
 from .NetworkxObjects import STATE, ACTIVATED,REPRESSED,UNKNOWN_STATE
 from .SemanticSearch import SemanticSearch,len,OQL
 from .ResnetAPISession import NO_REL_PROPERTIES,ONLY_REL_PROPERTIES,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,DBID
 from .FolderContent import FolderContent
 from concurrent.futures import ThreadPoolExecutor
-from ..pandas.panda_tricks import df
+from ..pandas.panda_tricks import df,NaN
 import time
 
 RANK_KNOWN_TARGETS = True
@@ -38,6 +38,8 @@ class DiseaseTargets(SemanticSearch):
         my_kwargs = {
                 'disease':[],
                 'what2retrieve':BIBLIO_PROPERTIES,
+                'ent_props' : ['Name', 'Class'], #'Class' is for target partners retrieval
+                'rel_props' : [EFFECT],
                 'strict_mode' : True,
                 'data_dir' : '',
                 'add_bibliography' : True,
@@ -46,17 +48,22 @@ class DiseaseTargets(SemanticSearch):
                 'pathway_folders' : ['Hypertension Pulmonary'],
                 'pathways' : []
             }
+        
+        entprops = kwargs.pop('ent_props',[])
+        relprops = kwargs.pop('rel_props',[])
+
         my_kwargs.update(kwargs)
         super().__init__(APIconfig,**my_kwargs)
-        self.add_rel_props([EFFECT])
-        self.entProps = ['Name', 'Class'] #'Class' is for target partners retrieval
+        self.add_ent_props(entprops)
+        self.add_rel_props(relprops)
+
         self.columns2drop += [self.__resnet_name__,self.__mapped_by__,'State in Disease']
         self.max_threads4ontology = 50
 
         self.input_diseases = list()
-        self.input_symptoms = set()
-        self.input_clinpars = set()
-        self.input_cellprocs = set()
+        self.input_symptoms = list()
+        self.input_clinpars = list()
+        self.input_cellprocs = list()
 
         self.__targets__ = set()
         self.GVs = list()
@@ -90,10 +97,15 @@ class DiseaseTargets(SemanticSearch):
         
 
     def set_input(self):
-        ontology_graph = self.child_graph(self.params['disease'],['Name','Alias'])
-        self.input_diseases = ontology_graph._get_nodes()
-        input_diseases_dbids = ResnetGraph.dbids(self.input_diseases)
-        self.find_disease_oql = OQL.get_objects(input_diseases_dbids)
+        my_session = self._clone_session()
+        my_session.add_ent_props(['Connectivity']) # Connectivity is needed for make_disease_df()
+        ontology_graph = my_session.child_graph(self.params['disease'],['Name','Alias'])
+        if isinstance(ontology_graph, ResnetGraph):
+            self.input_diseases = ontology_graph._psobjs_with('Disease','ObjTypeName') 
+            # filter by Disease is necessary because some proteins in monogenic disorders may have the same name as disease
+            input_diseases_dbids = ResnetGraph.dbids(self.input_diseases)
+            self.find_disease_oql = OQL.get_objects(input_diseases_dbids)
+        return
 
 
     def input_names(self):
@@ -102,9 +114,9 @@ class DiseaseTargets(SemanticSearch):
             return list(set([x['Name'][0] for x in self.input_diseases if x.has_value_in(prop2values)]))
         else:
             try:# case of SNEA drug_df
-                return self.params['sample']+' in '+ self.params['experiment']
+                return [self.params['sample']+' in '+ self.params['experiment']]
             except KeyError:
-                return 'Drugs'
+                return ['Drugs']
             
 
     def refcount_columns(self,counts_df=df(),column_prefix=''):
@@ -132,7 +144,7 @@ class DiseaseTargets(SemanticSearch):
     
 
     def _targets_dbids(self):
-        return ResnetGraph.dbids(self._targets())
+        return ResnetGraph.dbids(list(self._targets()))
 
     def __target_types_str(self):
         tar_types_str = ','.join(self.params['target_types'])
@@ -146,49 +158,40 @@ class DiseaseTargets(SemanticSearch):
         #oql_query = oql_query.format()
         request_name = f'Select GeneticVariants for {disease_names}'
         self.gv2diseases = self.process_oql(oql_query,request_name)
-        self.GVs = self.gv2diseases.psobjs_with(only_with_values=['GeneticVariant'])
-        GVdbids = ResnetGraph.dbids(self.GVs)
-        target_withGVs = list()
-
-        if GVdbids:
-            oql_query = f'SELECT Relation WHERE objectType = GeneticChange AND \
-                NeighborOf (SELECT Entity WHERE objectType = ({self.__target_types_str()})) AND NeighborOf ({OQL.get_objects(GVdbids)})'
-            request_name = f'Find targets with genetic variants linked to {disease_names}'
-
-            # avoid adding GeneticChange to self.Graph
-            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
-            gv2target = new_session.process_oql(oql_query,request_name)
-            self.gv2diseases = self.gv2diseases.compose(gv2target)
-
-            target_withGVs = gv2target.psobjs_with(only_with_values=PROTEIN_TYPES)
-            gv2dis_refs = self.gv2diseases.load_references()
-            print('Found %d targets with %d GeneticVariants for %s supported by %d references' % 
-                (len(target_withGVs), len(self.GVs), disease_names, len(gv2dis_refs)))
+        if isinstance(self.gv2diseases,ResnetGraph):
+            self.GVs = self.gv2diseases.psobjs_with(only_with_values=['GeneticVariant'])
         
-        return target_withGVs
+            GVdbids = ResnetGraph.dbids(self.GVs)
+            target_withGVs = list()
 
-    '''
-    def targets_from_cache(self):
-        oql = f'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE objectType = ({PROTEIN_TYPES})) AND NeighborOf (SELECT Entity WHERE objectType = Disease)'
-        name_dict = {'Name':self.params['disease']}
-        rank4simplifying = ['Regulation','Biomarker','StateChange','QuantitativeChange']
-        rel_props = self._what2retrieve(REFERENCE_IDENTIFIERS)
-        api_cache = APIcache()
-        prot2disease_graph = super().load_cache('prot2disease',[oql],['Class'],rel_props,name_dict,rank4simplifying)
-        self.Graph = prot2disease_graph.compose(self.Graph)
-        return prot2disease_graph
-    '''
+            if GVdbids:
+                oql_query = f'SELECT Relation WHERE objectType = GeneticChange AND \
+                    NeighborOf (SELECT Entity WHERE objectType = ({self.__target_types_str()})) AND NeighborOf ({OQL.get_objects(GVdbids)})'
+                request_name = f'Find targets with genetic variants linked to {disease_names}'
 
+                # avoid adding GeneticChange to self.Graph
+                new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
+                gv2target = new_session.process_oql(oql_query,request_name)
+                if isinstance(gv2target, ResnetGraph):
+                    self.gv2diseases = self.gv2diseases.compose(gv2target)
+                    target_withGVs = gv2target.psobjs_with(only_with_values=PROTEIN_TYPES)
+                    gv2dis_refs = self.gv2diseases.load_references()
+                    print('Found %d targets with %d GeneticVariants for %s supported by %d references' % 
+                        (len(target_withGVs), len(self.GVs), disease_names, len(gv2dis_refs)))
+        
+                    return target_withGVs
+        return ResnetGraph()
+
+ 
     def targets_from_db(self):
         req_name = f'Find targets linked to {self._disease2str()}'
         select_targets = f'SELECT Entity WHERE objectType = ({self.__target_types_str()})'
-        OQLquery = f'SELECT Relation WHERE NeighborOf({select_targets}) AND NeighborOf ({self.find_disease_oql})'      
+        OQLquery = f'SELECT Relation WHERE NeighborOf ({select_targets}) AND NeighborOf ({self.find_disease_oql})'      
         target_disease_graph = self.process_oql(OQLquery,req_name)
         return target_disease_graph
         
 
     def find_targets(self):
-        #target_disease_graph = self.targets_from_cache() if self.use_cache else self.targets_from_db()
         target_disease_graph = self.targets_from_db()
         self.__targets__ = set(target_disease_graph.psobjs_with(only_with_values=self.params['target_types']))
         target_refcount = target_disease_graph.load_references()
@@ -207,7 +210,7 @@ class DiseaseTargets(SemanticSearch):
             [disease_model_components.update(p.get_members(self.params['target_types'])) for p in all_pathways]
             self.__targets__.update(disease_model_components)
             before_add = self.Graph.number_of_nodes()
-            self.Graph.add_psobjs(list(disease_model_components))
+            self.Graph.add_psobjs(set(disease_model_components))
             print('Added %d targets from disease model' % (self.Graph.number_of_nodes()-before_add))
 
         if self.params['strict_mode']:
@@ -232,7 +235,7 @@ class DiseaseTargets(SemanticSearch):
             request_name = '\nLoading Clinical Parameters entities listed in script parameters'
             OQLquery = OQL.get_childs(self.params['clinical_parameters'],['Name'],include_parents=True)
             clinpar_graph = self.process_oql(OQLquery,request_name)
-            self.input_clinpars = set(clinpar_graph._psobjs_with('ClinicalParameter','ObjTypeName'))
+            self.input_clinpars = clinpar_graph._psobjs_with('ClinicalParameter','ObjTypeName')
             print('Found %d clinical parameters in ontology under %d "clinical parameters" in parameters' % 
                         (len(self.input_clinpars), len(self.params['clinical_parameters'])))
 
@@ -242,7 +245,7 @@ class DiseaseTargets(SemanticSearch):
             request_name = '\nLoading Cell Process entities listed in script parameters'
             OQLquery = OQL.get_childs(self.params['processes'],['Name'],include_parents=True)
             cellproc_graph = self.process_oql(OQLquery,request_name)
-            self.input_cellprocs = set(cellproc_graph._psobjs_with('CellProcess','ObjTypeName'))
+            self.input_cellprocs = cellproc_graph._psobjs_with('CellProcess','ObjTypeName')
             print('Found %d cell processes in ontology under %d "processes" in parameters' % 
                         (len(self.input_cellprocs), len(self.params['processes'])))
 
@@ -296,7 +299,9 @@ class DiseaseTargets(SemanticSearch):
             #opening new APIsession to avoid adding result graph to self.Graph
             new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
             request_name = f'Find ligands for {str(len(receptor_dbids))} receptors'
-            self.partner2targets = new_session.process_oql(ligands_oql,request_name)
+            p2t = new_session.process_oql(ligands_oql,request_name)
+            if isinstance(p2t,ResnetGraph):
+                self.partner2targets = p2t
             new_ligands = self.partner2targets._psobjs_with('Ligand','Class')
             print('Found %d additional ligands for %d receptors' % (len(new_ligands),len(receptor_dbids)))
         else:
@@ -314,9 +319,10 @@ class DiseaseTargets(SemanticSearch):
             #opening new APIsession to avoid adding result graph to self.Graph
             new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
             orphan_ligand_partners = new_session.process_oql(receptor_oql,request_name)
-            self.partner2targets.add_graph(orphan_ligand_partners)
-            new_receptors = orphan_ligand_partners._psobjs_with('Receptor','Class')
-            print('Found %d receptors for %d orphan ligands' % (len(new_receptors),len(orphan_ligands_dbids)))
+            if isinstance(orphan_ligand_partners,ResnetGraph):
+                self.partner2targets.add_graph(orphan_ligand_partners)
+                new_receptors = orphan_ligand_partners._psobjs_with('Receptor','Class')
+                print('Found %d receptors for %d orphan ligands' % (len(new_receptors),len(orphan_ligands_dbids)))
         
         if find_receptors:
             find_metabolites = OQL.get_childs(['mammal endogenous compounds and their derivatives'],['Name'])
@@ -324,9 +330,10 @@ class DiseaseTargets(SemanticSearch):
                 AND NeighborOf downstream ({find_metabolites}) AND NeighborOf upstream ({find_receptors}) AND RelationNumberOfReferences > 25'
             new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
             metabolite2receptors_graph = new_session.process_oql(metabolite_ligands_oql,'Find metabolite ligands')
-            self.partner2targets.add_graph(metabolite2receptors_graph)
-            metabolite_ligands = metabolite2receptors_graph._psobjs_with('SmallMol','ObjTypeName')
-            print('Found %d metabolite ligands for %d receptors' % (len(metabolite_ligands),len(receptor_dbids)))
+            if isinstance(metabolite2receptors_graph, ResnetGraph):
+                self.partner2targets.add_graph(metabolite2receptors_graph)
+                metabolite_ligands = metabolite2receptors_graph._psobjs_with('SmallMol','ObjTypeName')
+                print('Found %d metabolite ligands for %d receptors' % (len(metabolite_ligands),len(receptor_dbids)))
         
         find_metabolite_products = 'SELECT Relation WHERE objectType = (MolTransport, MolSynthesis,ChemicalReaction) \
 AND Effect = positive AND NeighborOf downstream (SELECT Entity WHERE id =({ids})) AND \
@@ -334,7 +341,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         req_name = f'Finding downstream metabolite products of targets for {self._disease2str()}'
         new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
 
-        metbolite_products_graph = new_session.iterate_oql(find_metabolite_products,self._targets_dbids(),request_name=req_name)
+        metbolite_products_graph = new_session.iterate_oql(find_metabolite_products,set(self._targets_dbids()),request_name=req_name)
         self.partner2targets.add_graph(metbolite_products_graph)
         metabolite_products = metbolite_products_graph._psobjs_with('SmallMol','ObjTypeName')
         print('Found %d metabolites produced by %d targets of %s' % (len(metabolite_products),len(self.__targets__),self._disease2str()))
@@ -427,8 +434,8 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         target_gvlinkcounter = 0
         for i in self.RefCountPandas.index:
             target_dbids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
-            row_targets = self.Graph.psobj_with_dbids(target_dbids)
-            targetGVs = self.gv2diseases.get_neighbors(row_targets, allowed_neigbors=self.GVs)
+            row_targets = self.Graph.psobj_with_dbids(set(target_dbids))
+            targetGVs = self.gv2diseases.get_neighbors(set(row_targets), allowed_neigbors=self.GVs)
                 
             GVscore = 0
             if targetGVs:
@@ -452,8 +459,8 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         elif len(negative_refs) > len(positive_refs):
             return REPRESSED
         else:
-            target_partners = set(self.partner2targets.get_neighbors(targets))
-            partners2disease_graph = self.Graph.get_subgraph(target_partners, self.input_diseases)
+            target_partners = set(self.partner2targets.get_neighbors(set(targets)))
+            partners2disease_graph = self.Graph.get_subgraph(list(target_partners), self.input_diseases)
             positive_refs, negative_refs = between_graph._effect_counts__()
             if len(positive_refs) > len(negative_refs):
                 return ACTIVATED
@@ -468,80 +475,117 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
                     return UNKNOWN_STATE
 
 
+    def make_disease_network(self):
+        print(f'Creating physical interaction network between targets of {self.input_names()} \
+              to calculate target closeness for "score_regulators" function')
+        my_session = self._clone_session(to_retrieve=NO_REL_PROPERTIES)
+        targets_dbid = ResnetGraph.dbids(list(self.__targets__))
+        disease_network = my_session.get_ppi(set(targets_dbid))
+        disease_network.name = f'{self._disease2str()} PPPI network'
+        return disease_network.make_simple(['DirectRegulation','ProtModification','Binding']) 
+
+
     def set_target_disease_state(self):
         print('\n\nCalculating targets state (activated/repressed) in %s' % self._disease2str())
-
         targets = set()
         for i in self.RefCountPandas.index:
             target_dbids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
-            row_targets = self.Graph.psobj_with_dbids(target_dbids)
+            row_targets = self.Graph.psobj_with_dbids(set(target_dbids))
             state = self.__vote4effect(row_targets)
-            self.RefCountPandas.at[i,'State in Disease'] = state
+            self.RefCountPandas.at[i,'State in Disease'] = int(state)
             if state != UNKNOWN_STATE:
                 [t.set_state(state) for t in row_targets]
                 targets.update(row_targets)
 
-        model = ResnetGraph()
+        self.disease_model = ResnetGraph()
         for pathway in self.disease_pathways.values():
-            model = model.compose(pathway.graph)
+            self.disease_model = self.disease_model.compose(pathway.graph)
 
-        if model and 'propogate_target_state_in_model' in self.params.keys():
+        if self.disease_model and 'propogate_target_state_in_model' in self.params.keys():
             uid2state = dict()
-            [uid2state.update(model.propagate_state(t)) for t in targets if t.uid() in model.nodes()]
+            [uid2state.update(self.disease_model.propagate_state(t)) for t in targets if t.uid() in self.disease_model.nodes()]
             for i in self.RefCountPandas.index:
                 if self.RefCountPandas.at[i,'State in Disease'] == UNKNOWN_STATE:
                     target_dbids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
-                    row_targets = self.Graph.psobj_with_dbids(target_dbids)
+                    row_targets = self.Graph.psobj_with_dbids(set(target_dbids))
                     row_state = UNKNOWN_STATE
                     for t in row_targets:
-                        try: 
+                        try:
                             t_state = uid2state[t.uid()]
                             row_state += t_state
                         except KeyError:
                             continue
                     self.RefCountPandas.at[i,'State in Disease'] = row_state
 
-        # determining disease state of the targets from disease model pathways
-        # by finding their regulatory effect on targets linked to disease
-        model_dbid2uid = model.dbid2uid()
-        def __disease_state_from_model():
-            activ_targets_pd = self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == ACTIVATED)]
-            #activated_targets_dbid2uid = model.dbid2uid(self._all_dbids(activ_targets_pd))
-            activated_targets = model.psobj_with_dbids(self._all_dbids(activ_targets_pd))
-            inhib_targets_pd = self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == REPRESSED)]
-            inhibited_trgts = model.psobj_with_dbids(self._all_dbids(inhib_targets_pd))
-            #inhibited_trgts_dbid2uid = model.dbid2uid(self._all_dbids(inhib_targets_pd))
+            # determining disease state of the targets from disease model pathways
+            # by finding their regulatory effect on targets linked to disease
+            model_dbid2uid = self.disease_model.dbid2uid()
+            def __disease_state_from_model():
+                activ_targets_pd = self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == ACTIVATED)]
+                #activated_targets_dbid2uid = model.dbid2uid(self._all_dbids(activ_targets_pd))
+                activated_targets = self.disease_model.psobj_with_dbids(self._all_dbids(activ_targets_pd))
+                inhib_targets_pd = self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == REPRESSED)]
+                inhibited_trgts = self.disease_model.psobj_with_dbids(self._all_dbids(inhib_targets_pd))
+                #inhibited_trgts_dbid2uid = model.dbid2uid(self._all_dbids(inhib_targets_pd))
 
-            new_regulators_count = 0
-            for idx in self.RefCountPandas.index:
-                if self.RefCountPandas.at[idx,'State in Disease'] == UNKNOWN_STATE:
-                    net_effect = 0
-                    for target_dbid in self.RefCountPandas.at[idx,self.__temp_id_col__]:
-                        try:
-                            target_uid = model_dbid2uid[target_dbid]
-                            target = model._get_node(target_uid)
-                            activates_activated_targets,inhibits_activated_targets = model.net_regulator_effect(target,activated_targets)
-                            activates_inhibited_targets,inhibits_inhibited_targets = model.net_regulator_effect(target,inhibited_trgts)
-                            net_effect += len(activates_activated_targets)+len(inhibits_inhibited_targets)-len(inhibits_activated_targets)-len(activates_inhibited_targets)
-                        except KeyError:
-                            continue
+                new_regulators_count = 0
+                for idx in self.RefCountPandas.index:
+                    if self.RefCountPandas.at[idx,'State in Disease'] == UNKNOWN_STATE:
+                        net_effect = 0
+                        for target_dbid in self.RefCountPandas.at[idx,self.__temp_id_col__]:
+                            try:
+                                target_uid = model_dbid2uid[target_dbid]
+                                target = self.disease_model._get_node(target_uid)
+                                activates_activated_targets,inhibits_activated_targets = self.disease_model.net_regulator_effect(target,activated_targets)
+                                activates_inhibited_targets,inhibits_inhibited_targets = self.disease_model.net_regulator_effect(target,inhibited_trgts)
+                                net_effect += len(activates_activated_targets)+len(inhibits_inhibited_targets)-len(inhibits_activated_targets)-len(activates_inhibited_targets)
+                            except KeyError:
+                                continue
 
-                    if net_effect > 0:
-                        self.RefCountPandas.at[idx,'State in Disease'] = ACTIVATED
-                        new_regulators_count += 1
-                    elif net_effect < 0:
-                        self.RefCountPandas.at[idx,'State in Disease'] = REPRESSED
-                        new_regulators_count += 1
-                        
-            return new_regulators_count
-        
-        new_regulators_count = __disease_state_from_model()
-        while new_regulators_count:
-           new_regulators_count =  __disease_state_from_model()
+                        if net_effect > 0:
+                            self.RefCountPandas.at[idx,'State in Disease'] = ACTIVATED
+                            new_regulators_count += 1
+                        elif net_effect < 0:
+                            self.RefCountPandas.at[idx,'State in Disease'] = REPRESSED
+                            new_regulators_count += 1
+                            
+                return new_regulators_count
+            
+            new_regulators_count = __disease_state_from_model()
+            while new_regulators_count:
+                new_regulators_count =  __disease_state_from_model()
+            return
         return
 
-
     def score_partners(self):
+        print(f'\n\nFinding semantic references supporting links between target partners and {self._disease2str()}')
+        my_df = df.copy_df(self.RefCountPandas)
+        partners_dbids = list()
+        partner_names = list()
+        target_names = list()
+        for i in my_df.index:
+            target_dbids = list(my_df.at[i,self.__temp_id_col__])
+            targets_in_row = self.Graph.psobjs_with([DBID],target_dbids)
+            # all_targets may include not linked to input_diseases of targets linked that are children of linked targets
+            target_partners = set(self.partner2targets.get_neighbors(set(targets_in_row)))
+            names = [n.name() for n in target_partners]
+            partner_names.append(','.join(names))
+            target_names.append(my_df.at[i,'Name'])
+            if target_partners:
+                target_partners_dbids = ResnetGraph.dbids(list(target_partners))
+                partners_dbids.append(tuple(target_partners_dbids))
+            else:
+                partners_dbids.append(tuple([0])) # adding fake dbid for link2concept to work
+
+        partners_df = df.from_dict({'Name':target_names,self.__temp_id_col__:partners_dbids,'Target partners':partner_names})
+        how2connect = self.set_how2connect([],[],'')
+        colname = 'target partners'
+        linked_row_count,linked_entity_ids,partners_df = self.link2concept(colname,self.input_diseases,partners_df,how2connect)
+        print('%d targets have partners linked to %s' % (linked_row_count,self._disease2str()))
+        return df.from_pd(partners_df.drop(columns=[self.__temp_id_col__]))
+
+
+    def score_partnersOLD(self):
         print('\n\nFinding semantic references supporting links between target partners and %s'%
                  self._disease2str())
         temp_targetdbid_col = 'target_dbids'
@@ -550,9 +594,9 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             target_dbids = list(self.RefCountPandas.at[i,temp_targetdbid_col])
             targets_in_row = self.Graph.psobjs_with([DBID],target_dbids)
             # all_targets may include not linked to input_diseases of targets linked that are children of linked targets
-            target_partners = set(self.partner2targets.get_neighbors(targets_in_row))
+            target_partners = set(self.partner2targets.get_neighbors(set(targets_in_row)))
             if target_partners:
-                target_partners_dbids = ResnetGraph.dbids(target_partners)
+                target_partners_dbids = ResnetGraph.dbids(list(target_partners))
                 self.RefCountPandas.at[i,self.__temp_id_col__] = tuple(target_partners_dbids)
             else:
                 self.RefCountPandas.at[i,self.__temp_id_col__] = tuple([0]) # fake dbid
@@ -571,8 +615,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
     def score_regulators(self):
         print('\n\nScoring regulators by distance to components of disease pathways',flush=True)
         print('Retrieving regulatory network between targets and components of disease pathway')
-        regulation_graph = ResnetGraph()
-        [regulation_graph.add_graph(p.graph) for p in self.disease_pathways.values()]
+        regulation_graph = self.disease_model if self.disease_model else self.make_disease_network()
         disease_pathway_component_dbids = set(regulation_graph.dbids4nodes())
 
         connected_nodes_dbids = disease_pathway_component_dbids
@@ -608,32 +651,11 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
                     continue
             self.RefCountPandas.at[i,PATHWAY_REGULATOR_SCORE] = target_regulator_score
 
-    def __closeness(self):
-        add_closseness = self.params.get('add_closeness',False)
-        if add_closseness:
-            my_session = self._clone_session(to_retrieve=NO_REL_PROPERTIES)
-            targets_dbid = ResnetGraph.dbids(self.__targets__)
-            disease_network = my_session.get_ppi(set(targets_dbid))
-            disease_network.name = f'{self._disease2str()} PPI network'
-            disease_network = disease_network.make_simple(['DirectRegulation','ProtModification','Binding'])  
-            uid2closeness = disease_network.closeness()
-            closeness_dic = {disease_network._get_node(uid).name():v[0] for uid,v in uid2closeness.items()}
-            my_session.close_connection()
-            return closeness_dic
-        else:
-            return dict()
-
-
-    def add_closeness(self, to_df:df, dis_closeness:dict):
-        return_df = to_df.merge_dict(dis_closeness,CLOSENESS,'Name')
-        return_df[CLOSENESS] = return_df[CLOSENESS].round(3)
-        return return_df
-
 
     def score_target_semantics(self):
-        e = ThreadPoolExecutor(max_workers=4, thread_name_prefix='Disease network closeness')
-        self.closeness_future = e.submit(self.__closeness)
-        
+      #  do not multithread.  self.Graph will leak
+      # e = ThreadPoolExecutor(max_workers=1, thread_name_prefix='Target partners score')
+      #  partner_score_future = e.submit(self.score_partners)
         t_n = self._disease2str()
         self.score_GVs()
 
@@ -659,8 +681,6 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         linked_row_count = self.link2RefCountPandas(colname,self.input_diseases,how2connect)
         print('%d targets quantitatively changed in %s' % (linked_row_count,t_n))
 
-        self.score_partners()
-
         if self.input_symptoms:
             colname = 'symptoms for '+ t_n
             reltypes2connect = ['Regulation','QuantitativeChange','StateChange','Biomarker']
@@ -674,39 +694,36 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             linked_row_count = self.link2RefCountPandas(colname,self.input_clinpars,how2connect,REFERENCE_IDENTIFIERS)
             print('%d targets linked to clinical parameters for in %s' % (linked_row_count,t_n))
 
-        if self.disease_pathways:
-            self.score_regulators()
-
         if self.input_cellprocs:
             colname = 'Cell processes affected by '+ t_n
             how2connect = self.set_how2connect(['Regulation'],[],'',['FunctionalAssociation'])
             linked_row_count = self.link2RefCountPandas(colname,self.input_cellprocs,how2connect,REFERENCE_IDENTIFIERS)
             print('%d targets linked to cell processes for %s' % (linked_row_count,t_n))
 
-      #  dis_closeness_dic = closeness_future.result()
-      #  if dis_closeness_dic:
-      #      self.RefCountPandas = self.RefCountPandas.merge_dict(dis_closeness_dic,CLOSENESS,'Name')
-      #      self.RefCountPandas[CLOSENESS] = self.RefCountPandas[CLOSENESS].round(3)
+        #partners_df = partner_score_future.result()
+        partners_df = self.score_partners()
+        self.RefCountPandas = self.RefCountPandas.merge_df(partners_df,on='Name')
+
 
         ################## SPLITTING RefCountPandas to score agonists and antagonists differently #####################
         activ_targets_df = df.from_pd(self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] > UNKNOWN_STATE)])
         inhib_targets_df = df.from_pd(self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] < UNKNOWN_STATE)])
         unk_targets_df = df.from_pd(self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == UNKNOWN_STATE)])
 
+        all_compounds = set()
         if hasattr(self, 'drugs_linked2disease'):
-            all_compounds = set()
             # drug-target relations are not added to self.Graph to exclude them from bibliography
             colname = 'drugs for '+t_n
             how2connect = self.set_how2connect(['DirectRegulation'],['negative'],'',['Binding','Expression','Regulation'])
             print ('\n\nLinking with Effect negative drugs for "%s" to targets activated in "%s"' % (t_n,t_n))
             was_linked,linked_entities,activ_targets_df = self.link2concept(
-                colname,self.drugs_linked2disease,activ_targets_df,how2connect,REFERENCE_IDENTIFIERS)
+                colname,list(self.drugs_linked2disease),activ_targets_df,how2connect,REFERENCE_IDENTIFIERS)
             print('Linked %d targets to drugs for "%s"' % (was_linked,t_n))
         
             how2connect = self.set_how2connect(['DirectRegulation'],['positive'],'',['Binding','Expression','Regulation'])
             print ('\n\nLinking with Effect positive drugs for "%s" to targets inhibiting "%s"' % (t_n,t_n))
             was_linked,linked_entities,inhib_targets_df = self.link2concept(
-                colname,self.drugs_linked2disease,inhib_targets_df,how2connect,REFERENCE_IDENTIFIERS)
+                colname,list(self.drugs_linked2disease),inhib_targets_df,how2connect,REFERENCE_IDENTIFIERS)
             print('Linked %d targets to drugs for "%s"' % (was_linked,t_n))
             all_compounds.update(self.drugs_linked2disease)
 
@@ -730,12 +747,9 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             print ('\n\nLinking compounds modulating "%s" to targets with unknown state in "%s"' % (t_n,t_n))
             how2connect = self.set_how2connect(['DirectRegulation'],[],'',['Binding','Expression','Regulation'])
             was_linked,linked_entities,unk_targets_df = self.link2concept(
-                colname,all_compounds,unk_targets_df,how2connect,REFERENCE_IDENTIFIERS)
+                colname,list(all_compounds),unk_targets_df,how2connect,REFERENCE_IDENTIFIERS)
             print('Linked %d targets to inducers for %s' % (was_linked,t_n))
 
-    #    activ_targets_df = self.__add_closeness(activ_targets_df)
-    #    inhib_targets_df = self.__add_closeness(inhib_targets_df)
-    #    unk_targets_df = self.__add_closeness(unk_targets_df)
 
         uptarget_df = self.make_count_df(activ_targets_df,DF4ANTAGONISTS)
         self.add2raw(uptarget_df)
@@ -754,7 +768,6 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         self.normalize(DF4UNKNOWN,UNKNOWN_TARGETS_WS)
         
 
-
     def add_etm_bibliography(self):
         '''
         Adds
@@ -770,7 +783,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
 
 
     def add_ps_bibliography(self):
-        input_disease_graph = self.Graph.neighborhood(self.input_diseases)
+        input_disease_graph = self.Graph.neighborhood(set(self.input_diseases))
         super().add_ps_bibliography(from_graph=input_disease_graph)
 
 
@@ -780,7 +793,22 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         self.add_entity_annotation(_2column,self.report_pandas[UNKNOWN_TARGETS_WS])
 
 
-    def make_report(self,no_futures=False):
+    def input_disease_df(self):
+        rows = list()
+        for d in self.input_diseases:
+            d_childs = d.childs()
+            child_names = [c.name() for c in d_childs]
+            child_names_str = ','.join(child_names)
+            rows.append((d.name(),str(d['Connectivity'][0]),child_names_str,d.urn()))
+
+        input_df = df.from_rows(rows,header=['Name','Connectivity','Children','URN'])
+        input_df['Connectivity'] = input_df['Connectivity'].astype(int)
+        input_df = df.from_pd(input_df.sort_values(by='Connectivity',ascending=False))
+        input_df._name_ = 'Disease subtypes'
+        return input_df
+
+
+    def make_report(self):
         start_time = time.time()
         self.set_input()
         self.flush_dump_files()
@@ -800,12 +828,8 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         self.normalize_counts()
         self.add_ps_bibliography()
         self.add_target_annotation()
-
-        if no_futures:
-            closeness_dic = self.closeness_future.result()
-            self.RefCountPandas = self.add_closeness(self.RefCountPandas,closeness_dic)
+        self.add2report(self.input_disease_df())
     
         self.clear()
         print('Target ranking for %s was done in %s' % 
         (self._disease2str(), self.execution_time(start_time)[0]))
-        

@@ -54,11 +54,11 @@ class OQL:
                     print(
                         "if you know how to concatenate string variable with double quotes and string variable with single quote in Python please let us know.\n"
                         "Otherwise please remove values with white spaces from either your value list or property name list")
-                    return
+                    return str(), str()
             property_names = property_names + prop_name + ','
         property_names = property_names[:-1]
 
-        return property_names, values
+        return str(property_names), str(values)
 
 
     @staticmethod
@@ -129,10 +129,10 @@ class OQL:
 
         if include_parents:
             if not search_by_id:
-                return search_query+' OR '+entity_query
+                return str(search_query+' OR '+entity_query)
             else:
                 print('Cannot include parents into ontology query which uses database Id for searching')
-                return None
+                return str()
 
         return search_query
 

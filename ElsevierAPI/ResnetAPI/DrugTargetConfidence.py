@@ -17,7 +17,6 @@ class DrugTargetConsistency(APIcache):
     cache_rel_props = ['URN',EFFECT,REFCOUNT,CONSISTENCY,'pX','Affinity']
     drug_target_confidence = dict()
     debug = False
-    cache_was_modified = False
     predict_effect4 = {'_4enttypes':['SmallMol'],'_4reltypes':['Binding']}
 
 
@@ -25,36 +24,39 @@ class DrugTargetConsistency(APIcache):
         '''
         APIconfig - args[0]\nwhat2retrieve - defaults NO_REL_PROPERTIES, other options -\n
         [DATABASE_REFCOUNT_ONLY,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,SNIPPET_PROPERTIES,ONLY_REL_PROPERTIES,ALL_PROPERTIES]
-        connect2server - default True, set to False to run script using data in __pscache__ files instead of database
+        connec
+        t2server - default True, set to False to run script using data in __pscache__ files instead of database
         '''
-        #session_kwargs = dict(kwargs)
-        super().__init__(*args,**kwargs)
-        self.add_ent_props(self.cache_ent_props)
-        self.add_rel_props(self.cache_rel_props)
-
-
-    def load_cache(self):
         get_targets = f'SELECT Entity WHERE objectType = ({PROTEIN_TYPES})' # works without join to string!!!!
         get_drugs = OQL.select_drugs()
         oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'
-        
-        oql_queries = [(oql_query,'download drugs2targets regulatory network')]
-        oql_query = f'SELECT Relation WHERE objectType = Binding AND NeighborOf ({get_drugs}) AND NeighborOf ({get_targets})'
-        oql_queries.append((oql_query,'download drugs2targets binding network'))
+        qt = tuple([oql_query,'download drugs2targets regulatory network'])
+        oql_queries = [qt]
 
-        rank4simple = ['DirectRegulation','Binding','Regulation']
-        self.network = super().load_cache(self.cache_name,
-                                          oql_queries=oql_queries,
-                                          ent_props=self.cache_ent_props,
-                                          rel_props = self.cache_rel_props,
-                                          rank4simplifying=rank4simple,
-                                          predict_effect4=self.predict_effect4,
-                                          refprop2rel={'pX':'Affinity'},refprop_minmax=1)
+        oql_query1 = f'SELECT Relation WHERE objectType = Binding AND NeighborOf ({get_drugs}) AND NeighborOf ({get_targets})'
+        qt = tuple([oql_query1,'download drugs2targets binding network'])
+        oql_queries.append(qt)
 
-        return self.network
-    
+        my_kwargs = {
+            'cache_name': self.cache_name, # used for folder in self.data_dir and in RNEF dump name
+            'oql_queries':oql_queries, # [(oql_query,request_name),...] list of GOQL queries tuples for fetching data from database
+            'ent_props' : self.cache_ent_props, # entity props to fetch from database
+            'rel_props' : self.cache_rel_props, # relation props to fetch from database
+            'ranks4simplifying' : ['DirectRegulation','Binding','Regulation'], # parameter for making simple graph
+            'refprop2rel': {'pX':'Affinity'}, # {reference_propname:relation_propname} - moves refprops to relprops using PSRelation._refprop2rel()
+            'refprop_minmax':1, # parameter for PSRelation._refprop2rel(refprop2rel,refprop_minmax)
+            #if min_max < 0 assigns single value to relprop that is the minimum of all ref_prop values
+            #if min_max > 0 assigns single value to relprop that is the maximum of all ref_prop values
+            #min_max works only if ref_prop values are numerical
+            'predict_effect4' : self.predict_effect4, # [_4enttypes:list,_4reltypes:list] - parameters for ResnetGraph.predict_effect4()
+        }
 
-    def load_drug_graph(self,for_targets:set,limit2drugs:set={},directly_from_db=False):
+        my_kwargs.update(kwargs)
+        my_kwargs.pop('data_dir','') # this cache uses default __pscache__ directory
+        super().__init__(*args,**my_kwargs)
+
+
+    def load_drug_graph(self,for_targets:set,limit2drugs=set(),directly_from_db=False):
         '''
         Input
         -----
@@ -80,11 +82,11 @@ class DrugTargetConsistency(APIcache):
                     oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'
                     self.drugs2targets = self.iterate_oql(oql_query,target_names,request_name=rn)
             else:
-                self.load_cache()
+                self.network = self._load_cache(self.cache_name)
         
         assert(self.network)
         if limit2drugs:
-            self.drugs2targets = self.network.get_subgraph(limit2drugs,for_targets)
+            self.drugs2targets = self.network.get_subgraph(limit2drugs,list(for_targets))
         else:
             self.drugs2targets = self.network.neighborhood(for_targets)
 
@@ -118,7 +120,7 @@ class DrugTargetConsistency(APIcache):
                     id_type='Name')
         
         if drug2target2disease_graph:
-            d2t_sub = self.drugs2targets.get_subgraph(drugs_need_consistency,targets4drugs_need_consistency)
+            d2t_sub = self.drugs2targets.get_subgraph(list(drugs_need_consistency),list(targets4drugs_need_consistency))
             drug2target2disease_graph = drug2target2disease_graph.compose(d2t_sub)
             # re-annotating self.drug2target_network for caching CONSISTENCY after algorithm run
             update4consistency = dict() # {(drug_uid,target_uid,effect):consistency_coefficient}
@@ -127,6 +129,7 @@ class DrugTargetConsistency(APIcache):
                 update4consistency.update(drug_consistensies)
                    
             if update4consistency:
+                # update4consistency can be emty if drug-target pair dies not have common diseases linked with known Effect 
                 print(f'Additional consistency coefficients for {len(update4consistency)} drug-target pairs were calculated using data from database')
                 self.drug_target_confidence.update(update4consistency)
 
@@ -143,7 +146,7 @@ class DrugTargetConsistency(APIcache):
                             continue
                 
     
-    def load_confidence_dict(self,for_targets:set,limit2drugs:set={},load_fromdb=False): 
+    def load_confidence_dict(self,for_targets:set,limit2drugs=set(),load_fromdb=False): 
         '''
         Input
         -----
@@ -160,7 +163,7 @@ class DrugTargetConsistency(APIcache):
         # first loading consistency coefficients from cache
         dt_need_consistency = list() #[(PSObject,PSObject)]
         if load_fromdb:
-            for d,t,rel in self.drugs2targets.edges.data('relation'):
+            for d,t,rel in self.drugs2targets.edges.data():
                 drug = self.drugs2targets._psobj(d)
                 target = self.drugs2targets._psobj(t)
                 dt_need_consistency.append((drug,target))
@@ -168,14 +171,14 @@ class DrugTargetConsistency(APIcache):
             dt_with_consistency = 0
             drugs_have_consistency = set()
             targets_have_consistency = set()
-            for d,t,rel in self.drugs2targets.edges.data('relation'):
+            for d,t,rel in self.drugs2targets.edges.data():
                 drug = self.drugs2targets._psobj(d)
                 target = self.drugs2targets._psobj(t)
                 if drug.objtype() == 'SmallMol': # safeguard for Binding that has no direction and 
                     # will produce drug-target and target-drug pair in the Graph
-                    if rel.effect() != 'unknown': # safeguard for Binding with no effect that cannot have CONSISTENCY
+                    if rel['relation'].effect() != 'unknown': # safeguard for Binding with no effect that cannot have CONSISTENCY
                         try:
-                            consistensy = float(rel[CONSISTENCY][-1])
+                            consistensy = float(rel['relation'][CONSISTENCY][-1])
                             self.drug_target_confidence[(drug.uid(),target.uid(),rel.effect())] = consistensy
                             dt_with_consistency += 1
                             drugs_have_consistency.add(drug)
@@ -183,7 +186,8 @@ class DrugTargetConsistency(APIcache):
                         except KeyError:
                             dt_need_consistency.append((drug,target))
     
-        print(f'Found consistency coefficients for {dt_with_consistency} drug-target pairs ({len(drugs_have_consistency)} drugs, {len(targets_have_consistency)} targets) in "{self.cache_name}.rnef" file')
+            print(f'Found consistency coefficients for {dt_with_consistency} drug-target pairs ({len(drugs_have_consistency)} drugs, {len(targets_have_consistency)} targets) in "{self.cache_name}.rnef" file')
+        
         if dt_need_consistency:
             print(f'\n\n{len(dt_need_consistency)} drug-target pairs need consistency calculation')
             dt_need_consistency.sort(key=lambda x:self.drugs2targets.in_degree(x[1].uid()),reverse=True)
@@ -204,24 +208,12 @@ class DrugTargetConsistency(APIcache):
                 dt = dt_need_consistency[start:i]
                 self.annotate_network(dt,load_fromdb)
                 print(f'Calculated consistency coefficients for {i} out of {len(dt_need_consistency)} drug-target pairs\n')
+
+            return
         else:
             print(f'No drug-target pairs need consistency calculation.  All coefficients were found in {self.cache_name}')
-
-
-    def clear(self):
-        super().clear()
-        #self.drugs2targets.clear_resnetgraph()
-        self.network.clear_resnetgraph()
-
- 
-    def save_network(self):
-        example_node_name = 'aspirin'
-        self.example_node = self.network._psobjs_with(example_node_name)[0]
-        if self.cache_was_modified:
-            self.replace_cache(self.cache_name,self.network,self.cache_ent_props,self.cache_rel_props)
-        self.clear()
-        return
-        
+            return
+    
 
     def consistency_coefficient(self,for_drug:PSObject,acting_on_target:PSObject, with_effect:str):
         try:
@@ -256,13 +248,13 @@ class DrugTargetConsistency(APIcache):
         '''
         targets = list()
         diseases = list()
-        for r,t,rel in in_drug2diseases2target.edges(drug.uid(),data='relation'):
+        for r,t,rel in in_drug2diseases2target.edges(drug.uid(),data=True):
             target = in_drug2diseases2target._get_node(t)
             target_objtype = target.objtype()
             if target_objtype in ['Disease','Virus','CellProcess']:
                 diseases.append(target)
             elif target_objtype in PROTEIN_TYPES:
-                if CONSISTENCY not in rel.keys():
+                if CONSISTENCY not in rel['relation'].keys():
                     targets.append(target)
                 else:
                     continue

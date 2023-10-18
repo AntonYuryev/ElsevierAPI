@@ -58,7 +58,7 @@ class PSNetworx(DataModel):
 
     
     @staticmethod
-    def execution_time(execution_start,remaining_iterations=None,number_of_iterations=None):
+    def execution_time(execution_start,remaining_iterations=int(),number_of_iterations=int()):
         '''
         Input
         -----
@@ -66,7 +66,7 @@ class PSNetworx(DataModel):
         otherwise assumes "execution_start" is the start of the current iteration if "remaining_iterations" is supplied
         '''
         delta = time.time() - execution_start
-        if type(number_of_iterations) != type(None):
+        if number_of_iterations:
             passed_iterations = number_of_iterations-remaining_iterations
             if passed_iterations:
                 remaining_time = delta*float(remaining_iterations/passed_iterations)
@@ -147,16 +147,16 @@ class PSNetworx(DataModel):
                     else:
                         new_relations[rel_id].Nodes[REGULATORS].append(link)
 
-            try:
-                new_relations[rel_id].Nodes[TARGETS].sort(key=lambda x:x[0])
-                # sorting TARGETS by id for speed
-            except KeyError: pass
+                try:
+                    new_relations[rel_id].Nodes[TARGETS].sort(key=lambda x:x[0])
+                    # sorting TARGETS by id for speed
+                except KeyError: pass
 
-            try:
-                new_relations[rel_id].Nodes[REGULATORS].sort(key=lambda x:x[0])
-                # sorting REGULATORS by id for speed
-            except KeyError: pass
-            
+                try:
+                    new_relations[rel_id].Nodes[REGULATORS].sort(key=lambda x:x[0])
+                    # sorting REGULATORS by id for speed
+                except KeyError: pass
+                
             [new_graph.add_rel(rel,merge=False) for rel in new_relations.values()]
             
         if add2self:
@@ -186,7 +186,7 @@ class PSNetworx(DataModel):
             return self._load_graph(None, zeep_objects,add2self)
 
 
-    def _db_id_by_oql(self, oql_query: str):
+    def oql2dbids(self, oql_query:str):
         zeep_entities = self.get_data(oql_query, retrieve_props=['Name'], getLinks=False)
         if type(zeep_entities) != type(None):
             obj_ids = set([x['Id'] for x in zeep_entities.Objects.ObjectRef])
@@ -240,7 +240,11 @@ class PSNetworx(DataModel):
             return ResnetGraph()
 
 
-    def get_network(self, InteractorIdList:set, connect_by_rel_types:list=None, REL_PROPS:list=None, ENTITY_PROPS:list=None):
+    def get_network(self, InteractorIdList:set, connect_by_rel_types=list(), REL_PROPS=list(), ENTITY_PROPS=list()):
+        oql_template = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
+        if connect_by_rel_types:
+            oql_template += f' AND objectType = ({str(",".join(connect_by_rel_types))})'
+        
         splitter = list() #holds lists of ids splits 
         splitter.append(list(InteractorIdList))
         number_of_splits = int(math.log2(len(InteractorIdList)))
@@ -260,11 +264,7 @@ class PSNetworx(DataModel):
                 new_splitter.append(uq_list1)
                 new_splitter.append(uq_list2)
 
-            oql_query = 'SELECT Relation WHERE NeighborOf (SELECT Entity WHERE id = ({ids1})) AND NeighborOf (SELECT Entity WHERE id = ({ids2}))'
-            oql_query = oql_query.format(ids1=','.join(list(map(str,ids1))), ids2=','.join(list(map(str,ids2))))
-            if isinstance(connect_by_rel_types,list):
-                oql_query = oql_query +  'AND objectType = ({rel_types})'.format(rel_types=','.join(connect_by_rel_types))
-
+            oql_query = oql_template.format(ids1=','.join(list(map(str,ids1))), ids2=','.join(list(map(str,ids2))))
             network_iter = self.load_graph_from_oql(oql_query, REL_PROPS,ENTITY_PROPS)
             accumulate_network = nx.compose(accumulate_network, network_iter)
 
@@ -275,17 +275,17 @@ class PSNetworx(DataModel):
         return accumulate_network
     
     
-    def get_pathway_members(self, pathway_ids: list, search_pathways_by=None, only_entities=None,
+    def get_pathway_members(self, pathway_ids:list,search_pathways_by=['id'], only_entities=None,
                                with_properties=None):
         """
-        returns id2psobj {id:PSObject} of entities from pathways found by 'search_pathways_by' or from 'pathway_ids'
+        returns {dbid:PSObject} of entities from pathways found by 'search_pathways_by' or from 'pathway_ids'
         """
         if with_properties is None:
             with_properties = ['Name', 'Alias']
         if only_entities is None:
             only_entities = []
 
-        if search_pathways_by is None:
+        if search_pathways_by == 'id':
             oql_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE id = (' + ','.join(list(map(str,pathway_ids))) + '))'
         else:
             property_names, values = OQL.get_search_strings(search_pathways_by, pathway_ids)

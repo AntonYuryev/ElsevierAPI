@@ -8,7 +8,7 @@ import math
 
 from ..ETM_API.references import Reference, len
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
-from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR
+from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR,SENTENCE,TITLE
 
 
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
@@ -64,7 +64,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     
     def urn(self):
         try:
-            return self['URN'][0]
+            return str(self['URN'][0])
         except KeyError:
             raise KeyError
         
@@ -461,7 +461,7 @@ class PSRelation(PSObject):
 
         Return
         ------
-        new list of references [Reference]
+        new list of references [Reference].\nMerges refs from input to existing refs in self.RefDict if possible
         '''
         self.load_refdict()
         for r in references:
@@ -479,6 +479,13 @@ class PSRelation(PSObject):
                     self.RefDict[i] = r
 
         return self.__refDict2refs()
+
+
+    def replace_refs(self, newrefs:list):
+        newrel = PSRelation(self)
+        newrel.Nodes = dict(self.Nodes)
+        newrel._add_refs(newrefs)
+        return newrel
         
 
     def __load_refs(self):
@@ -512,7 +519,8 @@ class PSRelation(PSObject):
     def pubage(self):
         today = datetime.date.today()
         this_year = today.year
-        last_pubyear = self.refs[0].pubyear()
+        my_refs = self.refs()
+        last_pubyear = my_refs[0].pubyear()
         return  this_year - last_pubyear
 
 
@@ -567,7 +575,7 @@ class PSRelation(PSObject):
         return new_psobj
 
         
-    def copy(self):
+    def make_copy(self):
         copy = PSRelation(self)
         copy.PropSetToProps= dict(self.PropSetToProps)
         copy.Nodes= dict(self.Nodes)
@@ -629,7 +637,7 @@ class PSRelation(PSObject):
                     continue
             
             to_return = cell_sep.join(prop_set_values)
-            if prop_id in ['Sentence','Title']:
+            if prop_id in [SENTENCE,TITLE]:
                 to_return = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', to_return)
             return to_return
 
@@ -714,6 +722,8 @@ class PSRelation(PSObject):
                     ref.update_with_list(propId, propValues)
                 elif propId in SENTENCE_PROPS:
                     sentence_props[propId] = propValues
+                elif propId == 'msrc':
+                    sentence_props[SENTENCE] = propValues
                 elif propId in CLINTRIAL_PROPS:
                     ref.update_with_list(propId, propValues)
                 elif propId == 'TextRef': textref = propValues[0]
@@ -950,13 +960,13 @@ class PSRelation(PSObject):
         try:
             eff = self['Effect'][0]
             if eff == 'positive':
-                return 1
+                return ACTIVATED
             elif eff == 'negative':
-                return -1
+                return REPRESSED
             else: 
-                return 0
+                return UNKNOWN_STATE
         except KeyError: 
-            return 0
+            return UNKNOWN_STATE
         
 
     def _affinity(self):
@@ -1021,7 +1031,7 @@ class PSRelation(PSObject):
         for ref in self.refs():
             try:
                 prop_val = ref[ref_prop]
-                propvals.add(prop_val)
+                propvals.update(prop_val)
             except KeyError:
                 try:
                     prop_val = ref.Identifiers[ref_prop]

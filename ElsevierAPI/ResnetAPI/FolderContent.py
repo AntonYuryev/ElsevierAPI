@@ -43,18 +43,18 @@ class FolderContent(APISession):
         return new_session
 
 
-    def __folder_id(self,folder_name:str) -> list:
+    def __folder_id(self,folder_name:str) -> str:
         if not hasattr(self, "id2folder"): 
             self.id2folder = self.load_folder_tree()
 
         for k,v in self.id2folder.items():
             if v['Name'] == folder_name:
-                return k
-        return None
+                return str(k)
+        return ''
     
 
     def __folder_name(self,folder_dbid:int):
-        return  self.id2folder[folder_dbid]['Name']
+        return  self.id2folder[int(folder_dbid)]['Name']
     
 
     @staticmethod
@@ -77,7 +77,7 @@ class FolderContent(APISession):
 
         subfolders_ids = set()
         for folder_id in subfolder_ids:
-            folder = self.id2folder[folder_id]
+            folder = self.id2folder[int(folder_id)]
             if type(folder['SubFolders']) != type(None):
                 subfolders_ids.update(folder['SubFolders']['long'])
 
@@ -629,7 +629,7 @@ class FolderContent(APISession):
         for folder in in_folders:
             folder_id = self.__folder_id(folder)
             sub_folder_ids = self.subfolder_ids(folder_id)
-            self.get_objects_from_folders(sub_folder_ids) # loads dbid2pathway
+            self.get_objects_from_folders(list(sub_folder_ids)) # loads dbid2pathway
         
         for pathway_id in self.dbid2folder_obj.keys():
             id2psobj = self.get_pathway_members([pathway_id],None,ent_dbids,['id'])
@@ -655,7 +655,7 @@ class FolderContent(APISession):
         list of PSPathway objects from folder_id_or_name annotated with 'resnet' and 'Folders' properties
         """
         folder_id = self.__folder_id(folder_id_or_name) if isinstance(folder_id_or_name, str) else folder_id_or_name
-        folder_name = self.id2folder[folder_id]['Name']
+        folder_name = self.id2folder[int(folder_id)]['Name']
         sub_folder_ids = self.subfolder_ids(folder_name)
         my_folders_ids = list(sub_folder_ids) + [folder_id]
         self.get_objects_from_folders(my_folders_ids,with_layout)

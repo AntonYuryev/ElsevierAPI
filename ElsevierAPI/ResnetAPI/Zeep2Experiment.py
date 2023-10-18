@@ -109,8 +109,13 @@ class Experiment(PSObject):
         This name must be identical to property name of PSObject in ResnetGraph for mapping self.identifiers[URN] column
         '''
         try:
-            return self.identifiers.columns[0]
+            mapping_name = self.identifiers.columns[0]
+            if mapping_name.upper()[:7] == 'ENSEMBL': # To replace "ENSEMBLE_ID","ENSEMBLE ID"
+                self.identifiers = df.copy_df(self.identifiers,rename2={mapping_name:'Ensembl ID'})
+                mapping_name = 'Ensembl ID'
+            return mapping_name
         except KeyError:
+            print('self.identifiers has no column names !!!')
             return str()
 
 
@@ -232,6 +237,7 @@ class Experiment(PSObject):
             phenotypes_pd = df.read(experiment_file_name,header=header, nrows=len(phenotype_rows),index_col=False)
         else:
             exp_df = df.read(experiment_file_name,header=header,index_col=False)
+            phenotypes_pd = df()
 
         experiment_name = experiment_file_name[:experiment_file_name.rfind('.')]
         experiment_name = experiment_name[experiment_name.rfind('/')+1:]
@@ -271,6 +277,7 @@ class Experiment(PSObject):
         identifier_name = exp_df.columns[identifier_column]
         identifiers = exp_df[identifier_name].to_list()
         experiment = cls({'Name':[experiment_name]},identifier_name,identifiers,samples)
+        print(f'Read {experiment_name} from {experiment_file_name}')
         return experiment
 
 

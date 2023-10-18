@@ -1,5 +1,5 @@
 import pandas as pd
-import sys, os, json, time, logging
+import sys, json, time, logging
 from time import sleep
 from .PathwayStudioGOQL import OQL,len
 from zeep import exceptions as zeep_exceptions
@@ -24,21 +24,19 @@ def configure_logging(logger):
 
 
 def load_api_config(api_config_file=''):# file with your API keys and API URLs
-    #cur_dir = os.getcwd()
-    default_apiconfig = DEFAULT_APICONFIG
     if not api_config_file:
-        print('No API config file was specified\nWill use default %s instead'% default_apiconfig)
-        api_config_file = default_apiconfig
+        print('No API config file was specified\nWill use default %s instead'% DEFAULT_APICONFIG)
+        api_config_file = DEFAULT_APICONFIG
     try:
-        return dict(json.load(open(api_config_file)))
+        return dict(json.load(open(api_config_file,'r')))
     except FileNotFoundError:
         print("Cannot find API config file: %s" % api_config_file)
-        if api_config_file != default_apiconfig:
-            print('Cannot open %s config file\nWill use default %s instead'% (api_config_file, default_apiconfig))
-            return dict(json.load(open(default_apiconfig)))
+        if api_config_file != DEFAULT_APICONFIG:
+            print('Cannot open %s config file\nWill use default %s instead'% (api_config_file, DEFAULT_APICONFIG))
+            return dict(json.load(open(DEFAULT_APICONFIG,'r')))
         else:
             print('No working API server was specified!!! Goodbye')
-            return None
+            return dict()
 
 
 class DataModel:
@@ -48,7 +46,7 @@ class DataModel:
         no_mess - default True, if False your script becomes more verbose\n
         connect2server - default True, set to False to run script using data in __pscache__ files instead of database
         '''
-        APIconfig = dict(args[0]) if args else dict()
+        self.APIconfig = dict(args[0]) if args else load_api_config()
         my_kwargs = {'connect2server':True,'no_mess':True,'load_model':True}
         my_kwargs.update(kwargs)
         self.no_mess = my_kwargs.get('no_mess',True)
@@ -59,11 +57,9 @@ class DataModel:
         self.RNEFnameToPropType = dict()
            
         if my_kwargs['connect2server']:
-            if not APIconfig: 
-                APIconfig = load_api_config()
-            url = APIconfig['ResnetURL']
-            username = APIconfig['PSuserName']
-            password = APIconfig['PSpassword']
+            url = self.APIconfig[str('ResnetURL')]
+            username = self.APIconfig['PSuserName']
+            password = self.APIconfig['PSpassword']
         
             from requests.auth import HTTPBasicAuth
             from requests import Session
@@ -245,6 +241,11 @@ class DataModel:
                 sleep(chunk_timeout)
                 continue
             except zeep_exceptions.Fault:
+                print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in %d sec' % 
+                                                                (OQLquery[:200],attempt,CONNECTION_TIMEOUT),flush=True)
+                sleep(CONNECTION_TIMEOUT)
+                continue
+            except req_exceptions.ConnectionError:
                 print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in %d sec' % 
                                                                 (OQLquery[:200],attempt,CONNECTION_TIMEOUT),flush=True)
                 sleep(CONNECTION_TIMEOUT)
@@ -441,7 +442,7 @@ class DataModel:
 
 
     def init_session(self, OQLrequest, PageSize: int, property_names=None, getLinks=True):
-        property_names = ['Name'] if property_names is None else property_names
+ #       property_names = ['Name'] if property_names is None else property_names
 
         rp = self.create_result_param(property_names)
         rp.GetObjects = True
