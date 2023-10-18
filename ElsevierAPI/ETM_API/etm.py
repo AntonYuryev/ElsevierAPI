@@ -5,7 +5,7 @@ import urllib.parse
 from urllib.error import HTTPError
 import json, http.client, time, xlsxwriter, os, math
 from datetime import datetime,timedelta
-from ..ScopusAPI.scopus import Scopus
+from ..ScopusAPI.scopus import Scopus, AuthorSearch
 from ..pandas.panda_tricks import pd, df
 from concurrent.futures import ThreadPoolExecutor
 
@@ -37,7 +37,7 @@ def load_api_config(api_config_file=''):# file with your API keys and API URLs
             return dict(json.load(open(default_apiconfig)))
         else:
             print('No working API server was specified!!! Goodbye')
-            return None
+            return dict({})
         
 class ETMjson(DocMine):
 
@@ -103,7 +103,7 @@ class ETMjson(DocMine):
                     return [str(abstract_secs['addressOrAlternativesOrArray']['p'])]
                 except KeyError:
                     print('Article abstract has no addressOrAlternativesOrArray', abstract_secs)
-                    return ''
+                    return [str()]
         
         #at this point abstract_secs can be only list of dict
         abstract_sentences = list()
@@ -169,7 +169,7 @@ class ETMjson(DocMine):
 
 
     @staticmethod
-    def __parse_contributors(article:dict, scopus_api=None):
+    def __parse_contributors(article:dict, scopus_api:AuthorSearch=None):
         try:
             author_info = article['article']['front']['article-meta']['contribGroupOrAffOrAffAlternatives']
             if not author_info:
@@ -285,7 +285,7 @@ class ETMjson(DocMine):
                 return '', set(), set()
 
 
-    def __init__(self, article:dict,scopus_api=None): 
+    def __init__(self, article:dict,scopus_api:AuthorSearch=None): 
         is_article, article_ids = self.__parse_ids(article)
         if isinstance(scopus_api,Scopus): 
             self.scopusInfo = dict()
@@ -307,7 +307,7 @@ class ETMjson(DocMine):
             self.set_date(year)
         except KeyError: pass
 
-        self.add2section('Abstract',self.__parse_abstact(article))
+        self.add2section('Abstract',' '.join(self.__parse_abstact(article)))
         authors,institutions,scopus_infos = self.__parse_contributors(article,scopus_api)
         if authors: self[AUTHORS] = authors
         self.addresses = {i[0]:i[1] for i in institutions}
@@ -336,10 +336,10 @@ class ETMstat:
     page_size = 100
     request_type = '/search/basic?'  # '/search/advanced?'
     def __base_url(self): return self.url+self.request_type
-    min_relevance = 0
+    min_relevance = float(0.0)
     
 
-    def __init__(self,APIconfig=dict(), limit=5, add_param=dict()):
+    def __init__(self,APIconfig:dict=dict({}), limit=5, add_param=dict()):
         """
         self.ref_counter = {str(id_type+':'+identifier):(ref,count)}
         """
@@ -451,6 +451,8 @@ class ETMstat:
                 return id_type,identifier
             except KeyError:
                 continue
+        
+        return '',''
 
 
     def counter2df(self, use_relevance=True):
@@ -643,6 +645,7 @@ class ETMstat:
             with open(fname, 'w', encoding='utf-8') as f:
                 f.write('Citation index\tCitation\tPMID or DOI\n')
                 for ref in to_sort:
+                    biblio_tup = ref._biblio_tuple()
                     if not biblio_tup[2]: 
                         continue #to remove reference with no ID type
                     biblio_tup = ref._biblio_tuple()
@@ -650,7 +653,7 @@ class ETMstat:
                         biblio_str = biblio_tup[0]+'\t'+biblio_tup[1]+':'+biblio_tup[2]
                     else:
                         biblio_str = biblio_tup[0]+'\t'+biblio_tup[2]
-                    f.write(str(ref['Citation index'][0])+'\t'+biblio_str+'\n')[1]
+                    f.write(str(ref['Citation index'][0])+'\t'+biblio_str+'\n')
 
 
     @staticmethod
@@ -715,14 +718,14 @@ class ETMstat:
 
 
     @staticmethod
-    def _etm_ref_column_name(between_column:str, and_concepts:str or list):
+    def _etm_ref_column_name(between_column:str, and_concepts:str|list):
         if isinstance(and_concepts,str):
             return ETM_REFS_COLUMN + ' between '+between_column+' and '+and_concepts
         else:
             return ETM_REFS_COLUMN + ' between '+between_column+' and '+','.join(and_concepts)
 
     @staticmethod
-    def _etm_doi_column_name(between_column:str, and_concepts:str or list):
+    def _etm_doi_column_name(between_column:str, and_concepts:str|list):
         if isinstance(and_concepts,str):
             return 'DOIs' + ' between '+between_column+' and '+and_concepts
         else:
@@ -876,10 +879,10 @@ class ETMstat:
             df2annotate = df.copy_df(in_df)
             unannoated_rows = df()
 
+        partition_size = 100
         thread_name = f'Retrieve {partition_size} ETM references'
         dfs2concat = list()
-        with ThreadPoolExecutor(max_workers=MAX_ETM_SESSIONS, thread_name_prefix=thread_name) as e:
-            partition_size = 100
+        with ThreadPoolExecutor(max_workers=MAX_ETM_SESSIONS, thread_name_prefix=thread_name) as e:    
             futures = list()
             for i in range(0,len(df2annotate),partition_size):
                 df_part = df(df2annotate.iloc[i:i+partition_size])
@@ -1075,9 +1078,9 @@ class ETMcache (ETMstat):
             except KeyError: continue
 
         worksheet_ref = workbook.add_worksheet('References')
-        worksheet_ref.write_string(0,0,'Total number of articles: '+str(len(self.references)))
+        worksheet_ref.write_string(0,0,'Total number of articles: '+str(len(self.references())))
         row_counter = 1
-        for ref in self.references:
+        for ref in self.references():
             row_str = ref.to_str(['PMID','DOI','PUI'],col_sep='\n')+'\n\t\t\t\n'
             worksheet_ref.write_string(row_counter,0,row_str)
             row_counter += 1
