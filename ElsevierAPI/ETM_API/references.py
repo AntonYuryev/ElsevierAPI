@@ -73,29 +73,36 @@ class Reference(dict):
     pass
 
     def __init__(self, idType:str, ID:str):
-        super().__init__(dict()) # self{BIBLIO_PROPS[i]:[values]};
+        super().__init__(dict({})) # self{BIBLIO_PROPS[i]:[values]};
         self.Identifiers = {idType:ID} #from REF_ID_TYPES
-        self.snippets = dict() # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
-        self.addresses = dict() # {orgname:adress}
-      
-    @classmethod
-    def copy(cls, other):
-        if isinstance(other, Reference):
-            for i in REF_ID_TYPES:
-                try:
-                    id_value = other.Identifiers[i]
-                    cls(i,id_value)
-                    cls.Identifiers.update(other.Identifiers)
-                    cls.update(other)
-                    cls.snippets.update(other.snippets)
-                    cls.addresses.update(other.addresses)
-                    return cls
-                except KeyError: continue
-
-        return dict()
+        self.snippets = dict({}) # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
+        self.addresses = dict({}) # {orgname:adress}
     
+        '''
+        @classmethod
+        def copy(cls, other):
+            if isinstance(other, Reference):
+                for i in REF_ID_TYPES:
+                    try:
+                        id_value = other.Identifiers[i]
+                        cls(i,id_value)
+                        cls.Identifiers.update(other.Identifiers)
+                        cls.update(other)
+                        cls.snippets.update(other.snippets)
+                        cls.addresses.update(other.addresses)
+                        return cls
+                    except KeyError: continue
 
-    def _copy(self):
+            return dict()
+        '''
+
+    def copy_ref(self):
+        '''
+        Return
+        ------
+        Reference object copy of self if self has valid identifiers\n
+        otherwise returns dict()
+        '''
         for i in REF_ID_TYPES:
             try:
                 id_value = self.Identifiers[i]
@@ -106,7 +113,7 @@ class Reference(dict):
                 my_copy.addresses = dict(self.addresses)
                 return my_copy
             except KeyError: continue
-        return dict()
+        return dict({})
     
 
     @staticmethod
@@ -182,6 +189,7 @@ class Reference(dict):
         for prop2value in self.snippets.values():
             prop_names.update(prop2value.keys())
         return prop_names
+
 
     def update_with_value(self, PropId, PropValue:int|str):
         clean_prop = PropValue.strip(' .\n') if isinstance(PropValue,str) else PropValue
@@ -265,6 +273,18 @@ class Reference(dict):
             except KeyError: continue
 
         return False
+    
+
+    def remove_props(self, prop_names:list):
+        my_copy = self.copy_ref()
+        if isinstance(my_copy,Reference): #copy_ref
+            for prop2values in my_copy.snippets.values():
+                [prop2values.pop(p,'') for p in prop_names]
+            
+            [my_copy.pop(p,'') for p in prop_names]
+            [my_copy.Identifiers.pop(p,'') for p in prop_names]
+            return my_copy
+        return dict({})
 
 
     def _identifier(self):
