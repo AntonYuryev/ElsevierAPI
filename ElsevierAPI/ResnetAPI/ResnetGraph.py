@@ -1854,8 +1854,9 @@ class ResnetGraph (nx.MultiDiGraph):
         -----
         add_rel_props,add_pathway_props structure - {PropName:[PropValues]}
         '''
-        print_snippets = set(REFERENCE_PROPS).intersection(rel_props)
-        #resnet = et.Element('resnet')
+        def _2b_printed(prop_name:str,prop_list:list):
+            return prop_name in prop_list if prop_list else True
+
         if add_pathway_props:
             pathway_props = et.SubElement(resnet, 'properties')
             for prop_name,prop_val in add_pathway_props.items():
@@ -1868,11 +1869,10 @@ class ResnetGraph (nx.MultiDiGraph):
                 local_id = n['URN'][0]
                 xml_node = et.SubElement(xml_nodes, 'node', {'local_id': local_id, 'urn': n['URN'][0]})
                 et.SubElement(xml_node, 'attr', {'name': 'NodeType', 'value': str(n['ObjTypeName'][0])})
-                if ent_props:
-                    for prop_name, prop_values in n.items():
-                        if prop_name in ent_props:
-                            for prop_value in prop_values:
-                                et.SubElement(xml_node, 'attr', {'name': str(prop_name), 'value': str(prop_value)})
+                for prop_name, prop_values in n.items():
+                    if _2b_printed(prop_name, ent_props):
+                        for prop_value in prop_values:
+                            et.SubElement(xml_node, 'attr', {'name': str(prop_name), 'value': str(prop_value)})
             except KeyError:
                 continue
 
@@ -1904,7 +1904,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
             # non-reference properties
             for prop_name, prop_values in rel.items():
-                if prop_name in rel_props:
+                if _2b_printed(prop_name,rel_props):
                     for prop_value in prop_values:
                         et.SubElement(xml_control, 'attr', {'name':str(prop_name), 'value':str(prop_value)})
 
@@ -1913,6 +1913,8 @@ class ResnetGraph (nx.MultiDiGraph):
                     et.SubElement(xml_control, 'attr', {'name':str(prop_name), 'value':str(val)})
 
             # adding references
+            snippet_props = set(REFERENCE_PROPS).intersection(rel_props)
+            print_snippets = True if not rel_props else True if snippet_props else False
             if print_snippets:
                 references = list(set(rel.refs()))
                 ref_index = 0
@@ -1921,17 +1923,17 @@ class ResnetGraph (nx.MultiDiGraph):
                     for textref, sentence_props in ref.snippets.items():
                         et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)})
                         for sentprop_name, sentprop_values in sentence_props.items():
-                            if sentprop_name in print_snippets:
+                            if _2b_printed(sentprop_name,snippet_props):
                                 for v in sentprop_values:
                                     et.SubElement(xml_control, 'attr',{'name':str(sentprop_name), 'value':str(v), 'index':str(ref_index)})
 
                         for prop_name, prop_values in ref.items():
-                            if prop_name in print_snippets:
+                            if _2b_printed(prop_name,snippet_props):
                                 for prop_value in prop_values:
                                     et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)})
                             
                         for ref_id_type,ref_id in ref.Identifiers.items():
-                            if ref_id_type in print_snippets:
+                            if _2b_printed(ref_id_type,snippet_props):
                                 et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)})
                         ref_index+=1
 
@@ -2008,7 +2010,7 @@ class ResnetGraph (nx.MultiDiGraph):
                 return
 
 
-    def dump2rnef(self,fname:str,ent_prop2print:list,rel_prop2print:list,add_rel_props:dict={},with_section_size=0):
+    def dump2rnef(self,fname:str,ent_prop2print:list=[],rel_prop2print:list=[],add_rel_props:dict={},with_section_size=0):
         '''
         Dumps
         -----
@@ -2024,7 +2026,7 @@ class ResnetGraph (nx.MultiDiGraph):
             with open(rnef_fname,'w',encoding='utf-8') as f:     
                 print(f'Writing graph "{self.name}" to {rnef_fname} file in resnet section of size {with_section_size}')
                 graph_copy = self.copy() # copying graph to enable using the function in multithreaded file writing
-                f.write(et.Comment(RNEF_DISCLAIMER))
+                f.write('<!--'+RNEF_DISCLAIMER+'-->\n')
                 f.write('<batch>\n')
                 graph_copy.__2rnef_secs(f,ent_prop2print,rel_prop2print,add_rel_props,with_section_size)
                 f.write('</batch>')
@@ -2055,19 +2057,21 @@ class ResnetGraph (nx.MultiDiGraph):
                 cell = node4cell.prop_values2str(from_properties[i][3:],sep=cell_sep)
                 row_template[i] = cell
     
-        row_counter = 0
+        rows2add = list()
         for rel in relations:
             row = row_template
             for i in range(0, len(from_properties)):
                 if from_properties[i][:2] == 'R:':
                     cell = rel._props2str(from_properties[i][2:])
                     row[i] = cell
-                    to_df.loc[len(to_df.index)] = row
-            row_counter += 1
+                    rows2add.append(row)
 
-        if not row_counter:
-            to_df.loc[len(to_df.index)] = row_template
-
+        if not rows2add: 
+            rows2add = [row_template]
+        
+        new_data = df.from_rows(rows2add, header=to_df.columns.to_list())
+        to_df = to_df.append_df(new_data)
+        return to_df
 
 ################################# READ READ READ ##########################################
     def _parse_nodes_controls(self, resnet:et.Element, prop2values=dict(),merge=False):
@@ -2200,6 +2204,7 @@ class ResnetGraph (nx.MultiDiGraph):
             g.__read_rnef(rnef_file,prop2values,merge)
             print('File %s with %d edges and %d nodes was loaded in %s' 
             % (rnef_file,g.number_of_edges(),g.number_of_nodes(),execution_time(start)))
+            g.name = f'from {rnef_file}'
             return g
         except FileNotFoundError:
             raise FileNotFoundError
@@ -2217,6 +2222,7 @@ class ResnetGraph (nx.MultiDiGraph):
             
             print('Graph with %d edges and %d nodes was loaded from "%s" with %d files in %s' 
             % (combo_g.number_of_edges(),combo_g.number_of_nodes(),path2dir,len(listing),execution_time(start)))
+            combo_g.name = f'from {path2dir}'
         else:
             combo_g = ResnetGraph()
             print('Cannot find "%s" directory' % path2dir)

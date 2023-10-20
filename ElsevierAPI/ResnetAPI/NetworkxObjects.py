@@ -338,7 +338,12 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             raise FileNotFoundError
 
 
-    def transform(self, remap:dict, remove_unmapped_props=False):
+    def transform(self, remap:dict, remove_props_not_in_remap=False):
+        '''
+        renames
+        -------
+        properties according to "remap"
+        '''
         transformed_copy = PSObject(self)
         for old_prop, new_prop in remap.items():
             try:
@@ -346,19 +351,29 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             except KeyError:
                 try:
                     references = transformed_copy['RefDict']
-                    ref_values = set()
-                    for ref in references:
-                        ref_props = ref.get_props(old_prop)
-                        ref_values.update(ref_props)
-                    if ref_values:
-                        transformed_copy[new_prop] = list(ref_values)
                 except KeyError:
-                    continue
-        
-        if remove_unmapped_props:
+                    try:
+                        references = transformed_copy['references']
+                    except KeyError:
+                        continue
+
+                ref_values = set()
+                for ref in references:
+                    ref_props = ref.get_props(old_prop)
+                    ref_values.update(ref_props)
+                if ref_values:
+                    transformed_copy[new_prop] = list(ref_values)
+                
+        if remove_props_not_in_remap:
             transformed_copy = {k:v for k,v in transformed_copy.items() if k in remap.values()}
 
         return transformed_copy
+
+
+    def remove_props(self,prop_names:list):
+        my_copy = self.copy()
+        [my_copy.pop(p,'') for p in prop_names]
+        return my_copy
 
 
 class PSRelation(PSObject):
@@ -576,15 +591,32 @@ class PSRelation(PSObject):
 
         
     def make_copy(self):
-        copy = PSRelation(self)
-        copy.PropSetToProps= dict(self.PropSetToProps)
-        copy.Nodes= dict(self.Nodes)
-        copy.RefDict = dict(self.RefDict)
-        copy.references = list(self.references)
-        return copy
-        
+        my_copy = PSRelation(self)
+        my_copy.PropSetToProps= dict(self.PropSetToProps)
+        my_copy.Nodes= dict(self.Nodes)
+        my_copy.RefDict = dict(self.RefDict)
+        my_copy.references = list(self.references)
+        return my_copy
+    
 
-    @ classmethod
+    def remove_props(self,prop_names:list):
+        my_copy = PSRelation(super().remove_props(prop_names))
+        my_copy.Nodes= dict(self.Nodes)
+        my_copy.PropSetToProps= dict(self.PropSetToProps)
+        for _,props in my_copy.PropSetToProps.items():
+            [props.pop(p,'') for p in prop_names]
+
+        new_RefDict = dict(self.RefDict)
+        for refid,ref in new_RefDict.items():
+            new_ref = ref.remove_props(prop_names)
+            if isinstance(new_ref,Reference):
+                my_copy.RefDict[refid] = new_ref
+        
+        my_copy.refs()
+        return my_copy
+    
+
+    @classmethod
     def make_rel(cls,regulator:PSObject,target:PSObject,props:dict,refs=[],is_directional=True):
         # props = {prop_name:[prop_values]}
         new_rel = cls(props)
