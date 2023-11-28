@@ -33,7 +33,7 @@ EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORE
 
 INT_PROPS = {RELEVANCE,PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX}
 
-PS_REFIID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID']
+PS_REFIID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCTID','NCT ID']
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
 ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
 PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
@@ -53,7 +53,7 @@ SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence','msrc','mref']
 RELATION_PROPS = {EFFECT,'Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
 PS_REFERENCE_PROPS = list(CLINTRIAL_PROPS)+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS+['TextRef']
-ALL_PS_PROPS = list(RELATION_PROPS)+PS_REFERENCE_PROPS
+ALL_PSREL_PROPS = list(RELATION_PROPS)+PS_REFERENCE_PROPS
 
 REFERENCE_PROPS = list(BIBLIO_PROPS)+list(CLINTRIAL_PROPS)+REF_ID_TYPES+SENTENCE_PROPS
 
@@ -78,24 +78,6 @@ class Reference(dict):
         self.snippets = dict({}) # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
         self.addresses = dict({}) # {orgname:adress}
     
-        '''
-        @classmethod
-        def copy(cls, other):
-            if isinstance(other, Reference):
-                for i in REF_ID_TYPES:
-                    try:
-                        id_value = other.Identifiers[i]
-                        cls(i,id_value)
-                        cls.Identifiers.update(other.Identifiers)
-                        cls.update(other)
-                        cls.snippets.update(other.snippets)
-                        cls.addresses.update(other.addresses)
-                        return cls
-                    except KeyError: continue
-
-            return dict()
-        '''
-
     def copy_ref(self):
         '''
         Return
@@ -139,6 +121,20 @@ class Reference(dict):
     def from_textref(cls, textref:str):
         id_type, identifier = cls.__parse_textref(textref)
         return cls(id_type,identifier)
+    
+    
+    @classmethod
+    def from_iddict(cls, idtype2id:dict):
+        '''
+        Input
+        -----
+        {id_type:id}
+        '''
+        id_type, identifier = next(iter(idtype2id.items()))
+        new_ref = cls(id_type, identifier)
+        new_ref.Identifiers.update(idtype2id)
+        return new_ref
+    
 
     def __key(self):
         for id_type in REF_ID_TYPES:
@@ -163,8 +159,7 @@ class Reference(dict):
                 except KeyError:
                     continue
         return False
-
-
+    
     def get_doc_id(self):
         for id_type in REF_ID_TYPES:
             try:
@@ -194,8 +189,9 @@ class Reference(dict):
     def update_with_value(self, PropId, PropValue:int|str):
         clean_prop = PropValue.strip(' .\n') if isinstance(PropValue,str) else PropValue
         try:
-            my_props = self[PropId]
-            self[PropId] = list(set(my_props).add(clean_prop))
+            my_props = set(self[PropId])
+            my_props.add(clean_prop)
+            self[PropId] = list(my_props)
         except KeyError:
             self[PropId] = [clean_prop]
 
@@ -354,7 +350,7 @@ class Reference(dict):
         return row
 
 
-    def to_str(self,id_types:list=None,col_sep='\t',print_snippets=False,biblio_props=[],other_props=[]):
+    def to_str(self,id_types=list(),col_sep='\t',print_snippets=False,biblio_props=[],other_props=[]):
         row = self.to_list(id_types,print_snippets,biblio_props,other_props)
         return col_sep.join(row)
     
@@ -364,10 +360,23 @@ class Reference(dict):
             return int(self[PUBYEAR][0])
         except KeyError:
             try:
-                year = self['Start'][0] # Clinical trials case
-                return int(year[-4:])
+                year = str(self['Start'][0]) # Clinical trials case
+                if year[-4:].isdigit(): # format: 20-Apr-2020; August 2004 
+                    return int(year[-4:])
+                elif year[-2:].isdigit():
+                    return int('20'+year[-2:]) # format: 20-Apr-20
+                else:
+                    print(f'Unknown Clinical trial "Start" format: {year}')
+                    return 1812
             except KeyError: return 1812 # No PubYear case
 
+
+    def title(self): 
+        try:
+            return self['Title'][0]
+        except KeyError:
+            return ''
+        
 
     def relevance(self):
         try:
@@ -430,8 +439,7 @@ class Reference(dict):
                 if prop in INT_PROPS:
                     clean_vals = set(map(int,values))
                 else:
-                    clean_vals = set(map(str,values))
-                    clean_vals = [v.strip(' .') for v in values]
+                    clean_vals = {str(v).strip(' .') for v in values if v is not None}
 
                 self.update_with_list(prop,list(clean_vals))
 
@@ -561,6 +569,47 @@ class Reference(dict):
                 return list(props)
 
 
+class SerializableRef:
+# clases derived from dict and list cannot have custom JSONEncoder
+    def __init__(self,ref:Reference):
+        self.reference = ref
+
+
+class ReferenceEncoder(json.JSONEncoder):
+    def default(self, sref):
+        if isinstance(sref, SerializableRef):
+            # Convert CustomObject to a dictionary
+            ref = sref.reference
+            dump_dict = dict(ref)
+            dump_dict.update({'Identifiers':ref.Identifiers})
+            if ref.snippets:
+                dump_dict.update({'snippets':ref.snippets})
+            if ref.addresses:
+                dump_dict.update({'addresses':ref.addresses})
+            return {'reference':dump_dict}
+        else:
+            return json.JSONEncoder.default(self, sref)
+
+
+class ReferenceDecoder(json.JSONDecoder):
+    def __init__(self, *args, **kwargs):
+        json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
+
+    def object_hook(self, dct):
+        my_dict = dct['reference']
+        Identifiers = my_dict.pop('Identifiers')
+        snippets = my_dict.pop('snippets',dict())
+        addresses = my_dict.pop('addresses',dict())
+
+        id_type,id = next(iter(my_dict.items()))
+        ref = Reference(id_type,id)
+        ref.update(my_dict)
+        ref.Identifiers.update(Identifiers)
+        ref.snippets.update(snippets)
+        ref.addresses.update(addresses)
+
+        return ref
+
 #########################################DocMine#############################################DocMine##################
 
 INSTITUTION_KEYWORDS = {'institute', 'institut', 'clinic', 'hospital', 'university', 'universitat', 'universiti', 'centre', 'center', 'inc', 'colleges',
@@ -581,8 +630,7 @@ class DocMine (Reference):
             return name2suffix[section_name]
         except KeyError:
             return 'cont'
-
-    def get_title(self): return self['Title'][0]
+        
 
     def add2section(self,section_name:str, paragraph:str): 
         if not paragraph: 
