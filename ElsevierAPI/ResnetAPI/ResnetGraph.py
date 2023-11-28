@@ -113,7 +113,7 @@ class ResnetGraph (nx.MultiDiGraph):
         """
         nodes connected by relation must exist in the graph.\n
         non-directional relations are duplicated in all possible directions\n
-        use "add_rel" to move relation from one graph to another or to add nodes together with "rel"
+        use "__copy_rel" to move relation from one graph to another or to add nodes together with "rel"
         """
         rel_urn = self.rel_urn(rel) # will raise error if nodes for relation do not exists in graph
         if merge:
@@ -171,18 +171,18 @@ class ResnetGraph (nx.MultiDiGraph):
         return
 
     
-    def add_triple(self,regulator:PSObject,target:PSObject,rel:(dict|PSRelation),refs=[],is_directional=True):
+    def add_triple(self,regulator:PSObject,target:PSObject,props_or_rel:(dict|PSRelation),refs=[],is_directional=True):
         """
         adds nodes and their relations to graph
         """
         self.add_psobjs({regulator,target})
 
-        if isinstance(rel,PSRelation):
-            self.add_rel(rel)
+        if isinstance(props_or_rel,PSRelation):
+            self.add_rel(props_or_rel)
             return
         else:
-            rel = PSRelation.make_rel(regulator,target,rel,refs,is_directional)
-            #rel['Id'] = [self.number_of_edges()]
+            assert(isinstance(props_or_rel,dict))
+            rel = PSRelation.make_rel(regulator,target,props_or_rel,refs,is_directional)
             self.rel_name(rel)
             rel_urn = self.rel_urn(rel)
             self.add_edge(regulator.uid(), target.uid(), relation=rel,weight=rel.get_reference_count(),key=rel_urn)
@@ -209,6 +209,42 @@ class ResnetGraph (nx.MultiDiGraph):
         composed_graph.urn2rel = dict(self.urn2rel)
         composed_graph.urn2rel.update(other.urn2rel)
         return composed_graph
+    
+
+    def duplicate_node(self,n:PSObject,replace_with:PSObject,flip_effect=0,set_reltype=''):
+        '''
+        Input
+        -----
+        flip_effect - ACTIVATED, REPRESSED, UNKNOWN_STATE (1,-1,0)
+        '''
+        replace_uid = n.uid()
+        replacement_uid = replace_with.uid()
+        if replacement_uid not in self.nodes():
+            self.add_psobj(replace_with)
+
+        for rel in self.get_neighbors_rels({n}):
+            new_rel = rel.make_copy()
+            if flip_effect < 0:
+                new_rel.flip_effect()
+            elif not flip_effect:
+                new_rel[EFFECT][0] = 0
+
+            if set_reltype:
+                new_rel['ObjTypeName'] = [set_reltype]
+
+            for nt, tuples in new_rel.Nodes.items():
+                new_tuples = list()
+                for t in tuples:
+                    if t[0] == replace_uid:
+                        new_tuple = (replacement_uid,t[1],t[2])
+                    else:
+                        new_tuple = t
+                    new_tuples.append(new_tuple)
+                new_rel.Nodes[nt] = new_tuples
+
+            new_rel.pop('URN','')
+            self.add_rel(new_rel,merge=False)
+
 
 ################## SET SET SET ##########################################
     def set_node_annotation(self, urn2value:dict, new_prop_name:str):
@@ -235,6 +271,7 @@ class ResnetGraph (nx.MultiDiGraph):
                 annotate_values.update(my_prop_values)
             except KeyError:
                 pass
+            
             self[between_node_uid][and_node_uid][for_rel_with_urn]['relation'][prop_name] = list(annotate_values)
 
 
@@ -488,14 +525,20 @@ class ResnetGraph (nx.MultiDiGraph):
             return name
 
 
-    def rel_urn(self, rel:PSRelation):
-        try:
-            return rel.urn()
-        except KeyError:
+    def rel_urn(self,rel:PSRelation,refresh=False):
+        if refresh:
             regulators, targets = self.find_nodes(for_relation=rel)
             reg_urns = [r.urn() for r in regulators]
             tar_urns = [r.urn() for r in targets]
             return rel.make_urn(reg_urns,tar_urns)
+        else:
+            try:
+                return rel.urn()
+            except KeyError:
+                regulators, targets = self.find_nodes(for_relation=rel)
+                reg_urns = [r.urn() for r in regulators]
+                tar_urns = [r.urn() for r in targets]
+                return rel.make_urn(reg_urns,tar_urns)
             
 
     def load_references(self,weight_by_property='',using_value2weight=dict()):
@@ -524,24 +567,26 @@ class ResnetGraph (nx.MultiDiGraph):
         """
         Returns
         -------
-        dictionary {identifier:Reference} with all references in graph.\n 
-        Reference objects in returned dictionary are annotated by Reference[PS_CITATION_INDEX] property
+        dictionary {id_type:ref_id:Reference} with all references in graph.\n 
+        Reference objects in return dictionary are annotated by PS_CITATION_INDEX property
         """
         graph_references = dict()
         for regulatorID, targetID, rel in self.edges.data():
-            rel_refs = rel['relation'].refs()
+            #rel_refs = rel['relation'].refs()
             for ref in rel['relation'].refs():
                 id_type, ref_id = ref.get_doc_id()
                 if ref_id:
                     try:
-                        ref_counter = graph_references[id_type+':'+ref_id]
-                        count = int(ref_counter[PS_CITATION_INDEX][0])
-                        graph_references[id_type+':'+ref_id][PS_CITATION_INDEX] = [count + 1]
+                        ref = graph_references[id_type+':'+ref_id]
+                        count = int(ref[PS_CITATION_INDEX][0])
+                        ref[PS_CITATION_INDEX] = [count + 1]
+                        graph_references[id_type+':'+ref_id] = ref
                     except KeyError:
                         ref[PS_CITATION_INDEX] = [1]
                         graph_references[id_type+':'+ref_id] = ref
 
-        return graph_references
+        sorted_dict = dict(sorted(graph_references.items(),reverse=True,key=lambda item: item[1][PS_CITATION_INDEX][0]))
+        return sorted_dict
 
 
     def refs2df(self,df_name:str,for_rel_types=list(),with_effect=list()):
@@ -555,7 +600,9 @@ class ResnetGraph (nx.MultiDiGraph):
         ref_df = ETMstat.external_counter2pd(set(references.values()),stat_prop=PS_CITATION_INDEX)
         ref_df._name_ = df_name
 
-        clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],['25741868'],['26582918'],['28492532'],['24033266']]
+        clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],
+                        ['25741868'],['26582918'],['28492532'],['24033266'],['18414213'],
+                        ['26467025'],['24728327']]
         clinvar_hyperlinks = list(map(pubmed_hyperlink,clinvar_pmids))
         ref_df = ref_df.remove_rows_by(clinvar_hyperlinks,IDENTIFIER_COLUMN)
         return ref_df
@@ -893,8 +940,9 @@ class ResnetGraph (nx.MultiDiGraph):
             return nodes
             '''
 
-    def _psobjs_with(self,value:str|int,in_property='Name'): # use this function to find object by Name
+    def _psobjs_with(self,value:str|int,in_property='Name'):
         '''
+        # finds objects by Name or other property
         Input
         -----
         value - str,int,float
@@ -925,6 +973,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
     def psobjs_with(self, with_properties:list=['ObjTypeName'], only_with_values:list=[]):
         '''
+        # finds objects by Name,Alias,ObjectTypeName or other list of properties
         Returns
         -------
         [PSObject], if "only_with_values" is empty returns all nodes annotated "with_properties"
@@ -944,8 +993,39 @@ class ResnetGraph (nx.MultiDiGraph):
         return self._get_nodes(list(return_node_uids)) if return_node_uids else []
 
 
+    def get_stats(self):
+        '''
+        Return
+        ------
+        {NodeType:Count}, {RelationType:Count}
+        '''
+        my_nodes = self._get_nodes()
+        node_stats = dict()
+        for n in my_nodes:
+            try:
+                node_stats[n.objtype()] += 1
+            except KeyError:
+                node_stats[n.objtype()] = 1
+
+        node_stats = dict(sorted(node_stats.items(), key=lambda item: item[1]))
+
+        rel_stats = dict()
+        for r,t,rel in self.edges.data('relation'):
+            try:
+                rel_stats[rel.objtype()] += 1
+            except KeyError:
+                rel_stats[rel.objtype()] = 1
+
+        rel_stats = dict(sorted(rel_stats.items(), key=lambda item: item[1],reverse=True))
+
+        return node_stats, rel_stats
+
+
     def find_parents4(self,psobjects:list):
         '''
+        Input
+        -----
+        [PSObject] - PSObject list annotated with CHILD property
         Returns
         -------
         parents2return - {PSObject}
@@ -972,7 +1052,7 @@ class ResnetGraph (nx.MultiDiGraph):
         -------
         [PSRelation] - list of all relations in graph
         """
-        return [r for n1,n2,r in self.edges.data('relation')]
+        return [PSRelation.make_copy(r) for n1,n2,r in self.edges.data('relation')]
     
 
     def relation_dbids(self):
@@ -1618,13 +1698,25 @@ class ResnetGraph (nx.MultiDiGraph):
         return self.__psobjs(neighbor_uids)
  
 
-    def get_neighbors_rels(self, for_node_ids:set, only_neighbors_with_ids=None):
-        neighbor_graph = self.neighborhood(for_node_ids,only_neighbors_with_ids)
+    def get_neighbors_rels(self, _4psobs:set, only_neighbors:list=[]):
+        '''
+        Input
+        -----
+        _4psobs - {PSObject}
+        only_neighbors - [PSObject]
+        '''
+        neighbor_graph = self.neighborhood(_4psobs,only_neighbors)
         return neighbor_graph.__psrels()
 
 
-    def get_neighbors_refs4(self, psobjects:set, only_neighbors_with_ids=None):
-        neighbor_graph = self.neighborhood(psobjects,only_neighbors_with_ids)
+    def get_neighbors_refs4(self, _4psobs:set, only_neighbors:list=[]):
+        '''
+        Input
+        -----
+        _4psobs - {PSObject}
+        only_neighbors - [PSObject]
+        '''
+        neighbor_graph = self.neighborhood(_4psobs,only_neighbors)
         return neighbor_graph.load_references()
 
 
@@ -1941,7 +2033,7 @@ class ResnetGraph (nx.MultiDiGraph):
                         textref = ref._make_textref()
                         et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)})
                         for prop_name, prop_values in ref.items():
-                            if prop_name in print_snippets:
+                            if prop_name in snippet_props:
                                 for prop_value in prop_values:
                                     et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)})
                             
@@ -2001,7 +2093,7 @@ class ResnetGraph (nx.MultiDiGraph):
             for sec in range(0, len(all_nodes), with_section_size):
                 section_nodes = all_nodes[sec:sec+with_section_size]
                 section_graph = ResnetGraph()
-                section_graph.add_psobjs(section_nodes)
+                section_graph.add_psobjs(set(section_nodes))
                 rnef_str = section_graph.to_rnefstr(ent_prop2print,rel_prop2print,add_rel_props)
                 rnef_str = str(minidom.parseString(rnef_str).toprettyxml(indent='  '))
                 rnef_str = rnef_str[rnef_str.find('\n')+1:]
@@ -2235,10 +2327,10 @@ class ResnetGraph (nx.MultiDiGraph):
         try:
             tree = nx.algorithms.traversal.breadth_first_search.bfs_tree(self,root.uid(),reverse)
             tree_nodes = self._get_nodes(tree.nodes())
-            tree_rn.add_psobjs(tree_nodes)
+            tree_rn.add_psobjs(set(tree_nodes))
             for r,t in tree.edges():
                 rels = self._psrels4(r,t)
-                [tree_rn.add_rel(rel,self) for rel in rels]
+                [tree_rn.__copy_rel(rel,self) for rel in rels]
             return tree_rn
         except NetworkXError:
             print(f'{root.name()} nodes was not found in graph {self.name}')
@@ -2413,7 +2505,8 @@ class ResnetGraph (nx.MultiDiGraph):
         '''
         Input
         -----
-        _4psobs, only_neighbors - [PSObject]
+        _4psobs, only_neighbors - [PSObject]\n
+        in_direction = ['>','<',None], defaults to None
         '''
         neighbors = self.get_neighbors(_4psobs,only_neighbors)
         return self.get_subgraph(list(_4psobs),list(neighbors),only_reltypes,with_effects,in_direction)
@@ -2524,6 +2617,72 @@ class ResnetGraph (nx.MultiDiGraph):
         return graph2return
 
 
+    @staticmethod
+    def __bestrel(rels:list,ranks:list=[]):
+        '''
+        Input
+        -----
+        rels - [PSRelation]
+        ranks - [[str,..]], where str - PSRelation obtypes sorted by rank. Order of ranking lists may be important.\n
+        Example:\n
+        [['DirectRegulation','Binding','ProtModification','Regulation'],
+        ['PromoterBinding','Expression','Regulation'],
+        ['Biomarker','StateChange'],
+        ['Biomarker','QuantitativeChange','FunctionalAssosiation'],
+        ['MolSynthesis','Regulation'],
+        ['MolTransport','Regulation'],
+        ['MolTransport','CellExpression'],
+        ['Regulation','FunctionalAssosiation']]
+        '''
+        for rank_list in ranks:
+            my_rels = [r for r in rels if r.objtype() in rank_list]
+            if len(my_rels) > 1:
+                my_rels.sort(key=lambda x: int(x[REFCOUNT][0]), reverse=True)
+                my_effect = my_rels[0].effect()
+                if my_effect == 'unknown':
+                    for rel in my_rels[1:]:
+                        if rel.effect() != 'unknown':
+                            my_effect = rel.effect()
+                            break
+
+                for reltype in rank_list:
+                    for rel in my_rels:
+                        if rel.objtype() == reltype:
+                            rel[EFFECT] = [my_effect]
+                            return rel
+                        
+            elif len(my_rels) == 1:
+                return my_rels[0]
+
+        # we are here because rels cannot be ranked by any ranks
+        rels.sort(key=lambda x: int(x[REFCOUNT][0]), reverse=True)
+        for rel in rels:
+            if rel.is_directional():
+                return rel
+                
+        return rels[0]
+    
+
+    def __set_bestrel(self,_4ruid:int, _4tuid:InterruptedError, from_rels:list,ranks:list):
+        '''
+        Input
+        -----
+        from_rels = [PSRelation]\n
+        ranks - [[str,..]], where str - PSRelation obtypes sorted by rank.
+        '''
+
+        best_rel = ResnetGraph.__bestrel(from_rels,ranks)
+        refs2add = set()
+        [refs2add.update(rel.refs()) for rel in from_rels]
+        best_rel._add_refs(list(refs2add))
+
+        [self.remove_relation(rel) for rel in from_rels]
+        best_rel_urn = self.rel_urn(best_rel,refresh=True) 
+        ref_count = best_rel.get_reference_count()
+        self.add_edge(_4ruid, _4tuid, relation=best_rel,weight=ref_count,key=best_rel_urn)
+
+
+
     def make_simple(self, rel_type_rank:list=[]):
         """
         Input
@@ -2546,45 +2705,25 @@ class ResnetGraph (nx.MultiDiGraph):
         all other relations are merged into the most referenced one
         if rel_type_rank is specified the new relation type is assigned accordingly 
         """
-        def __bestrel(rels:list):
-            if rel_type_rank:
-                my_rels = [r for r in rels if r.objtype() in rel_type_rank]
-                if not my_rels:
-                    my_rels = rels
-            else:
-                my_rels = rels
-
-            my_rels.sort(key=lambda x: int(x[REFCOUNT][0]), reverse=True)
-            for rel in my_rels:
-         #       if rel.urn() == 'urn:agi-DirectRegulation:in-out:urn:agi-cas:73-31-4:out:urn:agi-llid:7124:negative:direct interaction':
-         #           print('')
-                if rel.effect() != 'unknown':
-                    return rel
-                else:
-                    continue
-            
-            # we are here because all rels have no Effect
-            for rel in my_rels:
-                if rel.is_directional():
-                    return rel
-                
-            return my_rels[0] 
-
-        
         print(f'Simplifying {self.name}')
         simple_g = self.copy()
-        for regulator_uid, target_uid in self.edges():
+        for ruid, tuid in self.edges():
            # if regulator_uid ==PSObject.urn2uid('urn:agi-cas:106266-06-2'):
            #     if  target_uid == PSObject.urn2uid('urn:agi-llid:3351'):
            #         print('')
-            reg2target_rels = simple_g._psrels4(regulator_uid,target_uid)
+            reg2target_rels = simple_g._psrels4(ruid,tuid)
             if len(reg2target_rels) > 1: # need simplification
-                best_rel = __bestrel(reg2target_rels)
-                reg2target_rels.remove(best_rel)
-                #simple_g.merge_rel(best_rel,reg2target_rels)
-                [simple_g.add_refs2(best_rel,rel.refs()) for rel in reg2target_rels]
-                [simple_g.remove_relation(rel) for rel in reg2target_rels]
+                best_rel = ResnetGraph.__bestrel(reg2target_rels,[rel_type_rank])
+                refs2add = set()
+                [refs2add.update(rel.refs()) for rel in reg2target_rels]
+                best_rel._add_refs(list(refs2add))
 
+                [simple_g.remove_relation(rel) for rel in reg2target_rels]
+                # sometimes best_rel_urn changes URN 
+                best_rel_urn = simple_g.rel_urn(best_rel,refresh=True) 
+                ref_count = best_rel.get_reference_count()
+                simple_g.add_edge(ruid, tuid, relation=best_rel,weight=ref_count,key=best_rel_urn)
+                
         print('%d redundant edges in graph "%s" were removed by simplification' % 
               (self.number_of_edges()-simple_g.number_of_edges(),self.name))
 
@@ -2597,7 +2736,100 @@ class ResnetGraph (nx.MultiDiGraph):
               (size_before-simple_g.number_of_edges(),self.name))
         return simple_g
     
-                    
+
+    def curate(self, ranks:list=[]):
+        """
+        Input
+        -----
+        curation_rules = [
+        ['DirectRegulation','Binding','ProtModification','Regulation'],
+        ['PromoterBinding','Expression','Regulation'],
+        ['Biomarker','StateChange'],
+        ['Biomarker','QuantitativeChange','FunctionalAssosiation'],
+        ['MolSynthesis','Regulation'],
+        ['MolTransport','Regulation'],
+        ['MolTransport','CellExpression'],
+        ['Regulation','FunctionalAssosiation']
+        ]
+        
+        Returns
+        -------
+        graph with only one edge between nodes.\n
+        keeps relation with the biggest reference count.\n
+        all other relations are merged into the most referenced one
+        if rel_type_rank is specified the new relation type is assigned accordingly 
+        """
+        curation_rules = [
+        ['DirectRegulation','Binding','ProtModification','Regulation'],
+        ['PromoterBinding','Expression','Regulation'],
+        ['Biomarker','StateChange'],
+        ['Biomarker','QuantitativeChange','FunctionalAssosiation'],
+        ['MolSynthesis','Regulation'],
+        ['MolTransport','Regulation'],
+        ['MolTransport','CellExpression'],
+        ['Regulation','FunctionalAssosiation']
+        ] if not ranks else ranks
+
+        print(f'Curating {self.name}')
+        curated_g = self.copy()
+        for ruid, tuid in self.edges():
+           # if regulator_uid ==PSObject.urn2uid('urn:agi-cas:106266-06-2'):
+           #     if  target_uid == PSObject.urn2uid('urn:agi-llid:3351'):
+           #         print('')
+            reg2target_rels = curated_g._psrels4(ruid,tuid)
+            if len(reg2target_rels) > 1: # need simplification
+                curated_g.__set_bestrel(ruid, tuid,reg2target_rels,curation_rules)
+                """
+                [refs2add.update(rel.refs()) for rel in reg2target_rels]
+                best_rel._add_refs(list(refs2add))
+                if best_rel.objtype() == 'Binding' and len(reg2target_rels) > 1:
+                    assert(reg2target_rels[1].objtype() == 'Regulation')
+                    best_rel['ObjTypeName'] = ['DirectRegulation']
+
+                [curated_g.remove_relation(rel) for rel in reg2target_rels]
+                best_rel_urn = curated_g.rel_urn(best_rel,refresh=True) 
+                ref_count = best_rel.get_reference_count()
+                """
+
+                
+        print('%d redundant edges in graph "%s" were removed by simplification' % 
+            (self.number_of_edges()-curated_g.number_of_edges(),self.name))
+
+        # now removing non-directional relations created by direction duplication in __add_rel
+        duplicate_rels = [r for u,v,urn,r in curated_g.edges(keys=True,data='relation') if urn not in curated_g.urn2rel.keys()]
+        size_before = curated_g.number_of_edges()
+        [curated_g.remove_relation(r) for r in duplicate_rels]
+
+        print('%d additional non-directional edges in graph "%s" were removed as duplicates of removed relation' % 
+            (size_before-curated_g.number_of_edges(),self.name))
+        return curated_g
+    
+
+    def clean(self):
+        """
+        Merges relations of same type between regulator and target to remove duplicates by Effect,Mechanism,ChangeType
+        """
+        print(f'Cleaning {self.name}')
+        curated_g = self.copy()
+        for ruid, tuid in self.edges():
+            reg2target_rels = curated_g._psrels4(ruid,tuid)
+            rtype2rels = dict()
+            for rel in reg2target_rels:
+                reltype = rel.objtype()
+                try:
+                   rtype2rels[reltype].append(rel)
+                except KeyError:
+                    rtype2rels[reltype] = [rel]
+
+            for rtype, sametype_rels in rtype2rels.items():
+                if len(sametype_rels) > 1: # need simplification
+                    curated_g.__set_bestrel(ruid, tuid,sametype_rels,[[rtype]])
+                
+        print('%d redundant edges in graph "%s" were removed by simplification' % 
+            (self.number_of_edges()-curated_g.number_of_edges(),self.name))
+    
+        return curated_g
+    
     def regulome_dict(self, only_objtype:list, min_size=2):
         """
         Returns
@@ -2672,7 +2904,7 @@ class ResnetGraph (nx.MultiDiGraph):
             [relation2targets.add(rel) for r,t,rel in self.edges.data('relation') if r in regulators_uids and t in targets_uids]
 
         if min_regulators > 1:
-            reg2target_subgraph = self.subgraph_by_rels(relation2targets)
+            reg2target_subgraph = self.subgraph_by_rels(list(relation2targets))
             targets_uids = [uid for uid in reg2target_subgraph.nodes() if reg2target_subgraph.in_degree(uid) > min_regulators]
             filtered_regulator_uids = set()
             filtered_rels = set()
@@ -2772,14 +3004,14 @@ class ResnetGraph (nx.MultiDiGraph):
             for prop_name in in_properties:
                 for n1, n2, rel in self.edges.data('relation'):
                     try:
-                        my_rel = rel[prop_type]
+                        my_rel = rel[prop_name]
                         my_rels.add(my_rel)
                         #subgraph.add_rel(my_rel,self)
                     except KeyError:
                         continue
 
         print(f'Select subgraph with {len(my_rels)} relations with {in_properties} from graph with {self.number_of_edges()} edges')
-        return self.subgraph_by_rels(my_rels)
+        return self.subgraph_by_rels(list(my_rels))
 
 
     def subgraph_by_nodeprops(self,has_properties:list,with_values=set()):
@@ -2791,10 +3023,10 @@ class ResnetGraph (nx.MultiDiGraph):
         '''
         my_nodes = self.psobjs_with(has_properties,with_values)
         my_nodes_ids = [n.uid() for n in my_nodes]
-        return self.neighborhood(my_nodes_ids)
+        return self.neighborhood(set(my_nodes_ids))
 
 
-    def get_subgraph(self,between_nodes:list,and_nodes:list,by_relation_types:list=[],with_effect:list=[],in_direction='',urn_ids=False)->"ResnetGraph":
+    def get_subgraph(self,between_nodes:list,and_nodes:list,by_relation_types:list=[],with_effect:list=[],in_direction='')->"ResnetGraph":
         '''
         Input
         -----
@@ -3064,7 +3296,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
         return multithreads
 
-
+    '''
     def splitOLD(self, max_edge_count=10000):
         #nodes_per_subgraph = int(len(self)/number_of_subgraphs)
         isolated_subgraphs = list()
@@ -3105,7 +3337,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
         return isolated_subgraphs
     
-
+    '''
     def __remap_rels(self,uid_remap:dict):
         '''
         Input
@@ -3216,6 +3448,98 @@ class ResnetGraph (nx.MultiDiGraph):
         remapped_rels = self.__remap_rels(uid_remap)
         mapped_graph.add_psrels(set(remapped_rels))
         return mapped_graph, unmapped_nodes
+    
+
+    def rn2tensor(self,node_stats=dict(),node_features=[],edge_stats=dict(),idx2objs=dict()):
+        '''
+        Input
+        -----
+        node_stats - {objtype:counts}. If empty will be created from self\n
+        edge_stats - {reltype:counts}. If empty will be created from self\n
+        idx2objs - {node_index:PSobject}. Dictionary of indexed graph nodes.If empty will be created from self\n
+
+        Return
+        ------
+        {index:PSobject} - dictionary of indexed graph nodes 
+        node_features - [[0,1,0,0]...[1,0,0,0]] - 1-hot encoded node types. feature index = index of objtype in node_stats
+        edges - [r,t,w,[0,1,0,0]] - regulator index, target index, edge weight, 1-hot encoded edge types\n
+        node_stats - {objtype:counts}, sorted by count in descending order
+        edge_stats - {reltype:counts}, sorted by count in descending order, edge feature index = index of reltype in edge_stats
+        '''
+        if not node_stats:
+            node_stats, edge_stats = self.get_stats()
+
+        urn2idx = dict()
+        if isinstance(idx2objs,dict):
+            urn2idx = {o.urn():i for i,o in idx2objs.items()}
+
+        def objidx(obj:PSObject):
+            try:
+                return urn2idx[obj.urn()]
+            except KeyError:
+                newidx = len(urn2idx)
+                urn2idx[obj.urn()] = newidx
+                idx2objs[newidx] = obj
+                return newidx
+        
+        if not node_features:
+            node_features_dict = list(node_stats.keys())
+            nodes = self._get_nodes()
+            node_features = [[]]*2*len(nodes)
+            for n in nodes:
+                nobjtype = n.objtype()
+                n_features = [0]*len(node_features_dict)
+                objtype_idx = node_features_dict.index(nobjtype)
+                n_features[objtype_idx] = 1
+
+                active_newidx = objidx(n.make_active())
+                node_features[active_newidx] = n_features
+                repressed_newidx = objidx(n.make_repressed())
+                node_features[repressed_newidx] = n_features
+        
+        edge_features_dict = list(edge_stats.keys())
+        edge_list = list()
+        for r,t,e in self.edges.data(True):
+            regulator = self._get_node(r)
+            target = self._get_node(t)
+            r_active_idx = objidx(regulator.make_active())
+            r_repressed_idx = objidx(regulator.make_repressed())
+            t_active_idx = objidx(target.make_active())
+            t_repressed_idx = objidx(target.make_repressed())
+            
+            psrel = e['relation']
+            if isinstance(psrel,PSRelation):
+                reltype = psrel.objtype()
+                if reltype == 'ClinicalTrial':
+                    effect_sign = -1 # hacking ClinicalTrial that do not have Effect sign in Resnet
+                else:
+                    effect_sign = psrel.effect_sign()
+
+                relweight = psrel.get_reference_count()
+
+                reltype = psrel.objtype()
+                e_features = [0]*len(edge_features_dict)
+                reltype_idx = edge_features_dict.index(reltype)
+                e_features[reltype_idx] = 1
+
+                if effect_sign > 0:
+                    edge_list.append([r_active_idx,t_active_idx,relweight,e_features])
+                    edge_list.append([r_repressed_idx,t_repressed_idx,relweight,e_features])
+                elif effect_sign < 0:
+                    edge_list.append([r_active_idx,t_repressed_idx,relweight,e_features])
+                    edge_list.append([r_repressed_idx,t_active_idx,relweight,e_features])
+                else:
+                    edge_list.append([r_active_idx,t_active_idx,relweight,e_features])
+                    edge_list.append([r_repressed_idx,t_repressed_idx,relweight,e_features])
+                    edge_list.append([r_active_idx,t_repressed_idx,relweight,e_features])
+                    edge_list.append([r_repressed_idx,t_active_idx,relweight,e_features])
+                
+        return edge_list,node_features,idx2objs,node_stats,edge_stats
+    
+
+    
+            
+
     
 '''
 class Regulome(ResnetGraph):

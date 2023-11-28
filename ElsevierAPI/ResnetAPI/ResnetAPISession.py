@@ -11,7 +11,7 @@ from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS
 from .NetworkxObjects import DBID,PSObject,PSRelation
 from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
-from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PS_PROPS
+from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
 
 TO_RETRIEVE = 'to_retrieve'
@@ -32,7 +32,7 @@ NO_RNEF_REL_PROPS={'RelationNumberOfReferences','Name','URN'}
 APISESSION_KWARGS = {'what2retrieve','connect2server','no_mess','data_dir',TO_RETRIEVE,
                   'use_cache','load_model','ent_props','rel_props'}
 MAX_SESSIONS = 50 # by default sessions_max=200 in Oracle 
-MAX_PAGE_THREADS = 100
+MAX_PAGE_THREADS = 80
 
 
 class APISession(PSNetworx):
@@ -115,7 +115,7 @@ class APISession(PSNetworx):
         elif what2retrieve == ONLY_REL_PROPERTIES:
             return ['URN']+list(RELATION_PROPS)
         elif what2retrieve == ALL_PROPERTIES:
-            return ['URN']+ALL_PS_PROPS
+            return ['URN']+ALL_PSREL_PROPS
         return []
 
 
@@ -227,19 +227,24 @@ class APISession(PSNetworx):
         '''
         self.__set_get_links()
         obj_props = self.relProps if self.getLinks else self.entProps
+        page_size = max_result if max_result else self.PageSize
         zeep_data, (self.ResultRef, self.ResultSize, self.ResultPos) = self.init_session(self.GOQLquery,
-                                                                                        self.PageSize,
-                                                                                        obj_props,
-                                                                                        getLinks = self.getLinks)
+                                                                                        page_size,obj_props,
+                                                                                 getLinks = self.getLinks)
+        
+        if max_result and self.ResultSize > max_result:
+            return ResnetGraph()
+    
         if first_iteration > 0:
             self.ResultPos = first_iteration
             print ('Resuming retrieval from %d position' % first_iteration)
             return self.__nextpage__(self.ResultPos)
+        else:
+            if not max_result:  # to suppress messages from load_children4
+                print(f'query found {self.ResultSize} results')
 
-        if max_result and self.ResultSize > max_result:
-            return ResnetGraph()
-
-        if type(zeep_data) != type(None):
+       # if type(zeep_data) != type(None):
+        if not isinstance(zeep_data, type(None)):
             if self.getLinks:
                 obj_dbids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
                 zeep_objects = self.get_object_properties(obj_dbids, self.entProps)
@@ -261,7 +266,7 @@ class APISession(PSNetworx):
             obj_props = self.relProps if self.getLinks else self.entProps
             zeep_data, self.ResultSize, current_pos = self.get_session_page(self.ResultRef, result_pos, self.PageSize,
                                                                        self.ResultSize,obj_props,getLinks=self.getLinks)                                                          
-            if type(zeep_data) != type(None):
+            if not isinstance(zeep_data, type(None)):
                 if self.getLinks and len(zeep_data.Links.Link) > 0:
                     obj_dbids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
                     zeep_objects = self.get_object_properties(obj_dbids, self.entProps)
@@ -617,6 +622,36 @@ class APISession(PSNetworx):
             return ResnetGraph()
      
 
+    def __iterate_oqls__(self,oqls:list):
+        max_workers = len(oqls) if len(oqls) < MAX_SESSIONS else MAX_SESSIONS
+        accumulate_graph = ResnetGraph()
+        with ThreadPoolExecutor(max_workers=max_workers,thread_name_prefix=f'Iterate {len(oqls)} OQLs') as e:
+            futures = list()
+            for i, oql in enumerate(oqls):
+                job_name = f'OQL#{i}'
+                new_session = self._clone_session() # need to clone since self.dbid2relation mutates
+                new_session.add2self = False
+                futures.append(e.submit(new_session.process_oql,oql,request_name=job_name))
+
+            for f in as_completed(futures):
+                accumulate_graph = accumulate_graph.compose(f.result())
+            e.shutdown()
+        return accumulate_graph
+            
+
+    def iterate_oql3(self,reg2targ:list,oql_template:str):
+        '''
+        Input
+        -----
+        reg2targ - [(PSObject.PSObject)..], where 1st element is regulator, 2nd is target
+        oql_template - must have two placeholders {reg_urn},{targ_urn}
+        '''
+        oql_queries = list()
+        [oql_queries.append(oql_template.format(reg_urn=rt[0].urn(),targ_urn=rt[1].urn())) for rt in reg2targ]
+        return self.__iterate_oqls__(oql_queries)
+
+
+
     def clear(self):
         self.Graph.clear_resnetgraph()
         self.dbid2relation.clear()
@@ -654,7 +689,11 @@ class APISession(PSNetworx):
             # load  self.ResultRef
             self.ResultRef  = 'ID='+str(result.dbid())
             zeepdata,self.ResultSize, pos = self.get_session_page(self.ResultRef,0, 1,1,[],getLinks=True)
-            first_obj = zeepdata.Objects.ObjectRef[0]
+            if  not isinstance(zeepdata, type(None)):
+                    first_obj = zeepdata.Objects.ObjectRef[0]
+            else:
+                return False
+            
             return True if first_obj['ObjClassId'] == 3 else False
 
         self.PageSize  = 10000
@@ -780,13 +819,19 @@ class APISession(PSNetworx):
         else:
             reltype_str = 'all'
 
-        req_name = f'Connecting {len(node_dbids1)} and {len(node_dbids2)} entities by {reltype_str} relations and {effect_str} effects'
+        my_dbids2 = node_dbids2.copy()
+        common_ids = node_dbids1.intersection(node_dbids2)
+        if common_ids and not in_direction:
+            print(f'Removed {len(common_ids)} common identifiers between two input lists from second input list to avoid false expand')
+            my_dbids2 = node_dbids2.difference(node_dbids1)
+
+        req_name = f'Connecting {len(node_dbids1)} and {len(my_dbids2)} entities by {reltype_str} relations and {effect_str} effects'
          # step is set 250 to mitigate possible timeout during multithreading
         if download:
-           self.__iterate2__(f'{oql_query}',list(node_dbids1),list(node_dbids2),req_name,step,download=True)
+           self.__iterate2__(f'{oql_query}',list(node_dbids1),list(my_dbids2),req_name,step,download=True)
            return ResnetGraph()
         else:
-            return self.iterate_oql2(f'{oql_query}',node_dbids1,node_dbids2,use_relation_cache,request_name=req_name,step=step)
+            return self.iterate_oql2(f'{oql_query}',node_dbids1,my_dbids2,use_relation_cache,request_name=req_name,step=step)
    
 
     def get_group_members(self, group_names:list):
@@ -806,8 +851,10 @@ class APISession(PSNetworx):
         urns2value = PSObject()
         for group_name in group_names:
             group_graph = self.get_group_members([group_name])
-            group_members = group_graph._get_nodes()
-            [urns2value.append_property(o.urn(),group_name) for o in group_members]
+            if isinstance(group_graph,ResnetGraph):
+                group_members = group_graph._get_nodes()
+                [urns2value.append_property(o.urn(),group_name) for o in group_members]
+
 
         if _2graph:
             _2graph.set_node_annotation(urns2value,BELONGS2GROUPS)
@@ -838,7 +885,9 @@ class APISession(PSNetworx):
         for i in range(0, len(need_db_mapping), step):
             last = i + step
             propval_chunk = using_values[i:last]
-            query_node = OQL.get_entities_by_props(propval_chunk,in_properties,map2types)
+           # query_node = OQL.get_entities_by_props(propval_chunk,in_properties,map2types)
+            prop_names_str, prop_values = OQL.get_search_strings(in_properties,propval_chunk)
+            query_node = f'''SELECT Entity WHERE ({prop_names_str}) = ({prop_values})'''
             request_name = 'Mapping {start}-{end} values out of {total}'
             end = min(last,len(using_values))
             request_name = request_name.format(start=str(i), end=str(end), total = len(using_values))
@@ -958,13 +1007,13 @@ class APISession(PSNetworx):
                         max_threaded_time = threaded_time
                         if max_threaded_time > 240:
                             print(f'Longest {max_threads}-threaded time {"{}".format(str(timedelta(seconds=max_threaded_time)))} \
-                                  is close to Apache default 5 minutes transaction timeout !!!')
+is close to Apache default 5 minutes transaction timeout !!!')
                     if not self.no_mess:
                         print (f'{p+1} parents out of {len(annotate_parents)} were processed in {self.execution_time(process_start)[0]}')
                     need_children.clear()
         
         print(f'{len(child_counter)} children for {len(annotate_parents)} parent entities were found in database \
-              in {self.execution_time(process_start)[0]}')
+in {self.execution_time(process_start)[0]}')
         print(f'Longest {max_threads}-threaded time: {"{}".format(str(timedelta(seconds=max_threaded_time)))}')
         return child_counter, self.Graph.psobjs_with([CHILDS])
 
@@ -1333,7 +1382,6 @@ class APISession(PSNetworx):
                 (request_name,self.ResultSize,return_type, number_of_iterations/threads,threads))
             with ThreadPoolExecutor(1,f'{request_name} Dump{number_of_iterations}iters') as e:
                 # max_workers = 1 otherwise _dump2rnef gets locked
-                # dump_futures = list()
                 for i in range(0,number_of_iterations,threads):
                     iterations_graph = iterations_graph.compose(self.__thread__(threads))
                     e.submit(self._dump2rnef, iterations_graph.copy(), self.dump_folder,'',True,lock)
@@ -1387,7 +1435,7 @@ class APISession(PSNetworx):
         find_neighbors_oql += ' AND Connected by ('+sel_rels23+') to (SELECT Entity WHERE id = ({ids2}))'
 
         r_n = f'Find entities common between {len(of_dbids1)} and {len(and_dbids3)} entities' 
-        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',of_dbids1,and_dbids3,request_name=r_n)
+        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',set(of_dbids1),set(and_dbids3),request_name=r_n)
         neighbors_dbids = list(neighbors_entity_graph.dbids4nodes())
         print('Found %d common neighbors' % len(neighbors_dbids))
 
@@ -1536,7 +1584,7 @@ class APISession(PSNetworx):
             oql_query = oql_query + ' AND objectType = (' + obj_types_str + ')'
 
         rn = f'Retrieving objects from database using {len(propValues)} values for {prop_names} properties'
-        my_psobjs = self.iterate_oql(oql_query,propValues,request_name=rn,step=950)._get_nodes()
+        my_psobjs = self.iterate_oql(oql_query,set(propValues),request_name=rn,step=950)._get_nodes()
         # step size is reduced to 950 to mitigate potential excessive length of oql_query string due to zeep package limitations
 
         if get_childs:
@@ -1606,7 +1654,7 @@ class APISession(PSNetworx):
 
     def scopusCI(self):
         references = self.Graph.load_references()
-        refs_with_ci, no_ci_refs = loadCI(self.APIconfig,references)
+        refs_with_ci, no_ci_refs = loadCI(self.APIconfig,list(references))
 
         graph_with_ci = ResnetGraph()
         graph_with_ci.add_psobjs(set(self.Graph._get_nodes()))

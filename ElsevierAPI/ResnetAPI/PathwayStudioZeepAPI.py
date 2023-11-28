@@ -235,21 +235,11 @@ class DataModel:
                     self.SOAPclient.transport.load_timeout = timeout
                     sleep(timeout)
                     continue
-            except req_exceptions.ChunkedEncodingError as cherr:
-                chunk_timeout = 10
-                print(f'{cherr} on GOQL query {OQLquery}\n Will try again in {chunk_timeout} seconds',flush=True)
-                sleep(chunk_timeout)
-                continue
-            except zeep_exceptions.Fault:
-                print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in %d sec' % 
-                                                                (OQLquery[:200],attempt,CONNECTION_TIMEOUT),flush=True)
+            except (req_exceptions.ChunkedEncodingError,zeep_exceptions.Fault,req_exceptions.ConnectionError) as err:
+                print(f'{err} on GOQL query {OQLquery}\n Will try again in {CONNECTION_TIMEOUT} seconds',flush=True)
                 sleep(CONNECTION_TIMEOUT)
                 continue
-            except req_exceptions.ConnectionError:
-                print('Connection error while executing query\n"%s"\nAttempt #%d to reconnect is in %d sec' % 
-                                                                (OQLquery[:200],attempt,CONNECTION_TIMEOUT),flush=True)
-                sleep(CONNECTION_TIMEOUT)
-                continue
+
         
         tout = self.SOAPclient.transport.load_timeout
         if tout > 300:
@@ -265,8 +255,8 @@ class DataModel:
             try:
                 result = self.SOAPclient.service.ResultGetData(result_param)
                 return result
-            except zeep_exceptions.Fault:
-                print('Connection error while retrieving results\n"%s"\nAttempt #%d to reconnect is in 10 sec' %
+            except (zeep_exceptions.Fault,req_exceptions.ChunkedEncodingError) as err:
+                print(f'{err} error while retrieving results\n"%s"\nAttempt #%d to reconnect is in 10 sec' %
                          (str(result_param.ResultRef),attempt+2),flush=True)
                 sleep(CONNECTION_TIMEOUT)
                 continue
@@ -277,11 +267,6 @@ class DataModel:
                 print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds',flush=True)
                 self.SOAPclient.transport.load_timeout = timeout
                 sleep(timeout)
-                continue
-            except req_exceptions.ChunkedEncodingError as cherr:
-                chunk_timeout = 10
-                print(f'{cherr} on retrieval of result {str(result_param.ResultRef)}\nWill try again in {chunk_timeout} seconds',flush=True)
-                sleep(chunk_timeout)
                 continue
 
 
@@ -441,9 +426,7 @@ class DataModel:
         return obj_props
 
 
-    def init_session(self, OQLrequest, PageSize: int, property_names=None, getLinks=True):
- #       property_names = ['Name'] if property_names is None else property_names
-
+    def init_session(self, OQLrequest:str, PageSize:int, property_names=None, getLinks=True):
         rp = self.create_result_param(property_names)
         rp.GetObjects = True
         rp.GetProperties = True

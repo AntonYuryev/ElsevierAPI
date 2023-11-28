@@ -64,9 +64,27 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     
     def urn(self):
         try:
-            return str(self['URN'][0])
+            ulist = self['URN']
+            return str(ulist[0])
         except KeyError:
             raise KeyError
+        
+    
+    def active_urn(self):
+        return self.urn()+'a'
+    
+    def repressed_urn(self):
+        return self.urn()+'i'
+    
+    def make_active(self):
+        activated_self = PSObject(self.copy())
+        activated_self['URN'] = [activated_self.active_urn()]
+        return activated_self
+    
+    def make_repressed(self):
+        repressed_self = PSObject(self.copy())
+        repressed_self['URN'] = [repressed_self.repressed_urn()]
+        return repressed_self
         
     @staticmethod
     def urn2uid(urn:str):
@@ -414,7 +432,16 @@ class PSRelation(PSObject):
     def effect(self):
         my_effects = self.__effects()
         return my_effects[0]
+    
 
+    def flip_effect(self):
+        if self.effect() == 'positive':
+            self[EFFECT][0] = 'negative'
+            return True
+        elif self.effect() == 'negative':
+            self[EFFECT][0] = 'positive'
+            return True
+        return False
 
     def mechanisms(self):
         try:
@@ -462,10 +489,15 @@ class PSRelation(PSObject):
     
 
     def __refDict2refs(self):
+        '''
+        Return
+        ------
+        self.references
+        '''
         my_refs = list(set(self.RefDict.values()))
         my_refs.sort(key=lambda r: r._sort_key(PUBYEAR), reverse=True)
         self.references = my_refs
-        return  self.references
+        return self.references
     
 
     def _add_refs(self, references:list):
@@ -592,8 +624,8 @@ class PSRelation(PSObject):
         
     def make_copy(self):
         my_copy = PSRelation(self)
-        my_copy.PropSetToProps= dict(self.PropSetToProps)
-        my_copy.Nodes= dict(self.Nodes)
+        my_copy.PropSetToProps = dict(self.PropSetToProps)
+        my_copy.Nodes = dict(self.Nodes)
         my_copy.RefDict = dict(self.RefDict)
         my_copy.references = list(self.references)
         return my_copy
@@ -694,6 +726,11 @@ class PSRelation(PSObject):
 
 
     def load_refdict(self,refresh=False):
+        '''
+        Return
+        ------
+        self.RefDict
+        '''
         if self.RefDict:
             if not refresh:
                 return
@@ -735,8 +772,13 @@ class PSRelation(PSObject):
                     try:
                         ref = self.RefDict[propset_title]
                     except KeyError:
-                        ref = Reference('Title', propset_title)
-                        self.RefDict[propset_title] = ref
+                        # attept to find reference with the same title among existing
+                        refs_with_title = [r for r in self.RefDict.values() if r.title() == propset_title]
+                        if refs_with_title: 
+                            ref = refs_with_title[0]
+                        else:
+                            ref = Reference('Title', propset_title)
+                            self.RefDict[propset_title] = ref
                 except KeyError:
                     try:
                         txtref = propSet['TextRef'][0]

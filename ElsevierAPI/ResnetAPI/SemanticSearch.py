@@ -410,7 +410,20 @@ class SemanticSearch (APISession):
         graph_connects = how2connect(node1dbids,node2dbids)
         print('%d nodes were linked by %d relations supported by %d references in %s' %
              (len(graph_connects),graph_connects.number_of_edges(),graph_connects.weight(),self.execution_time(start_time)[0]))
+        
         return graph_connects
+    
+
+    def connect(self, my_df:df,concepts:list,how2connect) -> "ResnetGraph":
+        '''
+        combines relation from database with relation that exist only in self.Graph and not in database
+        '''
+        concepts_db_ids = ResnetGraph.dbids(concepts)
+        all_entity_dbids = list(self._all_dbids(my_df))
+        graph_from_db = self.__refcount_by_dbids(concepts_db_ids, all_entity_dbids,how2connect)
+        all_entities = self.Graph.psobj_with_dbids(set(all_entity_dbids))
+        graph_from_self = self.Graph.get_subgraph(concepts,all_entities,self.__connect_by_rels__,self.__rel_effect__,self.__rel_dir__)
+        return graph_from_db.compose(graph_from_self)
 
 
     def set_how2connect(self,connect_by_rels:list=[],with_effects:list=[],in_dir='',boost_by_reltypes=list(),step=500):
@@ -495,9 +508,9 @@ class SemanticSearch (APISession):
         linked_row_count = 0
         linked_entities_counter = set()
         start_time  = time.time()
-        concepts_db_ids = ResnetGraph.dbids(concepts)
-        all_entity_dbids = list(self._all_dbids(my_df))
-        connection_graph = self.__refcount_by_dbids(concepts_db_ids, all_entity_dbids,how2connect)
+      #  concepts_db_ids = ResnetGraph.dbids(concepts)
+      #  all_entity_dbids = list(self._all_dbids(my_df))
+        connection_graph = self.connect(my_df,concepts, how2connect)
    
         if connection_graph.size() > 0:
             self.__annotate_rels(connection_graph, ConceptName)

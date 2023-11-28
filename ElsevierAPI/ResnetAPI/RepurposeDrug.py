@@ -1,5 +1,6 @@
 from .TargetIndications import Indications4targets,OQL,df,DF4ANTAGONISTS,DF4AGONISTS,ResnetGraph
 from .TargetIndications import ANTAGONIST,AGONIST,BIBLIO_PROPERTIES,PS_SENTENCE_PROPS
+from ElsevierAPI import  execution_time
 from concurrent.futures import ThreadPoolExecutor
 from .SemanticSearch import RANK
 import time
@@ -15,9 +16,14 @@ class RepurposeDrug(Indications4targets):
         '''
         APIconfig - args[0]
         '''
-        APIconfig = args[0]
+        APIconfig = args[0] if args else dict()
+
         my_kwargs = {
-                'what2retrieve':BIBLIO_PROPERTIES
+                'input_compound' : '', 
+                'similars' : [],
+                'drug_effect': INHIBIT, # INHIBIT for indications, ACTIVATE for toxicitites
+                'mode_of_action': ANTAGONIST,
+                'indication_types': ['Disease'], #['CellProcess','Virus']
                 }
         my_kwargs.update(kwargs)
 
@@ -33,13 +39,15 @@ class RepurposeDrug(Indications4targets):
 
     def target2indication_effect(self):
         if self.params['drug_effect'] == INHIBIT and self.params['mode_of_action'] == ANTAGONIST:
-            return 'positive' #most often case for drugs and their disease indications
+            return str('positive') #most often case for drugs and their disease indications
         elif self.params['drug_effect'] == ACTIVATE and self.params['mode_of_action'] == ANTAGONIST:
-            return 'negative' # can be used only with CellProcess
+            return str('negative') # can be used only with CellProcess
         elif self.params['drug_effect'] == ACTIVATE and self.params['mode_of_action'] == AGONIST:
-            return 'positive' # can be used only with CellProcess
+            return str('positive') # can be used only with CellProcess
         elif self.params['drug_effect'] == INHIBIT and self.params['mode_of_action'] == AGONIST:
-            return 'negative' #find disease indications for drugs that are agonist of their target(s)
+            return str('negative') #find disease indications for drugs that are agonist of their target(s)
+        else:
+            return ''
 
 
 
@@ -49,8 +57,7 @@ class RepurposeDrug(Indications4targets):
         drug_graph = self.load_graph_from_oql(self.SELECTdrug,[],['Connectivity'],get_links=False,add2self=False)
         self.drugs = drug_graph._get_nodes()
         self.drugs.sort(key=lambda x: int(x['Connectivity'][0]), reverse=True)
-        
- 
+
 
     def __effect_str(self):
         if self.params['drug_effect'] == INHIBIT: return 'negative'
@@ -82,19 +89,21 @@ class RepurposeDrug(Indications4targets):
             REQUEST_NAME = 'Find {drug} indications by clinical trials'.format(drug=self.params['input_compound'])
             OQLquery = 'SELECT Relation WHERE objectType = ClinicalTrial AND NeighborOf ({select_drug}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_types}))'
             ClinicalTrialIndictions = self.process_oql(OQLquery.format(select_drug=self.SELECTdrug, indication_types = indic_str),REQUEST_NAME)
-            found_indications = ClinicalTrialIndictions.psobjs_with(only_with_values=self.params['indication_types'])
-            indications2return.update(found_indications)
-            print('Found %d indications in %s clinical trials' % (len(found_indications), self.params['input_compound']))
+            if isinstance(ClinicalTrialIndictions,ResnetGraph):
+                found_indications = ClinicalTrialIndictions.psobjs_with(only_with_values=self.params['indication_types'])
+                indications2return.update(found_indications)
+                print('Found %d indications in %s clinical trials' % (len(found_indications), self.params['input_compound']))
 
         effect = 'negative' if self.params['drug_effect'] == INHIBIT else 'positive'
         REQUEST_NAME = 'Find {drug} all other indications'.format(drug=self.params['input_compound'])
         OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {eff} AND NeighborOf({select_drug}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_types}))'
         oql_query = OQLquery.format(eff=effect, select_drug=self.SELECTdrug,indication_types = indic_str)
         LiteratureIndications = self.process_oql(oql_query, REQUEST_NAME)
-        found_indications = LiteratureIndications.psobjs_with(only_with_values=self.params['indication_types'])
-        indications2return.update(found_indications)
-        print('Found %d indications reported in scientific literature for %s' % (len(found_indications), self.params['input_compound']))
- 
+        if isinstance(LiteratureIndications,ResnetGraph):
+            found_indications = LiteratureIndications.psobjs_with(only_with_values=self.params['indication_types'])
+            indications2return.update(found_indications)
+            print('Found %d indications reported in scientific literature for %s' % (len(found_indications), self.params['input_compound']))
+    
         self.drug_indications.update(indications2return)
         return list(indications2return)
 
@@ -121,20 +130,21 @@ class RepurposeDrug(Indications4targets):
             REQUEST_NAME = 'Find indications by clinical trials for {similars}'.format(similars=','.join(self.params['similars']))
             OQLquery = 'SELECT Relation WHERE objectType = ClinicalTrial AND NeighborOf ({select_drugs}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_types}))'
             SimilarDrugsClinicalTrials = self.process_oql(OQLquery.format(select_drugs=select_similar_drugs, indication_types=indic_str), REQUEST_NAME)
-            found_indications = SimilarDrugsClinicalTrials.psobjs_with(only_with_values=self.params['indication_types'])
-            indications2return.update(found_indications)
-            print('Found %d indications in clinical trials for drugs similar to %s' % (len(found_indications), self.params['input_compound']))
+            if isinstance(SimilarDrugsClinicalTrials,ResnetGraph):
+                found_indications = SimilarDrugsClinicalTrials.psobjs_with(only_with_values=self.params['indication_types'])
+                indications2return.update(found_indications)
+                print('Found %d indications in clinical trials for drugs similar to %s' % (len(found_indications), self.params['input_compound']))
 
         effect = 'negative' if self.params['drug_effect'] == INHIBIT else 'positive'
         REQUEST_NAME = 'Find all other indications for {similars}'.format(similars=','.join(self.params['similars']))
         OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {eff} AND NeighborOf ({select_drugs}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_types}))'
         OQLquery = OQLquery.format(eff=effect,select_drugs=select_similar_drugs,indication_types=indic_str)
         SimilarDrugsIndications = self.process_oql(OQLquery, REQUEST_NAME)
-        self.similar_drugs = SimilarDrugsIndications.psobjs_with(only_with_values=['SmallMol'])
-        found_indications = SimilarDrugsIndications.psobjs_with(only_with_values=self.params['indication_types'])
-        indications2return.update(found_indications)
-        print('Found %d indications reported in scientific literature or drugs similar to %s' % (len(found_indications), self.params['input_compound']))
-        #self.drug_indications4strictmode.update(indications2return)
+        if isinstance(SimilarDrugsIndications,ResnetGraph):
+            self.similar_drugs = SimilarDrugsIndications.psobjs_with(only_with_values=['SmallMol'])
+            found_indications = SimilarDrugsIndications.psobjs_with(only_with_values=self.params['indication_types'])
+            indications2return.update(found_indications)
+            print('Found %d indications reported in scientific literature or drugs similar to %s' % (len(found_indications), self.params['input_compound']))
 
         self.drug_indications.update(indications2return)
         return list(indications2return)
@@ -147,15 +157,15 @@ class RepurposeDrug(Indications4targets):
             if 'Disease' in self.params['indication_types']:
                 #indications = self.drug_indications
                 before_clean_indications_count = len(self.drug_indications)
-                indication_childs, parents_with_children = self.load_children4(self.drug_indications)
+                indication_childs, parents_with_children = self.load_children4(list(self.drug_indications))
                 all_indications = self.drug_indications | indication_childs
 
                 all_drugs = self.drugs+self.similar_drugs
                 oql_query = 'SELECT Entity WHERE objectType = Disease AND id = ({ids1}) AND Connected by (SELECT Relation WHERE objectType = ClinicalTrial)  \
                     to (SELECT Entity WHERE id = ({ids2}))'
-                all_indications_dbid = ResnetGraph.dbids(all_indications)
+                all_indications_dbid = ResnetGraph.dbids(list(all_indications))
                 all_drugs_dbids = ResnetGraph.dbids(all_drugs)
-                clinical_trial_graph = self.iterate_oql2(oql_query,all_indications_dbid,all_drugs_dbids)
+                clinical_trial_graph = self.iterate_oql2(oql_query,set(all_indications_dbid),set(all_drugs_dbids))
                 clinical_trial_indications = clinical_trial_graph._psobjs_with('Disease','ObjTypeName')
                 clintrial_indication_parents, ctuid2parent = self.Graph.find_parents4(clinical_trial_indications)
                 clinical_trial_indications += list(clintrial_indication_parents)
@@ -216,9 +226,12 @@ class RepurposeDrug(Indications4targets):
         rep_pred =  'suggested ' if self.params['strict_mode'] else 'suggested,predicted '
         if indics == 'Disease':
             if self.params['drug_effect'] == INHIBIT:
-                return rep_pred + 'indications for '+self.params['input_compound']
+                return str(rep_pred + 'indications for '+self.params['input_compound'])
             elif self.params['drug_effect'] == ACTIVATE:
-                return rep_pred + 'toxicities for '+self.params['input_compound']
+                return str(rep_pred + 'toxicities for '+self.params['input_compound'])
+            else:
+                print('No drug_effect was specified in paramters')
+                return ''
         else:
             regulate = ' activated by ' if self.params['drug_effect'] == ACTIVATE else ' inhibited by '
             return str(rep_pred+indics+regulate+self.params['input_compound'])
@@ -232,7 +245,7 @@ class RepurposeDrug(Indications4targets):
     def add_drug_indication_refs(self):
         print('Printing clinical trials')
         clin_trial_graph = self.Graph.subgraph_by_relprops(['ClinicalTrial'])
-        ct_pd = self.Graph.snippets2df(clin_trial_graph)
+        ct_pd = clin_trial_graph.snippets2df()
         ct_pd._name_ ='clin. trials'
         self.add2report(ct_pd)
 
@@ -241,7 +254,7 @@ class RepurposeDrug(Indications4targets):
         research_graph = self.Graph.subgraph_by_relprops(['Regulation'])
         effect_str = self.__effect_str()
         research_graph = self.Graph.subgraph_by_relprops([effect_str],['Effect'])
-        research_ref_pd = self.Graph.snippets2df(research_graph)
+        research_ref_pd = research_graph.snippets2df()
 
         research_ref_pd._name_ ='articles'
         self.add2report(research_ref_pd)
@@ -262,7 +275,7 @@ class RepurposeDrug(Indications4targets):
         #return #uncomment for fast downstream testing
         self.find_indications4similars()
         self.clean_indications()
-        print("Drug indications were loaded in %s" % self.execution_time(start_time))
+        print("Drug indications were loaded in %s" % execution_time(start_time))
 
 
     def other_effects(self):
@@ -293,7 +306,7 @@ class RepurposeDrug(Indications4targets):
 
             trgts = ','.join(self.params['target_names'])
             print("%s repurposing using %s as targets was done in %s" % 
-                (self.params['input_compound'],trgts,self.execution_time(start_time)))
+                (self.params['input_compound'],trgts,execution_time(start_time)))
             return indication_df._name_
         else:
             return ''
@@ -316,7 +329,9 @@ class RepurposeDrug(Indications4targets):
             if self._4agonist():
                 self.indications4agonists = self.drug_indications|self.indications4agonists
                 self.indications4antagonists.clear()
-            self.indications4antagonists = self.drug_indications|self.indications4antagonists
+            else:
+                self.indications4antagonists = self.drug_indications|self.indications4antagonists
+                self.indications4agonists.clear()
 
         count_df_name = self.perform_semantic_search()
         if count_df_name:

@@ -5,7 +5,7 @@ from .ResnetAPISession import APISession,ResnetGraph,PSObject,PSRelation
 from .ResnetGraph import EFFECT
 from contextlib import redirect_stdout
 
-CACHE_DIR = 'ElsevierAPI/ResnetAPI/__pscache__/'
+CACHE_DIR = 'D:/Python/ENTELLECT_API/ElsevierAPI/ResnetAPI/__pscache__/'
 
 class APIcache(APISession):
     '''
@@ -89,25 +89,29 @@ class APIcache(APISession):
         refprop2rel = dict(kwargs.pop('refprop2rel',dict()))
         refprop_minmax = kwargs.pop('refprop_minmax',0)
 
-        database_g = database_g.make_simple(rank4simplifying)
+        clean_graph = database_g.copy()
+
+        if kwargs['make_simple']:
+            clean_graph = clean_graph.make_simple(rank4simplifying)
+
         #converting sentence properties to relation properties before making a dump.  Used for pX dump
         for refprop, relprop in refprop2rel.items():
-            database_g.refprop2rel(refprop,relprop,refprop_minmax)
+            clean_graph.refprop2rel(refprop,relprop,refprop_minmax)
             self.relprops2rnef.remove(refprop)
             self.relprops2rnef.append(relprop)
             
         if predict_effect4:
-            database_g,modified_rels = database_g.predict_effect4(**predict_effect4)
-            modified_rels_graph = database_g.subgraph_by_rels(modified_rels)
+            clean_graph,modified_rels = clean_graph.predict_effect4(**predict_effect4)
+            modified_rels_graph = clean_graph.subgraph_by_rels(modified_rels)
             modified_rels_graph.name = 'relations with predicted effect'
             modified_rels_graph.dump2rnef('Effect predicted4',self.entProps,self.relprops2rnef)
         
         if kwargs['no_id_version']:
             for ent_prop in self.entProps:
                 if ent_prop[-3:] == ' ID':
-                    database_g = database_g.clean_version_number(ent_prop)
+                    clean_graph = clean_graph.clean_version_number(ent_prop)
 
-        return database_g
+        return clean_graph
     
 
     def save_network(self, example_node_name=''):
@@ -125,7 +129,10 @@ class APIcache(APISession):
                                    'edges':self.network.number_of_edges(),
                                    'diseases': len(self.network._psobjs_with('Disease','ObjTypeName')),
                                    'chemicals': len(self.network._psobjs_with('SmallMol','ObjTypeName')),
-                                   'proteins': len(self.network._psobjs_with('Protein','ObjTypeName'))
+                                   'proteins': len(self.network._psobjs_with('Protein','ObjTypeName')),
+                                   'DirectRegulation': len(self.network.psrels_with(['DirectRegulation'])),
+                                   'Binding': len(self.network.psrels_with(['Binding'])),
+                                   'Regulation': len(self.network.psrels_with(['Regulation']))
                                    }
         
         with open(self.data_dir+self.network.name+"_description.json", "w") as f:
@@ -150,11 +157,11 @@ class APIcache(APISession):
         Examples:\n
         ['DirectRegulation','Binding','ProtModification','Regulation']\n
         ['PromoterBinding','Expression','Regulation']\n
-        ['Regulation','Biomarker','StateChange','QuantitativeChange']\n
-        ['Biomarker','StateChange']\n
-        ['Biomarker','QuantitativeChange']\n
-        [MolSynthesis','Regulation']\n
-        [MolTransport','Regulation']\n
+        ['Regulation','Biomarker','StateChange','QuantitativeChange','FunctionalAssociation']\n
+        ['Biomarker','StateChange','FunctionalAssociation']\n
+        ['Biomarker','QuantitativeChange','FunctionalAssociation']\n
+        [MolSynthesis','Regulation','FunctionalAssociation']\n
+        [MolTransport','Regulation','FunctionalAssociation']\n
         [MolTransport','CellExpression']\n
         ['Regulation','FunctionalAssosiation']\n
 
@@ -214,7 +221,7 @@ class APIcache(APISession):
                 database_graph = ResnetGraph.fromRNEFdir(dump_dir,merge=False)
             
             database_graph.name = cache_name
-            database_graph = self.clean_graph(database_graph)
+            database_graph = self.clean_graph(database_graph,**kwargs)
             
             database_graph.dump2rnef(my_cache_file,self.entProps,self.relprops2rnef,with_section_size=1000) #with_section_size=1000
             

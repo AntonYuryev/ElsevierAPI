@@ -35,15 +35,16 @@ class Drugs4Targets(DiseaseTargets):
                 'target_types' : ['Protein'],
                 'pathway_folders':[],
                 'pathways': [],
-                'consistency_correction4target_rank':False
+                'consistency_correction4target_rank':False,
+                "max_child_count" : 11
                 }
         my_kwargs.update(kwargs)
 
         super().__init__(APIconfig,**my_kwargs)
         self.clone_all_sessions = my_kwargs.pop('clone',True) # must be different from clone that is used by SemanticSearch
 
-        dt_consist_kwargs = dict(**my_kwargs)
-        self.dt_consist = DrugTargetConsistency(self.APIconfig,**dt_consist_kwargs)
+        #dt_consist_kwargs = dict(**my_kwargs)
+        self.dt_consist = DrugTargetConsistency(self.APIconfig,**my_kwargs)
         self.target_uid2rank = dict() # {target_dbid:rank}
         self.column_ranks = dict() # {column rank:column name} rank defines the column position in Drugs df and consequently its weight
         self.direct_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
@@ -585,8 +586,8 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
 
     def find_rank_targets(self):
         super().make_report()
-        self.report_pandas[ANTAGONIST_TARGETS_WS] = self.remove_high_level_entities(self.report_pandas[ANTAGONIST_TARGETS_WS])
-        self.report_pandas[AGONIST_TARGETS_WS] = self.remove_high_level_entities(self.report_pandas[AGONIST_TARGETS_WS])
+        self.report_pandas[ANTAGONIST_TARGETS_WS] = self.remove_high_level_entities(self.report_pandas[ANTAGONIST_TARGETS_WS],self.params["max_child_count"])
+        self.report_pandas[AGONIST_TARGETS_WS] = self.remove_high_level_entities(self.report_pandas[AGONIST_TARGETS_WS],self.params["max_child_count"])
         print('Found %d targets for antagonists, %d targets for agonitsts, %d targets with uknown disease state'%
         (len(self.report_pandas[ANTAGONIST_TARGETS_WS])-1, len(self.report_pandas[AGONIST_TARGETS_WS])-1,len(self.report_pandas[UNKNOWN_TARGETS_WS])-1))
         print('%d targets in total were ranked' % len(self._targets()))

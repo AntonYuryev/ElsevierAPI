@@ -30,7 +30,7 @@ class OQL:
 
 
     @staticmethod
-    def get_search_strings(PropertyNameList: list, PropValuesList: list):
+    def get_search_strings(PropertyNameList:list, PropValuesList:list):
         some_values_have_quotes = False
         values = str()
         unique_values_list = set(PropValuesList)
@@ -51,10 +51,10 @@ class OQL:
                 if not some_values_have_quotes:
                     prop_name = '\"' + prop_name + '\"'
                 else:
-                    print(
-                        "if you know how to concatenate string variable with double quotes and string variable with single quote in Python please let us know.\n"
-                        "Otherwise please remove values with white spaces from either your value list or property name list")
-                    return str(), str()
+                    message = "if you know how to concatenate string variable with double quotes and string variable with single quote in Python please let us know.\n \
+                        Otherwise please remove values with white spaces from either your value list or property name list"
+                    print(message)
+                    raise ValueError(message)
             property_names = property_names + prop_name + ','
         property_names = property_names[:-1]
 
@@ -62,19 +62,19 @@ class OQL:
 
 
     @staticmethod
-    def get_entities_by_props(PropertyValues: list, SearchByProperties: list, only_object_types=[], MinConnectivity=0):
+    def get_entities_by_props(PropertyValues:list, SearchByProperties:list, only_object_types=[], MinConnectivity=0):
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
-            oql_query = "SELECT Entity WHERE id = " + '(' + ','.join([str(int) for int in PropertyValues]) + ')'
+            oql_query = "SELECT Entity WHERE id = " + '(' + ','.join([str(i) for i in PropertyValues]) + ')'
         else:
             prop_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
             oql_query = "SELECT Entity WHERE (" + prop_names + ") = (" + values + ')'
 
         if only_object_types:
             object_types = OQL.join_with_quotes(only_object_types)
-            oql_query = oql_query + ' AND objectType = (' + object_types + ')'
+            oql_query += ' AND objectType = (' + object_types + ')'
 
         if MinConnectivity:
-            oql_query + ' AND Connectivity >= ' + str(MinConnectivity)
+            oql_query += ' AND Connectivity >= ' + str(MinConnectivity)
 
         return oql_query
 
@@ -168,11 +168,14 @@ class OQL:
 
 
     @staticmethod
-    def expand_entity(PropertyValues: list, SearchByProperties: list, expand_by_rel_types:list=None,
-                    expand2neighbors=None, direction=''):
-        expand2neighbors = [] if expand2neighbors is None else expand2neighbors
-        expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
-        expand2neighbors_str = OQL.join_with_quotes( expand2neighbors)
+    def expand_entity(PropertyValues:list, SearchByProperties:list, 
+        expand_by_rel_types:list=[], expand2neighbors:list=[], direction=''):
+        '''
+        Input
+        -----
+        direction - upstream, downstream, str()
+        '''
+        expand2neighbors_str = OQL.join_with_quotes(expand2neighbors)
         expand_by_rel_types_str = OQL.join_with_quotes(expand_by_rel_types)
 
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
@@ -181,22 +184,17 @@ class OQL:
         property_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
         expand = 'Select Relation WHERE NeighborOf ' + direction + ' (SELECT Entity WHERE (' + property_names + ') = (' + values + '))'
 
-        if direction == 'upstream':
-            opposite_direction = 'downstream'
-        elif direction == 'downstream':
-            opposite_direction = 'upstream'
-        else:
-            opposite_direction = ''
+        oql_dir_hint = 'downstream' if direction == 'upstream' else 'upstream' if direction == 'downstream' else ''
 
         if expand_by_rel_types:
             if expand2neighbors:
-                expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + opposite_direction
+                expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + oql_dir_hint
                 expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
             else:
                 expand += " AND objectType = (" + expand_by_rel_types_str + ")"
         else:
             if expand2neighbors:
-                expand += ' AND NeighborOf ' + opposite_direction + ' (SELECT Entity WHERE objectType = ('
+                expand += ' AND NeighborOf ' + oql_dir_hint + ' (SELECT Entity WHERE objectType = ('
                 expand += expand2neighbors_str + "))"
 
         return expand
@@ -251,9 +249,8 @@ class OQL:
 
     @staticmethod
     def connect_entities(PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list, PropertyValues2: list,
-                        SearchByProperties2: list, EntityTypes2: list, connect_by_rel_types:list=None):
+                        SearchByProperties2: list, EntityTypes2: list, connect_by_rel_types:list=[]):
 
-        if not isinstance(connect_by_rel_types,list): connect_by_rel_types = list()
         prop_names1, prop_values1 = OQL.get_search_strings(PropertyNameList=SearchByProperties1, PropValuesList=PropertyValues1)
         prop_names2, prop_values2 = OQL.get_search_strings(PropertyNameList=SearchByProperties2, PropValuesList=PropertyValues2)
         object_type1 = OQL.join_with_quotes( EntityTypes1)
