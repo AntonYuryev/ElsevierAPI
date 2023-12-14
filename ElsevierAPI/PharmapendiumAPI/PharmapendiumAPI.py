@@ -169,13 +169,13 @@ class DrugActivity(Pharmapendium):
         self.page_size = 500
         
 
-    def targets4(self,drugs:list):
-        self._add_param({'drugs':drugs})
+    def targets4(self,drug_names:list[str]):
+        self._add_param({'drugs':','.join(drug_names)})
         return self.search_results('search',self.params)
 
 
     def drugs(self):
-        drugs = list()
+        drug_targets = list()
         cache_name = f'Drugs 4 PP {self.api_source} module.json'
         cache_path = self.cache_dir + cache_name
         try:
@@ -187,15 +187,14 @@ class DrugActivity(Pharmapendium):
             drug_names = self.tax_childs('Drugs')
             step_size = 100
             for step in range(0,len(drug_names),step_size):
-                self._add_param({'drugs':','.join(drug_names[step:step+step_size])})
-                result = self.search_results('search',self.params)
-                drugs += result
+                result = self.targets4(drug_names[step:step+step_size])
+                drug_targets += result
 
             with open(cache_path,'w',encoding='utf=8') as f:
-                json.dump(drugs,f)
+                json.dump(drug_targets,f)
             
-            print(f'Dumped {len(drugs)} drugs to "{cache_name}"')
-            return drugs
+            print(f'Dumped {len(drug_targets)} drugs to "{cache_name}"')
+            return drug_targets
 
 
 class PPDoc(Pharmapendium):
