@@ -3570,7 +3570,7 @@ class ResnetGraph (nx.MultiDiGraph):
         [SmallMol,ClinicalTrial,Disease] edge types are converted into [SmallMol,Regulation,Disease] with label = 1
         '''
         node_stats = self.__node_stats()
-        edge_stats = self.__rel_stats()
+        #edge_stats = self.__rel_stats()
 
         # assigning indexes to objects
         urn2idx = dict()
