@@ -3563,15 +3563,16 @@ class ResnetGraph (nx.MultiDiGraph):
         '''
         Return
         ------
-        HeteroData with edge_weight and edge_label, where\n
-        edge_weight is normalized\n
+        HeteroData object with edge_weight and edge_label for drug repurposing usecase, where\n
+        edge_weight is L2 normalized\n
         edge_label = 1 for positive edges, -1 for negative edges, 0 for test edges\n
         idx2obj - {index:PSobject} - dictionary of indexed graph nodes\n
-        [SmallMol,ClinicalTrial,Disease] edge types are converted into [SmallMol,Regulation,Disease] with label = 1
+
+        [SmallMol,ClinicalTrial,Disease] edge types are converted into [SmallMol,Regulation,Disease] with edge_label = 1\n
+        [SmallMol,Regulation,Disease] edges with effect positive are labeled -1\n
+        all other [SmallMol,Regulation,Disease] edges have label = 0
         '''
         node_stats = self.__node_stats()
-        #edge_stats = self.__rel_stats()
-
         # assigning indexes to objects
         urn2idx = dict()
         idx2objs = dict()
@@ -3585,7 +3586,8 @@ class ResnetGraph (nx.MultiDiGraph):
                 return newidx
             
         def efsign(rel:PSRelation):
-            return -1 if rel.objtype() == 'ClinicalTrial' else rel.effect_sign()# hacking ClinicalTrial that do not have Effect sign in Resnet
+            # hacking ClinicalTrial that do not have Effect sign in Resnet
+            return -1 if rel.objtype() == 'ClinicalTrial' else rel.effect_sign()
 
         # initializing urn2idx to count total number of nodes with different states
         for r,t,rel in self.edges.data(data='relation'):
@@ -3634,13 +3636,12 @@ class ResnetGraph (nx.MultiDiGraph):
             if effect_sign > 0:
                 new_edges = [[r_active_idx,r_repressed_idx], [t_active_idx,t_repressed_idx]]
             elif effect_sign < 0:
-                    r_active_idx = objidx(regulator.make_active())
                     new_edges = [[r_active_idx,r_repressed_idx], [t_repressed_idx,t_active_idx]]
             else:
                 new_edges = [[r_active_idx,r_active_idx,r_repressed_idx,r_repressed_idx], [t_active_idx,t_repressed_idx,t_active_idx,t_repressed_idx]]
 
             reltype = rel.objtype()
-            new_reltype = 'Regulation'  if reltype == 'ClinicalTrial' else reltype
+            new_reltype = 'Regulation' if reltype == 'ClinicalTrial' else reltype
             triple_type = (rtype,new_reltype,ttype)
             edges_reg[triple_type] += new_edges[0]
             edges_tar[triple_type] += new_edges[1]
@@ -3663,25 +3664,26 @@ class ResnetGraph (nx.MultiDiGraph):
 
         triple_types = list(edges_reg.keys())
         for triple_type in triple_types:
-            regulator, relation, target = triple_type
+            #regulator, relation, target = triple_type
             edges = torch.tensor([edges_reg[triple_type],edges_tar[triple_type]])
             edge_weight = torch.from_numpy(np.asarray(edge_weights[triple_type]))
 
-            data[regulator, relation, target].edge_index = edges
-            data[regulator, relation, target].edge_weight = edge_weight
+            data[triple_type].edge_index = edges
+            data[triple_type].edge_weight = edge_weight
             if triple_type in edge_labels.keys():
                 edge_label = torch.from_numpy(np.asarray(edge_labels[triple_type]))
-                data[regulator, relation, target].edge_label = edge_label
+                data[triple_type].edge_label = edge_label
         
-        all_edge_weights = torch.cat([data[et].edge_weight for et in triple_types], dim=0)
+        all_edge_weights = torch.cat([data[tt].edge_weight for tt in triple_types], dim=0)
         all_edge_weights = all_edge_weights.to(torch.float32)
         normalized_weights = torch.nn.functional.normalize(all_edge_weights, p=2, dim=0)
-        split_index = [data[et].edge_index.shape[1] for et in triple_types]
-        split_index = torch.cumsum(torch.tensor(split_index), dim=0)
+        split_index = [0]+[data[tt].edge_index.shape[1] for tt in triple_types]
+        split_intervals = torch.cumsum(torch.tensor(split_index), dim=0)
 
-        for i, et in enumerate(triple_types[:-1]):
-            start, end = split_index[i], split_index[i+1]
-            data[et].edge_weight = normalized_weights[start:end]
+        for i in range(0,len(triple_types)):
+            triple_type = triple_types[i]
+            start, end = split_intervals[i], split_intervals[i+1]
+            data[triple_type].edge_weight = normalized_weights[start:end]
 
         return data, idx2objs
 
