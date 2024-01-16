@@ -16,8 +16,6 @@ class RepurposeDrug(Indications4targets):
         '''
         APIconfig - args[0]
         '''
-        APIconfig = args[0] if args else dict()
-
         my_kwargs = {
                 'input_compound' : '', 
                 'similars' : [],
@@ -27,7 +25,7 @@ class RepurposeDrug(Indications4targets):
                 }
         my_kwargs.update(kwargs)
 
-        super().__init__(APIconfig,**my_kwargs)
+        super().__init__(*args,**my_kwargs)
      #   self.PageSize = 1000
         self.similar_drugs = list()
         self.drug_indications = set()
@@ -152,7 +150,7 @@ class RepurposeDrug(Indications4targets):
 
     def clean_indications(self):
         if self.params['drug_effect'] == ACTIVATE: # == report is for toxicities
-# clinical trials report their indications as toxicities testing 
+# clinical trials report their indications as toxicities 
 # to check if patient condition is not worsening after drug treatment
             if 'Disease' in self.params['indication_types']:
                 #indications = self.drug_indications
@@ -289,6 +287,9 @@ class RepurposeDrug(Indications4targets):
             NeighborOf({self.SELECTdrug}) AND NeighborOf ({select_indications})'
         to_return = self.process_oql(OQLquery,REQUEST_NAME)
         self.relProps = old_rel_prop
+        if isinstance(to_return,ResnetGraph):
+            to_return.remove_nodes_from(ResnetGraph.uids(list(self.indications4agonists)))
+            to_return.remove_nodes_from(ResnetGraph.uids(list(self.indications4antagonists)))
         return to_return
 
 
@@ -310,6 +311,13 @@ class RepurposeDrug(Indications4targets):
             return indication_df._name_
         else:
             return ''
+        
+
+    def add_ps_bibliography(self,suffix:str):
+        drug_neighbors = self.Graph.neighborhood(set(self.drugs))
+        if self.similar_drugs:
+            drug_neighbors = self.Graph.neighborhood(set(self.similar_drugs)).compose(drug_neighbors)
+        super().add_ps_bibliography(suffix,add_graph=drug_neighbors)
 
 
     def make_report(self,for_targets_with_names:list=[]):
@@ -349,7 +357,8 @@ class RepurposeDrug(Indications4targets):
                 ontology_df_future = e.submit(self.add_ontology_df,norm_df_name)
                 add_parent_future = e.submit(self.id2paths,norm_df_name)
                 ps_biblio_future = e.submit(self.add_ps_bibliography,ws_suffix)
-                
+            
+            
             norm_df = df.copy_df(self.report_pandas[norm_df_name])
             id2paths = add_parent_future.result()
             norm_df = norm_df.merge_dict(id2paths,'Ontology parents','Name')

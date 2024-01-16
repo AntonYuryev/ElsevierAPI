@@ -100,7 +100,8 @@ class SNEA(APIcache):
                 self.dt = Drugs4Targets.from_files(**dt_kwargs)
             
             e = ThreadPoolExecutor(max_workers=4, thread_name_prefix='Reading drug-target network')
-            self.dt_future = e.submit(self.dt.dt_consist._load_cache,'drug2target',**dt_kwargs)
+            dt_kwargs['cache_name'] = 'drug2target'
+            self.dt_future = e.submit(self.dt.dt_consist._load_cache,**dt_kwargs)
 
         self.Graph.clear_resnetgraph() # in case graph was downloaded from database
         self.experiment = self.experiment.mask_by_pval(self.diffexp_pvalue_cutoff)
@@ -165,8 +166,8 @@ class SNEA(APIcache):
         my_kwargs['oql_queries'] = [(oql_query,f'downloading {network_name}')]
         my_kwargs['ent_props'] = ['Name','Ensembl ID'] # Ensembl ID to support DESeq2 output
         my_kwargs['rel_props'] = ['URN',EFFECT,REFCOUNT]
-
-        return self._load_cache(network_name,**my_kwargs)
+        my_kwargs['cache_name'] = network_name
+        return self._load_cache(**my_kwargs)
 
 
     def activity(self,_in:Sample,_4reg_uid:int,with_targets:list,according2:ResnetGraph):

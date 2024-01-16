@@ -67,7 +67,8 @@ class Indications4targets(SemanticSearch):
         self.unknown_effect_indications = set()
         self.unknown_effect_indications_strict = set()
         self.partners = list() # list of PSObject
-        self.GVids = list()  
+        self.GVids = list()
+        self.target_class = ''
 
 
     def __input_targets(self):
@@ -139,21 +140,22 @@ class Indications4targets(SemanticSearch):
         except KeyError: 
             target_objtype_str = 'Protein'
 
-        prop_names_str, prop_values_str = OQL.get_search_strings(['Name'],self.params['target_names'])
-        self.add_ent_props(['Class'])
-        self.oql4targets = f'SELECT Entity WHERE ({prop_names_str}) = ({prop_values_str}) AND objectType = ({target_objtype_str})'
-        targets_graph = self.process_oql(self.oql4targets)
-        if isinstance(targets_graph,ResnetGraph):
-            self.targets = targets_graph._get_nodes()
-            target_dbids = [x['Id'][0] for x in self.targets]
-            self.oql4targets = OQL.get_objects(target_dbids)
-            for t in self.targets:
-                try:
-                    self.target_class = t['Class'][0]
-                    break
-                # assumes all targets have the same class
-                except KeyError:
-                    continue
+        if self.params['target_names']:
+            prop_names_str, prop_values_str = OQL.get_search_strings(['Name'],self.params['target_names'])
+            self.add_ent_props(['Class'])
+            self.oql4targets = f'SELECT Entity WHERE ({prop_names_str}) = ({prop_values_str}) AND objectType = ({target_objtype_str})'
+            targets_graph = self.process_oql(self.oql4targets)
+            if isinstance(targets_graph,ResnetGraph):
+                self.targets = targets_graph._get_nodes()
+                target_dbids = [x['Id'][0] for x in self.targets]
+                self.oql4targets = OQL.get_objects(target_dbids)
+                for t in self.targets:
+                    try:
+                        self.target_class = t['Class'][0]
+                        break
+                    # assumes all targets have the same class
+                    except KeyError:
+                        continue
 
 
     def set_partner_class(self):
@@ -177,19 +179,21 @@ class Indications4targets(SemanticSearch):
         if self.set_partner_class():
             SELECTpartners = f'SELECT Entity WHERE Class = {self.partner_class} AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({self.oql4targets})'
             partners_graph = self.process_oql(SELECTpartners)
-            if self.partner_class == 'Ligand':
-                # additional request to find secreted molecules that are not annotated with class Ligand
-                SELECTsecretedpartners = 'SELECT Entity WHERE "Cell Localization" = Secreted AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
-                secreted_partners = self.process_oql(SELECTsecretedpartners.format(select_target=self.oql4targets))
-                partners_graph = partners_graph.add_graph(secreted_partners)
+            if isinstance(partners_graph,ResnetGraph):
+                if self.partner_class == 'Ligand':
+                    # additional request to find secreted molecules that are not annotated with class Ligand
+                    SELECTsecretedpartners = 'SELECT Entity WHERE "Cell Localization" = Secreted AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
+                    secreted_partners = self.process_oql(SELECTsecretedpartners.format(select_target=self.oql4targets))
+                    if isinstance(secreted_partners,ResnetGraph):
+                        partners_graph = secreted_partners.compose(partners_graph)
 
-            self.partners = partners_graph._get_nodes()
-            target_names = self.__input_targets()
-            partners_names = ','.join([n.name() for n in self.partners])
-            message = f'Found {partners_names} as partners for {target_names}'
-            if self.partner_class:
-                message = f'Found {partners_names} {self.partner_class}s as partners for {target_names}'
-            print (message)
+                self.partners = partners_graph._get_nodes()
+                target_names = self.__input_targets()
+                partners_names = ','.join([n.name() for n in self.partners])
+                message = f'Found {partners_names} as partners for {target_names}'
+                if self.partner_class:
+                    message = f'Found {partners_names} {self.partner_class}s as partners for {target_names}'
+                print (message)
         
         return self.partners
 
@@ -211,9 +215,10 @@ class Indications4targets(SemanticSearch):
             partner_names = ''
 
         if partner_names: 
-                partners_names_s = OQL.join_with_quotes(partner_names)
-                SELECTpartners = f'SELECT Entity WHERE Name = ({partners_names_s})'
-                partners_graph = self.process_oql(SELECTpartners)
+            partners_names_s = OQL.join_with_quotes(partner_names)
+            SELECTpartners = f'SELECT Entity WHERE Name = ({partners_names_s})'
+            partners_graph = self.process_oql(SELECTpartners)
+            if isinstance(partners_graph,ResnetGraph):
                 self.partners = partners_graph._get_nodes()
                 self.find_partners_oql = OQL.get_objects(ResnetGraph.dbids(self.partners))
         else:
@@ -222,11 +227,17 @@ class Indications4targets(SemanticSearch):
         
     def _get_report_name(self):
         indics = ','.join(self.params['indication_types'])
-        rep_pred = 'suggested ' if self.params['strict_mode'] else 'suggested,predicted ' 
-        return str(self.data_dir+rep_pred+ indics+' for '+ self.__input_targets())
+        rep_pred = 'suggested ' if self.params['strict_mode'] else 'suggested,predicted '
+        if self.params['mode_of_action'] == ANTAGONIST:
+            mode = ' inhibition'
+        elif self.params['mode_of_action'] == AGONIST:
+            mode = ' activation'
+        else:
+            mode = ''
+        return str(self.data_dir+rep_pred+ indics+' for '+ self.__input_targets()+mode)
 
 
-    def GVindications(self):
+    def GVindications(self)->list[PSObject]:
         target_names = [x['Name'][0] for x in self.targets]
         t_n = ','.join(target_names)
         selectGVs = f'SELECT Entity WHERE objectType = GeneticVariant AND Connected by (SELECT Relation WHERE objectType = GeneticChange) to ({self.oql4targets})'
@@ -235,13 +246,16 @@ class Indications4targets(SemanticSearch):
         indication_type=','.join(self.params['indication_types'])
         OQLquery = f'SELECT Relation WHERE NeighborOf({selectGVs}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_type}))'
         self.GVsInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-        indications = self.GVsInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
-        self.GVs = self.GVsInDiseaseNetwork._psobjs_with('GeneticVariant','ObjTypeName')
+        if isinstance(self.GVsInDiseaseNetwork,ResnetGraph):
+            indications = self.GVsInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
+            self.GVs = self.GVsInDiseaseNetwork._psobjs_with('GeneticVariant','ObjTypeName')
+            
+            print('Found %d indications genetically linked to %d Genetic Variants in %s' % 
+                (len(indications), len(self.GVs), t_n))
         
-        print('Found %d indications genetically linked to %d Genetic Variants in %s' % 
-            (len(indications), len(self.GVs), t_n))
-        
-        return indications
+            return indications
+        else:
+            return list()
 
 
     def __resolve_conflict_indications(self):
@@ -291,6 +305,8 @@ class Indications4targets(SemanticSearch):
     
 
     def find_target_indications(self):
+        if not hasattr(self,'oql4targets'): 
+            return
         f_t = self.oql4targets
         t_n = self.__input_targets()
         select_indications_by_type = self.__oql4indications_type()
@@ -313,9 +329,10 @@ class Indications4targets(SemanticSearch):
                 NeighborOf ({target}) AND NeighborOf ({indications})'
             OQLquery = OQLquery.format(target=f_t,effect = effect,indications=select_indications_by_type)
             ActivatedInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-            add2indications = ActivatedInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
-            self.indications4antagonists.update(add2indications)
-            print('Found %d diseases where %s is %sly regulated' % (len(add2indications),t_n,effect))
+            if isinstance(ActivatedInDiseaseNetwork,ResnetGraph):
+                add2indications = ActivatedInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
+                self.indications4antagonists.update(add2indications)
+                print('Found %d diseases where %s is %sly regulated' % (len(add2indications),t_n,effect))
 
         if self._4agonist():
             effect =  'negative'
@@ -323,17 +340,19 @@ class Indications4targets(SemanticSearch):
             OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {effect} AND NeighborOf({select_target}) AND NeighborOf ({indications})'      
             OQLquery = OQLquery.format(select_target=f_t,effect=effect,indications=select_indications_by_type)
             ModulatedByTargetNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-            self.indications4agonists = set(ModulatedByTargetNetwork.psobjs_with(only_with_values=self.params['indication_types']))
-            self.indications4agonists_strict = set(self.indications4agonists)
-            print('Found %d diseases %sly regulated by %s' % (len(self.indications4agonists),effect,t_n))
+            if isinstance(ModulatedByTargetNetwork,ResnetGraph):
+                self.indications4agonists = set(ModulatedByTargetNetwork.psobjs_with(only_with_values=self.params['indication_types']))
+                self.indications4agonists_strict = set(self.indications4agonists)
+                print('Found %d diseases %sly regulated by %s' % (len(self.indications4agonists),effect,t_n))
 
             REQUEST_NAME = 'Find indications {effect}ly regulating {target}'.format(effect=effect, target=t_n)
             OQLquery = 'SELECT Relation WHERE objectType = QuantitativeChange AND Effect = {effect} AND NeighborOf ({select_target}) AND NeighborOf ({indications})'  
             OQLquery = OQLquery.format(select_target=f_t,effect = effect,indications=select_indications_by_type)
             ActivatedInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-            add2indications = ActivatedInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
-            self.indications4agonists.update(add2indications)
-            print('Found %d diseases where %s is %sly regulated' % (len(add2indications),t_n,effect))
+            if isinstance(ActivatedInDiseaseNetwork,ResnetGraph):
+                add2indications = ActivatedInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
+                self.indications4agonists.update(add2indications)
+                print('Found %d diseases where %s is %sly regulated' % (len(add2indications),t_n,effect))
 
         # initializing unknown_effect_indications
         gv_indications = self.GVindications()
@@ -344,11 +363,12 @@ class Indications4targets(SemanticSearch):
         OQLquery = 'SELECT Relation WHERE objectType = Biomarker AND NeighborOf({select_target}) AND NeighborOf ({indications})'
         OQLquery = OQLquery.format(select_target=f_t,indications=select_indications_by_type)
         BiomarkerInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-        biomarker_indications = BiomarkerInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
-        print('Found %d indications where target %s is claimed as biomarker' %  (len(biomarker_indications),t_n))
-        add2indications = set(biomarker_indications).difference(self.__known_effect_indications())
-        print('%d indications having %s as biomarker were not found by previous searches' % (len(add2indications),t_n))
-        self.unknown_effect_indications = set(add2indications)
+        if isinstance(BiomarkerInDiseaseNetwork,ResnetGraph):
+            biomarker_indications = BiomarkerInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
+            print('Found %d indications where target %s is claimed as biomarker' %  (len(biomarker_indications),t_n))
+            add2indications = set(biomarker_indications).difference(self.__known_effect_indications())
+            print('%d indications having %s as biomarker were not found by previous searches' % (len(add2indications),t_n))
+            self.unknown_effect_indications = set(add2indications)
 
 
     def indications4partners(self):
@@ -438,7 +458,9 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
                 REQUEST_NAME = f'Find clinical trials for substances {with_effect_on_target}ly regulating {t_n} by {reltype_str}'
                 OQLquery = f'SELECT Relation WHERE objectType = ClinicalTrial AND \
 NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf ({get_modulators})'
-                InhibitorsIndicationNetwork.add_graph(self.process_oql(OQLquery,REQUEST_NAME))
+                ct_g = self.process_oql(OQLquery,REQUEST_NAME)
+                if isinstance(ct_g,ResnetGraph):
+                    InhibitorsIndicationNetwork = ct_g.compose(InhibitorsIndicationNetwork)
 
                 all_indications = InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types'])
                 print('Found %d indications on clinical trials with %d substances %sly regulating %s by %s relations' %  
@@ -491,8 +513,9 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
         REQUEST_NAME = f'Find cells secreting {t_n}'
         OQLquery = 'SELECT Relation WHERE objectType = (CellExpression,MolTransport) AND NeighborOf ({select_targets}) AND NeighborOf (SELECT Entity WHERE objectType = Cell)'
         cells_make_target = self.process_oql(OQLquery.format(select_targets=self.oql4targets),REQUEST_NAME)
-        self.ProducingCells = cells_make_target._psobjs_with('CellType','ObjTypeName')
-        print('Found %d cell types producing %s' % (len(self.ProducingCells),t_n))
+        if isinstance(cells_make_target,ResnetGraph):
+            self.ProducingCells = cells_make_target._psobjs_with('CellType','ObjTypeName')
+            print('Found %d cell types producing %s' % (len(self.ProducingCells),t_n))
 
         if self._is_strict(): # no further predictions of indications
             return # found Cells will be used for target ranking
@@ -576,7 +599,7 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
                 merged_pathway = merged_pathway.compose(f.result())
 
         if merged_pathway:
-            targets_regulome = merged_pathway.get_regulome(self.targets)
+            targets_regulome = merged_pathway.get_regulome(set(self.targets))
             self.PathwayComponents = set(targets_regulome._get_nodes())
             print (f'Found regulome with {len(self.PathwayComponents)} components')
             return targets_regulome
@@ -820,8 +843,9 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
             print('Linked %d indications to %s pathway components' % (linked_row_count,t_n))
             new_session.close_connection()
 
-        counts_df = self.make_count_df(indication_df,with_name=in_worksheet)
-        self.add2raw(counts_df)
+        if not indication_df.empty:
+            counts_df = self.make_count_df(indication_df,with_name=in_worksheet)
+            self.add2raw(counts_df)
         return
 
 
@@ -841,18 +865,23 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
         REQUEST_NAME = 'Find indications where {target} was suggested as Biomarker'.format(target=t_n)
         OQLquery = f'SELECT Relation WHERE objectType = (Biomarker,StateChange,GeneticChange) AND \
 NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
-        to_return.add_graph(self.process_oql(OQLquery,REQUEST_NAME))
+        if isinstance(to_return,ResnetGraph):
+            bm_g = self.process_oql(OQLquery,REQUEST_NAME)
+            if isinstance(bm_g,ResnetGraph):
+                to_return = bm_g.compose(to_return)
         
         REQUEST_NAME = f'Find indications with genetically linked {t_n} Genetic Variants'
         OQLquery = f'SELECT Relation WHERE objectType = FunctionalAssociation AND NeighborOf ({oql4indications_type})'
         OQLquery += ' AND NeighborOf (SELECT Entity WHERE id = ({ids}))'
         GVdbids = set(ResnetGraph.dbids(self.GVs))
-        to_return.add_graph(self.iterate_oql(OQLquery,GVdbids,request_name=REQUEST_NAME))
+        if isinstance(to_return,ResnetGraph):
+            gv_g = self.iterate_oql(OQLquery,GVdbids,request_name=REQUEST_NAME)
+            to_return = gv_g.compose(to_return)
 
-        to_return.remove_nodes_from(ranked_indication_ids) # now delete all indication with known effect
-        indications = to_return.psobjs_with(only_with_values=self.params['indication_types'])
+            to_return.remove_nodes_from(ranked_indication_ids) # now delete all indication with known effect
+            indications = to_return.psobjs_with(only_with_values=self.params['indication_types'])
 
-        print('Found %d new indications linked to %s with unknown effect' % (len(indications),self.__input_targets()))
+            print('Found %d new indications linked to %s with unknown effect' % (len(indications),self.__input_targets()))
         self.relProps = old_rel_props
         return to_return
 
@@ -882,13 +911,22 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
               (len(self.__indications()), self.__input_targets(), execution_time(start_time)))
 
 
+    def add_ps_bibliography(self,suffix='',add_graph=ResnetGraph()):
+        targets_neighbors = self.Graph.neighborhood(set(self.targets))
+        targets_neighbors = self.Graph.neighborhood(set(self.GVs)).compose(targets_neighbors)
+        targets_neighbors = self.Graph.neighborhood(set(self.partners)).compose(targets_neighbors)
+        if add_graph:
+            targets_neighbors = add_graph.compose(targets_neighbors)
+        super().add_ps_bibliography(suffix,from_graph=targets_neighbors)
+
+
     def make_report(self):
         start_time = time.time()
         self.flush_dump_files()
         self.load_indications4targets()
         
         if self.init_semantic_search():
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix='etm4targets') as etm4targets:
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix='score,etm4targets') as etm4targets:
                 if self._4antagonist():
                     self.semscore4targets(DF4ANTAGONISTS,target_effect_on_indication='positive')
                     self.normalize(DF4ANTAGONISTS,ANTAGONISTS_WS)      
@@ -903,10 +941,7 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
                 other_indications = other_effects_graph.snippets2df(df_name='possibilities')
                 self.add2report(other_indications)
 
-            targets_neighbors = self.Graph.neighborhood(set(self.targets))
-            targets_neighbors = self.Graph.neighborhood(set(self.GVs)).compose(targets_neighbors)
-            targets_neighbors = self.Graph.neighborhood(set(self.partners)).compose(targets_neighbors)
-            self.add_ps_bibliography(from_graph=targets_neighbors)
+            self.add_ps_bibliography()
 
             etm4targets.shutdown()
             self.add_etm_bibliography()

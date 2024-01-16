@@ -11,7 +11,7 @@ from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS
 from .NetworkxObjects import DBID,PSObject,PSRelation
 from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
-from ..ETM_API.references import SENTENCE_PROPS,PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
+from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
 
 TO_RETRIEVE = 'to_retrieve'
@@ -33,6 +33,7 @@ APISESSION_KWARGS = {'what2retrieve','connect2server','no_mess','data_dir',TO_RE
                   'use_cache','load_model','ent_props','rel_props'}
 MAX_SESSIONS = 50 # by default sessions_max=200 in Oracle 
 MAX_PAGE_THREADS = 80
+MAX_OQLSTR_LEN = 65000 # string properties can form long oql queries exceeding 65000 chars limit
 
 
 class APISession(PSNetworx):
@@ -115,16 +116,19 @@ class APISession(PSNetworx):
         elif what2retrieve == ONLY_REL_PROPERTIES:
             return ['URN']+list(RELATION_PROPS)
         elif what2retrieve == ALL_PROPERTIES:
-            return ['URN']+ALL_PSREL_PROPS
+            return ['URN']+list(ALL_PSREL_PROPS)
         return []
 
 
     def __retrieve(self,what2retrieve=CURRENT_SPECS):
-        retrieve_props = self._what2retrieve(what2retrieve)
-        if retrieve_props:
-            self.relProps = retrieve_props
+        if isinstance(what2retrieve,int):
+            retrieve_props = self._what2retrieve(what2retrieve)
+            if retrieve_props:
+                self.relProps = retrieve_props
+            else:
+                return # do nothing, keep CURRENT_SPECS
         else:
-            return # do nothing, keep CURRENT_SPECS
+            print(f'Invalid what2retrieve: {what2retrieve}')
              
 
     @staticmethod
@@ -205,9 +209,13 @@ class APISession(PSNetworx):
 
     def add_rel_props(self, add_props:list):
         self.relProps = self.relProps+[i for i in add_props if i not in self.relProps]
-        if set(SENTENCE_PROPS).intersection(add_props) and 'TextRef' not in self.relProps:
-            self.relProps.append('TextRef')
-
+        if set(PS_SENTENCE_PROPS).intersection(add_props):
+            ms = 10
+            print(f'Decreasing multithreading to {ms} to retreive sentence properties')
+            self.max_sessions = ms
+            if 'TextRef' not in self.relProps:
+                self.relProps.append('TextRef')
+            
 
     def add_ent_props(self, add_props: list):
         self.entProps = self.entProps+[i for i in add_props if i not in self.entProps]
@@ -243,7 +251,6 @@ class APISession(PSNetworx):
             if not max_result:  # to suppress messages from load_children4
                 print(f'query found {self.ResultSize} results')
 
-       # if type(zeep_data) != type(None):
         if not isinstance(zeep_data, type(None)):
             if self.getLinks:
                 obj_dbids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
@@ -305,7 +312,7 @@ class APISession(PSNetworx):
         return entire_graph
 
 
-    def process_oql(self,oql_query,request_name='',max_result=0) -> ResnetGraph|int:
+    def process_oql(self,oql_query:str,request_name='',max_result=0) -> ResnetGraph|int:
         '''
         Return
         ------
@@ -396,7 +403,7 @@ class APISession(PSNetworx):
        # assert(return_subgraph.number_of_edges() >= len(relation_dbids2return))
        # privately owned relations are not returned by API. 
        # therefore, return_subgraph.number_of_edges() may have less relations than "relation_dbids2return"
-       # 
+       
        # return_subgraph may also contain more relations than "relation_dbids2return" 
        # due to duplication of non-directional relations into both directions
         return return_subgraph
@@ -430,28 +437,31 @@ class APISession(PSNetworx):
         if not dbids: return ResnetGraph()
         if oql_query.find('{ids',20) > 0:
             my_oql = oql_query
+            iteration_size =  min(step,1000)
             def join_list (l:list):
                 return ','.join(list(map(str,l)))
         else:
             my_oql = oql_query.replace('{props','{ids')
+            # string properties can form long oql queries exceeding 65500 chars limit
+            max_id_len = max(len(s) for s in dbids)
+            iteration_size = min(step, 1000, int(MAX_OQLSTR_LEN/max_id_len))
             def join_list (l:list):
                 return OQL.join_with_quotes(l)
-            
 
-        number_of_iterations = math.ceil(len(dbids)/step)  
+        number_of_iterations = math.ceil(len(dbids)/iteration_size)  
         # new sessions must be created to avoid ResultRef pointer overwriting
         entire_graph = ResnetGraph()
-        thread_name = f'Iterate_{len(dbids)}_ids_by_{step}'
+        thread_name = f'Iterate_{len(dbids)}_ids_by_{iteration_size}'
         print(f'Retrieval of {len(dbids)} objects will be done in {self.max_sessions} parallel sessions' )
         dbids_list = list(dbids)
         lock = threading.Lock() if download else None
         with ThreadPoolExecutor(max_workers=self.max_sessions, thread_name_prefix=thread_name) as e:
             future_sessions = list()
             futures = list()
-            for i in range(0,len(dbids_list), step):
-                iter_dbids = dbids_list[i:i+step]
+            for i in range(0,len(dbids_list), iteration_size):
+                iter_dbids = dbids_list[i:i+iteration_size]
                 oql_query_with_dbids = my_oql.format(ids=join_list(iter_dbids))
-                iter_name = f'Iteration #{int(i/step)+1} out of {number_of_iterations} for "{request_name}" retrieving {len(iter_dbids)} ids'
+                iter_name = f'Iteration #{int(i/iteration_size)+1} out of {number_of_iterations} for "{request_name}" retrieving {len(iter_dbids)} ids'
                 if self.dump_oql_queries:
                     self.my_oql_queries.append((oql_query_with_dbids,iter_name))   
                 future_session = self._clone_session()
@@ -523,8 +533,10 @@ class APISession(PSNetworx):
         else:
             id_oql = oql_query.replace('{props','{ids')
             hint = r'{props}'
-            iteration1step = min(step,950) # string properties can form long oql queries exceeding zeep limits
-            iteration2step = min(2*iteration1step, 950)
+            # string properties can form long oql queries exceeding 65500 chars limit
+            max_id_len = max(len(s) for s in ids1)
+            iteration1step = min(step, 1000, int(MAX_OQLSTR_LEN/max_id_len))
+            iteration2step = min(2*iteration1step, 1000)
             def join_list (l:list):
                 return OQL.join_with_quotes(l)
                              
@@ -553,7 +565,7 @@ class APISession(PSNetworx):
         return entire_graph
     
 
-    def __iterate_oql2__(self, oql_query:str, ids_or_props1:set, ids_or_props2:set, request_name='', step=500):
+    def __iterate_oql2__(self,oql_query:str, ids_or_props1:set, ids_or_props2:set, request_name='', step=500):
         '''
         Input
         -----
@@ -582,13 +594,13 @@ class APISession(PSNetworx):
         return dbidonly_graph
 
  
-    def iterate_oql(self,oql_query:str,dbid_set:set,use_cache=True,request_name='',step=1000):
+    def iterate_oql(self,oql_query:str,search_values:set[str]|set[int],use_cache=True,request_name='',step=1000):
         """
         # oql_query MUST contain string placeholder called {ids} if iterable id_set contains dbids\n
         # oql_query MUST contain string placeholder called {props} if iterable id_set contain property values other than database id
         """
         print('Processing "%s" request\n' % request_name)
-        dbid_only_graph = self.__iterate_oql__(oql_query,dbid_set,request_name,step)
+        dbid_only_graph = self.__iterate_oql__(oql_query,search_values,request_name,step)
         if dbid_only_graph:
             annoated_graph = self.__annotate_dbid_graph__(dbid_only_graph,use_cache,request_name)
             return annoated_graph
@@ -596,22 +608,23 @@ class APISession(PSNetworx):
             return ResnetGraph()
    
 
-    def iterate_download(self,oql_query:str,dbid_set:set,request_name='',step=1000):
+    def iterate_download(self,oql_query:str,search_values:set[str]|set[int],request_name='',step=1000):
         """
         # oql_query MUST contain string placeholder called {ids} if iterable id_set contains dbids\n
         # oql_query MUST contain string placeholder called {props} if iterable id_set contain property values other than database id
         """
-        return self.__iterate_oql__(oql_query,dbid_set,request_name,step,download=True)
+        return self.__iterate_oql__(oql_query,search_values,request_name,step,download=True)
 
 
-    def iterate_oql2(self,oql_query:str,dbid_set1:set,dbid_set2:set,use_cache=True,request_name='',step=500):
+    def iterate_oql2(self,oql_query:str,search_values1:set[str]|set[int],search_values2:set[str]|set[int]
+                     ,use_cache=True,request_name='',step=500):
         """
         # oql_query MUST contain 2 string placeholders called {ids1} and {ids2}
         # oql_query MUST contain 2 string placeholder called {props1} and {props2}\n
         if iterable id_sets contain property values other than database id
         """
         print(f'Processing "{request_name}" request')
-        dbid_only_graph = self.__iterate_oql2__(oql_query,dbid_set1,dbid_set2,request_name,step)
+        dbid_only_graph = self.__iterate_oql2__(oql_query,search_values1,search_values2,request_name,step)
         
         if dbid_only_graph:
             print('Will retrieve annotated graph with %d entities and %d relations' 
@@ -622,7 +635,7 @@ class APISession(PSNetworx):
             return ResnetGraph()
      
 
-    def __iterate_oqls__(self,oqls:list):
+    def __iterate_oqls__(self,oqls:list[str]):
         max_workers = len(oqls) if len(oqls) < MAX_SESSIONS else MAX_SESSIONS
         accumulate_graph = ResnetGraph()
         with ThreadPoolExecutor(max_workers=max_workers,thread_name_prefix=f'Iterate {len(oqls)} OQLs') as e:
@@ -678,7 +691,7 @@ class APISession(PSNetworx):
 
 
 ###########################GET GET RETRIEVE GET RETRIEVE GET GET ################################################
-    def __get_saved_results(self,psobjs:list):
+    def __get_saved_results(self,psobjs:list[PSObject]):
         result_names = [o.name() for o in psobjs]
         oql_query = f'SELECT Result WHERE Name = ({OQL.join_with_quotes(result_names)})'
         results = self.load_graph_from_oql(oql_query,self.relProps,
@@ -864,7 +877,7 @@ class APISession(PSNetworx):
         return
 
 
-    def map_props2objs(self,using_values:list,in_properties:list,map2types=[],case_insensitive=False):
+    def map_props2objs(self,using_values:list,in_properties:list,case_insensitive=False):
         """
         Returns
         -------
@@ -1205,6 +1218,7 @@ in {self.execution_time(process_start)[0]}')
     def __dump_base_name(self,folder_name:str):
         return 'content of '+ APISession.filename4(folder_name)+'_'
 
+
     def __dumpfiles(self, in_folder:str,in2parent_folder='', with_extension='rnef'):
         folder_path = self.dump_path(in_folder,in2parent_folder)
         listing = glob.glob(folder_path+'*.' + with_extension)
@@ -1373,13 +1387,14 @@ in {self.execution_time(process_start)[0]}')
         reference_counter = 0
         start_time = time.time()
         return_type = 'relations' if self.getLinks else 'entities'
-        resume_pos = resume_page*self.PageSize #self.add2self=False
+        resume_pos = resume_page*self.PageSize
         iterations_graph = self.__init_session(resume_pos)
         self.clear() # to save RAM self.Graph is cleared
         number_of_iterations = int(self.ResultSize / self.PageSize)
         if number_of_iterations:
+            result_size = self.ResultSize
             print('\n\nrequest "%s" found %d %s. Begin download in %d %d-thread iterations' % 
-                (request_name,self.ResultSize,return_type, number_of_iterations/threads,threads))
+                (request_name,result_size,return_type, number_of_iterations/threads,threads))
             with ThreadPoolExecutor(1,f'{request_name} Dump{number_of_iterations}iters') as e:
                 # max_workers = 1 otherwise _dump2rnef gets locked
                 for i in range(0,number_of_iterations,threads):
@@ -1390,11 +1405,11 @@ in {self.execution_time(process_start)[0]}')
                     remaining_iterations = number_of_iterations-i-threads
                     exec_time, remaining_time = self.execution_time(start_time,remaining_iterations,number_of_iterations) 
                     print("With %d in %d iterations, %d %s out of %d results with %d references retrieved in %s using %d threads" % 
-                    (i+threads,number_of_iterations,self.ResultPos,return_type,self.ResultSize,reference_counter,exec_time,threads))
-                    print('Estimated remaining retrieval time %s: '% remaining_time)
+                    (i+threads,number_of_iterations,self.ResultPos,return_type,result_size,reference_counter,exec_time,threads))
+                    if i < number_of_iterations:
+                        print(f'Estimated remaining retrieval time: {remaining_time}')
                     self.clear()
                     iterations_graph.clear()
-        
                 e.shutdown()
         else:
             self._dump2rnef(iterations_graph, to_folder=self.dump_folder,lock=lock)
@@ -1584,8 +1599,10 @@ in {self.execution_time(process_start)[0]}')
             oql_query = oql_query + ' AND objectType = (' + obj_types_str + ')'
 
         rn = f'Retrieving objects from database using {len(propValues)} values for {prop_names} properties'
-        my_psobjs = self.iterate_oql(oql_query,set(propValues),request_name=rn,step=950)._get_nodes()
-        # step size is reduced to 950 to mitigate potential excessive length of oql_query string due to zeep package limitations
+        # string properties can form long oql queries exceeding 65500 chars limit
+        max_id_len = max(len(s) for s in propValues)
+        iteration_size = min(1000, int(MAX_OQLSTR_LEN/max_id_len))
+        my_psobjs = self.iterate_oql(oql_query,set(propValues),request_name=rn,step=iteration_size)._get_nodes()
 
         if get_childs:
             children, parents_with_children = self.load_children4(my_psobjs,add2self)
@@ -1595,8 +1612,8 @@ in {self.execution_time(process_start)[0]}')
         
         return my_psobjs
 
-##################### EXPERIMENT EXPERIMENT EXPERIMENT EXPERIMENT ###########################
-    def load_dbids4(self,psobjs:list):
+
+    def load_dbids4(self,psobjs:list[PSObject]):
         '''
         Return
         ------
@@ -1641,8 +1658,45 @@ in {self.execution_time(process_start)[0]}')
         print(f'Loaded {len(mapped_objs)} database identitiers for {len(psobjs)} entities')
         my_session.close_connection()
         return mapped_objs,no_dbid_objs
+    
 
+    def update(self, g:ResnetGraph,with_node_props:list[str],with_rel_props:list[str],inplace=True):
+        my_graph = g if inplace else g.copy()
+        new_session = self._clone_session()
+        new_session.add2self = False
+        if with_node_props:
+            new_session.add_ent_props(with_node_props)
+            oql = 'SELECT Entity WHERE URN = ({props})'
+            objs = g._get_nodes()
+            urns = {r.urn() for r in objs}
+            for step in range(0,len(urns),10000):
+                req_name = f'Updating {step} object out of {len(objs)} Entities with {len(with_node_props)} properties'
+                new_g = new_session.iterate_oql(oql,urns,use_cache=False,request_name=req_name)
+                new_g.load_references()
+                my_graph.add_graph(new_g)
+        
+        if with_rel_props:
+            new_session.add_rel_props(with_rel_props)
+            oql = 'SELECT Relation WHERE URN = ({props})'
+            objs = g.psrels_with()
+            urns = list({r.urn() for r in objs})
+            start = time.time()
+            number_of_iterations = math.ceil(len(urns)/10000)
+            iteration_counter = 0
+            for i in range(0,len(urns),10000):
+                req_name = f'Updating {i} out of {len(objs)} Relations with {len(with_rel_props)} properties'
+                new_g = new_session.iterate_oql(oql,set(urns[i:10000]),use_cache=False,request_name=req_name)
+                new_g.load_references()
+                my_graph.add_graph(new_g)
+                iteration_counter +=1
+                remaining_iteration = number_of_iterations-iteration_counter
+                time_passed, remaining_time = self.execution_time(start,remaining_iteration,number_of_iterations)
+                print(f'Retrieved {i+10000} relations out of {len(objs)} in {time_passed}')
+                print(f'Estimated remaining update time: {remaining_time}')
 
+        return None if inplace else my_graph
+
+##################### EXPERIMENT EXPERIMENT EXPERIMENT EXPERIMENT ###########################
     def map_experiment(self, exp:Experiment):
         identifier_name = exp.identifier_name()
         identifier_names = identifier_name.split(',')
@@ -1684,7 +1738,7 @@ in {self.execution_time(process_start)[0]}')
         my_session.add_ent_props(map_by)
 
         graph_psobjs = graph.psobjs_with(map_by)
-        obj_props = graph.props(map_by,graph_psobjs)
+        obj_props = graph.node_props(map_by,graph_psobjs)
         my_session._props2psobj(list(obj_props),map_by,get_childs=False)
         props2objs,uid2propval  = my_session.Graph.props2obj_dict([],map_by,case_insensitive=True)
 

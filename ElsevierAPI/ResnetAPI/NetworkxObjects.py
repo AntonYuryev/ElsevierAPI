@@ -3,8 +3,8 @@ import json
 import itertools
 import pickle
 import hashlib
-import datetime
 import math
+from datetime import datetime
 
 from ..ETM_API.references import Reference, len
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
@@ -119,13 +119,15 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         except KeyError:
             return list()
 
+
     def child_dbids(self):
         try:
             children = self[CHILDS]
             return [c.dbid() for c in children]
         except KeyError:
             return []
-        
+
+
     def child_uids(self):
         try:
             children = self[CHILDS]
@@ -192,20 +194,17 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             return True
     
 
-    def get_prop(self,prop_name:str,value_index=-1,if_missing_return=''):
+    def get_prop(self,prop_name:str,value_index=0,if_missing_return='')->str|int:
         '''
         Return
         ------
-        if value_index >= 0 returns self[prop_name][value_index]\n
-        else returns self[prop_name] as list
+        returns self[prop_name][value_index]
         '''
         try:
-            values = self[prop_name]
-            if value_index >= 0:
-                return str(values[value_index])
-            else:
-                return values
+            return self[prop_name][value_index]
         except KeyError:
+            return if_missing_return
+        except ValueError:
             return if_missing_return
 
 
@@ -291,7 +290,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         return table_row[0:len(table_row) - 1] + endOfline
 
 
-    def has_propeties(self,prop_names:set):
+    def has_properties(self,prop_names:set):
         return not prop_names.isdisjoint(set(self.keys()))
 
 
@@ -395,20 +394,22 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
 
 
 class PSRelation(PSObject):
+    '''
+    PropSetToProps = {PropSetID:{PropID:[values]}}
+    Nodes = {"Regulators':[(entityID, 0, effect)], "Targets':[(entityID, 1, effect)]}, 
+    where 0 - undirected linktype
+    1 - directed linktype
+    RefDict = {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, NCT ID, Title):Reference}
+    references - list of unique references sorted by PUBYEAR in descending order
+    '''
     pass
-    PropSetToProps = dict() # {PropSetID:{PropID:[values]}}
-    Nodes = dict() # {"Regulators':[(entityID, 0, effect)], "Targets':[(entityID, 1, effect)]}
-    # where 0,1 direction of linktype
-    RefDict = dict() # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
-    references = list() # list of unique references sorted by PUBYEAR
-
 
     def __init__(self, dic=dict()):
         super().__init__(dic)
         self.PropSetToProps = dict()  # {PropSetID:{PropID:[values]}}
         self.Nodes = dict()  # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
         self.RefDict = dict()  # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
-
+        self.references = list()
 
     def __hash__(self):
         #__hash__ needs __eq__ to work properly
@@ -457,7 +458,7 @@ class PSRelation(PSObject):
         
 
     def has_properties(self,prop_names:set):
-        has_props = super().has_propeties(prop_names)
+        has_props = super().has_properties(prop_names)
         if not has_props:
             my_refs = self.refs()
             for prop in prop_names:
@@ -466,7 +467,16 @@ class PSRelation(PSObject):
                         return True
                     
         return has_props
-        
+    
+
+    def has_value_in(self,prop2values:dict,case_sensitive=False):
+        has_values = super().has_value_in(prop2values,case_sensitive)
+        if not has_values:
+            for ref in self.refs():
+                if ref.has_values_in(prop2values):
+                    return True
+        return has_values
+
 
     def make_urn(self,reg_urns:list,tar_urns:list):
         reg_urns.sort()
@@ -488,7 +498,7 @@ class PSRelation(PSObject):
         return str(rel_urn)
     
 
-    def __refDict2refs(self):
+    def __refDict2refs(self)->list[Reference]:
         '''
         Return
         ------
@@ -551,20 +561,29 @@ class PSRelation(PSObject):
         return self.__refDict2refs()
     
 
-    def refs(self, ref_limit=0):
+    def refs(self, ref_limit=0) -> list[Reference]:
         '''
         Return
         -------
-        self.references sorted by PUBYEAR
+        self.references sorted by PUBYEAR in descending order\n
+        loads self.RefDict from self.PropSetToProps and self.references from self.RefDict if necessary
         '''
         if not self.references:
             self.references = list(self.__load_refs())
 
         return self.references[:ref_limit] if ref_limit else self.references
-       
+
+
+    def _1st_ref(self):
+        for ref in reversed(self.refs()):
+            pubyear = ref.pubyear()
+            if pubyear > 1812:
+                return ref
+        return dict()
+
 
     def pubage(self):
-        today = datetime.date.today()
+        today = datetime.today()
         this_year = today.year
         my_refs = self.refs()
         last_pubyear = my_refs[0].pubyear()
@@ -750,11 +769,11 @@ class PSRelation(PSObject):
                 if not existing_ref:  # case when reference is new
                     id_type, id_value = my_reference_tuples[0][0], my_reference_tuples[0][1]
                     ref = Reference(id_type, id_value)
-                    self.RefDict[id_value] = ref
+                    self.RefDict[str(id_value)] = ref
                     for Id in range(1, len(my_reference_tuples)):
                         id_type, id_value = my_reference_tuples[Id][0], my_reference_tuples[Id][1]
                         ref.Identifiers[id_type] = id_value
-                        self.RefDict[id_value] = ref
+                        self.RefDict[str(id_value)] = ref
                 else: 
                     ref = existing_ref[0]
                     if len(existing_ref) > 1:  # identifiers from one propset point to different references
@@ -832,23 +851,44 @@ class PSRelation(PSObject):
         prop_names2values = {prop_name:[values]}
         '''
         # self.RefDict = {identifier:ref} contains reference duplications. Reference list needs compression for speed
-        all_refs = set(self.RefDict.values())
-        ref2keep = {ref for ref in all_refs if ref.has_properties(keep_prop2values)}
+        all_refs = self.refs()
+        ref2keep = {ref for ref in all_refs if ref.has_values_in(keep_prop2values)}
         self.RefDict = {k:r for k,r in self.RefDict.items() if r in ref2keep}
         return
 
 
-    def remove_reference(self, remove_prop2values:dict):
-        # self.RefDict = {identifier:ref} contains reference duplications. Reference list needs compression for speed
-        all_refs = set(self.RefDict.values()) 
-        ref2keep = {ref for ref in all_refs if not ref.has_properties(remove_prop2values)}
-        self.RefDict = {k:r for k,r in self.RefDict.items() if r in ref2keep}
+    def remove_references(self, with_prop2values:dict):
+        '''
+        Input
+        -----
+        prop2values = {prop_name:[values]}
+        '''
+        all_refs = self.refs()
+        ref2keep = {ref for ref in all_refs if not ref.has_values_in(with_prop2values)}
+        if ref2keep:
+            if len(ref2keep) < len(all_refs):
+                mycopy = self.make_copy()
+                mycopy.RefDict = {k:r for k,r in self.RefDict.items() if r in ref2keep}
+                mycopy.references.clear()
+                mycopy.refs()
+                return mycopy
+            else:
+                return self
+        else:
+            return PSRelation()
+        
+
+
+    def is_from_abstract(self):
+        for ref in self.refs():
+            if ref.is_from_abstract():
+                return True
+        return False
 
 
     def get_reference_count(self, count_abstracts=False):
-        self.load_refdict()
-        if self.RefDict:
-            ref_count = len(self.refs())
+        if self.references:
+            ref_count = len(self.references)
             self[REFCOUNT] = [ref_count]
             if count_abstracts:
                 ref_from_abstract = set([x for x in self.RefDict.values() if x.is_from_abstract()])

@@ -711,6 +711,9 @@ class SemanticSearch (APISession):
         df with _name_='to_df_named' added to self.report_data where normalized values from 'norm.raw_df' are replaced by original counts from raw_df\n
         df in self.report_data has column RANK
         """
+        if self.raw_data[raw_df_named].empty:
+            return df(),df()
+        
         counts_df = df.copy_df(self.raw_data[raw_df_named])
         refcount_cols = columns2norm if columns2norm else self.refcount_columns(counts_df)
         

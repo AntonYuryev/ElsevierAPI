@@ -58,12 +58,16 @@ class PSNetworx(DataModel):
 
     
     @staticmethod
-    def execution_time(execution_start,remaining_iterations=int(),number_of_iterations=int()):
+    def execution_time(execution_start:float,remaining_iterations=int(),number_of_iterations=int()):
         '''
         Input
         -----
         if "number_of_iterations" is supplied assumes that "execution_start" is global start
         otherwise assumes "execution_start" is the start of the current iteration if "remaining_iterations" is supplied
+        
+        Return
+        ------
+        tuple(time passed from execution_start, remaining_time)
         '''
         delta = time.time() - execution_start
         if number_of_iterations:
@@ -156,7 +160,8 @@ class PSNetworx(DataModel):
                     new_relations[rel_id].Nodes[REGULATORS].sort(key=lambda x:x[0])
                     # sorting REGULATORS by id for speed
                 except KeyError: pass
-                
+            
+            [rel.refs() for rel in new_relations.values()]
             [new_graph.add_rel(rel,merge=False) for rel in new_relations.values()]
             
         if add2self:
@@ -166,7 +171,7 @@ class PSNetworx(DataModel):
             else:
                 self.Graph = self.Graph.compose(new_graph)
                 self.dbid2relation.update(new_relations)
-
+        
         return new_graph
 
 

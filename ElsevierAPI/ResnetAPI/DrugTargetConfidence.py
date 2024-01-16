@@ -82,7 +82,7 @@ class DrugTargetConsistency(APIcache):
                     oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'
                     self.drugs2targets = self.iterate_oql(oql_query,target_names,request_name=rn)
             else:
-                self.network = self._load_cache(self.cache_name)
+                self.network = self._load_cache(cache_name=self.cache_name)
         
         assert(self.network)
         if limit2drugs:
