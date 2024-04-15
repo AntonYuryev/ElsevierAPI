@@ -153,7 +153,8 @@ class df(pd.DataFrame):
                 _df = df.from_pd(_pd[header_pos+1+skiprows:],str(_dfname_))
                 return _df
             try:
-                _df = df.from_pd(pd.read_excel(*args, **kwargs),df_name)
+                _pd = pd.read_excel(*args, **kwargs)
+                _df = df.from_pd(_pd,df_name)
                # _df._name_ = df_name
                 return _df
             except FileNotFoundError: 
@@ -166,7 +167,6 @@ class df(pd.DataFrame):
                 my_kwargs = dict(kwargs)
                 my_kwargs['sep'] = '\t'
                 _df = df.from_pd(pd.DataFrame(pd.read_csv(*args,**my_kwargs)),df_name)
-                #_df._name_ = df_name
                 return _df
             except FileNotFoundError:
                 print(FileNotFoundError)
@@ -177,8 +177,7 @@ class df(pd.DataFrame):
             try:
                 my_kwargs = dict(kwargs)
                 my_kwargs['sep'] = ','
-                _df = df.from_pd(pd.concat(pd.read_csv(*args,sep=',', **my_kwargs),ignore_index=True),df_name)
-                #_df._name_ = df_name
+                _df =  df.from_pd(pd.DataFrame(pd.read_csv(*args,**my_kwargs)),df_name)
                 return _df
             except FileNotFoundError:
                 print(FileNotFoundError)
@@ -203,23 +202,34 @@ class df(pd.DataFrame):
     def apply_and_concat2(self, concept_name, func, column_names):
             return pd.concat((self,self['Name'].apply(lambda cell: pd.Series(func(cell,concept_name),index=column_names))),axis=1)
 
+
     @classmethod 
-    def from_dict(cls, dic:dict,*args, **kwargs):
+    def from_dict(cls, dic:dict, **kwargs):
+        '''
+        Input
+        -----
+        dic - {col_name:[values]}
+        orient: Literal['columns', 'index', 'tight'] = ...,
+        dtype: _str = ...,
+        columns: list[_str] = ...\n
+        The "orientation" of the data. If the keys of the passed dict should be the columns of the resulting DataFrame, pass 'columns' (default). Otherwise if the keys should be rows, pass 'index'. If 'tight', assume a dict with keys ['index', 'columns', 'data', 'index_names', 'column_names']
+        '''
         df_name = kwargs.pop('name','')
-        new_pd = cls.from_pd(pd.DataFrame.from_dict(dic,*args, **kwargs))
+        new_pd = cls.from_pd(pd.DataFrame.from_dict(dic,**kwargs))
         new_pd._name_ = df_name
         return new_pd
 
 
     @classmethod 
-    def from_rows(cls, rows:set|list, header:list):
+    def from_rows(cls,rows:list[list],header:list[str],index=-1):
         '''
         rows - list/set of lists/tuples
         '''
-        dic  = {i:list(row) for i,row in enumerate(rows)}
-        new_pd = cls.from_pd(pd.DataFrame.from_dict(dic,orient='index',columns=header))
-        return new_pd
-
+        _2return = pd.DataFrame(rows,columns=header)
+        if index >= 0:
+            _2return.set_index(header[index], inplace=True)
+        return df.from_pd(_2return)
+    
 
     @classmethod
     def from_dict2(cls,dic:dict, key_colname:str, value_colname:str)->'df':
@@ -393,7 +403,7 @@ class df(pd.DataFrame):
         self.header_format.pop('valign','not_found')
 
 
-    def df2excel(self,writer:ExcelWriter,sheet_name:str):
+    def __df2excel(self,writer:ExcelWriter,sheet_name:str):
         '''
         Column format specifications must be in self.column2format\n
         Header format specification must be in self.header_format\n
@@ -441,6 +451,14 @@ class df(pd.DataFrame):
             my_worksheet.set_tab_color(tab_color)
         except KeyError:
             pass
+
+
+    def df2excel(self,writer:ExcelWriter,sheet_name:str):
+        if len(self) > 1000000:
+            chunks = [df.from_pd(self[i:i+1000000]) for i in range(0, len(self), 1000000)]
+            [d.__df2excel(writer,sheet_name+str(i+1)) for i,d in enumerate(chunks)]
+        else:
+            self.__df2excel(writer,sheet_name)
 
 
     def clean(self):
@@ -679,8 +697,9 @@ class df(pd.DataFrame):
         return copy_df
 
 
-    def reorder(self,columns_in_new_order:list):
-        copy_df = df.from_pd(self[columns_in_new_order])
+    def reorder(self,columns_in_new_order:list[str]):
+        new_pd = self[columns_in_new_order]
+        copy_df = df.from_pd(new_pd)
         copy_df.copy_format(self)
         copy_df._name_ = self._name_
         return copy_df
