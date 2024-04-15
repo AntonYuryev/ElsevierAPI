@@ -26,7 +26,7 @@ def load_api_config(api_config_file=''):# file with your API keys and API URLs
 class Pharmapendium:
     url = 'https://api.elsevier.com/pharma/'
     page_size = 100 #controls number of records downloaded in one get request
-    cache_dir = 'ElsevierAPI/ResnetAPI/__ppcache__/'
+    cache_dir = 'ElsevierAPI/PharmapendiumAPI/__ppcache__/'
 
     def __init__(self,APIconfig='',add_param=dict()):
         my_apiconfig = load_api_config(APIconfig)
@@ -112,7 +112,7 @@ class Pharmapendium:
         return child_collector
 
 
-    def tax_childs(self,taxonomy:str):
+    def retreive_taxonomy(self,taxonomy:str):
         cache_name = f'{taxonomy} taxonomy 4 PP {self.api_source} module.json'
         cache_path = self.cache_dir + cache_name
         try:
@@ -130,6 +130,36 @@ class Pharmapendium:
                 json.dump(children,f,indent=2)
 
             return children
+        
+    
+    def drugs_by_name(self,drugs:list[str]):
+        self._add_param({'drugs':','.join(drugs)})
+        return self.search_results('search',self.params)
+
+
+    def drugs(self):
+        cache_name = f'Drugs 4 PP {self.api_source} module.json'
+        cache_path = self.cache_dir + cache_name
+        try:
+            with open(cache_path,'r',encoding='utf=8') as f:
+                drug_records =  json.load(f)
+                print(f'Read {len(drug_records)} drugs from "{cache_name}"')
+                return drug_records
+        except FileNotFoundError:
+            drug_records = list()
+            drug_names = self.retreive_taxonomy('Drugs')
+            step_size = 100
+            for step in range(0,len(drug_names),step_size):
+                result = self.drugs_by_name(drug_names[step:step+step_size])
+                drug_records += result
+                print(f'Downloaded {len(result)} records for {step_size} drug names')
+
+            drug_records.sort()
+            with open(cache_path,'w',encoding='utf=8') as f:
+                json.dump(drug_records,f)
+            
+            print(f'Dumped {len(drug_records)} drugs to "{cache_name}"')
+            return drug_records
 
 
 class SafetyPP(Pharmapendium):
@@ -169,34 +199,6 @@ class DrugActivity(Pharmapendium):
         self.page_size = 500
         
 
-    def targets4(self,drug_names:list[str]):
-        self._add_param({'drugs':','.join(drug_names)})
-        return self.search_results('search',self.params)
-
-
-    def drugs(self):
-        drug_targets = list()
-        cache_name = f'Drugs 4 PP {self.api_source} module.json'
-        cache_path = self.cache_dir + cache_name
-        try:
-            with open(cache_path,'r',encoding='utf=8') as f:
-                drugs =  json.load(f)
-                print(f'Read {len(drugs)} drugs from "{cache_name}"')
-                return drugs
-        except FileNotFoundError:
-            drug_names = self.tax_childs('Drugs')
-            step_size = 100
-            for step in range(0,len(drug_names),step_size):
-                result = self.targets4(drug_names[step:step+step_size])
-                drug_targets += result
-
-            with open(cache_path,'w',encoding='utf=8') as f:
-                json.dump(drug_targets,f)
-            
-            print(f'Dumped {len(drug_targets)} drugs to "{cache_name}"')
-            return drug_targets
-
-
 class PPDoc(Pharmapendium):
     def __init__(self,search_type:str, APIconfig=''):
         self.url = super().url+'documents/'+search_type+'?'
@@ -207,4 +209,11 @@ class PPDoc(Pharmapendium):
         self._add_param({'Id':citation_id})
         return self.search_results('seach')
 
+
+class FAERS(Pharmapendium):
+    def __init__(self,APIconfig=''):
+        super().__init__(APIconfig)
+        self.api_source = 'faers'
+        self.url = super().url+self.api_source+'/'
+        self.page_size = 500
 
