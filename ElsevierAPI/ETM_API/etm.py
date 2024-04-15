@@ -169,7 +169,7 @@ class ETMjson(DocMine):
 
 
     @staticmethod
-    def __parse_contributors(article:dict, scopus_api:AuthorSearch=None):
+    def __parse_contributors(article:dict, scopus_api=None):
         try:
             author_info = article['article']['front']['article-meta']['contribGroupOrAffOrAffAlternatives']
             if not author_info:
@@ -214,7 +214,7 @@ class ETMjson(DocMine):
                         au_name = au_surname + ' ' + au1stname if au1stname else au_surname
                         authors.append(str(au_name).title())
 
-                        if isinstance(scopus_api,Scopus):
+                        if isinstance(scopus_api,AuthorSearch):
                             scopus_info = scopus_api.get_author_id(au_surname,au1stname,org_names)
                         else:
                             scopus_info = []
@@ -285,7 +285,7 @@ class ETMjson(DocMine):
                 return '', set(), set()
 
 
-    def __init__(self, article:dict,scopus_api:AuthorSearch=None): 
+    def __init__(self, article:dict,scopus_api=None): 
         is_article, article_ids = self.__parse_ids(article)
         if isinstance(scopus_api,Scopus): 
             self.scopusInfo = dict()
@@ -474,7 +474,7 @@ class ETMstat:
 
         first_col = RELEVANCE if use_relevance else ETM_CITATION_INDEX
         header = [first_col,'Citation','Identifier type',IDENTIFIER_COLUMN]
-        return_pd = df.from_rows(table_rows,header)
+        return_pd = df.from_rows(list(table_rows),header)
         if use_relevance:
             return_pd[RELEVANCE] = return_pd[RELEVANCE].astype(float).round(2)
         else:
@@ -505,7 +505,7 @@ class ETMstat:
             table_rows.add(tuple([ref[stat_prop][0],biblio_str,id_type,identifier]))
 
         header = [stat_prop,'Citation','Identifier type',IDENTIFIER_COLUMN]
-        return_pd = df.from_rows(table_rows,header)
+        return_pd = df.from_rows(list(table_rows),header)
         if stat_prop == RELEVANCE:
             return_pd[RELEVANCE] = return_pd[RELEVANCE].astype(float).round(2)
         else:
@@ -712,7 +712,7 @@ class ETMstat:
             else:
                 continue
 
-        hyperlink2pubmed = pubmed_hyperlink(pmids,total_hits) if pmids else '' 
+        hyperlink2pubmed = pubmed_hyperlink(pmids,str(total_hits)) if pmids else '' 
         doi_str = make_hyperlink(dois[0],url='http://dx.doi.org/', display_str=';'.join(dois)) if dois else ''
         return [hyperlink2pubmed,doi_str]
 
@@ -750,7 +750,9 @@ class ETMstat:
 
         Returns
         ----
-        copy of input to_df with added columns "ETM_REFS_COLUMN","DOIs"
+        copy of input to_df with added columns ETM_REFS_COLUMN,"DOIs"\n
+        self.etm_ref_column_name - []\n
+        self.etm_doi_column_name - []\n
         """
         if to_df.empty: return to_df
         start_time = time.time()
@@ -781,7 +783,6 @@ class ETMstat:
                 
                 dfs2concat.append(unannoated_rows)
                 annotated_df = df.concat_df(dfs2concat,to_df._name_)
-                
         else:
             annotated_df = self. __add_refs1(to_df,between_names_in_col,and_concepts,use_query,add2query)[0]
         
@@ -911,14 +912,15 @@ class ETMstat:
         return annotated_df
 
 
+ETM_CACHE_DIR = 'ElsevierAPI/ETM_API/__etmcache__'
 class ETMcache (ETMstat):
     """
     self.statistics = {prop_name:{prop_value:count}}
     """
     pass
     request_type = '/search/advanced?'
-    etm_results_dir = 'ElsevierAPI\ETM_API\__etmcache__'
-    etm_stat_dir = 'ElsevierAPI\ETM_API\__etmcache__'
+    etm_results_dir = ETM_CACHE_DIR
+    etm_stat_dir = ETM_CACHE_DIR
     
     def __init__(self,query,search_name,APIconfig=dict(),etm_dump_dir='',etm_stat_dir='',add_params={}):
         super().__init__(APIconfig,add_param=add_params)
@@ -926,8 +928,8 @@ class ETMcache (ETMstat):
         self._set_query(query)
         self.hit_count = self._get_articles()[1]
         self.search_name = search_name
-        self.etm_results_dir = etm_dump_dir if etm_dump_dir else 'ElsevierAPI\ETM_API\__etmcache__'
-        self.etm_stat_dir = etm_stat_dir if etm_stat_dir else 'ElsevierAPI\ETM_API\__etmcache__'
+        self.etm_results_dir = etm_dump_dir if etm_dump_dir else ETM_CACHE_DIR
+        self.etm_stat_dir = etm_stat_dir if etm_stat_dir else ETM_CACHE_DIR
         self.statistics = dict() # {prop_name:{prop_value:count}}
         self.scopusAPI = None
 

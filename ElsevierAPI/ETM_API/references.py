@@ -23,7 +23,7 @@ PATENT_GRANT_NUM = 'Patent Grant Number'
 EFFECT = 'Effect'
 RELEVANCE = 'Relevance'
 ETM_CITATION_INDEX = 'ETM Citation index'
-PS_CITATION_INDEX = 'Resnet Citation index'
+PS_CITATION_INDEX = 'Graph Citation index'
 SCOPUS_CI = 'Scopus Citation index'
 LOINCID = 'LOINC ID'
 THRESHOLD = 'Threshold'
@@ -33,7 +33,7 @@ EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORE
 
 INT_PROPS = {RELEVANCE,PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX}
 
-PS_REFIID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCTID','NCT ID']
+PS_REFIID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID','NCTID']
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
 ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
 PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
@@ -78,6 +78,7 @@ class Reference(dict):
         self.snippets = dict({}) # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
         self.addresses = dict({}) # {orgname:adress}
     
+
     def copy_ref(self):
         '''
         Return
@@ -160,12 +161,6 @@ class Reference(dict):
                     continue
         return False
     
-    def get_doc_id(self):
-        for id_type in REF_ID_TYPES:
-            try:
-                return id_type, self.Identifiers[id_type]
-            except KeyError: continue
-        return '',''
 
     def append_property(self, PropId, PropValue):
         try:
@@ -173,13 +168,14 @@ class Reference(dict):
         except KeyError:
             self[PropId] = [PropValue]
 
+
     def get_equivalent(self, ref_list:set):
         for ref in ref_list:
             if ref == self: return ref
         return dict()
 
 
-    def my_sentence_props(self):
+    def my_sentence_props(self)->set[str]:
         prop_names = set()
         for prop2value in self.snippets.values():
             prop_names.update(prop2value.keys())
@@ -237,26 +233,16 @@ class Reference(dict):
         return prop_name in self.keys()
     
 
-    def has_properties(self, prop_names2values:dict,case_sensitive=False):
-        # prop_names2values = {prop_name:[values]}
-        for prop2values in self.snippets.values():
-            for prop, values in prop2values.items():
-                try:
-                    match_values = set(prop_names2values[prop])
-                    if case_sensitive:
-                        search_set = values
-                    else:
-                        match_values =set(map(lambda x: x.lower(),match_values))
-                        search_set = set(map(lambda x: x.lower(),values))
-
-                    if not match_values.isdisjoint(search_set): 
-                        return True
-                    else: continue
-                except KeyError: continue
-
+    def has_values_in(self, in_prop2values:dict,case_sensitive=False):
+        '''
+        Input
+        -----
+        prop2values = {prop_name:[values]}
+        '''
+        # now seaching among ref properties
         for prop, values in self.items():
             try:
-                match_values = set(prop_names2values[prop])
+                match_values = set(in_prop2values[prop])
                 if case_sensitive:
                     search_set = values
                 else:
@@ -267,6 +253,22 @@ class Reference(dict):
                     return True
                 else: continue
             except KeyError: continue
+
+        # if nothing found seach among snippet properties 
+        for my_prop2values in self.snippets.values():
+            for prop, values in my_prop2values.items():
+                try:
+                    match_values = set(in_prop2values[prop])
+                    if case_sensitive:
+                        search_set = values
+                    else:
+                        match_values =set(map(lambda x: x.lower(),match_values))
+                        search_set = set(map(lambda x: x.lower(),values))
+
+                    if not match_values.isdisjoint(search_set): 
+                        return True
+                    else: continue
+                except KeyError: continue
 
         return False
     
@@ -282,18 +284,23 @@ class Reference(dict):
             return my_copy
         return dict({})
 
-
-    def _identifier(self):
-        for i in REF_ID_TYPES:
+    
+    def get_doc_id(self):
+        '''
+        Return
+        ------
+        tuple(id_type, identifier) for the first id type from REF_ID_TYPES\n
+        tuple('','') if reference does not have id_type in REF_ID_TYPES
+        '''
+        for id_type in REF_ID_TYPES:
             try:
-                return i,self.Identifiers[i]
-            except KeyError: 
-                continue
-        return '',''
+                return id_type, self.Identifiers[id_type]
+            except KeyError: continue
+        return str(),str()
     
 
     def _identifiers_str(self):
-        id_type, identifier = self._identifier()
+        id_type, identifier = self.get_doc_id()
         return id_type  +':'+identifier
     
 
@@ -365,6 +372,8 @@ class Reference(dict):
                     return int(year[-4:])
                 elif year[-2:].isdigit():
                     return int('20'+year[-2:]) # format: 20-Apr-20
+                elif year[:2].isdigit(): 
+                    return int('20'+year[:2]) # format 20-May
                 else:
                     print(f'Unknown Clinical trial "Start" format: {year}')
                     return 1812
@@ -376,6 +385,38 @@ class Reference(dict):
             return self['Title'][0]
         except KeyError:
             return ''
+        
+    
+    def pmid(self):
+        try:
+            return self.Identifiers['PMID']
+        except KeyError:
+            return ''
+
+
+    def doi(self):
+        try:
+            return self.Identifiers['DOI']
+        except KeyError:
+            return ''
+
+
+    def number_of_snippets(self):
+        return len(self.snippets)
+
+
+    def textrefs(self):
+        return list(self.snippets.keys())
+
+
+    def journal(self):
+        try:
+            return self[JOURNAL][0]
+        except KeyError:
+            try:
+                return self[MEDLINETA][0]
+            except KeyError:
+                return 'No journal name'
         
 
     def relevance(self):
@@ -390,6 +431,28 @@ class Reference(dict):
             return self.Identifiers['NCT ID']
         except KeyError:
             return ''
+        
+
+    def author_list(self)->list[str]:
+        '''
+        Return
+        ------
+        sorted list of authors from self[AUTHORS]
+        '''
+        try:
+            authors2split = self[AUTHORS]
+            individual_authors = set()
+            for au_list in authors2split:
+                authors = au_list.split(';')
+                individual_authors.update(authors)
+            
+            individual_authors = list(individual_authors)
+            individual_authors.sort()
+            self[AUTHORS] = individual_authors
+            return individual_authors
+        except KeyError:
+            return []
+
 
     def _biblio_tuple(self):
         """
@@ -416,15 +479,8 @@ class Reference(dict):
         except KeyError:
             authors_str = 'unknown authors.'
 
-        try:
-            journal = self[JOURNAL][0]
-        except KeyError:
-            try:
-                journal = self[MEDLINETA][0]
-            except KeyError:
-                journal = 'No journal name'
-        
-        identifier_type, identifier  = self._identifier()
+        journal = self.journal()
+        identifier_type, identifier  = self.get_doc_id()
         return title+' ('+year+'). '+journal+'. '+authors_str, identifier_type, identifier 
 
     
@@ -454,7 +510,7 @@ class Reference(dict):
     def is_from_abstract(self):
         for textref in self.snippets.keys():
             try:
-                return bool(str(textref).rindex('#abs', len(textref) - 8, len(textref) - 3))
+                return bool(str(textref).rindex('#abs',-8,-3))
             except ValueError:
                 continue
         return False
@@ -555,12 +611,12 @@ class Reference(dict):
         return prop_values
     
 
-    def get_props(self,prop_name:str):
+    def get_props(self,prop_name:str)->list[str]:
         try:
-            return self[prop_name]
+            return list(self[prop_name])
         except KeyError:
             try:
-                return self.Identifiers[prop_name]
+                return [self.Identifiers[prop_name]]
             except KeyError:
                 snippet_prop_dic = self.get_snippet_prop(prop_name)
                 props = set()
@@ -569,8 +625,22 @@ class Reference(dict):
                 return list(props)
 
 
+    def get_prop(self,prop_name:str,value_index=0,if_missing_return='')->str|int:
+        my_props = self.get_props(prop_name)
+        if my_props:
+            try:
+                return my_props[value_index]
+            except ValueError:
+                return if_missing_return
+        return if_missing_return
+
+
 class SerializableRef:
-# clases derived from dict and list cannot have custom JSONEncoder
+    '''
+    Enables Reference serialization into json dump because
+    classes derived from dict and list cannot have custom JSONEncoder
+    '''
+
     def __init__(self,ref:Reference):
         self.reference = ref
 
