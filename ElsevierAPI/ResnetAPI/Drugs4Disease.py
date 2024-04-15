@@ -24,7 +24,6 @@ class Drugs4Targets(DiseaseTargets):
         what2retrieve - default BIBLIO_PROPERTIES which is required to load self.set_target_disease_state()
         connect2server - default True
         """
-        APIconfig = args[0]
         my_kwargs = {
                 'disease':[],
                 'what2retrieve':BIBLIO_PROPERTIES,
@@ -40,7 +39,7 @@ class Drugs4Targets(DiseaseTargets):
                 }
         my_kwargs.update(kwargs)
 
-        super().__init__(APIconfig,**my_kwargs)
+        super().__init__(*args,**my_kwargs)
         self.clone_all_sessions = my_kwargs.pop('clone',True) # must be different from clone that is used by SemanticSearch
 
         #dt_consist_kwargs = dict(**my_kwargs)

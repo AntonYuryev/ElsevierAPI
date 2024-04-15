@@ -5,8 +5,9 @@ from .PathwayStudioGOQL import OQL,len
 from zeep import exceptions as zeep_exceptions
 from datetime import timedelta
 import requests.exceptions as req_exceptions
+import http.client
 
-CONNECTION_TIMEOUT = 10
+CONNECTION_TIMEOUT = 20
 DEFAULT_APICONFIG = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
 
 def execution_time(execution_start):
@@ -255,9 +256,9 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
             try:
                 result = self.SOAPclient.service.ResultGetData(result_param)
                 return result
-            except (zeep_exceptions.Fault,req_exceptions.ChunkedEncodingError) as err:
+            except (zeep_exceptions.Fault,req_exceptions.ChunkedEncodingError,http.client.RemoteDisconnected,req_exceptions.ConnectionError) as err:
                 print(f'{err} error while retrieving results {result_param.ResultRef}')
-                print(f'Attempt {attempt+1} to reconnect will be in 10 sec\n',flush=True)
+                print(f'Attempt {attempt+1} to reconnect will be in {CONNECTION_TIMEOUT} sec\n',flush=True)
                 sleep(CONNECTION_TIMEOUT)
                 continue
             except zeep_exceptions.TransportError:
@@ -304,9 +305,7 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
         return rp
 
 
-    def get_object_properties(self, obj_ids: list, property_names: list=None):
-        property_names = ['Name'] if property_names is None else property_names
-
+    def __get_obj_props(self, obj_ids:list[int], property_names:list[str]=[]):
         rp = self.create_result_param(property_names)
         rp.GetObjects = True
         rp.GetProperties = True
@@ -333,6 +332,17 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
                     new_dict_value = dict_folder[id_dict_prop_value]
                     prop['PropValues']['string'][i] = new_dict_value
         return obj_props
+    
+
+    def get_object_properties(self, obj_ids:list[int], property_names:list[str]=[]):
+        max_chunk_size = 1000
+        obj_props = self.__get_obj_props(obj_ids[:max_chunk_size],property_names)
+        for chunk in range(max_chunk_size,len(obj_ids),max_chunk_size):
+            chunk_props = self.__get_obj_props(obj_ids[chunk:chunk+max_chunk_size],property_names)
+            obj_props['Objects']['ObjectRef'] += chunk_props.Objects.ObjectRef
+            obj_props['Properties']['ObjectProperty'] += chunk_props.Properties.ObjectProperty
+        return obj_props
+
 
 
     def get_folder_objects_props(self, FolderId, property_names=None):

@@ -56,8 +56,8 @@ class SNEA(APIcache):
 
         self.experiment = Experiment({'Name':[args[0]]})
         if my_kwargs['no_mess']:
-            log_name = self.report_path('log')
-            print('Runtime messages for SNEA initialization will be added to "%s"'%log_name)
+            log_name = self.data_dir+self.report_path('log')
+            print(f'Runtime messages for SNEA initialization will be added to {log_name}')
             with open(log_name, 'a') as fout:
                 with redirect_stdout(fout):
                    super().__init__(**my_kwargs)
@@ -95,7 +95,7 @@ class SNEA(APIcache):
             dt_kwargs['connect2server'] = my_kwargs.get('connect2server',True)
             dt_kwargs['load_cache'] = False
             if dt_kwargs['connect2server']:
-                self.dt = Drugs4Targets(dt_kwargs)
+                self.dt = Drugs4Targets(**dt_kwargs)
             else:
                 self.dt = Drugs4Targets.from_files(**dt_kwargs)
             

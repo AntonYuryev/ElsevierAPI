@@ -58,7 +58,7 @@ class PSNetworx(DataModel):
 
     
     @staticmethod
-    def execution_time(execution_start:float,remaining_iterations=int(),number_of_iterations=int()):
+    def execution_time(execution_start:float,remaining_iterations:int=0,number_of_iterations:int=0):
         '''
         Input
         -----
@@ -84,7 +84,7 @@ class PSNetworx(DataModel):
             return "{}".format(str(timedelta(seconds=delta))),str(0)
     
 
-    def __psrel2dict(self,rels:dict):
+    def __psrel2dict(self,rels:dict[int,PSRelation]):
         '''
         Input
         -----

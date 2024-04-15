@@ -1,6 +1,6 @@
 from .NetworkxObjects import PSObject
 from .ResnetGraph import ResnetGraph,RESNET
-import xml.etree.ElementTree as et
+from lxml import etree as et
 from .rnef2sbgn import rnef2sbgn_str,minidom
 
 ################################## PSPathway, PSPathway, PSPathway, PSPathway##########################################
@@ -16,16 +16,16 @@ class PSPathway(PSObject):
 
 
     @classmethod
-    def from_resnet(cls, resnet:et.Element, add_annotation=PSObject(),make_rnef=True):
+    def from_resnet(cls, resnet:et._Element, add_annotation=PSObject(),make_rnef=True):
         pathway = PSPathway()
-        pathway['Name'] = [resnet.get('name')]
-        pathway['URN'] = [resnet.get('urn')]
+        pathway['Name'] = [resnet.get('name','no_name')]
+        pathway['URN'] = [resnet.get('urn','no_urn')]
         pathway.update(add_annotation)
-        [pathway.update_with_value(p.get('name'),p.get('value')) for p in resnet.findall('properties/attr')]
+        [pathway.update_with_value(p.get('name'),p.get('value')) for p in resnet.findall('properties/attr','')]
 
         if pathway.graph._parse_nodes_controls(resnet):
             if make_rnef:
-                pathway[RESNET] = et.tostring(resnet, encoding='unicode', method='xml')
+                pathway[RESNET] = et.tostring(resnet)
             return pathway
         else:
             print('Invalid <resnet> section')
@@ -72,11 +72,11 @@ class PSPathway(PSObject):
 
 
     def props2rnef(self):
-        props_element = et.Element('properties')
+        props_element = et.Element('properties',attrib=None, nsmap=None)
         for prop_name,prop_val in self.items():
             for val in prop_val:
-                et.SubElement(props_element, 'attr', {'name':str(prop_name), 'value':str(val)})
-        return str(et.tostring(props_element,encoding='utf-8',xml_declaration=True).decode("utf-8"))
+                et.SubElement(props_element, 'attr', {'name':str(prop_name), 'value':str(val)},nsmap=None)
+        return str(et.tostring(props_element).decode("utf-8"))
 
 
     def to_xml_s(self,ent_props:list,rel_props:list,add_props2rel=dict(),add_props2pathway=dict(),format='RNEF',as_batch=True, prettify=True):
@@ -87,22 +87,22 @@ class PSPathway(PSObject):
         '''
         self.graph.load_references()
         graph_xml = self.graph.to_rnefstr(ent_props,rel_props,add_props2rel,add_props2pathway)
-        pathway_xml = et.fromstring(graph_xml)
+        pathway_xml = et.fromstring(graph_xml,parser=None)
 
-        pathway_props = et.SubElement(pathway_xml, 'properties')
+        pathway_props = et.SubElement(pathway_xml, 'properties',attrib=None, nsmap=None)
         for prop_name,prop_val in self.items():
             for val in prop_val:
-                et.SubElement(pathway_props, 'attr', {'name':str(prop_name), 'value':str(val)})
+                et.SubElement(pathway_props, 'attr', {'name':str(prop_name), 'value':str(val)}, nsmap=None)
 
         try:
-            my_layout = et.fromstring(self['layout'])
-            lay_out = et.Element('attachments')
+            my_layout = et.fromstring(self['layout'],parser=None)
+            lay_out = et.Element('attachments',attrib=None, nsmap=None)
             lay_out.append(my_layout)
         except KeyError: pass
         pathway_xml.append(lay_out)
 
         if format == 'SBGN':
-            pathway_xml_str = et.tostring(pathway_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+            pathway_xml_str = et.tostring(pathway_xml).decode("utf-8")
             pathway_xml_str = rnef2sbgn_str(pathway_xml)
         else:
             '''
@@ -124,12 +124,12 @@ class PSPathway(PSObject):
                 batch_xml.append(resnet)
             '''
             if as_batch:
-                batch_xml = et.Element('batch')
+                batch_xml = et.Element('batch',attrib=None, nsmap=None)
                 batch_xml.insert(0,pathway_xml)
-                pathway_xml_str = et.tostring(batch_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+                pathway_xml_str = et.tostring(batch_xml).decode("utf-8")
                 if prettify: pathway_xml_str = minidom.parseString(pathway_xml_str).toprettyxml(indent='   ')
             else:
-                pathway_xml_str = et.tostring(pathway_xml,encoding='utf-8',xml_declaration=True).decode("utf-8")
+                pathway_xml_str = et.tostring(pathway_xml).decode("utf-8")
                 if prettify:
                     pathway_xml_str = str(minidom.parseString(pathway_xml_str).toprettyxml(indent='   '))
                     pathway_xml_str = pathway_xml[pathway_xml_str.find('\n')+1:]
@@ -144,9 +144,6 @@ class PSPathway(PSObject):
             f.write('<batch>\n') 
             props_str = self.props2rnef()
             f.write(props_str+'\n')
-            self.graph.dump2rnef(f,ent_props,rel_props,add_props2rel)
-            f.write('</batch>') 
-
- 
-            
+            f.write(self.graph.to_rnefstr(ent_props,rel_props,add_props2rel))
+            f.write('\n</batch>') 
 

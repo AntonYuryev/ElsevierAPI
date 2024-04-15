@@ -233,6 +233,11 @@ class OQL:
 
 
     @staticmethod
+    def select_metabolites():
+        return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = ('mammal endogenous compounds and their derivatives'))"
+
+
+    @staticmethod
     def drugs4(targets_with_dbids:list):
         strings = [str(integer) for integer in targets_with_dbids]
         db_ids = ",".join(strings)

@@ -45,6 +45,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
     def __init__(self, dic=dict()):
         super().__init__(dic)
         
+
     @staticmethod
     def from_zeep_objects(ZeepObjectRef):
         return_dict = dict()
@@ -57,6 +58,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             else:
                 return_dict[item] = [ZeepObjectRef[item]]
         return return_dict
+
 
     @classmethod
     def from_zeep(cls, ZeepObjectRef):
@@ -113,11 +115,11 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         self[PropId] = [PropValue]
 
     
-    def childs(self):
+    def childs(self)->list['PSObject']:
         try:
-            return list(self[CHILDS])
+            return list(map(PSObject,self[CHILDS]))
         except KeyError:
-            return list()
+            return []
 
 
     def child_dbids(self):
@@ -194,7 +196,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
             return True
     
 
-    def get_prop(self,prop_name:str,value_index=0,if_missing_return='')->str|int:
+    def get_prop(self,prop_name:str,value_index=0,if_missing_return:str|int|float='')->str|int|float:
         '''
         Return
         ------
@@ -260,12 +262,13 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         '''
         properties from "other" take precedent including URN
         '''
-        [self.update_with_list(prop_name,values) for prop_name,values in other.items()]
+        my_copy = PSObject(self.copy())
+        [my_copy.update_with_list(prop_name,values) for prop_name,values in other.items()]
         if replace_unique:
-            self['URN'] = other['URN']
-            self['Name'] = other['Name']
-            self['ObjTypeName'] = other['ObjTypeName']
-        return self
+            my_copy['URN'] = other['URN']
+            my_copy['Name'] = other['Name']
+            my_copy['ObjTypeName'] = other['ObjTypeName']
+        return my_copy
         
 
     def _prop2str(self, prop_id:str,cell_sep:str =';'):
@@ -303,7 +306,7 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         try:
             search_in = self[with_prop]
             if having_values:
-                if case_sensitive or with_prop in {DBID,'id','ID'}:
+                if case_sensitive or with_prop in {DBID,REFCOUNT}:
                     search_set = set(having_values)   
                 else:
                     search_in  = set(map(lambda x: x.lower(),search_in))
@@ -478,7 +481,9 @@ class PSRelation(PSObject):
         return has_values
 
 
-    def make_urn(self,reg_urns:list,tar_urns:list):
+    def make_urn(self,regulators:list[PSObject],targets:list[PSObject]):
+        reg_urns = [r.urn() for r in regulators]
+        tar_urns = [r.urn() for r in targets]
         reg_urns.sort()
         tar_urns.sort()
         rel_urn = 'urn:agi-'+self.objtype()+':'
@@ -561,7 +566,7 @@ class PSRelation(PSObject):
         return self.__refDict2refs()
     
 
-    def refs(self, ref_limit=0) -> list[Reference]:
+    def refs(self,ref_limit=0) -> list[Reference]:
         '''
         Return
         -------
@@ -575,11 +580,18 @@ class PSRelation(PSObject):
 
 
     def _1st_ref(self):
+        '''
+        Return
+        ------
+        the earliest reference or empty Reference if publication year is unavalialble 
+        '''
         for ref in reversed(self.refs()):
             pubyear = ref.pubyear()
             if pubyear > 1812:
                 return ref
-        return dict()
+        empty_ref = Reference('','')
+        empty_ref.Identifiers.clear()
+        return empty_ref
 
 
     def pubage(self):
@@ -623,12 +635,21 @@ class PSRelation(PSObject):
     
 
     def merge_rel(self, other:'PSRelation'):
-        self.merge_obj(other)
-        self._add_refs(other.__load_refs())
-        return self
-     #  self.PropSetToProps.update(other.PropSetToProps)
+        my_copy = self.make_copy()
+        my_copy.merge_obj(other)
+        my_copy._add_refs(other.__load_refs())
+        return my_copy
 
     
+    def number_of_snippets(self):
+        return sum([ref.number_of_snippets() for ref in self.refs()])
+        
+
+    def textrefs(self):
+        my_refs = self.refs()
+        return sum([r.textrefs() for r in my_refs],[])
+
+
     def rel2psobj(self):
         '''
         Return
@@ -886,27 +907,27 @@ class PSRelation(PSObject):
         return False
 
 
-    def get_reference_count(self, count_abstracts=False):
+    def count_refs(self, count_abstracts=False):
         if self.references:
-            ref_count = len(self.references)
-            self[REFCOUNT] = [ref_count]
+            self[REFCOUNT] = [len(self.references)]
             if count_abstracts:
                 ref_from_abstract = set([x for x in self.RefDict.values() if x.is_from_abstract()])
                 return len(ref_from_abstract)
-            return ref_count
         else:
             try:
                 refcount = self[REFCOUNT]
-                # case when REFCOUNT was loaded from RNEF dump that did not contain references
+                # case when REFCOUNT was loaded from RNEF dump as string without references
                 # e.g. for loading network from __pscache__
                 if len(refcount) > 1:
                     refcount2merge = list(map(int,refcount))
                     max_refcount = max(refcount2merge)
-                    self[REFCOUNT] = [max_refcount] 
-                return int(self[REFCOUNT][0])
+                    self[REFCOUNT] = [max_refcount]
+                else:
+                    self[REFCOUNT] = [int(refcount[0])]
             except KeyError:
                 self[REFCOUNT] = [0]
-                return 0
+        
+        return int(self[REFCOUNT][0])
 
 
     def rel_prop_str(self, sep=':'):
@@ -976,7 +997,7 @@ class PSRelation(PSObject):
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
         # initializing table
         col_count = len(columnPropNames) +2 if add_entities else len(columnPropNames)
-        RelationNumberOfReferences = self.get_reference_count()
+        RelationNumberOfReferences = self.count_refs()
 
         table = ['']*col_count
         if add_entities:
@@ -1098,7 +1119,7 @@ class PSRelation(PSObject):
         my_affinity = rel._affinity()
         if my_affinity >= MINAFFINITY4DIRECT:
             return True
-        elif rel.objtype() in DIRECT_RELTYPES and rel.get_reference_count() >= MINREF4DIRECTREL:
+        elif rel.objtype() in DIRECT_RELTYPES and rel.count_refs() >= MINREF4DIRECTREL:
             return True
         else:
             return False
@@ -1109,7 +1130,7 @@ class PSRelation(PSObject):
         indirect_reltypes={'Regulation','MolTransport','Expression','MolSynthesis'}
         if rel.objtype() in indirect_reltypes:
             return True
-        elif rel.objtype() in DIRECT_RELTYPES and rel.get_reference_count() < MINREF4DIRECTREL:
+        elif rel.objtype() in DIRECT_RELTYPES and rel.count_refs() < MINREF4DIRECTREL:
             return True
         elif rel._affinity() < MINAFFINITY4DIRECT and rel._affinity() > 0.0:
             return True
@@ -1126,7 +1147,7 @@ class PSRelation(PSObject):
         
         objtype = self.objtype()
         if objtype in DIRECT_RELTYPES:
-            return DIRECT if self.get_reference_count() >= MINREF4DIRECTREL else INDIRECT
+            return DIRECT if self.count_refs() >= MINREF4DIRECTREL else INDIRECT
         elif objtype in {'Regulation','MolTransport','Expression','MolSynthesis'}:
             return INDIRECT
         

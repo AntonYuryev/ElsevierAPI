@@ -138,8 +138,8 @@ class nx2neo4j:
     @staticmethod
     def __get_rel_labels(rel: PSRelation):
         lbls = ','.join([k.replace(':', ' ') + ':\"' + v[0] + '\"' for k, v in rel.items() if k in REL_PROP_Neo4j])
-        lbls = lbls + ',RefCount:' + str(rel.get_reference_count())
-        lbls = lbls + ',AbstractCount:' + str(rel.get_reference_count(count_abstracts=True))
+        lbls = lbls + ',RefCount:' + str(rel.count_refs())
+        lbls = lbls + ',AbstractCount:' + str(rel.count_refs(count_abstracts=True))
         return lbls
 
 

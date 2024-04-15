@@ -33,7 +33,6 @@ class DiseaseTargets(SemanticSearch):
         APIconfig - args[0]
         self.set_target_disease_state() needs references
         """
-        APIconfig=args[0]
         my_kwargs = {
                 'disease':[],
                 'what2retrieve':BIBLIO_PROPERTIES,
@@ -52,7 +51,7 @@ class DiseaseTargets(SemanticSearch):
         relprops = kwargs.pop('rel_props',[])
 
         my_kwargs.update(kwargs)
-        super().__init__(APIconfig,**my_kwargs)
+        super().__init__(*args,**my_kwargs)
         self.add_ent_props(entprops)
         self.add_rel_props(relprops)
 
@@ -91,6 +90,7 @@ class DiseaseTargets(SemanticSearch):
 
     def clear(self):
         super().clear()
+        assert (isinstance(self.gv2diseases, ResnetGraph))
         self.gv2diseases.clear_resnetgraph()
         self.partner2targets.clear_resnetgraph()
         self.disease_pathways.clear()
@@ -158,29 +158,30 @@ class DiseaseTargets(SemanticSearch):
         #oql_query = oql_query.format()
         request_name = f'Select GeneticVariants for {disease_names}'
         self.gv2diseases = self.process_oql(oql_query,request_name)
-        if isinstance(self.gv2diseases,ResnetGraph):
-            self.GVs = self.gv2diseases.psobjs_with(only_with_values=['GeneticVariant'])
-        
-            GVdbids = ResnetGraph.dbids(self.GVs)
-            target_withGVs = list()
+        assert isinstance(self.gv2diseases,ResnetGraph)
+        self.GVs = self.gv2diseases.psobjs_with(only_with_values=['GeneticVariant'])
+    
+        GVdbids = ResnetGraph.dbids(self.GVs)
+        target_withGVs = list()
 
-            if GVdbids:
-                oql_query = f'SELECT Relation WHERE objectType = GeneticChange AND \
-                    NeighborOf (SELECT Entity WHERE objectType = ({self.__target_types_str()})) AND NeighborOf ({OQL.get_objects(GVdbids)})'
-                request_name = f'Find targets with genetic variants linked to {disease_names}'
+        if GVdbids:
+            oql_query = f'SELECT Relation WHERE objectType = GeneticChange AND \
+                NeighborOf (SELECT Entity WHERE objectType = ({self.__target_types_str()})) AND NeighborOf ({OQL.get_objects(GVdbids)})'
+            request_name = f'Find targets with genetic variants linked to {disease_names}'
 
-                # avoid adding GeneticChange to self.Graph
-                new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
-                gv2target = new_session.process_oql(oql_query,request_name)
-                if isinstance(gv2target, ResnetGraph):
-                    self.gv2diseases = self.gv2diseases.compose(gv2target)
-                    target_withGVs = gv2target.psobjs_with(only_with_values=PROTEIN_TYPES)
-                    gv2dis_refs = self.gv2diseases.load_references()
-                    print('Found %d targets with %d GeneticVariants for %s supported by %d references' % 
-                        (len(target_withGVs), len(self.GVs), disease_names, len(gv2dis_refs)))
-        
-                    return target_withGVs
-        return ResnetGraph()
+            # avoid adding GeneticChange to self.Graph
+            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
+            gv2target = new_session.process_oql(oql_query,request_name)
+            assert isinstance(gv2target, ResnetGraph)
+            self.gv2diseases = self.gv2diseases.compose(gv2target)
+            target_withGVs = gv2target.psobjs_with(only_with_values=PROTEIN_TYPES)
+            gv2dis_refs = self.gv2diseases.load_references()
+            print('Found %d targets with %d GeneticVariants for %s supported by %d references' % 
+                (len(target_withGVs), len(self.GVs), disease_names, len(gv2dis_refs)))
+
+            return target_withGVs
+        else:
+            return ResnetGraph()
 
  
     def targets_from_db(self):
@@ -457,23 +458,23 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
 
         self.__colnameGV__ = 'Genetic Variants for '+self._disease2str()
         target_gvlinkcounter = 0
-        if isinstance(self.gv2diseases, ResnetGraph):
-            for i in self.RefCountPandas.index:
-                target_dbids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
-                row_targets = self.Graph.psobj_with_dbids(set(target_dbids))
-                targetGVs = self.gv2diseases.get_neighbors(set(row_targets), allowed_neigbors=self.GVs)
-                    
-                GVscore = 0
-                if targetGVs:
-                    GVnames = set([n.name() for n in targetGVs])
-                    self.RefCountPandas.at[i,self.__colnameGV__] = ';'.join(GVnames)
-                    target_gvlinkcounter += 1
-                    gv_disease_subgraph = self.gv2diseases.get_subgraph(list(targetGVs),self.input_diseases)
-                    GVscore = len(gv_disease_subgraph.load_references())
+        assert (isinstance(self.gv2diseases, ResnetGraph))
+        for i in self.RefCountPandas.index:
+            target_dbids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
+            row_targets = self.Graph.psobj_with_dbids(set(target_dbids))
+            targetGVs = self.gv2diseases.get_neighbors(set(row_targets), allowed_neigbors=self.GVs)
                 
-                self.RefCountPandas.at[i,self._col_name_prefix+'Genetic Variants'] = GVscore
+            GVscore = 0
+            if targetGVs:
+                GVnames = set([n.name() for n in targetGVs])
+                self.RefCountPandas.at[i,self.__colnameGV__] = ';'.join(GVnames)
+                target_gvlinkcounter += 1
+                gv_disease_subgraph = self.gv2diseases.get_subgraph(list(targetGVs),self.input_diseases)
+                GVscore = len(gv_disease_subgraph.load_references())
+            
+            self.RefCountPandas.at[i,self._col_name_prefix+'Genetic Variants'] = GVscore
 
-            print('Found %d targets linked to %d GVs' % (target_gvlinkcounter, len(self.GVs)))
+        print('Found %d targets linked to %d GVs' % (target_gvlinkcounter, len(self.GVs)))
 
 
     def __vote4effect(self,targets:list):
@@ -631,7 +632,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         print('%d targets have partners linked to %s' % (linked_row_count,self._disease2str()))
         return df.from_pd(partners_df.drop(columns=[self.__temp_id_col__]))
 
-
+    '''
     def score_partnersOLD(self):
         print('\n\nFinding semantic references supporting links between target partners and %s'%
                  self._disease2str())
@@ -657,7 +658,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
 
         self.RefCountPandas.drop(columns=self.__temp_id_col__,inplace=True)
         self.RefCountPandas.rename(columns={temp_targetdbid_col:self.__temp_id_col__}, inplace=True)
-
+        '''
 
     def score_regulators(self):
         print('\n\nScoring regulators by distance to components of disease pathways',flush=True)
@@ -796,7 +797,6 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             was_linked,linked_entities,unk_targets_df = self.link2concept(
                 colname,list(all_compounds),unk_targets_df,how2connect,REFERENCE_IDENTIFIERS)
             print('Linked %d targets to inducers for %s' % (was_linked,t_n))
-
 
         uptarget_df = self.make_count_df(activ_targets_df,DF4ANTAGONISTS)
         self.add2raw(uptarget_df)
