@@ -1,10 +1,7 @@
 from builtins import len
 from .medscan import MedScan
-import xlsxwriter
-import re
+import xlsxwriter,re,time,json
 from datetime import timedelta
-import time
-import json
 from ..NCBI.pubmed import pubmed_hyperlink
 
 AUTHORS = 'Authors'
@@ -33,7 +30,8 @@ EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORE
 
 INT_PROPS = {RELEVANCE,PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX}
 
-PS_REFIID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE','NCT ID','NCTID']
+ARTICLE_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE']
+PS_REFIID_TYPES = ARTICLE_ID_TYPES + ['NCT ID','NCTID']
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
 ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
 PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
@@ -147,9 +145,11 @@ class Reference(dict):
         # self.Identifiers has ['TextRef'] value
         except KeyError: return NotImplemented
 
+
     def __hash__(self):
         #__hash__ needs __eq__ to work properly
         return hash(self.__key())
+    
 
     def __eq__(self, other):
         #__hash__ needs __eq__ to work properly
