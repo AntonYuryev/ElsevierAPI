@@ -26,7 +26,6 @@ ANY_MOA = 0
 
 class Indications4targets(SemanticSearch):
     pass
-    max_ontology_parent = 11
     max_threads4ontology = 4
     max_cell_indications = 1000 # to limit number indications for popular ligands like TNF
   
@@ -50,7 +49,8 @@ class Indications4targets(SemanticSearch):
                  'data_dir':'',
                  'add_bibliography' : True,
                  'what2retrieve':BIBLIO_PROPERTIES,
-                 'mode_of_action':ANY_MOA
+                 'mode_of_action':ANY_MOA,
+                 'max_ontology_parent': 11
                 }
         my_kwargs.update(kwargs)
 
@@ -637,21 +637,21 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
 
         indications4antagonists = self.__indications4antagonists()
         if indications4antagonists:
-            indication_df = self.load_df(list(indications4antagonists),
+            antagonist_indication_df = self.load_df(list(indications4antagonists),
                                          max_child_count=self.max_ontology_parent,
                                          max_threads=self.max_threads4ontology)
-            indication_df._name_ = RAWDF4ANTAGONISTS
-            self.add2raw(indication_df)
-            print(f'Will score {len(indication_df)} indications for {t_n} antagonists')
+            antagonist_indication_df._name_ = RAWDF4ANTAGONISTS
+            self.add2raw(antagonist_indication_df)
+            print(f'Will score {len(antagonist_indication_df)} indications for {t_n} antagonists')
 
         indications4agonists = self.__indications4agonists()
         if indications4agonists:
-            indication_df = self.load_df(list(indications4agonists),
+            agonist_indication_df = self.load_df(list(indications4agonists),
                                          max_child_count=self.max_ontology_parent,
                                          max_threads=self.max_threads4ontology)
-            indication_df._name_ = RAWDF4AGONISTS
-            self.add2raw(indication_df)
-            print(f'Will score {len(indication_df)} indications for {t_n} agonists')
+            agonist_indication_df._name_ = RAWDF4AGONISTS
+            self.add2raw(agonist_indication_df)
+            print(f'Will score {len(agonist_indication_df)} indications for {t_n} agonists')
         
         if indications4antagonists or indications4agonists:
             return True
@@ -884,7 +884,7 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
         old_rel_props = self.relProps
         self.add_rel_props(PS_SENTENCE_PROPS+list(PS_BIBLIO_PROPS))
         t_n = self._input_targets()
-        ranked_indication_ids = self.Graph.dbids4nodes(self.params['indication_types'])
+        
         request_name = f'Find indications modulated by {t_n} with unknown effect'
         oql4indications_type = self.__oql4indications_type()
         OQLquery = f'SELECT Relation WHERE objectType = (Regulation,QuantitativeChange) AND Effect = unknown AND \
@@ -907,12 +907,13 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
             gv_g = self.iterate_oql(OQLquery,GVdbids,request_name=request_name)
             to_return = gv_g.compose(to_return)
 
-            to_return.remove_nodes_from(ranked_indication_ids) # now delete all indication with known effect
-            indications = to_return.psobjs_with(only_with_values=self.params['indication_types'])
-
-            print('Found %d new indications linked to %s with unknown effect' % (len(indications),self._input_targets()))
-        self.relProps = old_rel_props
         assert(isinstance(to_return,ResnetGraph))
+        ranked_indication_ids = self.Graph.dbids4nodes(self.params['indication_types'])
+        to_return.remove_nodes_from(ranked_indication_ids) # now delete indications with known effect
+        indications = to_return.psobjs_with(only_with_values=self.params['indication_types'])
+        print('Found %d new indications linked to %s with unknown effect' % (len(indications),self._input_targets()))
+        
+        self.relProps = old_rel_props
         return to_return
 
 
@@ -984,13 +985,14 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
 
         with ThreadPoolExecutor(max_workers=5, thread_name_prefix='AddAnnot') as b:
             id_path_futures = list()
-            for report_dfname in dfnames_map.values():
-                b.submit(self.add_ontology_df,report_dfname)
-                id_path_futures.append((report_dfname,b.submit(self.id2paths,report_dfname)))
+            for worksheet_name in dfnames_map.values():
+                if worksheet_name in self.report_pandas.keys():
+                    b.submit(self.add_ontology_df,worksheet_name)
+                    id_path_futures.append((worksheet_name,b.submit(self.id2paths,worksheet_name)))
 
-            for report_dfname, future in id_path_futures:
+            for worksheet_name, future in id_path_futures:
                 id2paths = future.result()
-                self.report_pandas[report_dfname] = self.report_pandas[report_dfname].merge_dict(id2paths,'Ontology parents','Name')
+                self.report_pandas[worksheet_name] = self.report_pandas[worksheet_name].merge_dict(id2paths,'Ontology parents','Name')
             
             b.shutdown()
         print(f'TargetIndications semantic search is finished in {execution_time(start)}')
@@ -1016,7 +1018,8 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
                 etm_ref_colname = self.etm_ref_column_name('Name',self.input_names())
                 doi_ref_colname = self.etm_doi_column_name('Name',self.input_names())
                 for worksheet_name in self.__dfnames_map().values():
-                    self.report_pandas[worksheet_name] = self.report_pandas[worksheet_name].merge_df(indication_etmrefs,how='left',on='Name',columns=[etm_ref_colname,doi_ref_colname])
+                    if worksheet_name in self.report_pandas.keys():
+                        self.report_pandas[worksheet_name] = self.report_pandas[worksheet_name].merge_df(indication_etmrefs,how='left',on='Name',columns=[etm_ref_colname,doi_ref_colname])
                 self.add_etm_bibliography()
                 self.add_ps_bibliography()
 
@@ -1028,9 +1031,10 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
     def write_report(self):
         report = pd.ExcelWriter(self.report_path(), engine='xlsxwriter')
         ordered_worksheets = list()
-        for report_worksheet_name in self.__dfnames_map().values():
-            ordered_worksheets.append(report_worksheet_name)
-            ordered_worksheets.append('ontology4'+report_worksheet_name)
+        for worksheet_name in self.__dfnames_map().values():
+            if worksheet_name in self.report_pandas.keys():
+                ordered_worksheets.append(worksheet_name)
+                ordered_worksheets.append('ontology4'+worksheet_name)
         ordered_worksheets.append(UNKEFFECTDF)
         
         self.add2writer(report,df_names=ordered_worksheets)

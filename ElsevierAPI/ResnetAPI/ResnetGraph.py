@@ -2420,15 +2420,16 @@ class ResnetGraph (nx.MultiDiGraph):
         Raises FileNotFoundError if "rnef_file" is not found
         '''
         try:
-            g = ResnetGraph()
             start = time.time()
+            g = ResnetGraph()
             nodes,rels = g.__read_rnef(rnef_file,prop2values,only_relprops,no_mess)
-            if not no_mess:
-                print('File %s with %d edges and %d nodes was loaded in %s' 
-                % (rnef_file,g.number_of_edges(),g.number_of_nodes(),execution_time(start)))
             g.name = f'from {rnef_file}'
             g.add_psobjs(nodes,merge)
             g.add_psrels(rels,merge)
+
+            if not no_mess:
+                print('File %s with %d edges and %d nodes was loaded in %s' 
+                % (rnef_file,g.number_of_edges(),g.number_of_nodes(),execution_time(start)))
             return g
         except FileNotFoundError:
             raise FileNotFoundError
@@ -2791,7 +2792,7 @@ class ResnetGraph (nx.MultiDiGraph):
         return filtered_graph
   
                     
-    def regulatory_network_urn(self,for_targets_with_urns:list,network_name:str):
+    def regulatory_network_urn(self,for_targets_with_urns:list[str],network_name:str):
         """
         Input
         -----

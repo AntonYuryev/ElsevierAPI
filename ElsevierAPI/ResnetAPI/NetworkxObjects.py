@@ -1,10 +1,6 @@
-import re
-import json
-import itertools
-import pickle
-import hashlib
-import math
+import re,json,itertools,pickle,hashlib,math
 from datetime import datetime
+from collections import defaultdict
 
 from ..ETM_API.references import Reference, len
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
@@ -40,14 +36,15 @@ DIRECT = 1
 INDIRECT = 0
 
 
-class PSObject(dict):  # {PropId:[values], PropName:[values]}
+class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
     pass
     def __init__(self, dic=dict()):
-        super().__init__(dic)
-        
+        super().__init__(list)
+        self.update(dic)
 
-    @staticmethod
-    def from_zeep_objects(ZeepObjectRef):
+
+    @classmethod
+    def from_zeep(cls, ZeepObjectRef):
         return_dict = dict()
         zeep_iter = iter(ZeepObjectRef)
         while True:
@@ -57,17 +54,13 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
                 break  # Iterator exhausted: stop the loop
             else:
                 return_dict[item] = [ZeepObjectRef[item]]
-        return return_dict
-
-
-    @classmethod
-    def from_zeep(cls, ZeepObjectRef):
-        return cls(cls.from_zeep_objects(ZeepObjectRef))
+        return cls(return_dict)
     
+
     def urn(self):
         try:
-            ulist = self['URN']
-            return str(ulist[0])
+          #  ulist = self['URN']
+            return str(self['URN'][0])
         except KeyError:
             raise KeyError
         
@@ -98,9 +91,9 @@ class PSObject(dict):  # {PropId:[values], PropName:[values]}
         #__hash__ needs __eq__ to work properly
         return self.urn2uid(self.urn())
 
-    def __eq__(self, other):
+    def __eq__(self, other:"PSRelation"):
         #__hash__ needs __eq__ to work properly
-        return self['URN'][0] == other['URN'][0]
+        return self.urn() == other.urn()
 
     def uid(self):
         return self.__hash__()
@@ -456,7 +449,7 @@ class PSRelation(PSObject):
     def mechanism(self):
         try:
             return self['Mechanism'][0]
-        except KeyError:
+        except (KeyError,IndexError):
             return ''
         
 
@@ -492,10 +485,10 @@ class PSRelation(PSObject):
             rel_urn += ':in-out:'+'in-out:'.join(reg_urns)
             try:
                 rel_urn += ':'+ self[EFFECT][0]
-            except KeyError: pass
+            except (KeyError,IndexError): pass
             try:
                 rel_urn += ':'+self['Mechanism'][0]
-            except KeyError: pass
+            except (KeyError,IndexError): pass
         else:
             rel_urn += 'in-out:'+'in-out:'.join([u for u in reg_urns])
 
@@ -937,7 +930,12 @@ class PSRelation(PSObject):
             to_return += prop_id + sep + ','.join(prop_values)+';'
 
 
-    def to_table_dict(self, columnPropNames:list, cell_sep:str=';', RefNumPrintLimit=0, add_entities=False):
+    def to_table_dict(self, columnPropNames:list, cell_sep:str=';', RefNumPrintLimit=0, add_entities=False)->dict[int,str]:
+        '''
+        Return
+        ------
+        {rownum:[column_values]}
+        '''
         # assumes all properties in columnPropNames were fetched from Database otherwise will crash
         # initializing table
         col_count = len(columnPropNames) +2 if add_entities else len(columnPropNames)
@@ -1113,30 +1111,6 @@ class PSRelation(PSObject):
             except KeyError:
                 return -1.0
 
-    '''
-    @staticmethod
-    def is_direct(rel:'PSRelation'):
-        my_affinity = rel._affinity()
-        if my_affinity >= MINAFFINITY4DIRECT:
-            return True
-        elif rel.objtype() in DIRECT_RELTYPES and rel.count_refs() >= MINREF4DIRECTREL:
-            return True
-        else:
-            return False
-
-
-    @staticmethod
-    def is_indirect(rel:'PSRelation'):
-        indirect_reltypes={'Regulation','MolTransport','Expression','MolSynthesis'}
-        if rel.objtype() in indirect_reltypes:
-            return True
-        elif rel.objtype() in DIRECT_RELTYPES and rel.count_refs() < MINREF4DIRECTREL:
-            return True
-        elif rel._affinity() < MINAFFINITY4DIRECT and rel._affinity() > 0.0:
-            return True
-        else:
-            return False
-        '''
 
     def isdirect(self):
         my_affinity = self._affinity()

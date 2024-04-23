@@ -41,7 +41,8 @@ class SemanticSearch (APISession):
         connect2server - default True, set to False to run script using data in __pscache__ files instead of database
         '''
         my_kwargs = {
-                'what2retrieve':REFERENCE_IDENTIFIERS
+                'what2retrieve':REFERENCE_IDENTIFIERS,
+                'max_ontology_parent': 11
                 }
         my_kwargs.update(kwargs)
         session_kwargs, parameters = self.split_kwargs(my_kwargs)
@@ -66,6 +67,7 @@ class SemanticSearch (APISession):
         self.columns2drop = [self.__temp_id_col__] # columns to drop before printing pandas
         self.__boost_with__ = list()
         self.weight_prop = ''
+        self.max_ontology_parent = self.params.get('max_ontology_parent',0)
 
 
     def reset(self):
@@ -236,7 +238,8 @@ class SemanticSearch (APISession):
         return new_df
         
 
-    def load_df(self,from_entities:list,max_child_count=0,max_threads=10):
+    def load_df(self,from_entities:list,max_child_count=0,max_threads=10): 
+        # do not use self.max_ontology_parent instread of max_child_count to avoid complications for session cloning  
         '''
         Input
         -----
@@ -245,7 +248,7 @@ class SemanticSearch (APISession):
         Return
         ------
         refcount_df with columns 'Name',\n
-        if max_children_count > 0 refcount_df will have "self.__temp_id_col__" column
+        if max_child_count > 0 refcount_df will have "self.__temp_id_col__" column
         '''
         [o.update_with_value(self.__mapped_by__,o.name()) for o in from_entities] 
         if max_child_count:
@@ -891,8 +894,15 @@ class SemanticSearch (APISession):
         return ref_df
 
 
-    def id2paths(self,to_report_named:str, for_entities_in_column='Name', map_by_graph_property='Name',ontology_depth=3):
+    def id2paths(self,to_report_named:str, for_entities_in_column='Name', 
+                 map_by_graph_property='Name',ontology_depth=3)->dict[str,str]:
         to_df = self.report_pandas[to_report_named]
+        if to_report_named:
+            try:
+                to_df = self.report_pandas[to_report_named]
+            except KeyError: return  dict()    
+        else: to_df = self.RefCountPandas
+
         id2child_objs = self.entities(to_df,for_entities_in_column,map_by_graph_property)
         return self.ontopaths2(id2child_objs,ontology_depth)
 
@@ -958,7 +968,11 @@ class SemanticSearch (APISession):
         ------
         Adds worksheet to "report_pandas" containing statistics for ontology groups listed in 'ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt'
         '''
-        my_df = self.report_pandas[for_df_name] if for_df_name else self.RefCountPandas
+        if for_df_name:
+            try:
+                my_df = self.report_pandas[for_df_name]
+            except KeyError: return df()        
+        else: my_df = self.RefCountPandas
 
         disease_ontology = 'ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt'
         disease_ontology_groups = [x.strip() for x in open(disease_ontology, 'r').readlines()]

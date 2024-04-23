@@ -174,7 +174,7 @@ class Experiment(PSObject):
         ps_api = DataModel(APIconfig)
         experiment_zobj,experiment_identifiers,sample_values = ps_api._fetch_experiment_data(experiment_name,only_log_ratio_samples)
         
-        psobj = PSObject.from_zeep_objects(experiment_zobj)
+        psobj = PSObject.from_zeep(experiment_zobj)
         experiment = cls(psobj)
         experiment.identifiers = df(experiment_identifiers)
 
@@ -414,7 +414,7 @@ class Experiment(PSObject):
         for idx in sample_pd.index:
             urn = sample_pd.loc[idx,'URN']
             value = sample_pd.loc[idx,'value']
-            if not isnan(value):
+            if not pd.isna(value):
                 pvalue = sample_pd.loc[idx,'pvalue']
                 urn2value[urn] = [(value,pvalue)]
 
@@ -436,7 +436,7 @@ class Experiment(PSObject):
             urns_with_values.update(urn2expvalue.keys())
 
         subnetwork_name = graph.name+f' for "{self.name()}"'
-        return graph_copy.regulatory_network_urn(urns_with_values,subnetwork_name)
+        return graph_copy.regulatory_network_urn(list(urns_with_values),subnetwork_name)
 
 
     def annotate_objs(self,urn2obj:dict,sample_names=[],sample_ids=[]):

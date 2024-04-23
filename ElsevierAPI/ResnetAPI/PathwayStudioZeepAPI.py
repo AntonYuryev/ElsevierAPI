@@ -704,7 +704,7 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
         
         if type(experiment_zobj) == type(None):
             print('No experiment with name "%s" exist in database' % experiment_name)
-            return
+            return None
         elif len(experiment_zobj.Objects.ObjectRef) > 1:
                 print('!Experiment has duplicate names!  Only first experiment will be used')
 

@@ -1,5 +1,5 @@
-from .TargetIndications import Indications4targets,OQL,df,RAWDF4ANTAGONISTS,RAWDF4AGONISTS,ResnetGraph
-from .TargetIndications import ANTAGONIST,AGONIST,PS_SENTENCE_PROPS
+from .TargetIndications import Indications4targets,OQL,df,ResnetGraph,PSObject
+from .TargetIndications import ANTAGONIST,AGONIST,PS_SENTENCE_PROPS,RAWDF4ANTAGONISTS,RAWDF4AGONISTS
 from ElsevierAPI import  execution_time
 from concurrent.futures import ThreadPoolExecutor
 from .SemanticSearch import RANK
@@ -72,16 +72,15 @@ class RepurposeDrug(Indications4targets):
         return False
 
 
-    def find_drug_indications(self):
+    def find_drug_indications(self)->set[PSObject]:
         """
         Returns
         -------
-        {drug indications ids}
+        {PSObject} - drug indications
 
         Loads
         -----
-        self.indications4antagonists if self.params['mode_of_action'] == ANTAGONIST
-        self.indications4agonists if self.params['mode_of_action'] == AGONIST
+        self.drug_indications
         """
         indications2return = set()
         indic_str = OQL.join_with_quotes(self.params['indication_types'])
@@ -106,7 +105,7 @@ class RepurposeDrug(Indications4targets):
             print('Found %d indications reported in scientific literature for %s' % (len(found_indications), self.params['input_compound']))
     
         self.drug_indications.update(indications2return)
-        return list(indications2return)
+        return indications2return
 
     
     def input_drug_names(self):
@@ -273,6 +272,7 @@ class RepurposeDrug(Indications4targets):
         self.find_indications4similars()
         self.clean_indications()
         print("Drug indications were loaded in %s" % execution_time(start_time))
+        return self.drug_indications
 
 
     def other_effects(self):
@@ -315,7 +315,7 @@ class RepurposeDrug(Indications4targets):
         self.load_drug_indications()
         if _4targets_named:
             self.params['target_names'] = _4targets_named
-        self.load_indications4targets(self.params['mode_of_action'])
+            self.load_indications4targets(self.params['mode_of_action'])
 
         if self._is_strict():
             if self.__4agonist():
