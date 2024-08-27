@@ -1,21 +1,25 @@
-from .references import DocMine, Reference, len, pubmed_hyperlink, make_hyperlink
-from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES,RELEVANCE, ETM_CITATION_INDEX
-import urllib.request
-import urllib.parse
+from .references import DocMine,Reference,Author,len,pubmed_hyperlink,make_hyperlink
+from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES,RELEVANCE, ETM_CITATION_INDEX,IN_OPENACCESS,PUBLISHER
 from urllib.error import HTTPError
-import json, http.client, time, xlsxwriter, os, math
-from datetime import datetime,timedelta
-from ..ScopusAPI.scopus import Scopus, AuthorSearch
+import json, http.client, time, os, math, urllib.request, urllib.parse,zipfile
+from datetime import datetime,timedelta,date
+from ..ScopusAPI.scopus import Scopus,AuthorSearch,CitationOverview
 from ..pandas.panda_tricks import pd, df
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
+from ..NCBI.pubmed import medlineTA2issn
 
 
 SCOPUS_AUTHORIDS = 'scopusAuthors'
-ETM_REFS_COLUMN = 'Number of references. Link opens most relevant articles in PubMed'
+SCOPUS_CITESCORE = 'CiteScore'
+SCOPUS_SJR = 'Scientific Journal Rankings'
+SCOPUS_SNIP = 'Source Normalized Impact per Paper'
+REFCOUNT_COLUMN = 'Number of references. Link opens most relevant articles in PubMed'
 IDENTIFIER_COLUMN = 'Document identifier: PMID or DOI'
 MAX_ETM_SESSIONS = 5 #ETM performance deteriorates if number of concurrent sessions is too big
 DEFAULT_ETM = 'https://covid19-services.elseviertextmining.com/api'
 DEFAULT_APICONFIG = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
+GRANT_APPLICATION = 'Grant Application'
 
 
 def execution_time(execution_start):
@@ -38,7 +42,12 @@ def load_api_config(api_config_file=''):# file with your API keys and API URLs
         else:
             print('No working API server was specified!!! Goodbye')
             return dict({})
-        
+
+
+def remove_the(t:str):
+    return t[4:] if t.startswith('The ') else t
+
+
 class ETMjson(DocMine):
 
     @staticmethod
@@ -53,13 +62,17 @@ class ETMjson(DocMine):
         for article_id in ids:
             id_type = article_id['pub-id-type'].upper()
             id_value = str(article_id['value'])
+          #  if id_value == '33373432':
+          #      print('')
             try:
                 if id_type == 'ELSEVIER': continue
-                exist_id = article_ids[id_type]
-                if isinstance (exist_id, str) : exist_id = [exist_id]
-                exist_id.append(id_value)
-                article_ids[id_type] = exist_id
-                is_article = False #record has multiple IDs of the same type.  It is likely conference proceedings
+                exist_ids = article_ids[id_type]
+                if isinstance (exist_ids, str) : 
+                    exist_ids = [exist_ids]
+                exist_ids.append(id_value)
+                article_ids[id_type] = exist_ids
+                is_article = False #record has multiple IDs of the same type.  
+                # It is likely abstract from conference proceedings
                 # Reference functions will not work.  Ref must be ignored in subsequent code
             except KeyError:
                 article_ids[id_type] = id_value
@@ -129,102 +142,114 @@ class ETMjson(DocMine):
 
 
     @staticmethod
-    def __parse_institution(correspondence:str):
+    def __parse_institution(correspondence:str)->tuple[list[str],str,str]:
         email_pattern = EMAIL.search(correspondence)
-        address = correspondence
         if email_pattern:
             email_pos = email_pattern.start()
-            email = correspondence[email_pattern.start():email_pattern.end()]
-            for i in range(3, email_pattern.start()-3):
+            email = correspondence[email_pos:email_pattern.end()]
+            for i in range(3, email_pos-3):
                 sub_start = email_pos-i
                 sub = correspondence[sub_start : sub_start+3]
-                if sub in {'. e', '. E'}:
+                if sub in {'. e', '. E'}: # . Electronic address
                     email_pos = sub_start
                     break
-
-            address = correspondence[0:email_pos].strip(' .,')
+            full_address = correspondence[0:email_pos].strip(' .,')
         else:
+            full_address = correspondence.strip(' .,')
             email = ''
         
         names = list()
-        if address:
-            if (not address[0].isalpha()) or address[0].islower():  address = address[1:].strip()
-            names = address.split(', ')    
+        if full_address:
+            address_start = full_address[0]
+            if (not address_start.isalpha()) or address_start.islower():  
+                full_address = full_address[1:].strip()
+                if full_address:
+                    if (not full_address[0].isalpha()):
+                        full_address = full_address[1:] # to remove double digit numbers
+                names = full_address.split(', ')
 
-        last_name_index = 0
-        has_institutional_keyword = False
-        for n in range(1,len(names)):
-            if DocMine.has_institution_keyword(names[n]):
-                has_institutional_keyword = True
-                last_name_index = n
-                names[n] = names[n].title()
-            else: break
+        affiliations = list()
+        if names:
+            has_institution = False
+            for n,name in enumerate(reversed(names)):
+                if DocMine.has_institution_keyword(name):
+                    has_institution = True
+                    break
 
-        if not has_institutional_keyword and last_name_index > 0:
-            print('article coresspondence %s has no institutional keyword!' % correspondence)
-
-        institutional_names =  names[:last_name_index+1] if names else []
-
-        return institutional_names, address, email
+            if not has_institution:
+                print(f'article coresspondence "{correspondence}" has no institutional keyword!')
+                if len(names) > 2: #evidence that correspondence is not junk
+                    affiliations.append(names[0].title())
+            else:
+                affiliations = names[:len(names)-n]
+        return affiliations, full_address, email
 
 
     @staticmethod
-    def __parse_contributors(article:dict, scopus_api=None):
+    def __parse_contributors(article:dict)->tuple[list[str],list[str],list[str]]:
+        '''
+        Return
+        ------
+        [authors],[institutions], [addresses] where\n
+        "institutions" - [global_affiliation]\n
+        [addresses] - [detailed_affiliation]
+        '''
         try:
             author_info = article['article']['front']['article-meta']['contribGroupOrAffOrAffAlternatives']
             if not author_info:
-                #print('Article has no author info') 
                 return [],[],[]
         except KeyError:
-            #print('Article has no author info')
             return [],[],[]
-            
         if isinstance(author_info, dict): author_info = [author_info]
 
         authors = list()
-        institutions = list()
-        scopus_infos = list()
-        org_names = list()
-
+        institutions = set()
+        addresses = list()
+        assert(len(author_info) <= 2) # either aff or contrib-group
         for item in author_info:
+            # list of affiliations is not linked to list of contributors unfortunately in ETM
             try:
-                instituts = item['aff']['content']
-                if not isinstance(instituts, list): instituts = [instituts]
-                for inst in instituts:
-                    org_names, address, email = ETMjson.__parse_institution(inst['institution'])
-                    if org_names:
-                        institutions.append((org_names[-1],address)) #use only last name of institution defining global organization
-                continue
+                affs = item['aff']['content']
+                if not isinstance(affs, list): affs = [affs]
+                for aff in affs:
+                    affiliations, address, email = ETMjson.__parse_institution(aff['institution'])
+                    addresses.append(address)
+                    if affiliations:
+                        institutions.add(affiliations[-1]) #use only last institution name defining global organization
             except KeyError:
-                contribOrAddressOrAff_list = item['contrib-group']['contribOrAddressOrAff']
-                if not isinstance(contribOrAddressOrAff_list, list): contribOrAddressOrAff_list = [contribOrAddressOrAff_list]
+                contribOrAddressOrAff = item['contrib-group']['contribOrAddressOrAff']
+                if not isinstance(contribOrAddressOrAff, list): contribOrAddressOrAff = [contribOrAddressOrAff]
 
                 au_name = ''
-                for author in contribOrAddressOrAff_list:
-                    au1stname = str()
+                for contributor in contribOrAddressOrAff:
                     try:
-                        au1stname = author['contrib']['contribIdOrAnonymousOrCollab']['name']['given-names']['content']
+                        author = contributor['contrib']['contribIdOrAnonymousOrCollab']['name']
                     except KeyError:
+                        continue
+                    try:
+                        given_names = author['given-names']
                         try:
-                            au1stname = author['contrib']['contribIdOrAnonymousOrCollab']['name']['given-names']['initials']+'.'
-                        except KeyError: pass
+                            au1stname = str(given_names['content'])
+                        except KeyError:
+                            try:
+                                au1stname = str(given_names['initials'])+'.'
+                            except KeyError:
+                                au1stname = ''
+                    except KeyError:
+                        given_names = dict()
+                        au1stname = ''
 
                     try:
-                        au_surname = author['contrib']['contribIdOrAnonymousOrCollab']['name']['surname']
-                        au_name = au_surname + ' ' + au1stname if au1stname else au_surname
-                        authors.append(str(au_name).title())
+                        au_name = author['surname']
+                        if au1stname: au_name += ' ' + au1stname
+                        au_name = str(au_name).title()
+                        authors.append(au_name)
+                        # list of affiliations is not linked to list of contributors unfortunately in ETM
+                    except KeyError: 
+                        continue
 
-                        if isinstance(scopus_api,AuthorSearch):
-                            scopus_info = scopus_api.get_author_id(au_surname,au1stname,org_names)
-                        else:
-                            scopus_info = []
-
-                        if scopus_info:
-                            scopus_infos.append(scopus_info)
-
-                    except KeyError: continue
-
-        return authors, institutions, scopus_infos #authors: list(str), institutions: list([orname,address])
+        return authors,list(institutions),addresses #authors: list(LastName 1stName), institutions: list([institution_name,address])
+            
 
 
     @staticmethod
@@ -241,7 +266,8 @@ class ETMjson(DocMine):
             for markup in highlights:
                 try:
                     query_end = pos_shift + markup['end']
-                    if query_end <= last_markup_end: continue
+                    if query_end <= last_markup_end: 
+                        continue
 
                     query_term = markup['queryTerm']
                     query_start = pos_shift+markup['start']
@@ -285,18 +311,16 @@ class ETMjson(DocMine):
                 return '', set(), set()
 
 
-    def __init__(self, article:dict,scopus_api=None): 
+    def __init__(self,article:dict):
         is_article, article_ids = self.__parse_ids(article)
-        if isinstance(scopus_api,Scopus): 
-            self.scopusInfo = dict()
-        if not is_article:
-            return None # __init__ must return None not dict()
-        else:
+        if is_article:
             id_type, id_value = article_ids.popitem()
             if id_type == 'ELSEVIER': id_type = 'PII'
             super().__init__(id_type, id_value)
             self.Identifiers.update(article_ids)
-
+        else:
+            return None # __init__ must return None not dict()
+            
         try:
             title = article['article']['front']['article-meta']['title-group']['article-title']
             self._set_title(title)
@@ -308,21 +332,26 @@ class ETMjson(DocMine):
         except KeyError: pass
 
         self.add2section('Abstract',' '.join(self.__parse_abstact(article)))
-        authors,institutions,scopus_infos = self.__parse_contributors(article,scopus_api)
+        authors,institutions,self.addresses = ETMjson.__parse_contributors(article)
         if authors: self[AUTHORS] = authors
-        self.addresses = {i[0]:i[1] for i in institutions}
-        if scopus_infos: 
-            self[SCOPUS_AUTHORIDS] = [i[0] for i in scopus_infos]
-            self.scopusInfo.update({i[0]:i for i in scopus_infos})
+        if institutions: self[INSTITUTIONS] = institutions
+
         try:
-            journal = article['article']['front']['journal-meta']['journal-title-group']['journal-title']
-            journal = ','.join(journal.values())
+            journal = article['article']['front']['journal-meta']['journal-title-group']['journal-title']['content']
+            #journal = self.__parse_journal(journal)
         except KeyError:
-            journal = 'Grant application'
+            journal = GRANT_APPLICATION
         self.append_property(JOURNAL, journal)
 
-        self['categories'] = self.__parse_category(article)
+        issn = article.get('article', {}).get('front', {}).get('journal-meta', {}).get('issn', {}).get('x', '')
+        if issn:
+            self.append_property('ISSN', issn)
 
+        publisher = article.get('article', {}).get('front', {}).get('journal-meta', {}).get('publisher',{}).get('publisherNameAndPublisherLoc',{}).get('publisher-name',{}).get('content', '')
+        if publisher:
+            self.append_property(PUBLISHER, publisher)
+
+        self['categories'] = self.__parse_category(article)
         text_ref = self._make_textref()
         snippet, self.term_ids, self.keywords = self.__parse_snippet(article) #term_ids = {term_id+'\t'+term_name}
         self.add_sentence_prop(text_ref, SENTENCE, snippet)
@@ -335,22 +364,80 @@ class ETMstat:
     url = DEFAULT_ETM
     page_size = 100
     request_type = '/search/basic?'  # '/search/advanced?'
+
     def __base_url(self): return self.url+self.request_type
     min_relevance = float(0.0)
+    scopus_cache_dir = 'ElsevierAPI/ETM_API/__journals__/'
+
+
+    def __load_journal_dict(self):
+        '''
+        Loads
+        -----
+        self.journal2issn - {normalized_journal_title:[ISSNs]}
+        self.abbrev2journal - {abbreviation:normalized_journal_title}
+        self.JournalInfo - {normalize_journal:(publisher,CiteScore)}
+        '''
+        self.abbrev2journal, self.journal2issn = medlineTA2issn()
+     #   try:
+      #      self.JournalInfo = json.load(open(self.scopus_jinfo_cache(),'r',encoding='utf-8'))
+       # except FileNotFoundError:
+        #    self.JournalInfo = dict()
+
+    
+    def _load_scopus_citation(self,ref:ETMjson):
+        idtype,identifier = ref.get_doc_id()
+        sco = CitationOverview(idtype,identifier,self.APIconfig)
+        scopus_citation = sco._get_results()
+        return scopus_citation
+    
+
+    def is_in_open_access(self,ref:ETMjson):
+        doi = ref.identifier('DOI')
+        return Scopus.oa_status(doi)
+    
+
+    def __publisher_from_scopus(self,ref:ETMjson):
+        '''
+        Return
+        ------
+        publisher,CiteScore,SJRscore,SNIPscore
+
+        Updates
+        -------
+        ref[ISSN] property
+        '''
+        my_issn = ref.get_prop('ISSN')
+        ref_journal = ref.journal()
+        my_issns = self.journal2issn.get(ref_journal,[])
+        if my_issn:
+            if my_issn not in my_issns:
+                my_issns.append(my_issn)
+
+        ref['ISSN'] = my_issns
+
+        for issn in my_issns:
+            j_title,publisher,CiteScore,SJRscore,SNIPscore = self.myPyblisherScopus.journal_info(issn,ref_journal)
+            if publisher: 
+                return publisher,CiteScore,SJRscore,SNIPscore
+        return '','','',''
     
 
     def __init__(self,APIconfig:dict=dict({}), limit=5, add_param=dict()):
         """
         self.ref_counter = {str(id_type+':'+identifier):(ref,count)}
         """
-        myAPIconfig = APIconfig if APIconfig else load_api_config()
+        self.APIconfig = APIconfig if APIconfig else load_api_config()
+        self.myScopus = AuthorSearch(self.APIconfig)
+        self.myPyblisherScopus = Scopus(self.APIconfig)
 
-        self.url = myAPIconfig['ETMURL']
+        self.url = self.APIconfig['ETMURL']
         self.params = {
             'searchTarget': 'full_index',
-            'apikey':myAPIconfig['ETMapikey'],
+            'apikey':self.APIconfig['ETMapikey'],
             'limit': limit,
-            'so_c':'17~' #  filter by Publication Source excluding NIH reporter
+            #'so_c':'17~' # filter by Publication Source excluding NIH reporter; 
+            # 'so_c':'17~' does not work on COVID server
             #'so_p':'ffb~' # filter by Publication Type
             }
         self.params.update(add_param)       
@@ -358,6 +445,12 @@ class ETMstat:
         self.etm_ref_column_name = list()
         self.etm_doi_column_name = list()
         self.hit_count = 0
+        #self.JournalInfo = dict() #{journal_title:publisher}
+        self.journal2issn = dict() # {journal_title:"[issn_print,issn_online]}
+        self.abbrev2journal = dict()
+        self.NormalizedAffs = dict()
+        self.authorInfo = defaultdict(defaultdict) # 4-level nested dict: {NoamalizedAffiliatioFromScopus:{Surname:{1stname:{middle intital:scopusAuthorID}}}}
+        self.__load_journal_dict()
 
 
     def clone(self, to_url=''):
@@ -380,7 +473,7 @@ class ETMstat:
         """
         return self.params['limit']
 
-    def references(self):
+    def references(self)->set[DocMine]:
         return set([x[0] for x in self.ref_counter.values()])
  
     def _set_query(self,query:str):
@@ -405,7 +498,7 @@ class ETMstat:
         self.request_type = '/search/advanced?'
 
 
-    def _get_articles(self, page_start=0, need_snippets=True):
+    def _get_articles(self, page_start=0, need_snippets=True)->tuple[list,int]:
         """
         Returns tuple
         -------
@@ -424,20 +517,31 @@ class ETMstat:
                     return list(result['article-data']), int(result['total-hits='])
                 else:
                     return list(),int(0)
-            except HTTPError:
-                tiout = 10
-                print(f'HTTPError. Will attempt to reconnect in {tiout}')
-                time.sleep(tiout)
+            except HTTPError as err:
+                raise err # usually means that ETM is not available
+                timeout = 10
+                print(f'ETMStat HTTPError. Will attempt to reconnect in {timeout}')
+                time.sleep(timeout)
             except http.client.IncompleteRead:
-                tiout = 10
-                print(f'IncompleteRead. Will attempt to reconnect in {tiout}')
-                time.sleep(tiout)
+                timeout = 10
+                print(f'ETMStat IncompleteRead. Will attempt to reconnect in {timeout}')
+                time.sleep(timeout)
 
         print(f'Cannot connect to {self.__base_url()} after 10 attempts')
         return list(),int(0)
 
 
-    def _add2counter(self, ref:Reference):
+    def _add2counter(self, ref:DocMine):
+        '''
+        Updates
+        -------
+        self.ref_counter - {str(id_type+':'+identifier):(ref,count)}
+        ref[RELEVANCE] with ref.relevance()
+
+        Return
+        ------
+        id_type,identifier of added ref
+        '''
         for id_type in REF_ID_TYPES:
             try:
                 identifier = ref.Identifiers[id_type]
@@ -457,28 +561,32 @@ class ETMstat:
 
     def counter2df(self, use_relevance=True):
         """
-        used for internal self.ref_counter = {identifier:(ref,ref_count)}
+        Creates DataFrame from self.ref_counter = {identifier:(ref,ref_count)}
         used to count references from ETM
         """
+        first_col = RELEVANCE if use_relevance else ETM_CITATION_INDEX
+        header = [first_col,PUBYEAR,'Citation','Identifier type',IDENTIFIER_COLUMN]
+
         table_rows = set()
         for identifier, ref_count in self.ref_counter.items():
             ref = ref_count[0]
-            refcount = ref_count[1]
+            assert(isinstance(ref,Reference))
+            refcount = int(ref_count[1])
             score = math.ceil(float(ref[RELEVANCE][0]) * refcount) if use_relevance else refcount
             biblio_str, id_type, identifier = ref._biblio_tuple()
             if id_type == 'PMID':
                 identifier = pubmed_hyperlink([identifier],identifier)
             elif id_type == 'DOI':
                 identifier = make_hyperlink(identifier,'http://dx.doi.org/')
-            table_rows.add(tuple([score,biblio_str,id_type,identifier]))
+            table_rows.add(tuple([score,ref.pubyear(),biblio_str,id_type,identifier]))
 
-        first_col = RELEVANCE if use_relevance else ETM_CITATION_INDEX
-        header = [first_col,'Citation','Identifier type',IDENTIFIER_COLUMN]
         return_pd = df.from_rows(list(table_rows),header)
         if use_relevance:
             return_pd[RELEVANCE] = return_pd[RELEVANCE].astype(float).round(2)
         else:
             return_pd[ETM_CITATION_INDEX] = return_pd[ETM_CITATION_INDEX].astype(int)
+
+        return_pd[PUBYEAR] = pd.to_numeric(return_pd[PUBYEAR], errors='coerce')
         return_pd.sort_values(first_col,ascending=False,inplace=True)
         return_pd.add_column_format('Citation','width',150)
         return_pd.add_column_format('Citation','wrap_text',True)
@@ -562,6 +670,58 @@ class ETMstat:
         return 'rel({'+'} AND {'.join(my_terms)+'})'
    
 
+    def __normalize_journal(self,ref:ETMjson):
+        maybe_abbr = str(ref.get_prop(JOURNAL))
+        norm_journal = ref.journal()
+        try:
+            norm_journal = str(self.abbrev2journal[maybe_abbr])
+        except KeyError:
+            try:
+                norm_journal = str(self.abbrev2journal[norm_journal])
+            except KeyError:
+                maybe_abbr_no_dots = maybe_abbr.replace('. ',' ')
+                try:
+                    norm_journal = str(self.abbrev2journal[maybe_abbr_no_dots])
+                except KeyError: 
+                    pass
+
+        ref[JOURNAL] = [norm_journal]
+        return norm_journal
+
+
+    def get_publisher(self,_4ref:ETMjson):
+        self.__normalize_journal(_4ref)
+        publisher,CiteScore,SJRscore,SNIPscore = self.__publisher_from_scopus(_4ref)
+        if publisher:
+            #self.myScopusJournalInfo[norm_journal] = [publisher,CiteScore,SJRscore,SNIPscore]
+            _4ref[PUBLISHER] = [publisher]
+            _4ref[SCOPUS_CITESCORE] = [CiteScore]
+            _4ref[SCOPUS_SJR] = SJRscore
+            _4ref[SCOPUS_SNIP] = SNIPscore
+
+        return publisher,CiteScore,SJRscore,SNIPscore
+    
+
+    def normalize_institution(self,ref:ETMjson):
+        institutions = ref.get(INSTITUTIONS,[])
+        normalized_institutions = self.myScopus.normalize_affiliations(institutions)
+        if normalized_institutions:
+            ref[INSTITUTIONS] = normalized_institutions
+        return normalized_institutions
+
+
+    def get_authors(self,ref:ETMjson):
+        authors = ref[AUTHORS]
+        instituts = ref[INSTITUTIONS]
+        for author in authors:
+            au_names = str(author).split(' ')
+            surname = au_names[0]
+            _1stname = au_names[1] if len(au_names) > 1 else ''
+            scopus_author = self.myScopus.get_author_id(surname,_1stname,instituts)
+            ref.authors.append(Author(surname,_1stname,instituts[0]))
+        return scopus_author
+
+
     def __get_stats(self):
         """
         Returns
@@ -577,7 +737,7 @@ class ETMstat:
 
         if self._limit() > 100:
             for page_start in range(len(articles), self._limit(), 100):
-                more_articles, discard = self._get_articles(page_start=page_start,need_snippets=False)
+                more_articles,_ = self._get_articles(page_start=page_start,need_snippets=False)
                 articles += more_articles
 
         references = list()
@@ -585,20 +745,18 @@ class ETMstat:
             relevance_score = float(article['score'])
             if relevance_score >= self.min_relevance:
                 etm_ref = ETMjson(article)
+                self.get_publisher(etm_ref)
                 etm_ref[RELEVANCE] = [relevance_score]
                 if hasattr(etm_ref,"Identifiers"):
                     references.append(etm_ref)
 
-        ref_ids = dict()
+        ref_ids = defaultdict(list)
         for ref in references:
             id_type, identifier = self._add2counter(ref)
-            try:
-                ref_ids[id_type].append(identifier)
-            except KeyError:
-                ref_ids[id_type] = [identifier]
+            ref_ids[id_type].append(identifier)
 
         self.hit_count = hit_count #self.hit_count can be corrupted in parallel ETM requests
-        return hit_count, ref_ids, references
+        return hit_count, dict(ref_ids), references
 
 
     @staticmethod
@@ -718,14 +876,14 @@ class ETMstat:
 
 
     @staticmethod
-    def _etm_ref_column_name(between_column:str, and_concepts:str|list):
+    def refcount_column_name(between_column:str, and_concepts:str|list):
         if isinstance(and_concepts,str):
-            return ETM_REFS_COLUMN + ' between '+between_column+' and '+and_concepts
+            return REFCOUNT_COLUMN + ' between '+between_column+' and '+and_concepts
         else:
-            return ETM_REFS_COLUMN + ' between '+between_column+' and '+','.join(and_concepts)
+            return REFCOUNT_COLUMN + ' between '+between_column+' and '+','.join(and_concepts)
 
     @staticmethod
-    def _etm_doi_column_name(between_column:str, and_concepts:str|list):
+    def doi_column_name(between_column:str, and_concepts:str|list):
         if isinstance(and_concepts,str):
             return 'DOIs' + ' between '+between_column+' and '+and_concepts
         else:
@@ -734,13 +892,13 @@ class ETMstat:
 
     def __add_refs1(self,to_df:df,between_names_in_col:str,and_concepts:list,my_query,add2query=[]):
         my_df = df.copy_df(to_df)
-        etm_ref_column_name = self._etm_ref_column_name(between_names_in_col,and_concepts)
-        doi_ref_column_name = self._etm_doi_column_name(between_names_in_col,and_concepts)
+        etm_ref_column_name = self.refcount_column_name(between_names_in_col,and_concepts)
+        doi_ref_column_name = self.doi_column_name(between_names_in_col,and_concepts)
         my_df[[etm_ref_column_name,doi_ref_column_name]] = my_df[between_names_in_col].apply(lambda row: self.__get_refs(row,and_concepts,my_query,add2query)).apply(pd.Series)
         return my_df,self.ref_counter # need to return self.ref_counter to concatenate ref_counters during cloning
 
 
-    def add_etm_references(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[],max_row=0):
+    def add_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[],max_row=0):
         """
         Input
         -----
@@ -750,7 +908,7 @@ class ETMstat:
 
         Returns
         ----
-        copy of input to_df with added columns ETM_REFS_COLUMN,"DOIs"\n
+        copy of input to_df with added columns REFCOUNT_COLUMN,"DOIs"\n
         self.etm_ref_column_name - []\n
         self.etm_doi_column_name - []\n
         """
@@ -787,10 +945,10 @@ class ETMstat:
             annotated_df = self. __add_refs1(to_df,between_names_in_col,and_concepts,use_query,add2query)[0]
         
         annotated_df.copy_format(to_df)
-        etm_ref_column_name = self._etm_ref_column_name(between_names_in_col,and_concepts)
+        etm_ref_column_name = self.refcount_column_name(between_names_in_col,and_concepts)
         self.etm_ref_column_name.append(etm_ref_column_name)
         annotated_df.add_column_format(etm_ref_column_name,'align','center')
-        etm_doi_column_name = self._etm_doi_column_name(between_names_in_col,and_concepts)
+        etm_doi_column_name = self.doi_column_name(between_names_in_col,and_concepts)
         self.etm_doi_column_name.append(etm_ref_column_name)
         annotated_df.set_hyperlink_color([etm_ref_column_name,etm_doi_column_name])
         
@@ -799,68 +957,11 @@ class ETMstat:
                 (rows_annotated,to_df._name_,execution_time(start_time)))
         return annotated_df
 
-    '''
-    def add_etm_refsOLD(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[]):
-        """
-        Input
-        -----
-        my_query - function to generate query from "between_names_in_col" and each concept in "and_concepts"
-        my_query must have 3 arguments: my_query(entity1:str, entity2:str, add2query:list)\n
-        where add2query - list of additinal keywords used for all pairs "between_names_in_col" and "and_concepts"
-
-        Returns
-        ----
-        copy of input to_df with added columns "ETM_REFS_COLUMN","DOIs"
-        """
-        start_time = time.time()
-        etm1 = self.clone(DEFAULT_ETM)
-        etm2 = self.clone('https://discover.elseviertextmining.com/api')
-        etm3 = self.clone('https://research.elseviertextmining.com/api')
-        my_df = to_df.copy_df(to_df)
-        
-        row_count = len(my_df)
-        if row_count > 9:
-            one3rd = int(row_count/3)
-            df1 = df(my_df.iloc[:one3rd])
-            df2 = df(my_df.iloc[one3rd : 2*one3rd])
-            df3 = df(my_df.iloc[2*one3rd:])
-
-            t1 = Thread(target=etm1. __add_refs1, args=(df1,between_names_in_col,and_concepts,use_query,add2query),name='etm_demo')
-            t1.start()
-            t2 = Thread(target=etm2. __add_refs1, args=(df2,between_names_in_col,and_concepts,use_query,add2query),name='etm_discover')
-            t2.start()
-            t3 = Thread(target=etm3. __add_refs1, args=(df3,between_names_in_col,and_concepts,use_query,add2query),name='etm_research')
-            t3.start()
-
-            t1.join()
-            t2.join()
-            t3.join()
-
-            annotated_df = df(pd.concat([df1,df2,df3]),name=to_df._name_)
-            [self._add2counter(ref) for ref in etm1.references()]
-            [self._add2counter(ref) for ref in etm2.references()]
-            [self._add2counter(ref) for ref in etm3.references()]
-        else:
-            self. __add_refs1(my_df,between_names_in_col,and_concepts,use_query,add2query)
-            annotated_df = my_df
-
-        annotated_df.copy_format(to_df)
-        etm_ref_column_name = self._etm_ref_column_name(between_names_in_col,and_concepts)
-        self.etm_ref_column_name.append(etm_ref_column_name)
-        annotated_df.add_column_format(etm_ref_column_name,'align','center')
-        etm_doi_column_name = self._etm_doi_column_name(between_names_in_col,and_concepts)
-        self.etm_doi_column_name.append(etm_ref_column_name)
-        annotated_df.set_hyperlink_color([etm_ref_column_name,etm_doi_column_name])
-        print('Annotated %d rows from %s with ETM references in %s' % 
-                (len(to_df),to_df._name_,execution_time(start_time)))
-        return annotated_df
-    '''
-
-
+  
     def __etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[]):
         my_df = df.copy_df(in_df)
-        etm_ref_column_name = self._etm_ref_column_name(between_col,and_col)
-        doi_ref_column_name = self._etm_doi_column_name(between_col,and_col)
+        etm_ref_column_name = self.refcount_column_name(between_col,and_col)
+        doi_ref_column_name = self.doi_column_name(between_col,and_col)
         for i in in_df.index:
             col1 = my_df.loc[i][between_col]
             col2 = my_df.loc[i][and_col]
@@ -871,7 +972,7 @@ class ETMstat:
         return my_df,self.ref_counter
 
 
-    def add_etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[],max_row=0):
+    def refs42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[],max_row=0):
         start_time = time.time()
         if max_row:
             df2annotate = df.from_pd(in_df.iloc[:max_row])
@@ -899,8 +1000,8 @@ class ETMstat:
 
         annotated_df = df.concat_df(dfs2concat,in_df._name_)
         
-        etm_ref_column_name = self._etm_ref_column_name(between_col,and_col)
-        doi_ref_column_name = self._etm_doi_column_name(between_col,and_col)
+        etm_ref_column_name = self.refcount_column_name(between_col,and_col)
+        doi_ref_column_name = self.doi_column_name(between_col,and_col)
         self.etm_ref_column_name.append(etm_ref_column_name)
         self.etm_doi_column_name.append(doi_ref_column_name)
 
@@ -922,16 +1023,23 @@ class ETMcache (ETMstat):
     etm_results_dir = ETM_CACHE_DIR
     etm_stat_dir = ETM_CACHE_DIR
     
-    def __init__(self,query,search_name,APIconfig=dict(),etm_dump_dir='',etm_stat_dir='',add_params={}):
+    def __init__(self,query,search_name,APIconfig=dict(),etm_dump_dir='',etm_stat_dir='',add_params={},use_scopus=False):
         super().__init__(APIconfig,add_param=add_params)
         self.params.pop('limit')
         self._set_query(query)
-        self.hit_count = self._get_articles()[1]
+        try:
+            self.articles, self.hit_count = self._get_articles()
+            self.can_connect2server = True
+        except HTTPError as er:
+            print(er)
+            print(f'Cannot connect to {APIconfig["ETMURL"]}.  Will use only cache files')
+            self.can_connect2server = False
+            pass
         self.search_name = search_name
         self.etm_results_dir = etm_dump_dir if etm_dump_dir else ETM_CACHE_DIR
         self.etm_stat_dir = etm_stat_dir if etm_stat_dir else ETM_CACHE_DIR
         self.statistics = dict() # {prop_name:{prop_value:count}}
-        self.scopusAPI = None
+        self.scopusAPI = AuthorSearch(APIconfig) if use_scopus else None
 
 
     def set_query(self,query:str,search_name:str):
@@ -941,87 +1049,143 @@ class ETMcache (ETMstat):
 
     def set_stat_props(self,stat_props:list):
         for p in stat_props:
-            if p == AUTHORS: p = SCOPUS_AUTHORIDS
             self.statistics[p] = dict()
+            if p == AUTHORS: 
+                self.statistics[SCOPUS_AUTHORIDS] = dict() 
+            
         
+    def __download(self,dumpfile_path:str,cached_articles:list=[],dump_date_modified=''):
+        '''
+        Input
+        -----
+        dump_date_create format: 2003-03-19\n
+        if dump_date_modified is empty will replace entire cache file if today hit count > len(cached_articles)
+        '''
+        def __update(articles:list,hit_count:int):
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix='backup ETM cache') as e:
+                pathname,_ = os.path.splitext(dumpfile_path)
+                try:
+                    with zipfile.ZipFile(pathname+'.zip', 'w',zipfile.ZIP_DEFLATED) as z:
+                        z.write(dumpfile_path,os.path.basename(dumpfile_path)) 
+                except FileNotFoundError:
+                    print(f'Cannot backup to {pathname}.zip')
+                    pass
 
-    def __download(self,cached_articles=[],dump_date_create=''):
-        print('\nPerforming ETM search "%s"' % self.search_name)
-        articles, self.hit_count = self._get_articles(need_snippets=False)
-        print (f'Query: "{self._query()}" found {self.hit_count} results' )
-        if  self.hit_count > len(cached_articles): # self.hit_count 1-based index !!!
-            print('Today ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(articles)))
             start = time.time()
-            if dump_date_create:
-                self.params.update({'so_d':dump_date_create}) # format: 2003-03-19
-            for page_start in range(0,self.hit_count,self.page_size):
-                more_articles = self._get_articles(page_start=page_start)[0]
+            for page_start in range(self.page_size,hit_count,self.page_size):
+                more_articles,_ = self._get_articles(page_start=page_start)
                 articles += more_articles
-                download_count = len(articles)
-                print("Downloaded %d out of %d hits in %s" % (download_count,self.hit_count, execution_time(start)))
-            self.params.pop('so_d','')
-            return articles
+                print(f"Downloaded {len(articles)} out of {hit_count} hits in {execution_time(start)}")
+            
+            e.shutdown()
+
+        if dump_date_modified: # update cache with articles published after dump_date_create
+            if datetime.strptime(dump_date_modified, "%Y-%m-%d").date() < date.today(): 
+                self.params.update({'so_d':dump_date_modified+'<'}) # dump_date_create format: 2003-03-19
+                update_articles, update_hit_count = self._get_articles()
+                print(f'Updating cache modified on {dump_date_modified} with {update_hit_count} recent articles')
+                __update(update_articles,update_hit_count)
+                self.params.pop('so_d','')
+                self.articles = cached_articles+update_articles
+                return True
+            else:
+                self.articles = cached_articles
+                return False
+        elif self.hit_count > len(cached_articles): #replace or create new cache.  
+            print('Today ETM search finds %d results. %d more than in cache' %(self.hit_count, self.hit_count-len(cached_articles)))
+            __update(self.articles,self.hit_count)
+            return True
         else:
             print('No new articles found. Will use articles from cache')
-            return []
+            return False
 
 
     def __dumps(self, articles:list, into_file:str):
-        try:
-            dump = open(into_file, "w", encoding='utf-8')
-            dump.write(json.dumps(articles,indent=1))
-        except FileNotFoundError:
-            # path was specified incorrectly, dumps into the current dir
-            dump = open(self.search_name+'.json', "w", encoding='utf-8')
-            dump.write(json.dumps(articles,indent=1))
+        my_file = into_file if into_file else self.search_name+'.json'
+        print(f'Writing ETM data into {my_file} file')
+        dump = open(my_file, "w", encoding='utf-8')
+        dump.write(json.dumps(articles,indent=1))
  
 
     def load_from_json(self,use_cache=True):
-        if use_cache:
-            dir_name = self.etm_results_dir
-            if dir_name[-1] != '/':
-                dir_name += '/'
-            dumpfile_name = dir_name+self.search_name+'.json'
+        '''
+        Loads articles from ETM cache if use_cache = True\n
+        Downloads additional articles from ETM if necessary\n
+        articles in self.artciles are annotated with RELEVANCE equal to ETM score
+        '''
+        dump_dir = os.path.join(self.etm_results_dir,'')    
+        dumpfile_path = dump_dir+self.search_name+'.json'
+        if use_cache:  
             try:
                 # attepts to find json file with ETM results saved after ETM API call below
-                f = open(dumpfile_name,'r')
-                articles = json.load(f)
-                f.close()
+                cached_articles = json.load(open(dumpfile_path,'r'))
+                fname = os.path.basename(dumpfile_path)
+                print(f'Found file "{fname}" in "{dump_dir}" directory with {len(cached_articles)} articles.\nWill use it to load cached results')
+                if self.can_connect2server:
+                    d =  datetime.strptime(time.ctime(os.path.getmtime(dumpfile_path)), "%c")
+                    dump_modified_date =  d.strftime('%Y-%m-%d')
+                    if self.__download(dumpfile_path,cached_articles,dump_modified_date):
+                        self.__dumps(self.articles,dumpfile_path)
+                else:
+                    self.articles = cached_articles
+            except (FileNotFoundError,json.JSONDecodeError):
+                #if json dump file is not found or it is corrupted new ETM search is initiated
+                self.__download(dumpfile_path)
+                self.__dumps(self.articles,dumpfile_path)
+        else: # if not use cache
+                self.__download(dumpfile_path)
+                self.__dumps(self.articles,dumpfile_path)
+        
 
-                path_end = dumpfile_name.rfind('/')
-                if path_end < 0:
-                    path_end = dumpfile_name.rfind('\\')
-                fname = dumpfile_name[path_end+1:]
-                cache_path = dumpfile_name[:path_end]
-                print('Found "%s" file in "%s" cache with %d articles. Will use it to load results' % (fname,cache_path,len(articles))) 
-                d =  datetime.strptime(time.ctime(os.path.getctime(dumpfile_name)), "%c")
-                dump_create_date =  d.strftime('%Y-%m-%d')
-                update_articles = self.__download(articles,dump_create_date)
-                articles = articles + update_articles
-                self.__dumps(articles,dumpfile_name)
-            except FileNotFoundError:
-                #if json dump file is not found new ETM search is initiated
-                articles = self.__download()
-                self.__dumps(articles,dumpfile_name)
-        else:
-            articles = self.__download()
+    def scopus_annotation(self):
+        def set_oa_status(ref:ETMjson):
+            ref_doi = ref.doi()
+            if ref_doi:
+                try:
+                    ref[IN_OPENACCESS] = [bool(doi2oa[ref_doi])]
+                except KeyError:
+                    is_in_oa = self.is_in_open_access(etm_ref)
+                    ref[IN_OPENACCESS] = [is_in_oa]
+                    doi2oa[ref_doi] = is_in_oa
+            else:
+                print(f'#{i} article "{etm_ref.title()}" out of {len(self.articles)} has no DOI!!!')
 
-        for article in articles:
-            etm_ref = ETMjson(article,self.scopusAPI)
+        dump_dir = os.path.join(self.etm_results_dir,'')
+        do12oa_dump = dump_dir+self.search_name+'_do12oa.json'
+        try:
+            doi2oa = json.load(open(do12oa_dump, 'r',encoding='utf-8'))
+        except FileNotFoundError:
+            doi2oa = dict()
+
+        print(f'Reannotating articles from "{self.search_name}" query with Scopus data')
+        for i,article in enumerate(self.articles):
+            etm_ref = ETMjson(article)
             if etm_ref: # etm_ref can be empty if it is conference proceedings
+            # scopus_authors = self.get_authors(etm_ref)
+                if etm_ref.journal() != GRANT_APPLICATION:
+                    with ThreadPoolExecutor(max_workers=3, thread_name_prefix='Scopus annotation') as e:
+                        #e.submit(self.normalize_institution,etm_ref)
+                        e.submit(set_oa_status,etm_ref)
+                        e.submit(self.get_publisher,etm_ref)
+                    e.shutdown()
+
                 relevance_score = float(article['score'])
                 etm_ref[RELEVANCE] = [relevance_score]
                 self._add2counter(etm_ref)
 
-        
+        self.myScopus.close()
+        self.myPyblisherScopus.close()
+        with open(do12oa_dump, 'w',encoding='utf-8') as f:
+            json.dump(doi2oa,f,indent=1)
+
+
     def get_statistics(self, stat_prop_list):
         self.term2refs = dict() # {term:{ref}}
         self.keywords2ref = dict() #{keyword:{ref}}
         self.scopusid2name = dict()
         references = self.references()
         for ref in references:
-            for p in stat_prop_list:
-                ref.count_property(self.statistics[p], p)
+            [ref.count_property(self.statistics[p], p) for p in stat_prop_list]
 
             if hasattr(ref,'term_ids'):
                 for term in ref.term_ids: #term_ids = {term_id+'\t'+term_name}
@@ -1037,11 +1201,9 @@ class ETMcache (ETMstat):
                     except KeyError:
                         self.term2refs[k] = {ref}
 
-            if hasattr(ref,'scopusInfo'):
-                self.scopusid2name.update({k:v[1]+' '+v[2] for k,v in dict(ref.scopusInfo).items()})
-
 
     def _org2address_stats(self):
+        return dict(sorted(self.statistics[INSTITUTIONS].items(), key=lambda item: item[1],reverse=True))
         org2addres = dict()
         references = self.references()
         for ref in references:
@@ -1060,7 +1222,25 @@ class ETMcache (ETMstat):
         except KeyError: return dict()
 
 
-    def to_excel(self, stat_props:list):
+    def count_oa_stats(self):
+        journal_oa_counts = defaultdict(int)
+        for ref in self.references():
+            if ref.get_prop(IN_OPENACCESS,0,''):
+                journal_oa_counts[ref.journal()] += 1
+        return dict(journal_oa_counts)
+
+
+    def count_affiliations(self,affils:set):
+        journal_aff_counts = dict()
+        normalized_affils = set(self.myScopus.normalize_affiliations(list(affils)))
+        for ref in self.references():
+            ref_affils = set(ref.get(INSTITUTIONS,[]))
+            if not ref_affils.isdisjoint(normalized_affils):
+                journal_aff_counts[ref.journal()] += 1
+        return journal_aff_counts
+
+
+    def to_excel(self, stat_props:list,_4affiliations:set={}):
         if self.scopusid2name:
             replaceid4name = dict()
             scopus_stats = dict(self.statistics[SCOPUS_AUTHORIDS])
@@ -1069,23 +1249,37 @@ class ETMcache (ETMstat):
                 replaceid4name[au_name] = v
             
             self.statistics[SCOPUS_AUTHORIDS] = replaceid4name
-                
-        workbook = xlsxwriter.Workbook(self.etm_stat_dir+self.search_name+'.xlsx')
+        
+        excel_file = os.path.join(self.etm_stat_dir,self.search_name+'_ETMstats.xlsx')
+        writer = pd.ExcelWriter(excel_file, engine='xlsxwriter')
+        print(f'Writing ETM statistics into {excel_file} file')
         for p in stat_props:
             try:
                 dic = dict(self.statistics[p])
-                sort_by_value = True if p != PUBYEAR else False
-                prop_stat = self._org2address_stats() if p == INSTITUTIONS else self._sort_dict(dic,sort_by_value)
-                DocMine.dict2worksheet(workbook,p,prop_stat, [p, '#References'],100)
+                sort_by_value = False if p == PUBYEAR else True
+                #prop_stat = self._org2address_stats() if p == INSTITUTIONS else self._sort_dict(dic,sort_by_value)
+                prop_stat = self._sort_dict(dic,sort_by_value)
+                stat_df = df.from_dict2(prop_stat,p,'#References')
+                if p == JOURNAL:
+                    oa_stats = self.count_oa_stats()
+                    stat_df = stat_df.merge_dict(oa_stats,'Articles in open access',JOURNAL)
+
+                    if _4affiliations:
+                        aff_stats = self.count_affiliations(_4affiliations)
+                        stat_df = stat_df.merge_dict(aff_stats,'Affiliation count',JOURNAL)
+                    
+                    citescore_dict = {v[0]:v[2] for k,v in self.myScopus.JournalInfo.items()}
+                    stat_df = stat_df.merge_dict(citescore_dict,SCOPUS_CITESCORE,JOURNAL)
+                    sjr_dict = {v[0]:v[3] for k,v in self.myScopus.JournalInfo.items()}
+                    stat_df = stat_df.merge_dict(sjr_dict,SCOPUS_SJR,JOURNAL)
+                    csnip_dict = {v[0]:v[4] for k,v in self.myScopus.JournalInfo.items()}
+                    stat_df = stat_df.merge_dict(csnip_dict,SCOPUS_SNIP,JOURNAL)
+                    publ_dict = {v[0]:v[1] for k,v in self.myScopus.JournalInfo.items()}
+                    stat_df = stat_df.merge_dict(publ_dict,PUBLISHER,JOURNAL)
+                stat_df.df2excel(writer,p)
             except KeyError: continue
 
-        worksheet_ref = workbook.add_worksheet('References')
-        worksheet_ref.write_string(0,0,'Total number of articles: '+str(len(self.references())))
-        row_counter = 1
-        for ref in self.references():
-            row_str = ref.to_str(['PMID','DOI','PUI'],col_sep='\n')+'\n\t\t\t\n'
-            worksheet_ref.write_string(row_counter,0,row_str)
-            row_counter += 1
-
-        workbook.close()
+        ref_df = self.counter2df()
+        ref_df.df2excel(writer,'References')
+        writer.close()
 

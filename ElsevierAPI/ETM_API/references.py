@@ -1,8 +1,9 @@
 from builtins import len
 from .medscan import MedScan
-import xlsxwriter,re,time,json
+import xlsxwriter,re,time,json,unicodedata
 from datetime import timedelta
 from ..NCBI.pubmed import pubmed_hyperlink
+from titlecase import titlecase
 
 AUTHORS = 'Authors'
 INSTITUTIONS = 'Institutions'
@@ -20,15 +21,18 @@ PATENT_GRANT_NUM = 'Patent Grant Number'
 EFFECT = 'Effect'
 RELEVANCE = 'Relevance'
 ETM_CITATION_INDEX = 'ETM Citation index'
+SBS_CITATION_INDEX = 'SBS Citation index'
 PS_CITATION_INDEX = 'Graph Citation index'
 SCOPUS_CI = 'Scopus Citation index'
 LOINCID = 'LOINC ID'
 THRESHOLD = 'Threshold'
 hGRAPHID = 'hGraph ID'
 EDMID = 'EDM ID'
+IN_OPENACCESS = 'is_openaccess'
+PUBLISHER = 'Publisher'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
-INT_PROPS = {RELEVANCE,PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX}
+INT_PROPS = {RELEVANCE,PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX,SBS_CITATION_INDEX}
 
 ARTICLE_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE']
 PS_REFIID_TYPES = ARTICLE_ID_TYPES + ['NCT ID','NCTID']
@@ -45,7 +49,7 @@ BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
 REF_ID_TYPES = PS_REFIID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
 PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD,'pX','Phase','Start','TrialStatus','URL']
-SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence','msrc','mref']
+SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence','msrc','mref','Similarity']
 # SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.Sentences
 RELATION_PROPS = {EFFECT,'Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
@@ -62,6 +66,7 @@ def make_hyperlink(identifier:str,url:str,display_str=''):
         display_str = display_str if display_str else identifier
         return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
 
+
 class Reference(dict):
     '''
     Reference{BIBLIO_PROPS[i]:[values]};\n
@@ -73,9 +78,7 @@ class Reference(dict):
     def __init__(self, idType:str, ID:str):
         super().__init__(dict({})) # self{BIBLIO_PROPS[i]:[values]};
         self.Identifiers = {idType:ID} #from REF_ID_TYPES
-        self.snippets = dict({}) # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
-        self.addresses = dict({}) # {orgname:adress}
-    
+        self.snippets = dict() # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP           
 
     def copy_ref(self):
         '''
@@ -89,9 +92,8 @@ class Reference(dict):
                 id_value = self.Identifiers[i]
                 my_copy = Reference(i,id_value)
                 my_copy.update(self)
-                my_copy.Identifiers = dict(self.Identifiers)
-                my_copy.snippets = dict(self.snippets)
-                my_copy.addresses = dict(self.addresses)
+                my_copy.Identifiers = self.Identifiers.copy()
+                my_copy.snippets = self.snippets.copy()
                 return my_copy
             except KeyError: continue
         return dict({})
@@ -300,6 +302,11 @@ class Reference(dict):
     
 
     def _identifiers_str(self):
+        '''
+        Return
+        ------
+        id_type:id_value
+        '''
         id_type, identifier = self.get_doc_id()
         return id_type  +':'+identifier
     
@@ -313,8 +320,11 @@ class Reference(dict):
 
     def to_list(self,id_types=list(),print_snippets=False,biblio_props=list(),other_props=list(),with_hyperlinks=False):
         '''
-        order of properties in return list:
-        other_props, id_types, biblio_props, snippets
+        Return
+        ------
+        order of properties in return list: other_props, id_types, biblio_props, snippets\n
+        reference identifiers for PMID and DOI are hyperlinked if with_hyperlinks is True
+        snippets are printed as json dump in one column
         '''
         row = list()
         id_types = id_types if isinstance(id_types,list) else ['PMID']
@@ -357,8 +367,15 @@ class Reference(dict):
         return row
 
 
-    def to_str(self,id_types=list(),col_sep='\t',print_snippets=False,biblio_props=[],other_props=[]):
-        row = self.to_list(id_types,print_snippets,biblio_props,other_props)
+    def to_str(self,id_types=list(),col_sep='\t',print_snippets=False,biblio_props=[],other_props=[],with_hyperlinks=False):
+        '''
+        Return
+        ------
+        order of properties in return list: other_props, id_types, biblio_props, snippets\n
+        reference identifiers for PMID and DOI are hyperlinked if with_hyperlinks is True
+        snippets are printed as json dump in one column
+        '''
+        row = self.to_list(id_types,print_snippets,biblio_props,other_props,with_hyperlinks)
         return col_sep.join(row)
     
 
@@ -409,16 +426,18 @@ class Reference(dict):
         return list(self.snippets.keys())
 
 
-    def journal(self):
+    def journal(self): 
+        '''
+        Return
+        ------
+        self[JOURNAL][0] 
+        '''
         try:
             return self[JOURNAL][0]
         except KeyError:
-            try:
-                return self[MEDLINETA][0]
-            except KeyError:
-                return 'No journal name'
+            return str('No journal name')
+                  
         
-
     def relevance(self):
         try:
             return float(self[RELEVANCE][0])
@@ -465,10 +484,10 @@ class Reference(dict):
             if title[-1] != '.': title += '.'
         except KeyError:
             title = 'No title available'
-        try:
-            year = str(self.pubyear())
-        except KeyError:
-            year = 'year unknown'
+
+        year = self.pubyear()
+        year = 'year unknown' if year == 1812 else str(year)
+
         try:
             authors_list = self[AUTHORS][:3]
             authors_str = ','.join(authors_list) if authors_list else 'unknown authors.'
@@ -480,8 +499,12 @@ class Reference(dict):
             authors_str = 'unknown authors.'
 
         journal = self.journal()
+
+        biblio_str = title+' ('+year+'). '+journal+'. '+authors_str
+        if self.get(IN_OPENACCESS,False):
+            biblio_str += ' [Open access]'
         identifier_type, identifier  = self.get_doc_id()
-        return title+' ('+year+'). '+journal+'. '+authors_str, identifier_type, identifier 
+        return biblio_str, identifier_type, identifier 
 
     
     def get_biblio_str(self, sep='\t'):
@@ -504,7 +527,6 @@ class Reference(dict):
             for textref, prop2val in other.snippets.items():
                 for prop, values in prop2val.items():
                     self.add_sentence_props(textref,prop,values)
-            self.addresses.update(other.addresses)
 
 
     def is_from_abstract(self):
@@ -625,7 +647,7 @@ class Reference(dict):
                 return list(props)
 
 
-    def get_prop(self,prop_name:str,value_index=0,if_missing_return='')->str|int:
+    def get_prop(self,prop_name:str,value_index=0,if_missing_return='')->str|int|bool:
         my_props = self.get_props(prop_name)
         if my_props:
             try:
@@ -654,8 +676,6 @@ class ReferenceEncoder(json.JSONEncoder):
             dump_dict.update({'Identifiers':ref.Identifiers})
             if ref.snippets:
                 dump_dict.update({'snippets':ref.snippets})
-            if ref.addresses:
-                dump_dict.update({'addresses':ref.addresses})
             return {'reference':dump_dict}
         else:
             return json.JSONEncoder.default(self, sref)
@@ -676,22 +696,49 @@ class ReferenceDecoder(json.JSONDecoder):
         ref.update(my_dict)
         ref.Identifiers.update(Identifiers)
         ref.snippets.update(snippets)
-        ref.addresses.update(addresses)
-
         return ref
 
 #########################################DocMine#############################################DocMine##################
 
-INSTITUTION_KEYWORDS = {'institute', 'institut', 'clinic', 'hospital', 'university', 'universitat', 'universiti', 'centre', 'center', 'inc', 'colleges',
-                        'ltd','gmbh', 'school','politecnic','politecnico', 'college', 'department', 'division', 'council', 'academy','faculty', 'co', 'corp',
-                        'laboratory', 'labs', 'biolabs', 'biolab', 'lab'}
+INSTITUTION_KEYWORDS = {'institute', 'institut', 'instituto', 'istituto','clinic', 'klinik','genetics','hospital', 'university', 'universitat', 'universiti', 'université','università','universidade','universidad','universitï¿½','universitaria','centre', 'center', 'centro', 'inc', 'colleges',
+                        'ltd','gmbh', 'llc', 'school','politecnic','politecnico', 'college', 'department', 'departamento','division', 'council', 'academy','faculty', 'co', 'corp','ministry','campus','group','corporation', 'consulting', 'pharma','union',
+                        'laboratory', 'laboratoire', 'laboratories','society','project', 'association', 'commission','program','drug', 'labs', 'biolabs', 'biolab', 'lab', 'unit', 'pharmaceutical', 'policlinico', 'cátedra', 'sciences', 'r&d', 'research', 'trust', 'fund', 'plant', 'biomed','salud', 'health','foundation','federation','service','cluster','fondazione','bio','pharmaceuticals', 'farmaceutico'}
 
+INSTITUTION_KEYWORDS = {unicodedata.normalize('NFKD', word).casefold() for word in INSTITUTION_KEYWORDS} 
+
+def removeThe(t:str):
+    return t[4:] if t.startswith('The ') else t
+
+
+class Author:
+    LastName=str()
+    _1stName=str()
+    organization = list()
+    address = str()
+    email = str()
+
+    def __init__(self,LastName,_1stName='',organization=[],address=str(),email=''):
+        self.LastName = LastName
+        self._1stName = _1stName
+        self.organization = organization
+        self.address = address
+        self.email = email
+
+    def institution(self):
+        return self.organization[-1] if self.organization else []
 
 
 class DocMine (Reference):
+    '''
+    use this class to normalize annotations from references in disparate sources, e.g. ETM,USPO,EPO,Pubmed\n
+    DocMine stores text in sections: Abstract, Results,Discussion, Claims, Descriptions
+    '''
     def __init__(self, doc_id_type, doc_id):
         super().__init__(doc_id_type, doc_id)
         self.sections = dict() #{{abstract:[text]}, {claims:[claims]}. Texts to be markerd up by NLP.
+        self.authors = list() # [Author]
+        self.addresses = list() # {orgname:adress}
+
 
     @staticmethod
     def __textref_suffix(section_name:str):
@@ -700,7 +747,12 @@ class DocMine (Reference):
             return name2suffix[section_name]
         except KeyError:
             return 'cont'
-        
+
+
+    @staticmethod
+    def normalize_journal(journal_title:str):
+        return removeThe(titlecase(journal_title)).replace(('. '),' ')
+
 
     def add2section(self,section_name:str, paragraph:str): 
         if not paragraph: 
@@ -714,10 +766,12 @@ class DocMine (Reference):
         except KeyError:
             self.sections[section_name] = [paragraph]
 
+
     def set_date (self, year, month='', day=''): 
         self[PUBYEAR] = [year]
         if month: self[PUBMONTH] = [month]
         if day: self[PUBDAY] = [day]
+
 
     def _set_title(self, title:str):
         self[TITLE] = [title]
@@ -742,15 +796,52 @@ class DocMine (Reference):
 
                     sentence_idx +=1
 
+
     def get_annotations(self, prop_name:str):
+        if prop_name == JOURNAL:
+            return [self.journal()]
+        
         try:
             return list(self[prop_name])
         except KeyError:
-            if prop_name == INSTITUTIONS:
-                return list(self.addresses.keys())
-            else: 
-                return []
+            return []
 
+
+    def journal(self): 
+        '''
+        Return
+        ------
+        self[JOURNAL][0] normalized by titlecase and removeThe
+        '''
+        try:
+            journal_name = self.normalize_journal(self[JOURNAL][0])
+        except KeyError:
+            try:
+                journal_name = self.normalize_journal(self[MEDLINETA][0])
+            except KeyError:
+                return str('No journal name')
+                  
+        return journal_name
+    
+
+    def journal_publisher(self):
+        '''
+        Return
+        ------
+        self.journal() (publisher)
+        '''
+        j_name = self.journal()
+        try:
+            publisher = str(self[PUBLISHER][0])
+            return j_name +'('+publisher+')'
+        except KeyError:
+            return j_name
+        
+
+    def organizations(self):
+        return {a.organization for a in self.authors for i in a.organization}
+    
+    
     def count_property(self,counter:dict, prop_name:str):
         prop_values = self.get_annotations(prop_name)
         for v in prop_values:
@@ -759,6 +850,7 @@ class DocMine (Reference):
                 counter[v] = current_count+1
             except KeyError:
                 counter[v] = 1
+
 
     @staticmethod
     def dict2worksheet(workbook:xlsxwriter.Workbook, worksheet_name, dict2print:dict, header:list, key_col_width=50):
@@ -778,9 +870,11 @@ class DocMine (Reference):
 
     @staticmethod
     def has_institution_keyword(name:str):
-        name_words = name.split(' ')
+        name_no_punctuation = name.replace('.', ' ').replace(',', ' ')
+        name_no_punctuation = name_no_punctuation.strip(' ()[]')
+        name_words = name_no_punctuation.split(' ')
         for w in name_words:
-            if w.lower() in INSTITUTION_KEYWORDS: return True
+            if unicodedata.normalize('NFKD',w).casefold() in INSTITUTION_KEYWORDS: return True
         return False
 
     @staticmethod
