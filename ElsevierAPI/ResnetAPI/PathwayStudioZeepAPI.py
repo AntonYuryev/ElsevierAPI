@@ -1,14 +1,16 @@
 import pandas as pd
-import sys, json, time, logging
+import sys, json, time, logging, os, gzip, zlib, http.client
 from time import sleep
+from datetime import timedelta
 from .PathwayStudioGOQL import OQL,len
 from zeep import exceptions as zeep_exceptions
-from datetime import timedelta
 import requests.exceptions as req_exceptions
-import http.client
+from zeep import helpers # converts zeep objects to dict
+
 
 CONNECTION_TIMEOUT = 20
-DEFAULT_APICONFIG = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
+DEFAULT_CONFIG_DIR = 'D:/Python/ENTELLECT_API/ElsevierAPI/'
+DEFAULT_APICONFIG = DEFAULT_CONFIG_DIR+'APIconfig.json'
 
 def execution_time(execution_start):
     return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
@@ -28,6 +30,12 @@ def load_api_config(api_config_file=''):# file with your API keys and API URLs
     if not api_config_file:
         print('No API config file was specified\nWill use default %s instead'% DEFAULT_APICONFIG)
         api_config_file = DEFAULT_APICONFIG
+    else:
+        if not os.path.isabs(api_config_file):
+            print(f'APIconfig is specified only by file name {api_config_file}')
+            print(f'Will look for {api_config_file} in default "{DEFAULT_CONFIG_DIR}" directory')
+            api_config_file = DEFAULT_CONFIG_DIR+api_config_file
+
     try:
         return dict(json.load(open(api_config_file,'r')))
     except FileNotFoundError:
@@ -87,8 +95,9 @@ class DataModel:
                         err_str = f"Pathway Studio server connection failed: {error}"
                         self.logger.error(err_str)
                         print(err_str)
-                        print(f'Pausing for {CONNECTION_TIMEOUT} seconds')
-                        sleep(CONNECTION_TIMEOUT)
+                        attempt_timeout = CONNECTION_TIMEOUT*attempt
+                        print(f'Pausing for {attempt_timeout} seconds')
+                        sleep(attempt_timeout)
                         continue
                 raise req_exceptions.ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
 
@@ -138,18 +147,17 @@ class DataModel:
         return self.__id2objtype(1)
 
 
-    def load_folder_tree(self):
+    def load_folder_tree(self)->dict:
         """
         Returns
         -------
-        {folder_id:folder}
+        {folder_id:folder}, where folder is zeep_object
         """
         print('Loading folders tree from database')
         folders = self.SOAPclient.service.GetFoldersTree(0)
         id2folders = dict()
         for folder in folders:
-            folder_id = folder['Id']
-            id2folders[folder_id] = folder
+            id2folders[int(folder['Id'])] = folder
         
         return id2folders
 
@@ -202,8 +210,9 @@ class DataModel:
                     self.propId2dict[dict_folder['Name']] = id_values_to_str
                     return self.propId2dict[idProperty]
                 except Exception as error:
-                    print(f'Pausing for {CONNECTION_TIMEOUT} seconds due to "{error}" on {attempt} attempt')
-                    sleep(CONNECTION_TIMEOUT)
+                    attempt_timeout = CONNECTION_TIMEOUT*attempt
+                    print(f'Pausing for {attempt_timeout} seconds due to "{error}" on {attempt} attempt')
+                    sleep(attempt_timeout)
                     continue
             raise req_exceptions.ConnectionError("Server connection failed after 10 attempts") 
              
@@ -227,20 +236,15 @@ class DataModel:
                 if attempt > 1:
                     print(f'{OQLquery[:100]} was succesful on {attempt} attempt')
                 return result
-            except zeep_exceptions.TransportError as err:
-                if err.status_code == 504:
-                    print(f'\nSOAPclient session timed out after {execution_time(start)} on {attempt+1} attempt \
-out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
-                    timeout = (attempt+2)*300 # 300 - default timeout in zeep
-                    print(f'\nWill make attempt #{attempt+2} with the same query after {timeout} seconds',flush=True)
-                    self.SOAPclient.transport.load_timeout = timeout
-                    sleep(timeout)
-                    continue
-            except (req_exceptions.ChunkedEncodingError,zeep_exceptions.Fault,req_exceptions.ConnectionError) as err:
-                print(f'{err} on GOQL query {OQLquery}\n Will try again in {CONNECTION_TIMEOUT} seconds',flush=True)
-                sleep(CONNECTION_TIMEOUT)
+            except (zeep_exceptions.Error,req_exceptions.RequestException) as err:
+                print(f'\nSOAPclient session timed out after {execution_time(start)} on {attempt} \
+out of {max_iter} attempt at GOQL query with length {len(OQLquery)}:\n{OQLquery[:100]}',flush=True)
+                print(f'Timeout error message:\n{err}',flush=True)
+                timeout = (attempt)*CONNECTION_TIMEOUT # None - default timeout in zeep
+                print(f'\nWill make attempt #{attempt+1} with the same query after {timeout} seconds',flush=True)
+                self.SOAPclient.transport.load_timeout = timeout
+                sleep(timeout)
                 continue
-
         
         tout = self.SOAPclient.transport.load_timeout
         if tout > 300:
@@ -258,8 +262,9 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
                 return result
             except (zeep_exceptions.Fault,req_exceptions.ChunkedEncodingError,http.client.RemoteDisconnected,req_exceptions.ConnectionError) as err:
                 print(f'{err} error while retrieving results {result_param.ResultRef}')
-                print(f'Attempt {attempt+1} to reconnect will be in {CONNECTION_TIMEOUT} sec\n',flush=True)
-                sleep(CONNECTION_TIMEOUT)
+                attempt_timeout = CONNECTION_TIMEOUT*attempt
+                print(f'Attempt {attempt+1} to reconnect will be in {attempt_timeout} sec\n',flush=True)
+                sleep(attempt_timeout)
                 continue
             except zeep_exceptions.TransportError:
                 print(f'\nSOAPclient session timed out after {execution_time(start)} on {attempt+1} attempt out of {max_iter}')
@@ -268,10 +273,11 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
                 self.SOAPclient.transport.load_timeout = timeout
                 sleep(timeout)
                 continue
+        return
 
 
-    def create_result_param(self, property_names=None):
-        property_names = ['Name'] if property_names is None else property_names
+    def create_result_param(self, property_names=[]):
+        property_names = property_names if property_names else ['Name'] 
 
         id_property_list = self.map_property_names_to_id(property_names)
         prop_refs = list()
@@ -345,14 +351,15 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
 
 
 
-    def get_folder_objects_props(self, FolderId, property_names=None):
+    def get_folder_objects_props(self, FolderId:int, property_names=None):
         property_names = ['Name'] if property_names is None else property_names
 
         rp = self.create_result_param(property_names)
         rp.GetObjects = True
         rp.GetProperties = True
         obj_props = self.get_folder_objects(FolderId, rp)
-        if type(obj_props.Objects) == type(None):return None
+        if obj_props is None: return None
+        if obj_props.Objects is None: return None
 
         #identifying synlinks 
         id2symlink = dict()
@@ -383,20 +390,23 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
         return obj_props
 
 
-    def get_layout(self, PathwayId):
-        for i in range (0,5):
+    def get_layout(self, PathwayId,max_retries=10,retry_delay:float = 1.0):
+        for attempt in range (max_retries):
             try:
                 result = self.SOAPclient.service.GetObjectAttachment(PathwayId, 1)
                 if 'Attachment' in result and result['Attachment'] is not None:
-                    return str(result['Attachment'].decode('utf-8')) 
+                    return str(result['Attachment'].decode('utf-8'))  
                 else: 
                     return ''
-            except zeep_exceptions.Fault: 
+            except (zeep_exceptions.Error,req_exceptions.RequestException):
+                sleep(retry_delay)
                 continue
+        return ''
         
 
-    def get_data(self, OQLrequest, retrieve_props:list=None, getLinks=True):
-        retrieve_props = ['Name', 'RelationNumberOfReferences'] if retrieve_props is None else retrieve_props
+    def get_data(self, OQLrequest, retrieve_props=[], getLinks=True):
+
+        retrieve_props = retrieve_props if retrieve_props  else ['Name', 'RelationNumberOfReferences']
 
         rp = self.create_result_param(retrieve_props)
         rp.GetObjects = True
@@ -404,12 +414,11 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
         rp.GetLinks = getLinks
         # setting objectType name
         obj_props = self.oql_response(OQLrequest, rp)
-        if type(obj_props) == type(None):
+        if obj_props is None:
             return None
-        if type(obj_props.Objects) == type(None):
-            # print('Your SOAP response is empty! Check your OQL query and try again\n')
+        if obj_props.Objects is None:
             return None
-        if len(obj_props.Objects.ObjectRef) == 0:
+        if not obj_props.Objects.ObjectRef:
             return None
 
         for obj in obj_props.Objects.ObjectRef:
@@ -430,8 +439,7 @@ out of {max_iter} with GOQL query of length {len(OQLquery)}:\n{OQLquery[:100]}')
                     id_dict_prop_value = int(prop['PropValues']['string'][i])
                     new_dict_value = dict_folder[id_dict_prop_value]
                     prop['PropValues']['string'][i] = new_dict_value
-
-        return obj_props
+        return obj_props #helpers.serialize_object(result, target_cls=dict)
 
 
     def init_session(self, OQLrequest:str, PageSize:int, property_names=None, getLinks=True):

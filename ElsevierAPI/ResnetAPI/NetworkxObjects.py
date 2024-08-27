@@ -6,7 +6,7 @@ from ..ETM_API.references import Reference, len
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
 from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR,SENTENCE,TITLE
 
-
+OBJECT_TYPE = 'ObjTypeName'
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
 REGULATORS = 'Regulators'
 TARGETS = 'Targets'
@@ -38,10 +38,10 @@ INDIRECT = 0
 
 class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
     pass
-    def __init__(self, dic=dict()):
+    def __init__(self, dic:dict=dict()):
         super().__init__(list)
-        self.update(dic)
-
+        if isinstance(dic,dict): # closseness passes <class:type> for some reason
+            self.update(dic)
 
     @classmethod
     def from_zeep(cls, ZeepObjectRef):
@@ -58,10 +58,12 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
     
 
     def urn(self):
+        '''
+        raises KeyError if URN property does not exist
+        '''
         try:
-          #  ulist = self['URN']
             return str(self['URN'][0])
-        except KeyError:
+        except (IndexError,KeyError):
             raise KeyError
         
     
@@ -95,13 +97,13 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         #__hash__ needs __eq__ to work properly
         return self.urn() == other.urn()
 
-    def uid(self):
+    def uid(self)->int:
         return self.__hash__()
 
-    def dbid(self):
+    def dbid(self)->int:
         try:
-            return self[DBID][0]
-        except KeyError:
+            return int(self[DBID][0])
+        except (IndexError,KeyError):
             return 0
 
     def set_property(self, PropId, PropValue: str):
@@ -111,23 +113,23 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
     def childs(self)->list['PSObject']:
         try:
             return list(map(PSObject,self[CHILDS]))
-        except KeyError:
+        except (IndexError,KeyError):
             return []
 
 
     def child_dbids(self):
         try:
             children = self[CHILDS]
-            return [c.dbid() for c in children]
-        except KeyError:
+            return [c.dbid() for c in children if c.dbid()]
+        except (IndexError,KeyError):
             return []
 
 
     def child_uids(self):
         try:
             children = self[CHILDS]
-            return [c.uid() for c in children]
-        except KeyError:
+            return [c.uid() for c in children if c.dbid()]
+        except (IndexError,KeyError):
             return []
 
 
@@ -141,43 +143,41 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
     def name(self):
         try:
             return str(self['Name'][0])
-        except KeyError:
+        except (IndexError,KeyError):
             raise KeyError
 
 
     def objtype(self):
         try:
             return str(self['ObjTypeName'][0])
-        except KeyError:
+        except (IndexError,KeyError):
             raise KeyError
 
 
+    def organism(self):
+        return str(self.get_prop('Organism'))
+
+
     def descr(self):
-        try:
-            return str(self['Description'][0])
-        except KeyError:
-            return ''
+        return str(self.get_prop('Description'))
         
 
     def notes(self):
-        try:
-            return str(self['Notes'][0])
-        except KeyError:
-            return ''
-        
+        return str(self.get_prop('Notes'))
+
     
     def set_state(self, state:int):
         assert (state in [ACTIVATED,REPRESSED,UNKNOWN_STATE])
         try:
-            self[STATE] += state
-        except KeyError:
-            self[STATE] = state
+            self[STATE][0] += state
+        except (IndexError,KeyError):
+            self[STATE] = [state]
 
 
     def state(self):
         try:
-            return self[STATE]
-        except KeyError:
+            return self[STATE][0]
+        except (IndexError,KeyError):
             return UNKNOWN_STATE
 
 
@@ -185,7 +185,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         try:
             database_id = self[DBID[0]]
             return False
-        except KeyError:
+        except (IndexError,KeyError):
             return True
     
 
@@ -197,9 +197,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         '''
         try:
             return self[prop_name][value_index]
-        except KeyError:
-            return if_missing_return
-        except ValueError:
+        except (IndexError,ValueError,KeyError):
             return if_missing_return
 
 
@@ -232,30 +230,27 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
             if new_value not in values:
                 values.append(new_value)
                 self[prop_id] = values
-        except KeyError:
+        except (IndexError,KeyError):
             self[prop_id] = [new_value]
 
 
     def update_with_list(self, prop_id:str, new_values):
         try:
-            values = self[prop_id]
-            if isinstance(values,list): 
-            # list preserves order 
-                [values.append(x) for x in new_values if x not in values]
-            elif isinstance(values,set):
-                [values.update(x) for x in new_values if x not in values]
-            else:
-                pass
-            self[prop_id] = values
-        except KeyError:
+            [self[prop_id].append(x) for x in new_values if x not in self[prop_id]]
+        except (IndexError,KeyError):
             self[prop_id] = new_values
+
+    
+    def copy(self):
+        return PSObject(self)
 
 
     def merge_obj(self,other:'PSObject',replace_unique=False):
         '''
-        properties from "other" take precedent including URN
+        properties from "other" take precedent,
+        if replace_unique URN, Name, ObjTypeName are also replaced
         '''
-        my_copy = PSObject(self.copy())
+        my_copy = PSObject(self)
         [my_copy.update_with_list(prop_name,values) for prop_name,values in other.items()]
         if replace_unique:
             my_copy['URN'] = other['URN']
@@ -267,8 +262,9 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
     def _prop2str(self, prop_id:str,cell_sep:str =';'):
         try:
             return cell_sep.join(self[prop_id])
-        except KeyError:
+        except (IndexError,KeyError):
             return ''
+
 
     def props2dict(self,prop_ids:list):
         return {k:self._prop2str(k) for k in self.keys() if k in prop_ids}
@@ -279,7 +275,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
             try:
                 values = self[propName]
                 prop_val = cell_sep.join(values)
-            except KeyError:
+            except (IndexError,KeyError):
                 prop_val = ''
 
             table_row = table_row + prop_val + col_sep
@@ -307,7 +303,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
                 return not search_set.isdisjoint(search_in)
             else:
                 return True
-        except KeyError: return False
+        except (IndexError,KeyError): return False
 
 
     def has_value_in(self,prop2values:dict,case_sensitive=False):
@@ -326,12 +322,9 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         try:
             prop_values = self[prop_name]
             return sep.join(list(map(str,prop_values)))
-        except KeyError:
+        except (IndexError,KeyError):
             return ''
 
- #   def _merge(self,with_other:"PSObject"):
- #           for k, vlist in with_other.items():
- #               self.update_with_list(k,vlist)
 
     def dump(self,to_file:str):
         with open(to_file+'.pickle', "wb") as outfile:
@@ -359,23 +352,13 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         '''
         transformed_copy = PSObject(self)
         for old_prop, new_prop in remap.items():
-            try:
-                transformed_copy[new_prop] = transformed_copy.pop(old_prop)
-            except KeyError:
-                try:
-                    references = transformed_copy['RefDict']
-                except KeyError:
-                    try:
-                        references = transformed_copy['references']
-                    except KeyError:
-                        continue
+            transformed_copy[new_prop] = transformed_copy.pop(old_prop)
+            references = transformed_copy['RefDict'] + transformed_copy['references']
 
-                ref_values = set()
-                for ref in references:
-                    ref_props = ref.get_props(old_prop)
-                    ref_values.update(ref_props)
-                if ref_values:
-                    transformed_copy[new_prop] = list(ref_values)
+            ref_values = set()
+            [ref_values.update(r.get_props(old_prop)) for r in references]
+            if ref_values:
+                transformed_copy[new_prop] = list(ref_values)
                 
         if remove_props_not_in_remap:
             transformed_copy = {k:v for k,v in transformed_copy.items() if k in remap.values()}
@@ -401,11 +384,15 @@ class PSRelation(PSObject):
     pass
 
     def __init__(self, dic=dict()):
+        '''
+        self.Nodes - {"Regulators':[(entityID, Dir, effect),], "Targets':[(entityID, Dir, effect),]}
+        '''
         super().__init__(dic)
-        self.PropSetToProps = dict()  # {PropSetID:{PropID:[values]}}
-        self.Nodes = dict()  # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
-        self.RefDict = dict()  # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
+        self.PropSetToProps = defaultdict(dict)  # {PropSetID:{PropID:[values]}}
+        self.Nodes = defaultdict(list)  # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
+        self.RefDict = dict() # {refIdentifier (PMID, DOI, EMBASE, PUI, LUI, Title):Reference}
         self.references = list()
+
 
     def __hash__(self):
         #__hash__ needs __eq__ to work properly
@@ -417,18 +404,10 @@ class PSRelation(PSObject):
     def __eq__(self, other):
         #__hash__ needs __eq__ to work properly
         return self['URN'][0] == other['URN'][0]
-    
-
-    def __effects(self):
-        try:
-            return self[EFFECT]
-        except KeyError:
-            return ['unknown']
 
 
-    def effect(self):
-        my_effects = self.__effects()
-        return my_effects[0]
+    def effect(self)->str:
+        return str(self.get_prop(EFFECT,if_missing_return='unknown'))
     
 
     def flip_effect(self):
@@ -440,18 +419,17 @@ class PSRelation(PSObject):
             return True
         return False
 
+
     def mechanisms(self):
         try:
             return self['Mechanism']
-        except KeyError:
+        except (IndexError,KeyError):
             return []
-        
+
+     
     def mechanism(self):
-        try:
-            return self['Mechanism'][0]
-        except (KeyError,IndexError):
-            return ''
-        
+        return str(self.get_prop('Mechanism'))
+    
 
     def has_properties(self,prop_names:set):
         has_props = super().has_properties(prop_names)
@@ -485,12 +463,12 @@ class PSRelation(PSObject):
             rel_urn += ':in-out:'+'in-out:'.join(reg_urns)
             try:
                 rel_urn += ':'+ self[EFFECT][0]
-            except (KeyError,IndexError): pass
+            except (IndexError,KeyError): pass
             try:
                 rel_urn += ':'+self['Mechanism'][0]
-            except (KeyError,IndexError): pass
+            except (IndexError,KeyError): pass
         else:
-            rel_urn += 'in-out:'+'in-out:'.join([u for u in reg_urns])
+            rel_urn += 'in-out:'+':in-out:'.join([u for u in reg_urns])
 
         self.set_property('URN', rel_urn)
         return str(rel_urn)
@@ -503,17 +481,13 @@ class PSRelation(PSObject):
         self.references
         '''
         my_refs = list(set(self.RefDict.values()))
-        my_refs.sort(key=lambda r: r._sort_key(PUBYEAR), reverse=True)
+        my_refs.sort(key=lambda r: r._sort_key(by_property=PUBYEAR), reverse=True)
         self.references = my_refs
         return self.references
     
 
-    def _add_refs(self, references:list):
+    def _add_refs(self, references:list[Reference])->list[Reference]:
         '''
-        Input
-        -----
-        references = [Reference]
-
         Return
         ------
         new list of references [Reference].\nMerges refs from input to existing refs in self.RefDict if possible
@@ -531,14 +505,16 @@ class PSRelation(PSObject):
 
             if not was_merged:
                 for i in r.Identifiers.values():
+                    assert(isinstance(r,Reference))
                     self.RefDict[i] = r
 
         return self.__refDict2refs()
 
 
     def replace_refs(self, newrefs:list):
-        newrel = PSRelation(self)
-        newrel.Nodes = dict(self.Nodes)
+        newrel = PSRelation(self) # copy only properties and Nodes. 
+        # PropSetToProps, RedDict and references are skipped
+        newrel.Nodes = self.Nodes.copy()
         newrel._add_refs(newrefs)
         return newrel
         
@@ -657,10 +633,10 @@ class PSRelation(PSObject):
         
     def make_copy(self):
         my_copy = PSRelation(self)
-        my_copy.PropSetToProps = dict(self.PropSetToProps)
-        my_copy.Nodes = dict(self.Nodes)
-        my_copy.RefDict = dict(self.RefDict)
-        my_copy.references = list(self.references)
+        my_copy.PropSetToProps = self.PropSetToProps.copy()
+        my_copy.Nodes = self.Nodes.copy()
+        my_copy.RefDict = self.RefDict.copy()
+        my_copy.references = self.references.copy()
         return my_copy
     
 
@@ -687,7 +663,7 @@ class PSRelation(PSObject):
         new_rel = cls(props)
         try:
             effect_val = props[EFFECT]
-        except KeyError:
+        except (IndexError,KeyError):
             effect_val = str()
 
         new_rel.Nodes[REGULATORS] = [(regulator.uid(), '0', effect_val)]
@@ -706,16 +682,23 @@ class PSRelation(PSObject):
         return len(self.Nodes) == 2
     
 
+    ''' 
+    TO DO - convert sel.Nodes from (uid(), '0', effect_val) to PSObject
+    def regulators(self):
+        return list(map(PSObject,self.Nodes[REGULATORS]))
+
+
+    def targets(self):
+        return list(map(PSObject,self.Nodes[TARGETS])) if TARGETS in self.Nodes else []
+    '''
+
     def regulator_uids(self):
         nodeIds = [x[0] for x in self.Nodes[REGULATORS]]
         return list(nodeIds)
-
-
-    def target_uids(self):
-        try:
-            nodeIds = [x[0] for x in self.Nodes[TARGETS]]
-            return list(nodeIds)
-        except KeyError: return []
+    
+    
+    def target_uids(self)->list[int]:    
+        return [x[0] for x in self.Nodes[TARGETS]] if TARGETS in self.Nodes else []
 
 
     def entities_uids(self):
@@ -725,12 +708,12 @@ class PSRelation(PSObject):
     def _prop2str(self, prop_id, cell_sep:str =';'):
         try:
             return cell_sep.join(list(map(str, self[prop_id])))
-        except KeyError:
+        except (IndexError,KeyError):
             prop_set_values = []
             for prop in self.PropSetToProps.values():
                 try:
                     prop_set_values.append(cell_sep.join(list(map(str, prop[prop_id]))))
-                except KeyError:
+                except (IndexError,KeyError):
                     continue
             
             to_return = cell_sep.join(prop_set_values)
@@ -746,7 +729,7 @@ class PSRelation(PSObject):
     def props2list(self, propID, cell_sep=';'):
         try:
             return self[propID]
-        except KeyError:
+        except (IndexError,KeyError):
             to_return = list()
             for prop in self.PropSetToProps.values():
                 prop_set_val = str()
@@ -790,11 +773,14 @@ class PSRelation(PSObject):
                         self.RefDict[str(id_value)] = ref
                 else: 
                     ref = existing_ref[0]
+                    assert(isinstance(ref,Reference))
                     if len(existing_ref) > 1:  # identifiers from one propset point to different references
                     # will merge all references from propset with the first one
                         for i in range(1, len(existing_ref)):
-                            ref._merge(existing_ref[i])
-                            for id_value in dict(existing_ref[i].Identifiers).values():
+                            existref = existing_ref[i]
+                            assert(isinstance(existref,Reference))
+                            ref._merge(existref)
+                            for id_value in existref.Identifiers.values():
                                 self.RefDict[id_value] = ref
                         del existing_ref[1:]
 
@@ -822,6 +808,7 @@ class PSRelation(PSObject):
                         else: continue #'Admin imported' references have no identifiers and ignored 
                     except KeyError: continue
 
+            assert(isinstance(ref,Reference))
             textref = None 
             sentence_props = dict()
             for propId, propValues in propSet.items():  # adding all other valid properties to Ref
@@ -907,18 +894,15 @@ class PSRelation(PSObject):
                 ref_from_abstract = set([x for x in self.RefDict.values() if x.is_from_abstract()])
                 return len(ref_from_abstract)
         else:
-            try:
-                refcount = self[REFCOUNT]
-                # case when REFCOUNT was loaded from RNEF dump as string without references
-                # e.g. for loading network from __pscache__
-                if len(refcount) > 1:
-                    refcount2merge = list(map(int,refcount))
-                    max_refcount = max(refcount2merge)
-                    self[REFCOUNT] = [max_refcount]
-                else:
-                    self[REFCOUNT] = [int(refcount[0])]
-            except KeyError:
-                self[REFCOUNT] = [0]
+            refcount = self[REFCOUNT]
+            # case when REFCOUNT was loaded from RNEF dump as string without references
+            # e.g. for loading network from __pscache__
+            if len(refcount) > 1: # case if refcount has 2 or more values after relation merge
+                refcount2merge = list(map(int,refcount))
+                max_refcount = max(refcount2merge)
+                self[REFCOUNT] = [max_refcount]
+            else:
+                self[REFCOUNT] = [int(refcount[0])] if refcount else [0]
         
         return int(self[REFCOUNT][0])
 
@@ -1038,32 +1022,35 @@ class PSRelation(PSObject):
             return self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
 
 
-    def get_regulators_targets(self):
+    def get_regulators_targets(self)->list[tuple[int,int]]:
         """
         Returns
         -------
         [(regulator_uid,target_uid)] pairs for directional self
         all possible pairwise combinations for non-directional self
         """
-        if len(self.Nodes) > 1:
-            # for directional relations
+        if self.is_directional():
             return [(r[0],t[0]) for r in self.Nodes[REGULATORS] for t in self.Nodes[TARGETS]]
         else:
-            try:
-                # for non-directions relations
-                objIdList = [x[0] for x in self.Nodes[REGULATORS]]
-                pairs = list(itertools.combinations(objIdList, 2))
+            # for non-directions relations
+            assert(len(self.Nodes) == 1)
+            if REGULATORS in self.Nodes:
+                uIdList = [x[0] for x in self.Nodes[REGULATORS]]
+            else:
+                uIdList = [x[0] for x in self.Nodes[TARGETS]]
+   
+            pairs = list(itertools.combinations(uIdList, 2))
+            if pairs:
                 plus_reverse = list(pairs)
                 [plus_reverse.append((p[1],p[0])) for p in pairs] 
                 # non-directional relations are added in both direction into MultiDiGraph
                 return plus_reverse
-            except KeyError:
-                # for wiered cases
-                objIdList = [x[0] for x in self.Nodes[TARGETS]]
-                pairs = list(itertools.combinations(objIdList, 2))
-                plus_reverse = list(pairs)
-                [plus_reverse.append((p[1],p[0])) for p in pairs]
-                return plus_reverse
+            else:
+                if len(uIdList) > 1: # case of self-loop
+                    return [(uIdList[0],uIdList[1])]
+                else:
+                    return list()
+
 
 
     def to_json(self):
@@ -1098,17 +1085,17 @@ class PSRelation(PSObject):
                 return REPRESSED
             else: 
                 return UNKNOWN_STATE
-        except KeyError: 
+        except (IndexError,KeyError): 
             return UNKNOWN_STATE
         
 
     def _affinity(self):
         try:
             return float(self['Affinity'][0])
-        except KeyError:
+        except (IndexError,KeyError):
             try:
                return float(self['pX'][0]) 
-            except KeyError:
+            except (IndexError,KeyError):
                 return -1.0
 
 

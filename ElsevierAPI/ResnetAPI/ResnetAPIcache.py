@@ -1,4 +1,4 @@
-import os, glob
+import os,glob,zipfile
 from pathlib import Path
 from shutil import copyfile
 from .ResnetAPISession import REFERENCE_IDENTIFIERS, REFCOUNT
@@ -131,9 +131,16 @@ class APIcache(APISession):
         return
     
 
-    def save_description(self):
+    def save_description(self,do_backup=True):
         stats_df = self.network.get_stats()
-        stats_df.to_csv(self.data_dir+'descriptions/'+self.network.name+"_description.tsv",sep='\t',index=False)
+        descr_file = self.data_dir+'descriptions/'+self.network.name+"_description"
+        if do_backup:
+            backup_descr = descr_file + '_old.tsv'
+            try:
+                copyfile(descr_file, backup_descr)
+            except FileNotFoundError:
+                pass
+        stats_df.to_csv(descr_file+'.tsv',sep='\t',index=False)
 
 
     def __dump_dir_name(self,**kwargs):
@@ -269,20 +276,25 @@ class APIcache(APISession):
             listing = glob.glob(my_cache_dir+'*.rnef')
             [os.remove(file) for file in listing]
             self._dump2rnef(with_network,cache_name)
+            print(f'{cache_name} raw cache files were replaced')
 
         my_cache_file = self.__path2cache(cache_name)
         if do_backup:
-            backup_cache = self.__path2cache(cache_name,'_backup.rnef')
-            copyfile(my_cache_file, backup_cache)
+            backup_cache = self.__path2cache(cache_name,'_backup.zip')
+            with zipfile.ZipFile(backup_cache,'w',zipfile.ZIP_DEFLATED) as z:
+                z.write(my_cache_file)
         
         with_network.dump2rnef(my_cache_file,ent_props,rel_props)
+        print(f'{cache_name} cache file was replaced')
+
         if self.example_node:
             example_cache = with_network.neighborhood({self.example_node})
             example_file = self.__path2cache(cache_name,extension='_example.rnef')
             example_cache.name = self.example_node.name()+' example'
             example_cache.dump2rnef(example_file,ent_props,rel_props)
+            print(f'{example_file} example file was replaced')
 
-
+        
     def clear(self):
         super().clear()
         self.network.clear_resnetgraph()

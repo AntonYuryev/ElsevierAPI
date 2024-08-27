@@ -6,6 +6,7 @@ from .ResnetGraph import ResnetGraph,PSObject,EFFECT,df,CHILDS
 from .ResnetAPISession import  APISession,len
 from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
 from ..ETM_API.etm import ETMstat
+from ..ETM_API.scibite import SBSstat
 import pandas as pd
 import numpy as np
 
@@ -61,6 +62,7 @@ class SemanticSearch (APISession):
         self.__rel_effect__ = list()
         self.references = dict() # {identifier:Reference} made by self.Graph.citation_index()
         self.etm_counter = ETMstat(self.APIconfig,limit=10)
+        #self.etm_counter = SBSstat(self.APIconfig,limit=10)
         self.etm_counter.min_relevance = self.min_etm_relevance
         self.all_entity_dbids = set()
         self.weight_dict = dict({})
@@ -85,9 +87,14 @@ class SemanticSearch (APISession):
 
 
     def _clone(self, **kwargs):
+        '''
+        Return
+        ------
+        Copy of SemanticSearch object with copy of self.Graph
+        '''
         my_kwargs = dict(kwargs)
         my_kwargs['copy_graph'] = True # need to copy self.Graph to enable using cache in link2concept
-        api_session = self._clone_session(**my_kwargs) # cannot use copy_graph here
+        api_session = super()._clone_session(**my_kwargs) 
         new_session = SemanticSearch(api_session.APIconfig,**my_kwargs)
         new_session.entProps = api_session.entProps
         new_session.relProps = api_session.relProps
@@ -221,8 +228,7 @@ class SemanticSearch (APISession):
         db_entities = self._props2psobj(mapping_values,[map2column],get_childs=False)
         [o.update_with_value(self.__mapped_by__,o.name()) for o in db_entities]
         
-        children, parents_with_children = self.load_children4(
-            db_entities,max_childs=max_children_count,max_threads=max_threads)
+        children,_ = self.load_children4(db_entities,max_childs=max_children_count,max_threads=max_threads)
         for c in children:
             self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
             self.Graph.nodes[c.uid()][self.__resnet_name__] = c.name()
@@ -494,15 +500,19 @@ class SemanticSearch (APISession):
         else:
             print(f'\nLinking row entities to "{ConceptName}" column which has {number_of_childs} ontology children')
         
-        new_column = self._col_name_prefix + ConceptName
+        refcount_column = self._col_name_prefix + ConceptName
+        incidence_column = ConceptName + ' incidence'
+        concepts_uids = set(ResnetGraph.uids(concepts))
+        concept_count = len(concepts_uids)
+
         try:
-            my_df.insert(len(my_df.columns),new_column,0)
+            my_df.insert(len(my_df.columns),refcount_column,0)
         except ValueError:
-            print('%s column already exists in dataframe!!!' % new_column)
+            print('%s column already exists in dataframe!!!' % refcount_column)
             pass
 
         if self.weight_prop:
-            my_df[new_column] = pd.to_numeric(my_df[new_column], downcast="float")
+            my_df[refcount_column] = pd.to_numeric(my_df[refcount_column], downcast="float")
 
         linked_row_count = 0
         linked_entities_counter = set()
@@ -527,19 +537,28 @@ class SemanticSearch (APISession):
                 if not row_has_connection:
                     continue
 
-                if self.weight_prop:
-                    references = connection_graph.load_references_between(idx_entities, concepts,self.weight_prop,self.weight_dict)
-                    ref_weights = [r.get_weight() for r in references]
-                    weighted_count = float(sum(ref_weights))
-                    my_df.at[idx,new_column] = weighted_count
-                else:
-                    references = connection_graph.load_references_between(idx_entities, concepts)
-                    my_df.at[idx,new_column] = len(references)
+                row_subgraph = connection_graph.get_subgraph(idx_entities, concepts)
+                concept_incidence = 0.0
+                if concept_count > 1:
+                    connected_concepts = [c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in concepts_uids]
+                    concept_incidence = len(connected_concepts)/concept_count
+                    percentage = round(concept_incidence,2) * 100 
+                    my_df.at[idx,incidence_column] = f'{len(connected_concepts)}/{concept_count} ({percentage:.2f}%)'
 
+                references = row_subgraph.load_references(self.weight_prop,self.weight_dict)
+                if self.weight_prop:
+                    ref_weights = [r.get_weight() for r in references]
+                    row_score = float(sum(ref_weights))
+                else:
+                    row_score = len(references)
+
+                my_df.at[idx,refcount_column] = row_score*(1+concept_incidence)
+               
                 if references:
                     ref_sum.update(references)
                     linked_row_count += 1
                     linked_entities_counter.update(idx_entities)
+                
 
             effecStr = ','.join(self.__rel_effect__) if len(self.__rel_effect__)>0 else 'all'
             relTypeStr = ','.join(self.__connect_by_rels__) if len(self.__connect_by_rels__)>0 else 'all'
@@ -557,6 +576,17 @@ class SemanticSearch (APISession):
 
 
     def link2concept(self,to_concept_named:str,concepts:list,to_entities:df|pd.DataFrame,how2connect,clone2retrieve=DO_NOT_CLONE):
+        """
+        Input
+        -----
+        to_entities.columns must have self.__temp_id_col__
+        concepts - [PSObject]
+        how2connect - function with instructions how to connect "concepts","to_entities"
+
+        Returns
+        -------
+        linked_row_count, linked_entity_ids, my_df = to_entities|ConceptName
+        """
         if clone2retrieve:
             my_session = self._clone(to_retrieve=clone2retrieve) # careful to_retrieve MPSVI ClinicalTrial
             linked_row_count,linked_entity_ids,return_df = my_session.__link2concept(
@@ -813,26 +843,34 @@ class SemanticSearch (APISession):
         return ranked_counts_df,normalized_count_df
 
 
-    def etm_ref_column_name(self,between_names_in_col,and_concepts):
-        return self.etm_counter._etm_ref_column_name(between_names_in_col,and_concepts)
+    def refcount_column_name(self,between_names_in_col,and_concepts):
+        return self.etm_counter.refcount_column_name(between_names_in_col,and_concepts)
     
 
-    def etm_doi_column_name(self,between_names_in_col,and_concepts):
-        return self.etm_counter._etm_doi_column_name(between_names_in_col,and_concepts)
+    def doi_column_name(self,between_names_in_col,and_concepts):
+        return self.etm_counter.doi_column_name(between_names_in_col,and_concepts)
 
 
-    def etm_refs2df(self,to_df:df,input_names:list,entity_name_col:str='Name',add2query=[],max_row=300):
+    def bibliography(self,to_df:df,input_names:list,entity_name_col:str='Name',add2query=[],max_row=300):
         '''
         Returns
         -------
-        copy of to_df with added columns ETM_REFS_COLUMN,DOIs
+        copy of to_df with added columns REFS_COLUMN,DOIs
         '''
-        print('Finding %d most relevant articles in ETM for %d rows in "%s" worksheet and %s' 
-                % (self.etm_counter._limit(),len(to_df),to_df._name_,input_names), flush=True)
-        return self.etm_counter.add_etm_references(to_df,entity_name_col,input_names,ETMstat.basic_query,add2query,max_row)
+        if isinstance(self.etm_counter,ETMstat):
+            TMsoft = 'ETM' 
+            my_query_func = ETMstat.basic_query
+        else:
+            TMsoft = 'SBS' 
+            my_query_func = SBSstat.basic_query
+
+        print(f'Finding {self.etm_counter._limit()} most relevant articles in {TMsoft} for {len(to_df)} rows \
+in "{to_df._name_} worksheet and {input_names}', flush=True)
+        
+        return self.etm_counter.add_refs(to_df,entity_name_col,input_names,my_query_func,add2query,max_row)
 
 
-    def add_etm_refs(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True,skip1strow=True):
+    def refs2report(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True,skip1strow=True):
         """
         Input
         -----
@@ -842,28 +880,28 @@ class SemanticSearch (APISession):
         ----
         columns etm.ETM_REFS_COLUMN, etm._etm_doi_column_name() to df with name "to_df_name" from self.report_pandas
         """
-        rank_counts_df = df.copy_df(self.report_pandas[to_df_named])
+        my_df = df.copy_df(self.report_pandas[to_df_named])
         if skip1strow:
-            weights = rank_counts_df.iloc[[0]].copy()
-            rank_counts_df = df.from_pd(rank_counts_df.drop(0, axis=0,inplace=False), self.report_pandas[to_df_named]._name_)
-            if rank_counts_df.empty: return rank_counts_df
-            rank_counts_df.copy_format(self.report_pandas[to_df_named])
-            rank_counts_df = self.etm_refs2df(rank_counts_df,input_names,entity_name_col,add2query,max_row=len(rank_counts_df))
+            weights = my_df.iloc[[0]].copy()
+            my_df = df.from_pd(my_df.drop(0, axis=0,inplace=False), self.report_pandas[to_df_named]._name_)
+            if my_df.empty: return my_df
+            my_df.copy_format(self.report_pandas[to_df_named])
+            my_df = self.bibliography(my_df,input_names,entity_name_col,add2query,max_row=len(my_df))
 
             #rank_counts_pd = rank_counts_df.sort_values(RANK,ascending=False)
-            rank_counts_pd = pd.concat([weights, rank_counts_df]).reset_index(drop=True)
-            rank_counts_df = df.from_pd(rank_counts_pd,self.report_pandas[to_df_named]._name_)     
-            rank_counts_df.copy_format(self.report_pandas[to_df_named])
+            rank_counts_pd = pd.concat([weights, my_df]).reset_index(drop=True)
+            my_df = df.from_pd(rank_counts_pd,self.report_pandas[to_df_named]._name_)     
+            my_df.copy_format(self.report_pandas[to_df_named])
         else:
-            rank_counts_df = self.etm_refs2df(rank_counts_df,input_names,entity_name_col,add2query,max_row=len(rank_counts_df))
+            my_df = self.bibliography(my_df,input_names,entity_name_col,add2query,max_row=len(my_df))
             
         if add2report:
-            self.add2report(rank_counts_df)
+            self.add2report(my_df)
 
-        return rank_counts_df
+        return my_df
 
 
-    def add_etm_bibliography(self,suffix=''):
+    def add_bibliography(self,suffix=''):
         """
         Adds
         ----
@@ -877,7 +915,7 @@ class SemanticSearch (APISession):
         return biblio_df._name_
   
 
-    def add_ps_bibliography(self,suffix='',from_graph=ResnetGraph(),add2report=True):
+    def add_graph_bibliography(self,suffix='',from_graph=ResnetGraph(),add2report=True):
         """
         Adds
         ----
@@ -887,7 +925,7 @@ class SemanticSearch (APISession):
         ref_df_name = PS_BIBLIOGRAPHY
         if suffix: ref_df_name += '-'+suffix
         ref_df_name = ref_df_name[:31]
-        ref_df = my_graph.refs2df(ref_df_name)
+        ref_df = my_graph.bibliography(ref_df_name)
         if add2report:
             self.add2report(ref_df)
 
@@ -903,20 +941,22 @@ class SemanticSearch (APISession):
             except KeyError: return  dict()    
         else: to_df = self.RefCountPandas
 
-        id2child_objs = self.entities(to_df,for_entities_in_column,map_by_graph_property)
-        return self.ontopaths2(id2child_objs,ontology_depth)
+        name2child_objs = self.entities(to_df,for_entities_in_column,map_by_graph_property)
+        return self.ontopaths2(name2child_objs,ontology_depth)
 
 
+    '''
     def add_parent_column(self,to_report_named:str, _4entities_in_column='Name', map_by_graph_property='Name',ontology_depth=3):
-        '''
+        """
         DEPRICATED
-        '''
+        """
         id2paths = self.id2paths(to_report_named,_4entities_in_column,map_by_graph_property,ontology_depth)
 
         new_df = df.copy_df(self.report_pandas[to_report_named])
         new_df = new_df.merge_dict(id2paths,'Ontology parents',_4entities_in_column)
         #self.add2report(new_df)
         return new_df
+    '''
     
 
     def add_groups(self,_2df:df,group_names:list,for_entities_in_column='Name',map_by_graph_property='Name'):

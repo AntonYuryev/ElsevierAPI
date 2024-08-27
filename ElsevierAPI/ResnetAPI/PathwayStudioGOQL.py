@@ -173,7 +173,7 @@ class OQL:
         '''
         Input
         -----
-        direction - upstream, downstream, str()
+        direction - upstream, downstream, ""
         '''
         expand2neighbors_str = OQL.join_with_quotes(expand2neighbors)
         expand_by_rel_types_str = OQL.join_with_quotes(expand_by_rel_types)

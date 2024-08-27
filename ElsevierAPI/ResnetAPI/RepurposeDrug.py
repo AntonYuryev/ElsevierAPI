@@ -113,10 +113,10 @@ class RepurposeDrug(Indications4targets):
     
 
     def __etm_ref_column_name(self):
-        return self.etm_counter._etm_ref_column_name('Name',self.input_drug_names())
+        return self.etm_counter.refcount_column_name('Name',self.input_drug_names())
     
     def __etm_doi_column_name(self):
-        return self.etm_counter._etm_doi_column_name('Name',self.input_drug_names())
+        return self.etm_counter.refcount_column_name('Name',self.input_drug_names())
 
 
     def find_indications4similars(self):
@@ -304,11 +304,11 @@ class RepurposeDrug(Indications4targets):
         return indication_df._name_
         
 
-    def add_ps_bibliography(self,suffix:str):
+    def add_graph_bibliography(self,suffix:str):
         drug_neighbors = self.Graph.neighborhood(set(self.drugs))
         if self.similar_drugs:
             drug_neighbors = self.Graph.neighborhood(set(self.similar_drugs)).compose(drug_neighbors)
-        super().add_ps_bibliography(suffix,add_graph=drug_neighbors)
+        super().add_graph_bibliography(suffix,add_graph=drug_neighbors)
 
 
     def make_report(self,_4targets_named:list=[]):
@@ -340,10 +340,10 @@ class RepurposeDrug(Indications4targets):
             self.normalize(count_df_name,norm_df_name,drop_empty_columns=drop_empty_cols)
 
             with ThreadPoolExecutor(max_workers=3, thread_name_prefix='Report annotation') as e:
-                etm_biblio_future = e.submit(self.add_etm_refs, norm_df_name,self.input_drug_names(),'Name',[],False)
+                etm_biblio_future = e.submit(self.refs2report, norm_df_name,self.input_drug_names(),'Name',[],False)
                 ontology_df_future = e.submit(self.add_ontology_df,norm_df_name)
                 add_parent_future = e.submit(self.id2paths,norm_df_name)
-                ps_biblio_future = e.submit(self.add_ps_bibliography,ws_suffix)
+                ps_biblio_future = e.submit(self.add_graph_bibliography,ws_suffix)
             
             norm_df = df.copy_df(self.report_pandas[norm_df_name])
             id2paths = add_parent_future.result()
@@ -363,7 +363,7 @@ class RepurposeDrug(Indications4targets):
             norm_df = norm_df.reorder(columns)
             self.add2report(norm_df)
 
-            biblio_df_name = self.add_etm_bibliography()
+            biblio_df_name = self.add_bibliography()
             return norm_df_name, biblio_df_name, ontology_df._name_
         else:
             return '','',''

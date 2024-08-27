@@ -111,7 +111,7 @@ class Experiment(PSObject):
         try:
             mapping_name = self.identifiers.columns[0]
             if mapping_name.upper()[:7] == 'ENSEMBL': # To replace "ENSEMBLE_ID","ENSEMBLE ID"
-                self.identifiers = df.copy_df(self.identifiers,rename2={mapping_name:'Ensembl ID'})
+                self.identifiers = df.copy_df(self.identifiers,colname_mapper={mapping_name:'Ensembl ID'})
                 mapping_name = 'Ensembl ID'
             return mapping_name
         except KeyError:

@@ -1,5 +1,5 @@
 from .NetworkxObjects import PSObject
-from .ResnetGraph import ResnetGraph,RESNET
+from .ResnetGraph import ResnetGraph,RESNET,OBJECT_TYPE
 from lxml import etree as et
 from .rnef2sbgn import rnef2sbgn_str,minidom
 
@@ -16,20 +16,20 @@ class PSPathway(PSObject):
 
 
     @classmethod
-    def from_resnet(cls, resnet:et._Element, add_annotation=PSObject(),make_rnef=True):
+    def from_resnet(cls, resnet:et._Element, add_annotation=PSObject(),make_rnef=True,ignore_graph=False):
         pathway = PSPathway()
         pathway['Name'] = [resnet.get('name','no_name')]
         pathway['URN'] = [resnet.get('urn','no_urn')]
+        pathway[OBJECT_TYPE] = [resnet.get('type','no_type')]
         pathway.update(add_annotation)
         [pathway.update_with_value(p.get('name'),p.get('value')) for p in resnet.findall('properties/attr','')]
 
-        if pathway.graph._parse_nodes_controls(resnet):
-            if make_rnef:
-                pathway[RESNET] = et.tostring(resnet)
-            return pathway
-        else:
-            print('Invalid <resnet> section')
-            return None
+        if not ignore_graph:
+            if pathway.graph._parse_nodes_controls(resnet):
+                if make_rnef:
+                    pathway[RESNET] = et.tostring(resnet)
+        return pathway
+
 
 
     @classmethod
@@ -42,7 +42,7 @@ class PSPathway(PSObject):
             try:
                 return self['#'+obj_type]
             except KeyError:
-                obj_count = len([obj_t for i,obj_t in self.graph.nodes.data('ObjTypeName') if obj_type in obj_t['ObjTypeName']])
+                obj_count = len([obj_t for i,obj_t in self.graph.nodes.data(OBJECT_TYPE) if obj_type in obj_t[OBJECT_TYPE]])
                 self['#'+obj_type] = obj_count
                 return obj_count
         else:
@@ -138,7 +138,7 @@ class PSPathway(PSObject):
         return str(pathway_xml_str)
 
 
-    def rnef2file(self,fname, ent_props:list,rel_props:list,add_props2rel=dict(),add_props2pathway=dict()):
+    def _2rnef(self,fname, ent_props:list,rel_props:list,add_props2rel=dict(),add_props2pathway=dict()):
         self.update(add_props2pathway)
         with open(fname,'w',encoding='utf-8') as f:
             f.write('<batch>\n') 

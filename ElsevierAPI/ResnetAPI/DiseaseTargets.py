@@ -1,6 +1,7 @@
-from .ResnetGraph import PROTEIN_TYPES,EFFECT,PHYSICAL_INTERACTIONS,ResnetGraph,CLOSENESS,CHILDS
+from .ResnetGraph import PROTEIN_TYPES,EFFECT,PHYSICAL_INTERACTIONS,ResnetGraph,PSRelation,PSObject
+from .PSPathway import PSPathway
 from .NetworkxObjects import STATE, ACTIVATED,REPRESSED,UNKNOWN_STATE
-from .SemanticSearch import SemanticSearch,len,OQL
+from .SemanticSearch import SemanticSearch,len,OQL,RANK
 from .ResnetAPISession import NO_REL_PROPERTIES,ONLY_REL_PROPERTIES,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,DBID
 from .FolderContent import FolderContent
 from ..pandas.panda_tricks import df,NaN
@@ -42,9 +43,13 @@ class DiseaseTargets(SemanticSearch):
                 'add_bibliography' : True,
                 'strict_mode' : False,
                 'target_types' : ['Protein'],
-                'pathway_folders' : ['Hypertension Pulmonary'],
+                'pathway_folders' : [],
                 'pathways' : [],
-                "max_child_count" : 11
+                "max_child_count" : 11,
+                "add_closeness":True, # obsolete
+                'propagate_target_state_in_model':True,
+                'add_regulators4':[],
+                'skip':False
             }
         
         entprops = kwargs.pop('ent_props',[])
@@ -139,7 +144,7 @@ class DiseaseTargets(SemanticSearch):
             return ','.join(self.params['disease'])
 
 
-    def _targets(self):
+    def _targets(self)->set[PSObject]:
         return self.targets4strictmode if self.params['strict_mode'] else self.__targets__
     
 
@@ -221,23 +226,19 @@ class DiseaseTargets(SemanticSearch):
                 self.targets4strictmode.update(disease_regulators)
                 self.targets4strictmode.update(disease_model_components)
             else:
-                try:
-                    target2_expand_names = self.params["add_regulators4"]
-                    targets2expand = [n for n in self.__targets__ if n.name() in target2_expand_names]
+                target2expand_names = self.params.get("add_regulators4",[])
+                if target2expand_names:
+                    targets2expand = [n for n in self.__targets__ if n.name() in target2expand_names]
                     targets2expand_dbids = ResnetGraph.dbids(targets2expand)
                     oql_query = OQL.expand_entity(targets2expand_dbids,['Id'],[],PROTEIN_TYPES,'upstream')
-                    expanded_targets_g = self.process_oql(oql_query,f'Find regulators 4 {target2_expand_names}')
+                    expanded_targets_g = self.process_oql(oql_query,f'Find regulators 4 {target2expand_names}')
                     if isinstance(expanded_targets_g,ResnetGraph):
-                        #self.targets_need_link2disease = set(expanded_targets_g._get_nodes())
-                        #self.targets_need_link2disease =  self.targets_need_link2disease.difference(targets2expand)
                         self.__targets__.update(expanded_targets_g._get_nodes())
                         for t in targets2expand:
                             t_regulators = expanded_targets_g.get_neighbors({t})
                             reg2target_namedict = dict({r.name():t.name() for r in t_regulators})       
                             self.expanded_targets.update(reg2target_namedict)
                         self.Graph = self.Graph.compose(expanded_targets_g)
-                except KeyError:
-                    pass
 
 
     def find_symptoms(self):
@@ -378,7 +379,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         self.partner2targets.remove_nodes_by_regulators(max_regulator=10,having_values=['SmallMol'])
 
 
-    def load_pathways(self):
+    def load_pathways(self)->dict[str,PSPathway]:
         """
         Loads
         -----
@@ -403,9 +404,10 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             ps_pathways = fc.folder2pspathways(folder_name,with_layout=False)
             disease_pathways += ps_pathways
 
-        if self.params['pathways']:
+        if self.params.get('pathways',''):
             filtered_pathway_list = list()
             for ps_pathway in disease_pathways:
+                assert(isinstance(ps_pathway, PSPathway))
                 if ps_pathway.name() in self.params['pathways']:
                     filtered_pathway_list.append(ps_pathway)
             disease_pathways = filtered_pathway_list
@@ -413,8 +415,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         print('Found %d curated pathways for %s:' %(len(disease_pathways), self._disease2str()))
         [print(p.name()+'\n') for p in disease_pathways]
 
-        #self.disease_pathways = dict()
-        # merging pathways from the same celltype
+        # merging pathways from the same celltype to build cell type specific models
         for pathway in disease_pathways:
             try:
                 cell_types = pathway['CellType']
@@ -424,15 +425,16 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             for cell_type in cell_types:
                 try:
                     exist_pathway = self.disease_pathways[cell_type]
+                    assert(isinstance(exist_pathway,PSPathway))
                     exist_pathway.merge_pathway(pathway)
                     self.disease_pathways[cell_type] = exist_pathway
                 except KeyError:
                     self.disease_pathways[cell_type] = pathway
             
-        for cell_type, pathway in self.disease_pathways.items():
+        for pathway in self.disease_pathways.values():
+            assert(isinstance(pathway,PSPathway))
             pathway.graph.remove_nodes_by_prop(['CellProcess', 'Disease','Treatment'])
 
-        [p.graph.closeness() for p in self.disease_pathways.values()]
         return self.disease_pathways
 
         
@@ -505,16 +507,6 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
                     return UNKNOWN_STATE
 
 
-    def make_disease_network(self):
-        print(f'Creating physical interaction network between targets of {self.input_names()} \
-              to calculate target closeness for "score_regulators" function')
-        my_session = self._clone_session(to_retrieve=NO_REL_PROPERTIES)
-        targets_dbid = ResnetGraph.dbids(list(self.__targets__))
-        disease_network = my_session.get_ppi(set(targets_dbid))
-        disease_network.name = f'{self._disease2str()} PPPI network'
-        return disease_network.make_simple(['DirectRegulation','ProtModification','Binding']) 
-
-
     def set_target_disease_state(self):
         print('\n\nCalculating targets state (activated/repressed) in %s' % self._disease2str())
         targets = set()
@@ -531,7 +523,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         for pathway in self.disease_pathways.values():
             self.disease_model = self.disease_model.compose(pathway.graph)
 
-        if self.disease_model and 'propogate_target_state_in_model' in self.params.keys():
+        if self.disease_model and 'propagate_target_state_in_model' in self.params.keys():
             uid2state = dict()
             [uid2state.update(self.disease_model.propagate_state(t)) for t in targets if t.uid() in self.disease_model.nodes()]
             for i in self.RefCountPandas.index:
@@ -552,11 +544,9 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             model_dbid2uid = self.disease_model.dbid2uid()
             def __disease_state_from_model():
                 activ_targets_pd = self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == ACTIVATED)]
-                #activated_targets_dbid2uid = model.dbid2uid(self._all_dbids(activ_targets_pd))
                 activated_targets = self.disease_model.psobj_with_dbids(self._all_dbids(activ_targets_pd))
                 inhib_targets_pd = self.RefCountPandas.loc[(self.RefCountPandas['State in Disease'] == REPRESSED)]
                 inhibited_trgts = self.disease_model.psobj_with_dbids(self._all_dbids(inhib_targets_pd))
-                #inhibited_trgts_dbid2uid = model.dbid2uid(self._all_dbids(inhib_targets_pd))
 
                 new_regulators_count = 0
                 for idx in self.RefCountPandas.index:
@@ -602,8 +592,8 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
                         self.RefCountPandas.at[idx,'State in Disease'] = int(state)
                     except KeyError:
                         continue
-                
         return
+
 
     def score_partners(self):
         print(f'\n\nFinding semantic references supporting links between target partners and {self._disease2str()}')
@@ -660,16 +650,34 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         self.RefCountPandas.rename(columns={temp_targetdbid_col:self.__temp_id_col__}, inplace=True)
         '''
 
-    def score_regulators(self):
+    def make_disease_network(self):
+        print(f'Creating physical interaction network between targets of {self.input_names()} \
+              to calculate target closeness for "score_regulators" function')
+        my_session = self._clone_session(to_retrieve=NO_REL_PROPERTIES)
+        disease_network = my_session.get_ppi(self.__targets__, self.params.get('ppiRNEFs',[]))
+        disease_network.name = f'{self._disease2str()} PPPI network'
+        return disease_network.make_simple(['DirectRegulation','ProtModification','Binding']) 
+    
+
+    def DiseaseNetworkRegulationScore(self):
+        '''
+        Add
+        ----
+        PATHWAY_REGULATOR_SCORE column to self.RefCountPandas
+        '''
         print('\n\nScoring regulators by distance to components of disease pathways',flush=True)
         print('Retrieving regulatory network between targets and components of disease pathway')
         regulation_graph = self.disease_model if self.disease_model else self.make_disease_network()
+        uid2closeness = regulation_graph.closeness() # will use closeness in disease network to initialize regulatory ranking
+        
         disease_pathway_component_dbids = set(regulation_graph.dbids4nodes())
-
         connected_nodes_dbids = disease_pathway_component_dbids
         unconnected_nodes_dbids = self.all_entity_dbids
-        for step in range (0,5):
-            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
+
+        for step in range (0,5): # 5 degree of separation
+            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES) # new_session.Graph does not contain regulation_graph 
+            new_session.Graph = regulation_graph.compose(new_session.Graph) # to speadup connect_nodes
+
             graph_expansion = new_session.connect_nodes(unconnected_nodes_dbids, connected_nodes_dbids,
                                                     PHYSICAL_INTERACTIONS, in_direction='>')
             regulation_graph.add_graph(graph_expansion)
@@ -682,9 +690,13 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
                 break
             unconnected_nodes_dbids = set(unconnected_nodes_dbids).difference(regulation_graph_dbids)
 
-        for pathway in self.disease_pathways.values():
-            closeness_dic = {i:c[0] for i,c in pathway.graph.nodes(data=CLOSENESS)}
-            regulation_graph.rank_regulators(closeness_dic,PATHWAY_REGULATOR_SCORE)
+        if self.disease_pathways:
+            for pathway in self.disease_pathways.values():
+                assert(isinstance(pathway,PSPathway))
+                uid2clos = pathway.graph.closeness()
+                regulation_graph.rank_regulators(uid2clos,PATHWAY_REGULATOR_SCORE)
+        else:
+            regulation_graph.rank_regulators(uid2closeness,PATHWAY_REGULATOR_SCORE)
 
         dbid2uid = regulation_graph.dbid2uid()
         for i in self.RefCountPandas.index:
@@ -698,7 +710,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
                 except KeyError:
                     continue
             self.RefCountPandas.at[i,PATHWAY_REGULATOR_SCORE] = target_regulator_score
-
+        return
 
     def score_target_semantics(self):
       #  do not multithread.  self.Graph will leak
@@ -751,6 +763,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         #partners_df = partner_score_future.result()
         partners_df = self.score_partners()
         self.RefCountPandas = self.RefCountPandas.merge_df(partners_df,on='Name')
+        self.DiseaseNetworkRegulationScore()
 
 
         ################## SPLITTING RefCountPandas to score agonists and antagonists differently #####################
@@ -815,7 +828,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         self.normalize(DF4UNKNOWN,UNKNOWN_TARGETS_WS)
         
 
-    def add_etm_bibliography(self):
+    def add_bibliography(self):
         '''
         Adds
         ----
@@ -823,15 +836,15 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         adds ETM_BIBLIOGRAPHY worksheet to report
         '''
         print('Adding ETM bibliography for ranked targets', flush=True)
-        self.add_etm_refs(ANTAGONIST_TARGETS_WS,self.input_names())
-        self.add_etm_refs(AGONIST_TARGETS_WS,self.input_names())
-        self.add_etm_refs(UNKNOWN_TARGETS_WS,self.input_names())
-        super().add_etm_bibliography()
+        self.refs2report(ANTAGONIST_TARGETS_WS,self.input_names())
+        self.refs2report(AGONIST_TARGETS_WS,self.input_names())
+        self.refs2report(UNKNOWN_TARGETS_WS,self.input_names())
+        super().add_bibliography()
 
 
-    def add_ps_bibliography(self):
+    def add_graph_bibliography(self):
         input_disease_graph = self.Graph.neighborhood(set(self.input_diseases))
-        super().add_ps_bibliography(from_graph=input_disease_graph)
+        super().add_graph_bibliography(from_graph=input_disease_graph)
 
 
     def add_target_annotation(self,_2column='Class'):
@@ -853,7 +866,43 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         input_df = df.from_pd(input_df.sort_values(by='Connectivity',ascending=False))
         input_df._name_ = 'Disease subtypes'
         return input_df
+    
 
+    def paralog_adjustment(self):
+        my_apisession = self._clone_session()
+        my_apisession.entProps = ['Name']
+        my_apisession.relProps = ['Similarity']
+        my_targets = self._targets()
+        for ws_name in [ANTAGONIST_TARGETS_WS, AGONIST_TARGETS_WS]:
+            try:
+                ws = self.report_pandas[ws_name]
+                assert(isinstance(ws,df))
+                name2score = {name:float(score) for name,score in zip(ws['Name'],ws[RANK]) if score} # WEIGHTS Name is skipped
+                ws_target_names = set(ws['Name'].to_list())
+                ws_targets = [x for x in my_targets if x.name() in ws_target_names]
+                ws_paralog_graph = my_apisession.get_network(set(ResnetGraph.dbids(ws_targets)),['Paralog'])
+                assert(isinstance(ws_paralog_graph,ResnetGraph))
+                paralog_counter = 0
+                for p1,p2,rel in ws_paralog_graph.edges.data('relation'):
+                    assert(isinstance(rel,PSRelation))
+                    similarity = float(rel.PropSetToProps[0]['Similarity'][0])
+                    if similarity:
+                        paralog1 = ws_paralog_graph._get_node(p1)
+                        paralog2 = ws_paralog_graph._get_node(p2)
+                        p1name = paralog1.name()
+                        p2name = paralog2.name()
+                        p1score = float(name2score[p1name])
+                        p2score = name2score[p2name]
+                        p1score_adj = p1score + similarity*p2score
+                        p2score_adj = p2score + similarity*p1score
+                        ws.loc[ws['Name'] == p1name, RANK] = p1score_adj
+                        ws.loc[ws['Name'] == p2name, RANK] = p2score_adj
+                        paralog_counter += 2
+                    else:
+                        print('Paralog relation has no similarity score!')
+                print(f'Adjusted scores for {paralog_counter} paralogs in {ws_name} worksheet')
+            except KeyError:
+                continue
 
     def make_report(self):
         start_time = time.time()
@@ -873,7 +922,8 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             self.score_target_semantics()
 
         self.normalize_counts()
-        self.add_ps_bibliography()
+        self.paralog_adjustment()
+        self.add_graph_bibliography()
         self.add_target_annotation()
         self.add2report(self.input_disease_df())
     

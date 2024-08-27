@@ -28,7 +28,7 @@ class PSNetworx(DataModel):
 
 
     @staticmethod
-    def _zeep2psobj(zeep_objects):
+    def _zeep2psobj(zeep_objects)->dict[int,PSObject]:
         '''
         Returns
         -------
@@ -141,26 +141,17 @@ class PSNetworx(DataModel):
                 link = (graph_node.uid(), direction, l[EFFECT])
 
                 if direction == 1:
-                    if len(new_relations[rel_id].Nodes) < 2:
-                        new_relations[rel_id].Nodes[TARGETS] = [link]
-                    else:
-                        new_relations[rel_id].Nodes[TARGETS].append(link)
+                    new_relations[rel_id].Nodes[TARGETS].append(link)
                 else:
-                    if not len(new_relations[rel_id].Nodes):
-                        new_relations[rel_id].Nodes[REGULATORS] = [link]
-                    else:
-                        new_relations[rel_id].Nodes[REGULATORS].append(link)
+                    new_relations[rel_id].Nodes[REGULATORS].append(link) 
+                    # non-directional relations will have only REGULATORS
 
-                try:
-                    new_relations[rel_id].Nodes[TARGETS].sort(key=lambda x:x[0])
-                    # sorting TARGETS by id for speed
-                except KeyError: pass
-
-                try:
-                    new_relations[rel_id].Nodes[REGULATORS].sort(key=lambda x:x[0])
-                    # sorting REGULATORS by id for speed
-                except KeyError: pass
-            
+            # at this point all rels have rel.Nodes[REGULATORS] and some rel.Nodes[TARGETS]
+            for rel_id, rel in new_relations.items():
+                rel.Nodes[REGULATORS].sort(key=lambda x:x[0])
+                if TARGETS in rel.Nodes:
+                    rel.Nodes[TARGETS].sort(key=lambda x:x[0])
+                    
             [rel.refs() for rel in new_relations.values()]
             [new_graph.add_rel(rel,merge=False) for rel in new_relations.values()]
             
@@ -271,7 +262,7 @@ class PSNetworx(DataModel):
 
             oql_query = oql_template.format(ids1=','.join(list(map(str,ids1))), ids2=','.join(list(map(str,ids2))))
             network_iter = self.load_graph_from_oql(oql_query, REL_PROPS,ENTITY_PROPS)
-            accumulate_network = nx.compose(accumulate_network, network_iter)
+            accumulate_network = accumulate_network.compose(network_iter)
 
             splitter = new_splitter
             executiontime = self.execution_time(iter_start)
@@ -382,7 +373,6 @@ class PSNetworx(DataModel):
         -------
         ResnetGraph containing graphs merged from all pathways found with "by_pathway_props" "in_prop_type"
         """
-         
         rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = \'{pathway}\')'
         subgraph_relation_dbids = set()
         loaded_node_ids = set(self.Graph.dbids4nodes())
@@ -390,23 +380,47 @@ class PSNetworx(DataModel):
         for pathway_prop in by_pathway_props:
             rel_q = rel_query.format(propName=in_prop_type,pathway=pathway_prop)
             pathway_id_only_graph = self.load_graph_from_oql(rel_q,[],[],get_links=True,add2self=False)
-            pathway_relation_dbids = set(pathway_id_only_graph.relation_dbids())
-            subgraph_relation_dbids.update(pathway_relation_dbids)
-            new_relation_ids = pathway_relation_dbids.difference(loaded_relation_ids)
-    
-            if new_relation_ids:
-                oql_query = OQL.get_relations_by_props(list(new_relation_ids),['id'])
-                new_relation_graph = self.load_graph_from_oql(oql_query,relprops2load)
-                # new_relation_graph is now fully loaded with desired rel_props
-                # still need desired props for new nodes that did not exist in self.Graph
-                new_nodes_ids = set(new_relation_graph.dbids4nodes()).difference(loaded_node_ids)
+            if pathway_id_only_graph:
+                pathway_relation_dbids = set(pathway_id_only_graph.relation_dbids())
+                subgraph_relation_dbids.update(pathway_relation_dbids)
+                new_relation_ids = pathway_relation_dbids.difference(loaded_relation_ids)
+                if new_relation_ids:
+                    oql_query = OQL.get_relations_by_props(list(new_relation_ids),['id'])
+                    new_relation_graph = self.load_graph_from_oql(oql_query,relprops2load)
+                    # new_relation_graph is now fully loaded with desired rel_props
+                    # still need desired props for new nodes that did not exist in self.Graph
+                    new_nodes_ids = set(new_relation_graph.dbids4nodes()).difference(loaded_node_ids)
+                    if new_nodes_ids:
+                        entity_query = OQL.get_objects(list(new_nodes_ids))
+                        self.load_graph_from_oql(entity_query,[],entprops2load,get_links=False)
+        
+        if subgraph_relation_dbids:
+            my_dbid2relation = self.dbid2relation.copy()
+            # need to make a copy of self.dbid2relation because it is mutating during multithreaded retreival
+            rels4subgraph = [rel for i,rel in my_dbid2relation.items() if i in subgraph_relation_dbids]
+            return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
+            return return_subgraph
+        else:
+            # case if pathway has nodes but no relations
+            node_query = 'SELECT Entity WHERE MemberOf (SELECT Network WHERE {propName} = \'{pathway}\')'
+            subgraph_node_ids = set()
+            for pathway_prop in by_pathway_props:
+                node_q = rel_query.format(propName=in_prop_type,pathway=pathway_prop)
+                nodeid_graph = self.load_graph_from_oql(node_q,[],[],get_links=False)
+                subgraph_node_ids.update(nodeid_graph.dbids4nodes())
+                new_nodes_ids = set().difference(loaded_node_ids)
                 if new_nodes_ids:
                     entity_query = OQL.get_objects(list(new_nodes_ids))
                     self.load_graph_from_oql(entity_query,[],entprops2load,get_links=False)
+
+            if subgraph_node_ids:
+                return_nodes = set(self.Graph.psobj_with_dbids(set(nodeid_graph.dbids4nodes())))
+                return_subgraph = ResnetGraph()
+                return_subgraph.add_psobjs(return_nodes)
+                return return_subgraph
+            else:
+                return ResnetGraph()
+
+
         
-        my_dbid2relation = dict(self.dbid2relation) 
-        # need to make a copy of self.dbid2relation because it is mutating during multithreaded retreival
-        rels4subgraph = [rel for i,rel in my_dbid2relation.items() if i in subgraph_relation_dbids]
-        return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
-        return return_subgraph
     

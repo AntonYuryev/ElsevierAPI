@@ -1,11 +1,13 @@
 from .SemanticSearch import SemanticSearch,len,df,pd
-from .ResnetAPISession import REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES
+from .ResnetAPISession import REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,NO_REL_PROPERTIES
 from .ResnetGraph import REFCOUNT, PSObject, ResnetGraph
 from ..ETM_API.references import PS_SENTENCE_PROPS,EFFECT,PS_BIBLIO_PROPS
 from .PathwayStudioGOQL import OQL
+from .FolderContent import FolderContent,PSPathway
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from ElsevierAPI import  execution_time
 import time,os
+
 
 RANK_SUGGESTED_INDICATIONS = True 
 # in RANK_SUGGESTED_INDICATIONS mode only indications suggested in the lietarure are ranked by amount of supporting evidence
@@ -74,8 +76,8 @@ class Indications4targets(SemanticSearch):
 
     def _input_targets(self):
         """
-        Returns target names as they were entered in configuration.
-        return values may be different from self.target_names()
+        Returns comma-separted string with target names as they appear in database.
+        return values may be different from self.params['target_names']
         """
         return ','.join(self.params['target_names']) if len(self.params['target_names']) < 3 else 'targets'
     
@@ -149,7 +151,7 @@ class Indications4targets(SemanticSearch):
             prop_names_str, prop_values_str = OQL.get_search_strings(['Name'],self.params['target_names'])
             self.add_ent_props(['Class'])
             self.oql4targets = f'SELECT Entity WHERE ({prop_names_str}) = ({prop_values_str}) AND objectType = ({target_objtype_str})'
-            targets_graph = self.process_oql(self.oql4targets)
+            targets_graph = self.process_oql(self.oql4targets,f'Find {prop_values_str}')
             if isinstance(targets_graph,ResnetGraph):
                 self.targets = targets_graph._get_nodes()
                 target_dbids = [x['Id'][0] for x in self.targets]
@@ -183,12 +185,13 @@ class Indications4targets(SemanticSearch):
         """
         if self.set_partner_class():
             SELECTpartners = f'SELECT Entity WHERE Class = {self.partner_class} AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({self.oql4targets})'
-            partners_graph = self.process_oql(SELECTpartners)
+            target_names = ','.join(self.params['target_names'])
+            partners_graph = self.process_oql(SELECTpartners,f'Find {self.partner_class}s for {target_names}')
             if isinstance(partners_graph,ResnetGraph):
                 if self.partner_class == 'Ligand':
                     # additional request to find secreted molecules that are not annotated with class Ligand
                     SELECTsecretedpartners = 'SELECT Entity WHERE "Cell Localization" = Secreted AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
-                    secreted_partners = self.process_oql(SELECTsecretedpartners.format(select_target=self.oql4targets))
+                    secreted_partners = self.process_oql(SELECTsecretedpartners.format(select_target=self.oql4targets),f'Find secreted partners for {target_names}')
                     if isinstance(secreted_partners,ResnetGraph):
                         partners_graph = secreted_partners.compose(partners_graph)
 
@@ -569,7 +572,12 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
                 (new_indication_count, len(self.ProducingCells),t_n))
 
 
-    def pathway_oql(self):
+    def pathway_oql(self)->dict[tuple[str,str,int],str]:
+        '''
+        Return
+        ------
+        {(target_name,partner_name(),partner_dbid):pathway_oql}
+        '''
         #set pathway_name_must_include_target to True if targets have a lot of large curated pathways
         target_oqls = dict()
         pct = '%'
@@ -598,7 +606,7 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
         return oqls
     
 
-    def get_pathway_componets(self):
+    def load_pathways4targets(self):
         #finding downstream pathway components
         oql_queries = self.pathway_oql() # separate oql_query for each target
         merged_pathway = ResnetGraph()
@@ -617,13 +625,57 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
                 merged_pathway = merged_pathway.compose(f.result())
 
         if merged_pathway:
-            targets_regulome = merged_pathway.get_regulome(set(self.targets))
-            self.PathwayComponents = set(targets_regulome._get_nodes())
-            print (f'Found regulome with {len(self.PathwayComponents)} components')
-            return targets_regulome
+            print (f'Found pathway for {self._input_targets()} with {len(merged_pathway)} components')
+            return merged_pathway
         else: 
             print('No curated pathways were found for %s' % self._input_targets())
             return ResnetGraph()
+        
+
+    def  load_pathways_from_folders(self)->ResnetGraph:
+        '''
+        Requires
+        --------
+        self.params['pathway_folders'], self.params['pathways']
+        '''
+        fc = FolderContent(self.APIconfig,what2retrieve=NO_REL_PROPERTIES)
+        my_folders = self.params.get('pathway_folders','')
+        if not my_folders: 
+            raise KeyError
+
+        folder_pathways = list()
+        for folder_name in my_folders:
+            folder_pathways += fc.folder2pspathways(folder_name,with_layout=False)
+
+        if self.params.get('pathways',''):
+            filtered_pathway_list = list()
+            for ps_pathway in folder_pathways:
+                assert(isinstance(ps_pathway, PSPathway))
+                if ps_pathway.name() in self.params['pathways']:
+                    filtered_pathway_list.append(ps_pathway)
+            folder_pathways = filtered_pathway_list
+
+        print(f'Found {len(folder_pathways)} curated pathways in {my_folders}:')
+        [print(p.name()+'\n') for p in folder_pathways]
+
+        # merging pathways 
+        merged_pathway = PSPathway()
+        [merged_pathway.merge_pathway(p) for p in folder_pathways]
+        return merged_pathway.graph
+
+
+    def get_pathway_components(self):
+        try:
+            target_pathways = self.load_pathways_from_folders()
+        except KeyError:
+            target_pathways = self.load_pathways4targets()
+        
+        # non-Protein components make link2concept unresponsive:
+        target_pathways.remove_nodes_by_prop(['CellProcess','Disease','Treatment'])
+        targets_regulome = target_pathways.get_regulome(set(self.targets))
+        self.PathwayComponents = set(targets_regulome._get_nodes())
+        self.PathwayComponents = self.PathwayComponents.difference(self.targets+self.partners)
+        print (f'Found regulome for {self._input_targets()} with {len(self.PathwayComponents)} components')
 
 
     def init_semantic_search(self):
@@ -863,7 +915,7 @@ NeighborOf (SELECT Entity WHERE objectType = ({indication_type})) AND NeighborOf
             new_session.close_connection()
         
         if hasattr(self, 'PathwayComponents'):
-            #references linking target pathway to indication
+            #references linking target pathways to indication
             colname = target_in_header + ' pathway components'
             # cloning session to avoid adding relations to self.Graph
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
@@ -938,7 +990,8 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
         else:
             self.indications4chem_modulators(moa)
 
-        self.get_pathway_componets()
+        self.get_pathway_components()
+
         self.__resolve_conflict_indications()
         print("%d indications for %s were found in %s" % 
         (len(self.__indications()), self._input_targets(), execution_time(start_time)))
@@ -946,13 +999,13 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
         return self.__all_indications()
 
 
-    def add_ps_bibliography(self,suffix='',add_graph=ResnetGraph()):
+    def add_graph_bibliography(self,suffix='',add_graph=ResnetGraph()):
         targets_neighbors = self.Graph.neighborhood(set(self.targets))
         targets_neighbors = self.Graph.neighborhood(set(self.GVs)).compose(targets_neighbors)
         targets_neighbors = self.Graph.neighborhood(set(self.partners)).compose(targets_neighbors)
         if add_graph:
             targets_neighbors = add_graph.compose(targets_neighbors)
-        super().add_ps_bibliography(suffix,from_graph=targets_neighbors)
+        super().add_graph_bibliography(suffix,from_graph=targets_neighbors)
 
 
     def other_effects2df(self):
@@ -1008,26 +1061,28 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications_type})'
             indication_names = [n.name() for n in all_indications]
             df4etm = df.from_dict({'Name':indication_names})
             e = ThreadPoolExecutor(thread_name_prefix='ETMannot')
-            etm_future = e.submit(self.etm_refs2df,df4etm,self.input_names(),'Name',[],len(df4etm))
+            target_names = self.input_names()
+            df4etm._name_ = f'Targets4 {target_names}'
+            etm_future = e.submit(self.bibliography,df4etm,target_names,'Name',[],len(df4etm))
         
         if self.init_semantic_search():
             self.perform_semantic_search()
 
             if self.params['add_bibliography']:
                 indication_etmrefs = etm_future.result()
-                etm_ref_colname = self.etm_ref_column_name('Name',self.input_names())
-                doi_ref_colname = self.etm_doi_column_name('Name',self.input_names())
+                etm_ref_colname = self.refcount_column_name('Name',self.input_names())
+                doi_ref_colname = self.doi_column_name('Name',self.input_names())
                 for worksheet_name in self.__dfnames_map().values():
                     if worksheet_name in self.report_pandas.keys():
                         self.report_pandas[worksheet_name] = self.report_pandas[worksheet_name].merge_df(indication_etmrefs,how='left',on='Name',columns=[etm_ref_colname,doi_ref_colname])
-                self.add_etm_bibliography()
-                self.add_ps_bibliography()
+                self.add_bibliography()
+                self.add_graph_bibliography()
 
             print(f'{self.report_path()} repurposing is done in {execution_time(start_time)}')
         else:
             print('Failed to initialize semantic search for TargetIndications')
 
-
+            
     def write_report(self):
         report = pd.ExcelWriter(self.report_path(), engine='xlsxwriter')
         ordered_worksheets = list()

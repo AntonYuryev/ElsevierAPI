@@ -1,5 +1,4 @@
-from .ZeepToNetworkx import PSObject, PSRelation
-from .ResnetGraph import ResnetGraph
+from .ResnetGraph import ResnetGraph, PSObject, PSRelation
 from .. import execution_time
 from .NetworkxObjects import PS_REFIID_TYPES
 import logging
@@ -234,7 +233,7 @@ class nx2neo4j:
         import_start = time.time()
         resnet.load_references()
         if resnet_size > 50000:
-            self.load_nodes(resnet)   
+            self.load_nodes(resnet)
             self.load_relations_multithread(resnet)
         else:
             self.load_nodes_1by1(resnet)

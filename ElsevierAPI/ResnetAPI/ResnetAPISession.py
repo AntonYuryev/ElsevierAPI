@@ -1,11 +1,11 @@
 import time, math, os, glob, json, threading
 import networkx as nx
-from math import ceil
 from zeep import exceptions
 from xml.dom import minidom
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
+from collections import defaultdict
 
 from .ZeepToNetworkx import PSNetworx, len
 from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS
@@ -55,8 +55,8 @@ class APISession(PSNetworx):
     dump_oql_queries = False
     max_threads4ontology = 4
     # 4 threads perform a bit faster than 8 threads 
-    # 288 disease parents out of 288 were processed in 0:19:51.732684 by 8 threads
-    # 288 disease parents out of 288 were processed in 0:18:52.715937 by 4 threads
+    # 288 disease parents in 288 were processed in 0:19:51.732684 by 8 threads
+    # 288 disease parents in 288 were processed in 0:18:52.715937 by 4 threads
     
 
 ######################################  CONFIGURATION  ######################################
@@ -64,7 +64,8 @@ class APISession(PSNetworx):
         '''
         Input
         -----
-        APIconfig = args[0]\nwhat2retrieve - defaults NO_REL_PROPERTIES, other options -\n
+        APIconfig = args[0], defaults to "ElsevierAPI/APIconfig.json"\n
+        what2retrieve - defaults NO_REL_PROPERTIES, other options -\n
         [DATABASE_REFCOUNT_ONLY,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,SNIPPET_PROPERTIES,ONLY_REL_PROPERTIES,ALL_PROPERTIES]
         no_mess - default True, if False your script becomes more verbose
         connect2server - default True, set to False to run script using data in __pscache__ files instead of database
@@ -208,10 +209,12 @@ class APISession(PSNetworx):
 
     def add_rel_props(self, add_props:list):
         self.relProps = self.relProps+[i for i in add_props if i not in self.relProps]
-        if set(PS_SENTENCE_PROPS).intersection(add_props):
+        my_sent_props = set(PS_SENTENCE_PROPS).intersection(add_props)
+        if my_sent_props:
             ms = 5
             if self.max_sessions > ms:
-                print(f'Decreasing multithreading to {ms} to retreive sentence properties')
+                print(f'{type(self).__name__} decreases multithreading to {ms} \
+to retreive {my_sent_props} properties')
                 self.max_sessions = ms
             if 'TextRef' not in self.relProps:
                 self.relProps.append('TextRef')
@@ -227,7 +230,7 @@ class APISession(PSNetworx):
         self.DumpFiles.append(dump_fname)
 
 #########################  MULTITHREADED PROCESSING, RETRIEVAL   ##################################
-    def __init_session(self, first_iteration=0,max_result=0):
+    def __init_session(self, first_iteration=0,max_result=0, request_name=''):
         '''
         Return
         ------
@@ -249,7 +252,7 @@ class APISession(PSNetworx):
             return self.__nextpage__(self.ResultPos)
         else:
             if not max_result:  # to suppress messages from load_children4
-                print(f'query found {self.ResultSize} results')
+                print(f'query "{request_name}" found {self.ResultSize} results')
 
         if not isinstance(zeep_data, type(None)):
             if self.getLinks:
@@ -312,7 +315,7 @@ class APISession(PSNetworx):
         return entire_graph
 
 
-    def process_oql(self,oql_query:str,request_name='',max_result=0) -> ResnetGraph|int:
+    def process_oql(self,oql_query:str,request_name='',max_result=0, debug=False) -> ResnetGraph|int:
         '''
         Return
         ------
@@ -322,7 +325,8 @@ class APISession(PSNetworx):
         self.__replace_goql(oql_query)
         start_time = time.time()
         return_type = 'relations' if self.getLinks else 'entities'
-        entire_graph = self.__init_session(max_result=max_result)
+        entire_graph = self.__init_session(max_result=max_result,request_name=request_name)
+        if debug: return entire_graph
 
         if max_result and self.ResultSize > max_result:
             return self.ResultSize
@@ -349,7 +353,6 @@ class APISession(PSNetworx):
         self.ResultPos = 0
         self.ResultSize = 0
         self.__IsOn1st_page = True
-        self.clone = False
         return entire_graph
 
 
@@ -461,7 +464,7 @@ class APISession(PSNetworx):
             for i in range(0,len(dbids_list), iteration_size):
                 iter_dbids = dbids_list[i:i+iteration_size]
                 oql_query_with_dbids = my_oql.format(ids=join_list(iter_dbids))
-                iter_name = f'Iteration #{int(i/iteration_size)+1} out of {number_of_iterations} for "{request_name}" retrieving {len(iter_dbids)} ids'
+                iter_name = f'Iteration #{int(i/iteration_size)+1} in {number_of_iterations} for "{request_name}" retrieving {len(iter_dbids)} ids'
                 if self.dump_oql_queries:
                     self.my_oql_queries.append((oql_query_with_dbids,iter_name))   
                 future_session = self._clone_session()
@@ -497,7 +500,7 @@ class APISession(PSNetworx):
         function does not add retrieved graph to self.Graph\n
         and must be used togeter with APISession::__annotate_dbid_graph__ \n
         '''
-        req_name = 'Retrieving database identifiers for '+request_name
+        req_name = 'Retrieve DB identifiers 4 "'+request_name+'"'
         my_ent_props = list(self.entProps)
         my_rel_props = list(self.relProps)
 
@@ -553,14 +556,14 @@ class APISession(PSNetworx):
                 iter_oql_query = id_oql.format(ids1=join_list(iter_ids1),ids2=hint)
                 iter_graph = self.__iterate__(iter_oql_query,set(ids2),'iteration2',iteration2step,download)
                 entire_graph = entire_graph.compose(iter_graph)
-                print(f'Processed {min([i1+iteration1step,len(ids1)])} out of {len(ids1)} identifiers against {len(ids2)} identifiers')
+                print(f'Processed {min([i1+iteration1step,len(ids1)])} in {len(ids1)} identifiers against {len(ids2)} identifiers')
         else:
             for i2 in range(0,len(ids2), iteration1step):
                 iter_ids2 = ids2[i2:i2+iteration1step]
                 iter_oql_query = id_oql.format(ids1=hint,ids2=join_list(iter_ids2))
                 iter_graph = self.__iterate__(iter_oql_query,set(ids1),'iteration2',iteration2step,download)
                 entire_graph = entire_graph.compose(iter_graph)
-                print(f'Processed {min([i2+iteration1step,len(ids2)])} out of {len(ids2)} identifiers against {len(ids1)} identifiers')
+                print(f'Processed {min([i2+iteration1step,len(ids2)])} in {len(ids2)} identifiers against {len(ids1)} identifiers')
             
         return entire_graph
     
@@ -603,8 +606,8 @@ class APISession(PSNetworx):
         dbid_only_graph = self.__iterate_oql__(oql_query,search_values,request_name,step)
         self.close_connection()
         if dbid_only_graph:
-            annoated_graph = self.__annotate_dbid_graph__(dbid_only_graph,use_cache,request_name,step)
-            return annoated_graph
+            annotated_graph = self.__annotate_dbid_graph__(dbid_only_graph,use_cache,request_name,step)
+            return annotated_graph
         else:
             return ResnetGraph()
    
@@ -665,11 +668,9 @@ class APISession(PSNetworx):
         return self.__iterate_oqls__(oql_queries)
 
 
-
     def clear(self):
         self.Graph.clear_resnetgraph()
         self.dbid2relation.clear()
-        #self.parent_dbid2children.clear()
 
 
     def flush_dump_files(self):
@@ -792,7 +793,7 @@ class APISession(PSNetworx):
                     uq_list2 = split[half:]
                     if len(splitter) <= number_step_iterations: # it is faster to download large splits individually
                         self.__iterate2__(oql_query,list(uq_list1),list(uq_list2),
-                        f'Download network: split #{i+1} out of {len(splitter)} in iteration #{s} out of {number_of_splits}',
+                        f'Download network: split #{i+1} in {len(splitter)} in iteration #{s} out of {number_of_splits}',
                         download=True,step=step)
                     else:
                         ids1.update(uq_list1)
@@ -869,74 +870,68 @@ class APISession(PSNetworx):
         req_name = 'Find members of groups: ' + ','.join(group_names)
         graph2return = self.process_oql(oql_query, request_name=req_name)
         if isinstance(graph2return,ResnetGraph):
-            if graph2return.number_of_nodes() > 0:
-                print('%s groups are empty or do not exist in databse' % str(group_names))
+            group_size = graph2return.number_of_nodes()
+            if group_size:
+                print(f'loaded {group_size} members from {group_names}')
             else:
-                print('loaded %d members from %s' % (graph2return.number_of_nodes(),str(group_names)))
+                print(f'{group_names} groups are empty or do not exist in database')
         return graph2return
     
 
     def add_group_annotation(self,group_names:list,_2graph=ResnetGraph()):
-        urns2value = PSObject()
+        urns2values = PSObject()
         for group_name in group_names:
             group_graph = self.get_group_members([group_name])
             if isinstance(group_graph,ResnetGraph):
                 group_members = group_graph._get_nodes()
-                [urns2value.append_property(o.urn(),group_name) for o in group_members]
+                [urns2values.append_property(o.urn(),group_name) for o in group_members]
 
-
-        if _2graph:
-            _2graph.set_node_annotation(urns2value,BELONGS2GROUPS)
+        if _2graph: # my_graph = _2graph if _2graph else self.Graph does not work here
+            _2graph.set_node_annotation(urns2values,BELONGS2GROUPS)
         else:
-            self.Graph.set_node_annotation(urns2value,BELONGS2GROUPS)
-        # my_graph = _2graph if _2graph else self.Graph does not work here
+            self.Graph.set_node_annotation(urns2values,BELONGS2GROUPS)
         return
 
 
-    def map_props2objs(self,using_values:list,in_properties:list,case_insensitive=False):
+    def map_props2objs(self,using_values:list,in_properties:list[str],
+                       case_insensitive=False)->tuple[dict[str,list[PSObject]],dict[int,list[str]]]:
         """
         Returns
         -------
         propval2objs = {prop_value:[PSObject]}\n
         objid2propval = {node_id:[prop_values]},\n  where prop_value is from 'using_values'
         """
-        propval2objs,objid2propval = self.Graph.props2obj_dict(using_values, in_properties,case_insensitive)
+        propval2objs,uid2propval = self.Graph.props2obj_dict(using_values, in_properties,case_insensitive)
         need_db_mapping = set(using_values).difference(propval2objs.keys())
 
         current_ent_props = self.entProps
-        self.entProps = in_properties
+        self.add_ent_props(in_properties)
 
         step = 1000
         iteration_counter = math.ceil(len(need_db_mapping) / step)
         print('Will use %d %s identifiers to find entities in %d iterations' % 
              (len(need_db_mapping), ','.join(in_properties), iteration_counter))
 
-        for i in range(0, len(need_db_mapping), step):
-            last = i + step
-            propval_chunk = using_values[i:last]
-           # query_node = OQL.get_entities_by_props(propval_chunk,in_properties,map2types)
-            prop_names_str, prop_values = OQL.get_search_strings(in_properties,propval_chunk)
-            query_node = f'''SELECT Entity WHERE ({prop_names_str}) = ({prop_values})'''
-            request_name = 'Mapping {start}-{end} values out of {total}'
-            end = min(last,len(using_values))
-            request_name = request_name.format(start=str(i), end=str(end), total = len(using_values))
-            self.process_oql(query_node,request_name)
+        prop_name_str,_ = OQL.get_search_strings(in_properties,using_values)
+        oql = f'SELECT Entity WHERE ({prop_name_str})' + ' = ({props})'
+        request_name = f'Mapping {len(using_values)} {prop_name_str}'
+        mapping_graph = self.iterate_oql(oql,set(using_values),request_name=request_name)
 
-        p2obj,id2p = self.Graph.props2obj_dict(list(need_db_mapping),in_properties,case_insensitive)
+        p2obj,id2p = mapping_graph.props2obj_dict(list(need_db_mapping),in_properties,case_insensitive)
         propval2objs.update(p2obj)
         for id,prop_vals in id2p.items():
             try:
-                mapped_values = set(objid2propval[id])
+                mapped_values = set(uid2propval[id])
                 mapped_values.update([str(x).lower() for x in prop_vals])
-                objid2propval[id] = list(mapped_values)
+                uid2propval[id] = list(mapped_values)
             except KeyError:
-                objid2propval[id] = prop_vals
+                uid2propval[id] = prop_vals
 
         print("%d entities were mapped to %d attributes in %s properties" % 
-                (len(objid2propval), len(using_values),','.join(in_properties)))
+                (len(uid2propval), len(using_values),','.join(in_properties)))
 
         self.entProps = current_ent_props
-        return propval2objs, objid2propval
+        return propval2objs, uid2propval
 
 ################################# ONTOLOGY  ONTOLOGY ############################################
     def __load_children(self,parent:PSObject,min_connectivity=0,depth=0,max_childs=0)->tuple[PSObject,list[PSObject]]:
@@ -971,13 +966,14 @@ class APISession(PSNetworx):
             return parent,[]
         
 
-    def load_children4(self,parents:list,add2self=True,min_connectivity=0,depth=0,max_childs=0,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
+    def load_children4(self,parents:list[PSObject],add2self=True,min_connectivity=0,depth=0,
+                       max_childs=0,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
         '''
         Input
         -----
-        parents - [PSObject]\n
+        if "parents" is empty will use all nodes from self.Graph
         depth - ontology depth to get children from. If depth=0, all children from all depths are returned\n
-        max_childs - mximum number of children allowed in each parent.  Use it as cutoff for high level ontology concepts
+        max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
 
         Return
         ------
@@ -1003,8 +999,8 @@ class APISession(PSNetworx):
         # for Protein+FunctionalCLass+Complex optimal max_threads = 50 
         thread_name_prefix = f'Childs 4 {len(annotate_parents)} prnts in {max_threads} thrds-'
         # 4 threads perform a bit faster than 8 threads 
-        # 288 disease parents out of 288 were processed in 0:19:51.732684 by 8 threads
-        # 288 disease parents out of 288 were processed in 0:18:52.715937 by 4 threads
+        # 288 in 288 disease parents were processed in 0:19:51.732684 by 8 threads
+        # 288 in 288 disease parents were processed in 0:18:52.715937 by 4 threads
         max_threaded_time = 0
         need_children = list()
         child_counter = set()
@@ -1042,7 +1038,7 @@ class APISession(PSNetworx):
                             print(f'Longest {max_threads}-threaded time {"{}".format(str(timedelta(seconds=max_threaded_time)))} \
 is close to Apache default 5 minutes transaction timeout !!!')
                     if not self.no_mess:
-                        print (f'{p+1} parents out of {len(annotate_parents)} were processed in {self.execution_time(process_start)[0]}')
+                        print (f'{p+1} {len(annotate_parents)} parents were processed in {self.execution_time(process_start)[0]}')
                     need_children.clear()
         
         print(f'{len(child_counter)} children for {len(annotate_parents)} parent entities were found in database \
@@ -1112,7 +1108,7 @@ in {self.execution_time(process_start)[0]}')
         return my_session.Graph.ontology_graph()
 
 
-    def load_ontology(self, parent_ontology_groups:list):
+    def load_ontology(self, parent_ontology_groups:list)->defaultdict[str,list[str]]:
         """
         Input
         -----
@@ -1122,36 +1118,36 @@ in {self.execution_time(process_start)[0]}')
         ------
         self.child2parent = {child_name:[ontology_parent_names]}
         """
-        self.child2parent = dict()
+        self.child2parent = defaultdict(list)
         self.add_ent_props(['Name'])
         for group_name in parent_ontology_groups:
-            childs = self.child_graph([group_name],['Name'],include_parents=False)
+            self.child_graph([group_name],['Name'],include_parents=False)
             for id, child in self.Graph.nodes(data=True):
                 child_name = child['Name'][0]
-                try:
-                    self.child2parent[child_name].append(group_name)
-                except KeyError:
-                    self.child2parent[child_name] = [group_name]
+                self.child2parent[child_name].append(group_name)
+
+        return self.child2parent
+ 
 
 
-    def ontopaths2(self,name2childs:dict, ontology_depth:int)->dict[str,str]:
+    def ontopaths2(self,parent2childs:dict[str,list[PSObject]], ontology_depth:int)->dict[str,str]:
         '''
         Input
         -----
-        name2childs = {name:[PSObject]}, where name is the concept name with ontology children in [PSObject]
-        name2childs is generated by SemanticSearch class
+        name2childs = {name:[PSObject]}, where name = parent concept with ontology children listed in [PSObject]\n
+        name2childs is generated by SemanticSearch:entities() 
 
         Return
         ------
-        name2paths = {name:[path]}, where path has format 
+        {name:paths}, where paths has format: path1<EOF>path2<EOF>...
         '''
-        list_of_objlists = list(name2childs.values())
+        list_of_objlists = list(parent2childs.values())
         children = PSObject.unpack(list_of_objlists)
         ontology_graph = self.__ontology_graph(children,ontology_depth)
 
         name2paths = dict()
         path_sep = '->'
-        for concept_name, childs in name2childs.items():
+        for concept_name, childs in parent2childs.items():
             for child in childs:
                 all_parent_paths = ontology_graph.all_paths_from(child)
                 for path in all_parent_paths:
@@ -1190,75 +1186,135 @@ in {self.execution_time(process_start)[0]}')
 
 
     @staticmethod
-    def filename4(folder_or_object_named:str):
-        new_str = list(folder_or_object_named)
-        for i in range(0, len(new_str)):
-            if new_str[i] in {'>', '<', '|','/'}:
-                new_str[i] = '-'
-            if new_str[i] in {':'}:
-                new_str[i] = '_'
-        return "".join(new_str)
+    def filename4(name: str) -> str:
+        """
+        Normalizes a filename by replacing illegal characters.
+
+        Args:
+            name: The filename to normalize.
+
+        Returns:
+            The normalized filename with illegal characters replaced.
+        """
+        replacements = {'>': '-', '<': '-', '|': '-', '/': '-', ':': '_'}
+        return "".join(replacements.get(char, char) for char in name)
 
 
-    def __find_folder(self, folder_name:str, in_parent_folder=''):
-        folder_name_ = self.filename4(folder_name)
-        parent_name = self.filename4(in_parent_folder)
-        longest_path = str()
-        for dirpath, dirnames, filenames in os.walk(os.path.abspath(self.data_dir)):
-            for dirname in dirnames:
-                if dirname == folder_name_:
-                    if len(dirpath+dirname)+1 > len(longest_path):
-                        if in_parent_folder:
-                            if parent_name in dirpath:
-                                longest_path = dirpath+'/'+dirname +'/'
-                        else:
-                            longest_path = dirpath+'/'+dirname +'/'
+    def __find_folder(self,folder_name:str,in_parent_folder='',root_dump_folder=''):
+        '''
+        Input:
+            if self.data_dir has several dump directories with the same subdirectory names 
+            use root_folder to direct search in specific subdirectory in self.data_dir
+        Return:
+            self.data_dir string if path does not exist
+        '''
+        folder_legal_name = self.filename4(folder_name)
+        parent_folder_legal_name = self.filename4(in_parent_folder)
+        root_folder_legal_name = self.filename4(root_dump_folder)
 
+        search_dir = os.path.join(self.data_dir,root_folder_legal_name)    
+        longest_path = search_dir
+        for dirpath, dirnames,_ in os.walk(os.path.abspath(search_dir)):
+            if folder_legal_name in dirnames and (not in_parent_folder or parent_folder_legal_name in dirpath):
+                path = os.path.join(dirpath, folder_legal_name)
+                if len(path) > len(longest_path):
+                    longest_path = path
         return longest_path
+   
 
-    
-    def dump_path(self, of_folder:str, in2parent_folder=''):
-        my_dir = self.__find_folder(of_folder,in2parent_folder)
-        if not my_dir:
-            if in2parent_folder:
-                parent_path = self.__find_folder(in2parent_folder)
-                if parent_path:
-                    my_dir = parent_path+self.filename4(of_folder)+'/'
-                else:
-                    my_dir = self.data_dir+self.filename4(in2parent_folder)+'/'+self.filename4(of_folder)+'/'
-            else:
-                my_dir = self.data_dir+self.filename4(of_folder)+'/'
-            try: 
-               os.mkdir(my_dir)
-            except FileExistsError: 
-                pass
-        return my_dir
+    def dump_path(self,folder_name:str, parent_folder='',root_dump_folder='') -> str:
+        """Creates a directory, optionally within a parent folder.
+
+        Args:
+            folder_name: The database name of the folder to create.
+            parent_folder: (Optional) The name of the parent folder.
+
+        Returns:
+            The full path of the created directory.
+        """
+        if parent_folder:
+            my_root = '' if parent_folder == root_dump_folder else root_dump_folder
+            parent_path = self.__find_folder(parent_folder,'',my_root)
+        else:
+            root_dump_folder_legal_name = self.filename4(root_dump_folder)
+            parent_path = os.path.join(self.data_dir,root_dump_folder_legal_name)
+
+        if folder_name != root_dump_folder:
+            folder_legal_name = self.filename4(folder_name)
+            full_path = os.path.join(parent_path, folder_legal_name)
+        else:
+           full_path = parent_path
+
+        try:
+            os.makedirs(full_path, exist_ok=True)  # Create directory, including parents if needed
+            # If the directory already exists, the function will do nothing and will not raise an error. 
+            # It will only create the directory and any missing parent directories if they don't already exist.
+        except OSError as e: # Handle potential errors (e.g., permissions issues)
+            pass  # Or raise a more specific exception
+
+        return full_path
 
 
     def __dump_base_name(self,folder_name:str):
         return 'content of '+ APISession.filename4(folder_name)+'_'
 
 
-    def __dumpfiles(self, in_folder:str,in2parent_folder='', with_extension='rnef'):
-        folder_path = self.dump_path(in_folder,in2parent_folder)
-        listing = glob.glob(folder_path+'*.' + with_extension)
-        return folder_path, self.__dump_base_name(in_folder), len(listing)
+    def __dumpfiles(self, in_folder:str,in2parent_folder='', root_folder='', with_extension='rnef'):
+        folder_path = self.dump_path(in_folder,in2parent_folder,root_folder)
+        base_name = self.__dump_base_name(in_folder)
+        listing = glob.glob(os.path.join(folder_path, base_name+'*.' + with_extension))
+        return folder_path, base_name, len(listing)
 
 
-    def __make_dumpfile_name(self,of_folder:str,in2parent_folder='',new=False,filecount=0):
+    @staticmethod
+    def __dumpfile_has_closing_batch_tag(dump_file:str):
+        try:
+            with open(dump_file, 'rb') as f:  # Open in binary mode to avoid potential line ending issues
+                f.seek(-2, 2)  # Seek to the second-to-last byte (to handle newline variations)
+                while f.read(1) != b'\n':  # Move backward until a newline is found
+                    f.seek(-2, 1) 
+                last_line = f.readline().decode('utf-8').strip()  # Read and decode the last line
+                return "</batch>" == last_line  # Check if "</batch>" is present
+        except FileNotFoundError:
+            return False # directory has no RNEF 
+
+
+    def was_downloaded(self,folder_name:str,in_parent_folder='',root_folder=''):
+        parent_folder = '' if folder_name == in_parent_folder else in_parent_folder
+        last_dump_file = self.__make_dumpfile_path(folder_name,parent_folder,root_folder)
+        return APISession.__dumpfile_has_closing_batch_tag(last_dump_file)
+
+
+    def __make_dumpfile_path(self,of_folder:str,in2parent_folder='',root_folder='',new=False,start_index=0):
         '''
         Input
         -----
         new - forces to return name for new dumpfile
         filecount - if not zero forces to create dump file with index = filecount+1
         '''
-        folder_path,of_folder_base_name,file_index = self.__dumpfiles(of_folder,in2parent_folder)
-        if filecount:
-            file_index = filecount
+        folder_path,of_folder_base_name,file_index = self.__dumpfiles(of_folder,in2parent_folder,root_folder,'rnef')
+        if start_index:
+            file_index = start_index
         if new:
             file_index += 1
-    
-        return folder_path + of_folder_base_name+str(file_index)+'.rnef'
+        else:
+            last_dumpfile = os.path.join(folder_path,of_folder_base_name+str(file_index)+'.rnef')
+            if APISession.__dumpfile_has_closing_batch_tag(last_dumpfile):
+                file_index += 1
+
+        return os.path.join(folder_path,of_folder_base_name+str(file_index)+'.rnef')
+
+
+    def close_rnef_dump(self,for_folder='',in_parent_folder='',root_folder='',check_last_tag=False):
+        parent_folder = '' if for_folder == in_parent_folder else in_parent_folder
+        last_dump_file = self.__make_dumpfile_path(for_folder,parent_folder,root_folder)
+        if os.path.exists(last_dump_file):
+            if check_last_tag:
+                if APISession.__dumpfile_has_closing_batch_tag(last_dump_file):
+                    return
+            f = open(last_dump_file,'a',encoding='utf-8')
+            f.write('</batch>')
+            f.close()
 
 
     def _2rnefs(self,graph=ResnetGraph(),add_rel_props:dict={},add_pathway_props:dict={}):
@@ -1273,21 +1329,20 @@ in {self.execution_time(process_start)[0]}')
         return my_graph.to_rnefstr(self.entProps,rel_props,add_rel_props,add_pathway_props)
     
 
-    def rnefs2dump(self,rnef_xml:str,to_folder='',in2parent_folder='',can_close=True, lock=None):
+    def rnefs2dump(self,rnef_xml:str,to_folder='',in2parent_folder='',root_folder='',
+        can_close=True,lock=None):
         '''
+        # set can_close=False to continue dumping into last dump file
         Dumps
         -----
         "rnef_xml" string into 'to_folder' inside 'in2parent_folder' located in "self.data_dir"
         if size of dump file exceeds "max_rnef_size", "rnef_xml" is splitted into several RNEF files\n
-        dump RNEF files are named as: 'content of to_folder#',
-        where # - dump file number
-        keep can_close = False to continue dumping into one file
+        dump RNEF files are named as: 'content of to_folder#', where # - dump file number
         '''
-        if lock is None:
-            lock = threading.Lock()
+        if lock is None: lock = threading.Lock()
 
         with lock:
-            write2 = self.__make_dumpfile_name(to_folder,in2parent_folder)
+            write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder)
             if Path(write2).exists():
                 file_size = os.path.getsize(write2)
                 if file_size < self.max_rnef_size:
@@ -1296,18 +1351,17 @@ in {self.execution_time(process_start)[0]}')
                         f.flush()
                         if os.path.getsize(write2) > self.max_rnef_size and can_close:
                             # need to create new dump file ASAP for next thread to write into it
-                            new_write2 = self.__make_dumpfile_name(to_folder,in2parent_folder,new=True)
+                            new_write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
                             with open(new_write2,'w',encoding='utf-8') as new_f:
                                 new_f.write('<batch>\n')
                                 new_f.flush()
-
                             f.write('</batch>')
                         f.flush()
                 else:
                     # file_size >= self.max_rnef_size
                     if can_close:
                         # need to create new dump file ASAP for next thread to write into it
-                        new_write2 = self.__make_dumpfile_name(to_folder,in2parent_folder,new=True)
+                        new_write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
                         with open(new_write2,'w',encoding='utf-8') as new_f:
                             new_f.write('<batch>\n')
                             new_f.write(rnef_xml)
@@ -1321,14 +1375,14 @@ in {self.execution_time(process_start)[0]}')
                             f.write(rnef_xml)
                             f.flush()                        
             else:
-                write2 = self.__make_dumpfile_name(to_folder,in2parent_folder,new=True)
+                write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
                 with open(write2,'w',encoding='utf-8') as new_f:
                     new_f.write('<batch>\n')
                     new_f.write(rnef_xml)
-                    new_f.flush()
+                    new_f.flush() 
 
 
-    def _dump2rnef(self,graph=ResnetGraph(),to_folder='',in_parent_folder='',can_close=True,lock=None):
+    def _dump2rnef(self,graph=ResnetGraph(),to_folder='',in_parent_folder='',root_folder='',can_close=True,lock=None):
         '''
         Input
         -----
@@ -1359,7 +1413,7 @@ in {self.execution_time(process_start)[0]}')
                     rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
                     rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
                     # dumps section
-                    self.rnefs2dump(rnef_str,to_folder,in_parent_folder,can_close,lock)
+                    self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
                     resnet_section.clear_resnetgraph()
                     section_rels.clear()
         
@@ -1367,27 +1421,18 @@ in {self.execution_time(process_start)[0]}')
             resnet_section = my_graph.subgraph_by_rels(list(section_rels))
             rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
             rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
-            self.rnefs2dump(rnef_str,to_folder,in_parent_folder,can_close,lock)
+            self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
 
             if my_graph.number_of_edges() == 0:
                 rnef_str = my_graph.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
                 rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
-                self.rnefs2dump(rnef_str,to_folder,in_parent_folder,can_close,lock)
+                self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
 
             if not self.no_mess:
                 print('RNEF dump of "%s" graph into %s folder was done in %s' % 
                     (my_graph.name,to_folder,self.execution_time(dump_start)[0]),flush=True)
                 
         return time.time()-dump_start
-
-
-    def close_rnef_dump(self,for_folder='',in_parent_folder=''):
-        parent_folder = '' if for_folder == in_parent_folder else in_parent_folder
-        last_dump_file = self.__make_dumpfile_name(for_folder,parent_folder)
-        if os.path.exists(last_dump_file):
-            f = open(last_dump_file,'a',encoding='utf-8')
-            f.write('</batch>')
-            f.close()
 
 
     def download_oql(self,oql_query,request_name:str,resume_page=0,threads=25,close_batch=True,lock=None):
@@ -1427,7 +1472,7 @@ in {self.execution_time(process_start)[0]}')
                         reference_counter += page_ref_count
                         remaining_iterations = number_of_iterations-i-threads
                         exec_time, remaining_time = self.execution_time(start_time,remaining_iterations,number_of_iterations) 
-                        print("With %d in %d iterations, %d %s out of %d results with %d references retrieved in %s using %d threads" % 
+                        print("With %d in %d iterations, %d %s in %d results with %d references retrieved in %s using %d threads" % 
                         (i+threads,number_of_iterations,self.ResultPos,return_type,result_size,reference_counter,exec_time,threads))
                         if i < number_of_iterations:
                             print(f'Estimated remaining retrieval time: {remaining_time}')
@@ -1444,7 +1489,6 @@ in {self.execution_time(process_start)[0]}')
             self.ResultPos = int()
             self.ResultSize = int()
             self.__IsOn1st_page = True
-            self.clone = False
             return ResnetGraph() # fake return for consistency with process_oql
         else:
            return ResnetGraph() # fake return for consistency with process_oql 
@@ -1586,7 +1630,7 @@ in {self.execution_time(process_start)[0]}')
             chunk = gv_dbids[i: i+1000]
             oql_query = OQL.expand_entity(PropertyValues=chunk, SearchByProperties=['id'], 
                                 expand_by_rel_types=['GeneticChange'],expand2neighbors=['Protein'])
-            request_name = f'{str(int(i/1000)+1)} iteration out of {str(number_of_iterations)} to find genes linked to GVs'
+            request_name = f'{str(int(i/1000)+1)} iteration in {str(number_of_iterations)} to find genes linked to GVs'
             gvs = self.process_oql(oql_query,request_name)
             if isinstance(gvs,ResnetGraph):
                 prot2gvs_graph.add_graph(gvs)
@@ -1701,8 +1745,7 @@ in {self.execution_time(process_start)[0]}')
                 new_g = new_session.iterate_oql(oql,urns,use_cache=False,request_name=req_name)
                 new_g.load_references()
                 my_graph.add_graph(new_g)
-                remaining_iteration = number_of_iterations-iteration_counter
-                time_passed, remaining_time = self.execution_time(start,remaining_iteration,number_of_iterations)
+                time_passed, remaining_time = self.execution_time(start,number_of_iterations-i,number_of_iterations)
                 print(f'Retrieved {i+chunk_len} entities out of {len(objs)} in {time_passed}')
                 print(f'Estimated remaining update time: {remaining_time}')
 
@@ -1717,7 +1760,7 @@ in {self.execution_time(process_start)[0]}')
             iteration_counter = 0
             for i in range(0,len(urns),chunk_len):
                 update_len = min(len(urns)-i,chunk_len)
-                req_name = f'Updating {update_len} out of {len(objs)} Relations with {len(with_rel_props)} properties'
+                req_name = f'Updating {update_len} in {len(objs)} Relations with {len(with_rel_props)} properties'
                 new_g = new_session.iterate_oql(oql,set(urns[i:i+chunk_len]),use_cache=False,request_name=req_name)
                 new_g.load_references()
                 #new_g_rels = new_g.psrels_with()
@@ -1743,7 +1786,7 @@ in {self.execution_time(process_start)[0]}')
 
     def scopusCI(self):
         references = self.Graph.load_references()
-        refs_with_ci, no_ci_refs = loadCI(self.APIconfig,list(references))
+        refs_with_ci, no_ci_refs = loadCI(self.APIconfig,references)
 
         graph_with_ci = ResnetGraph()
         graph_with_ci.add_psobjs(set(self.Graph._get_nodes()))
@@ -1780,39 +1823,45 @@ in {self.execution_time(process_start)[0]}')
         return graph.remap_graph(props2objs,map_by)
     
 
-    def get_ppi(self, interactors_dbids:set):
+    def get_ppi(self, interactors:set[PSObject], fromRNEFs:list=[]):
         '''
         Return
         ------
         ResnetGraph with relation types: Binding, DirectRegulation, ProtModification 
         '''
-        splitter = list() #holds lists of ids splits 
-        splitter.append(list(interactors_dbids))
-        number_of_splits = int(math.log2(len(interactors_dbids)))
         ppi_keeper = ResnetGraph()
-        for s in range(1, number_of_splits):
-            new_splitter = list()
-            half = int(len(splitter[0]) / 2)
-            with ThreadPoolExecutor(max_workers=number_of_splits,thread_name_prefix='Retrieve PPI') as e:
-                futures = list()
-                job_name = f'split {s} in {number_of_splits}'
-                for split in splitter:
-                    uq_list1 = split[0:half]
-                    uq_list2 = split[half:]
-                    oql_query = "SELECT Relation WHERE objectType = (Binding, DirectRegulation, ProtModification) "
-                    oql_query += "AND NeighborOf (SELECT Entity WHERE id = ({ids1})) "
-                    oql_query += "AND NeighborOf (SELECT Entity WHERE id = ({ids2}))"
-                    new_session = self._clone_session() # need to clone since self.dbid2relation mutates
-                    new_session.add2self = False
-                    futures.append(e.submit(new_session.iterate_oql2,oql_query,set(uq_list1),set(uq_list2),request_name=job_name))
-                    new_splitter.append(uq_list1)
-                    new_splitter.append(uq_list2)
-                splitter = new_splitter
-                s += 1
+        if fromRNEFs:
+            for fname in fromRNEFs:
+                ppi_keeper = ppi_keeper.compose(ResnetGraph.fromRNEF(fname,only4objs=interactors))
+        else:
+            interactors_dbids = ResnetGraph.dbids(list(interactors))
+            splitter = list() #holds lists of ids splits 
+            splitter.append(list(interactors_dbids))
+            number_of_splits = int(math.log2(len(interactors_dbids)))
+            
+            for s in range(1, number_of_splits):
+                new_splitter = list()
+                half = int(len(splitter[0]) / 2)
+                with ThreadPoolExecutor(max_workers=number_of_splits,thread_name_prefix='Retrieve PPI') as e:
+                    futures = list()
+                    job_name = f'split {s} in {number_of_splits}'
+                    for split in splitter:
+                        uq_list1 = split[0:half]
+                        uq_list2 = split[half:]
+                        oql_query = "SELECT Relation WHERE objectType = (Binding, DirectRegulation, ProtModification) "
+                        oql_query += "AND NeighborOf (SELECT Entity WHERE id = ({ids1})) "
+                        oql_query += "AND NeighborOf (SELECT Entity WHERE id = ({ids2}))"
+                        new_session = self._clone_session() # need to clone since self.dbid2relation mutates
+                        new_session.add2self = False
+                        futures.append(e.submit(new_session.iterate_oql2,oql_query,set(uq_list1),set(uq_list2),request_name=job_name))
+                        new_splitter.append(uq_list1)
+                        new_splitter.append(uq_list2)
+                    splitter = new_splitter
+                    s += 1
 
-                for f in as_completed(futures):
-                    ppi_keeper = ppi_keeper.compose(f.result())
-                e.shutdown()
+                    for f in as_completed(futures):
+                        ppi_keeper = ppi_keeper.compose(f.result())
+                    e.shutdown()
         print(f'Retrieved protein-protein interaction network with {ppi_keeper.number_of_nodes()} nodes and {ppi_keeper.number_of_edges()} edges')
         return ppi_keeper
 

@@ -1,5 +1,5 @@
 from .SemanticSearch import SemanticSearch,df,COUNTS,RANK
-from ..ETM_API.etm import ETM_REFS_COLUMN, ETMstat
+from ..ETM_API.etm import REFCOUNT_COLUMN, ETMstat
 from .ResnetAPISession import SNIPPET_PROPERTIES,BIBLIO_PROPERTIES
 from .PathwayStudioGOQL import OQL
 from .NetworkxObjects import PSObject,REFCOUNT,CHILDS
@@ -252,7 +252,7 @@ class BiomarkerReport(SemanticSearch):
         report_df._name_ = RANKED_COUNTS
         self.add2report(report_df)
         print ('Created %s table' % report_df._name_)
-        self.add_ps_bibliography()
+        self.add_graph_bibliography()
 
         if self.params['print_snippets']:
             ref_df = self.Graph.snippets2df()
@@ -298,8 +298,8 @@ class BiomarkerReport(SemanticSearch):
             biomarker2disease = self.Graph.add_recent_refs(biomarker2disease,'Biomarker','Disease')
             #biomarker2disease.dropna(subset=['Recent PMIDs','Recent DOIs'],inplace=True, how='all')
         elif max_etm_row:
-            biomarker2disease=self.etm_counter.add_etm42columns(biomarker2disease,'Biomarker','Disease',ETMstat.basic_query,add2etm_query)
-            self.add_etm_bibliography()
+            biomarker2disease=self.etm_counter.refs42columns(biomarker2disease,'Biomarker','Disease',ETMstat.basic_query,add2etm_query)
+            self.add_bibliography()
 
         if self.params['print_rdf']:
             self.bm2dis_graph = ResnetGraph() # to convert into RDF
@@ -308,16 +308,16 @@ class BiomarkerReport(SemanticSearch):
                 disease_name = biomarker2disease.loc[i]['Disease']
                 biomarker_objs = self.Graph._psobjs_with(biomarker_name)
                 disease_objs = self.Graph._psobjs_with(disease_name)
-                rel_props[REFCOUNT] = biomarker2disease.loc[i][ETM_REFS_COLUMN]
+                rel_props[REFCOUNT] = biomarker2disease.loc[i][REFCOUNT_COLUMN]
                 [self.bm2dis_graph.add_triple(d,b,rel_props) for b in biomarker_objs for d in disease_objs] 
             
         biomarker2disease['Type'] = biomarker2disease['Biomarker'].apply(lambda x: self.name2objs[x][0]['ObjTypeName'][0])
         biomarker2disease = df(biomarker2disease.sort_values(RANK,ascending=False))
         biomarker2disease._name_ = 'biomarker-disease'
         biomarker2disease.add_column_format(RANK,'align','center')
-        biomarker2disease.add_column_format(ETM_REFS_COLUMN,'align','center')
+        biomarker2disease.add_column_format(REFCOUNT_COLUMN,'align','center')
         biomarker2disease.add_column_format('Disease','width',60)
-        biomarker2disease.set_hyperlink_color([ETM_REFS_COLUMN])
+        biomarker2disease.set_hyperlink_color([REFCOUNT_COLUMN])
         self.add2report(biomarker2disease)
 
 
