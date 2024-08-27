@@ -1,6 +1,8 @@
-import urllib.request
-import urllib.parse
-import json
+import urllib.request,urllib.parse,json,time
+from collections import defaultdict
+from ..pandas.panda_tricks import df
+from ..ResnetAPI.NetworkxObjects import Reference,PUBYEAR
+from .. import execution_time
 import urllib.error as http_error
 from time import sleep
 
@@ -137,12 +139,12 @@ class Pharmapendium:
         return self.search_results('search',self.params)
 
 
-    def drugs(self):
+    def drugs(self)->list[dict]:
         cache_name = f'Drugs 4 PP {self.api_source} module.json'
         cache_path = self.cache_dir + cache_name
         try:
             with open(cache_path,'r',encoding='utf=8') as f:
-                drug_records =  json.load(f)
+                drug_records =  list(json.load(f))
                 print(f'Read {len(drug_records)} drugs from "{cache_name}"')
                 return drug_records
         except FileNotFoundError:
@@ -177,6 +179,97 @@ class SafetyPP(Pharmapendium):
             return result['children'][0]['data']['name']
         else: 
             return ''
+        
+    
+    def ToxReport(self,drug_names:list[str]):
+        '''
+        Return
+        ------
+        df with columns: 'Smiles','Drug','Dose','Dose type','Route','Tox Category','#Ref','References'
+        '''
+        SMILES = 'Smiles'
+        DRUG = 'Drug'
+        DOSE = 'Dose'
+        DOSETYPE = 'Dose type'
+        ROUTE = 'Route'
+        TOXICITY = 'Toxicity'
+        TOXCATEGORY = 'Tox Category'
+        REFCOUNT = '#Ref'
+        REFERENCES = 'References'
+
+        col_names = [SMILES,DRUG,DOSE,DOSETYPE,ROUTE,TOXICITY,TOXCATEGORY,REFCOUNT,REFERENCES]
+        tox_df = df(columns=col_names)
+        tox_df.index.name = "PP name\ttoxicity"
+        self._add_param({'taxonomy':'Drugs'})
+
+        start_time = time.time()
+        print (f'Will find drug safety documents for {len(drug_names)} drugs')
+        for i,drugPPname in enumerate(drug_names):
+            self._add_param({'drugs':drugPPname})
+            drug_safety_docs = self.search_results('search',self.params)
+           # if drugPPname == 'Vorinostat':
+           #     print('')
+        
+            DrugToxicities = defaultdict(list)
+            [DrugToxicities[doc['effect']].append(doc) for doc in drug_safety_docs]
+
+            toxCount = 0
+            for toxicity, references in DrugToxicities.items():
+                toxCount += 1
+                print(f'\'{toxicity}\' - {toxCount} from {len(DrugToxicities)} toxicities for \
+\"{drugPPname}\" ({i+1} of {len(drug_names)}) was reported in {len(references)} documents')
+                
+                pandaIndex = drugPPname+'\t'+toxicity
+                tox_df.at[pandaIndex,SMILES] = references[0].get('smiles','')
+                tox_df.at[pandaIndex,DRUG] = drugPPname
+                tox_df.at[pandaIndex,DOSE] = references[0].get('dose','')
+                tox_df.at[pandaIndex,DOSETYPE] = references[0].get('doseType','')
+                tox_df.at[pandaIndex,ROUTE] = references[0].get('route','')
+                tox_df.at[pandaIndex,TOXICITY] = toxicity
+                tox_df.at[pandaIndex,TOXCATEGORY] = self.GetTopEffectCategory(toxicity)
+
+                refIndex = dict() # {ref_identifiere:Reference}
+                for ref in references:
+                    assert(isinstance(ref,dict))
+                    document = ref['document']
+                    assert(isinstance(document,dict))
+
+                    try:docName = document['name']
+                    except KeyError:
+                        try: docName = document['article']
+                        except KeyError: docName = document['journal']
+                    
+                    docSource = document['sourceShort']
+                    refIdentifier = docSource+':'+docName
+                    try: PPRef = refIndex[refIdentifier]
+                    except KeyError:
+                        PPRef = Reference('Title',refIdentifier)
+                        refIndex[refIdentifier] = PPRef
+
+                    assert(isinstance(PPRef,Reference))
+
+                    PubYear = str(document.get('year','historic'))
+                    PPRef.update_with_value(PUBYEAR, PubYear)
+                    
+                    dose = ref.get('dose','')
+                    doseType = ref.get('doseType','')
+                    route = ref.get('route','')
+                    organism=ref['specie']
+                    PPRef.update_with_value(route, doseType + ' in ' + organism + ' ' + dose)
+
+                addToPandas = set()
+                drug_refs = list(refIndex.values())
+                [addToPandas.update([r.to_str(['Title'], col_sep='-',biblio_props=[PUBYEAR],other_props=[route])]) for r in drug_refs]
+
+                tox_df.at[pandaIndex,REFCOUNT] = len(addToPandas)
+                reflist = '|'.join(list(addToPandas))
+                tox_df.at[pandaIndex,REFERENCES] = reflist
+
+        toxicity_counts = dict(tox_df[TOXICITY].value_counts())
+        tox_df = tox_df.merge_dict(toxicity_counts,'Toxicity count','Toxicity')
+        tox_df = df.from_pd(tox_df.sort_values(by=['Toxicity count','Toxicity'],ascending=False))
+        print(f'Finished finding toxicities in Pharmapendium in {execution_time(start_time)}')
+        return tox_df
 
 
 class DrugIndications(Pharmapendium):
@@ -197,6 +290,18 @@ class DrugActivity(Pharmapendium):
         self.api_source = 'activity'
         self.url = super().url+self.api_source+'/'
         self.page_size = 500
+
+
+    def drugs4targets(self,target_names:list[str],only_primary=True):
+        all_drugs = self.drugs()
+        target2drug = defaultdict(list)
+        if only_primary:
+            [target2drug[d['target']].append(d) for d in all_drugs if d.get('isPrimaryTarget','') == 'Primary']
+        else:
+            [target2drug[d['target']].append(d) for d in all_drugs] 
+        drug_records4targets = {t:drugs for t,drugs in target2drug.items() if t in target_names}
+        return drug_records4targets
+
         
 
 class PPDoc(Pharmapendium):
