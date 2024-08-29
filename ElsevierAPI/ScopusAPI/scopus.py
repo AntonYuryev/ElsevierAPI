@@ -1,5 +1,4 @@
 import urllib.request,urllib.parse,json
-import urllib.error as HTTPError
 from xml.etree.ElementTree import fromstring
 from time import sleep
 from ..ETM_API.references import Reference, SCOPUS_CI,ARTICLE_ID_TYPES
@@ -130,18 +129,22 @@ class Scopus:
 
 
     def get_affiliation(self,institution:str):
+        '''
+        output:
+            canonical institution name for input institution name.  In case of multiple hits returns name of the most relevant Scopus hit  
+        '''
         titlecase_institution = titlecase(institution)
         try:
-            return self.AffiliationInfo[titlecase_institution]
+            return str(self.AffiliationInfo[titlecase_institution])
         except KeyError:
             self.base_url = SCOPUS_API_BASEURL+'search/affiliation?'
             query = f'affil({institution})'
-            self.params.update({'query': query,'sort':'relevancy'})
+            self.params.update({'query': query,'sort':'relevancy'}) # ensures the most relevant hit to be 1st
             result = self._get_results()
             if result:
                 entry = result["search-results"]["entry"][0]
                 if 'error' in entry: return ''
-                affil_name = entry['affiliation-name']
+                affil_name = str(entry['affiliation-name'])
                 affil_variants = entry['name-variant']
                 for variant in affil_variants:
                     self.AffiliationInfo[titlecase(variant['$'])] = affil_name
@@ -152,6 +155,12 @@ class Scopus:
 
 
     def normalize_affiliations(self,affils:list):
+        '''
+        input:
+            list of not normalized institution name
+        output:
+            list of institution names normalized by Scopus
+        '''
         normalized_institutions = list()
         for aff in affils:
             norm_aff = self.get_affiliation(aff)
@@ -160,7 +169,6 @@ class Scopus:
 
         return normalized_institutions
 
-        
 
 class AuthorRetreival(Scopus):
     def __init__(self,author_id:str, APIconfig:dict):
