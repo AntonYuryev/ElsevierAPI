@@ -1,13 +1,15 @@
-from .references import DocMine,Reference,Author,len,pubmed_hyperlink,make_hyperlink
+import certifi.core
+from .references import DocMine,Reference,Author,len,pubmed_hyperlink,make_hyperlink,re
 from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES,RELEVANCE, ETM_CITATION_INDEX,IN_OPENACCESS,PUBLISHER
 from urllib.error import HTTPError
-import json, http.client, time, os, math, urllib.request, urllib.parse,zipfile
+import json, http.client, time, os, math, urllib.request, urllib.parse,zipfile,ssl
 from datetime import datetime,timedelta,date
 from ..ScopusAPI.scopus import Scopus,AuthorSearch,CitationOverview
 from ..pandas.panda_tricks import pd, df
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 from ..NCBI.pubmed import medlineTA2issn
+import certifi 
 
 
 SCOPUS_AUTHORIDS = 'scopusAuthors'
@@ -160,13 +162,9 @@ class ETMjson(DocMine):
         
         names = list()
         if full_address:
-            address_start = full_address[0]
-            if (not address_start.isalpha()) or address_start.islower():  
-                full_address = full_address[1:].strip()
-                if full_address:
-                    if (not full_address[0].isalpha()):
-                        full_address = full_address[1:] # to remove double digit numbers
-                names = full_address.split(', ')
+            # remove leading non-letters:
+            full_address = re.sub(r'^[^a-zA-Z]+', '', full_address)
+            names = full_address.split(', ')
 
         affiliations = list()
         if names:
@@ -177,7 +175,7 @@ class ETMjson(DocMine):
                     break
 
             if not has_institution:
-                print(f'article coresspondence "{correspondence}" has no institutional keyword!')
+                #print(f'article coresspondence "{correspondence}" has no institutional keyword!') # makes a lot of noise
                 if len(names) > 2: #evidence that correspondence is not junk
                     affiliations.append(names[0].title())
             else:
@@ -436,6 +434,7 @@ class ETMstat:
             'searchTarget': 'full_index',
             'apikey':self.APIconfig['ETMapikey'],
             'limit': limit,
+            'insttoken':APIconfig['insttoken'] # ScopusAPI needs it
             #'so_c':'17~' # filter by Publication Source excluding NIH reporter; 
             # 'so_c':'17~' does not work on COVID server
             #'so_p':'ffb~' # filter by Publication Type
@@ -456,7 +455,8 @@ class ETMstat:
     def clone(self, to_url=''):
         if not to_url:
             to_url = self.url
-        myApiconfig = {'ETMURL':to_url,'ETMapikey':self.params['apikey']}
+        myApiconfig = dict(self.APIconfig)
+        myApiconfig['ETMURL'] = to_url
         newEtMstat =  ETMstat(myApiconfig,self._limit(),self.params)
         newEtMstat.page_size = self.page_size
         newEtMstat.request_type = self.request_type
@@ -509,7 +509,9 @@ class ETMstat:
             self.params.update({'snip': '1.desc'})
         for attempt in range(1, 11):
             try:
-                the_page = urllib.request.urlopen(self._url_request()).read()
+                context = ssl._create_unverified_context()
+                #context=ssl.create_default_context(cafile=certifi.core.where())
+                the_page = urllib.request.urlopen(self._url_request(),context=context).read()         
                 if the_page:
                     result = json.loads(the_page.decode('utf-8'))
                     if attempt > 1:
@@ -690,6 +692,10 @@ class ETMstat:
 
 
     def get_publisher(self,_4ref:ETMjson):
+        '''
+        annotates _4ref with fields:
+            PUBLISHER, SCOPUS_CITESCORE,SCOPUS_SJR,SCOPUS_SNIP
+        '''
         self.__normalize_journal(_4ref)
         publisher,CiteScore,SJRscore,SNIPscore = self.__publisher_from_scopus(_4ref)
         if publisher:
@@ -722,7 +728,7 @@ class ETMstat:
         return scopus_author
 
 
-    def __get_stats(self):
+    def __get_stats(self,getScopusInfo=False):
         """
         Returns
         -------
@@ -745,7 +751,8 @@ class ETMstat:
             relevance_score = float(article['score'])
             if relevance_score >= self.min_relevance:
                 etm_ref = ETMjson(article)
-                self.get_publisher(etm_ref)
+                if getScopusInfo:
+                    self.get_publisher(etm_ref)
                 etm_ref[RELEVANCE] = [relevance_score]
                 if hasattr(etm_ref,"Identifiers"):
                     references.append(etm_ref)
@@ -837,6 +844,7 @@ class ETMstat:
     
     
     def __multiple_search(self,for_entity:str,and_concepts:list,my_query,add2query=[]):
+        assert(isinstance(and_concepts,list|set))
         references = set()
         total_hits = 0
         for concept in and_concepts:
@@ -851,7 +859,7 @@ class ETMstat:
 
     def __get_refs(self, entity_name:str, concepts2link:list,my_query,add2query=[]):
         references = set()
-  #      if entity_name == 'siltuximab':
+        assert(isinstance(concepts2link,list|set))
   #          print('')
         references, total_hits = self.__multiple_search(entity_name,concepts2link,my_query,add2query)
 
@@ -1204,22 +1212,6 @@ class ETMcache (ETMstat):
 
     def _org2address_stats(self):
         return dict(sorted(self.statistics[INSTITUTIONS].items(), key=lambda item: item[1],reverse=True))
-        org2addres = dict()
-        references = self.references()
-        for ref in references:
-            for name, address in ref.addresses.items():
-                try:
-                    exist_address = org2addres[name]
-                    if len(exist_address) < len(address):
-                        org2addres[name] = address
-                except KeyError:
-                    org2addres[name] = address
-        
-        try:
-            institution_counter = dict(self.statistics[INSTITUTIONS])
-            org_address_couner = {org2addres[k]:v for k,v in institution_counter.items()}
-            return dict(sorted(org_address_couner.items(), key=lambda item: item[1],reverse=True))
-        except KeyError: return dict()
 
 
     def count_oa_stats(self):

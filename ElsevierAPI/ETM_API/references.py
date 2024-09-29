@@ -20,6 +20,7 @@ PATENT_APP_NUM = 'Patent Application Number'
 PATENT_GRANT_NUM = 'Patent Grant Number'
 EFFECT = 'Effect'
 RELEVANCE = 'Relevance'
+MEASUREMENT = 'Measurement'
 ETM_CITATION_INDEX = 'ETM Citation index'
 SBS_CITATION_INDEX = 'SBS Citation index'
 PS_CITATION_INDEX = 'Graph Citation index'
@@ -48,7 +49,7 @@ PS_BIBLIO_PROPS = {TITLE, PUBYEAR, AUTHORS, JOURNAL, MEDLINETA,'Start'} # contai
 BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
 REF_ID_TYPES = PS_REFIID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
-PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD,'pX','Phase','Start','TrialStatus','URL']
+PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD,'pX','Phase','Start','TrialStatus','URL','Experimental System']
 SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence','msrc','mref','Similarity']
 # SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.Sentences
@@ -235,6 +236,17 @@ class Reference(dict):
         return prop_name in self.keys()
     
 
+    def get_values(self,prop_name:str):
+        for prop2values in self.snippets.values():
+            try:
+                return list(prop2values[prop_name])
+            except KeyError: continue
+        try:
+            return list(self[prop_name])
+        except KeyError: 
+            return []
+
+    
     def has_values_in(self, in_prop2values:dict,case_sensitive=False):
         '''
         Input
@@ -330,7 +342,7 @@ class Reference(dict):
         id_types = id_types if isinstance(id_types,list) else ['PMID']
         for p in other_props:
             try:
-                prop_values_str = ';'.join(list(map(str,self[p])))
+                prop_values_str = ';'.join(list(map(str,self.get_props(p))))
                 row.append(prop_values_str)
             except KeyError:
                 row.append('')
@@ -344,6 +356,8 @@ class Reference(dict):
                             identifier = pubmed_hyperlink([identifier])
                         elif t == 'DOI':
                             identifier = make_hyperlink(identifier,'http://dx.doi.org/')
+                        elif t == PATENT_APP_NUM:
+                            identifier = make_hyperlink(identifier,'https://patents.google.com/patent/')
                     row.append(identifier)
                 except KeyError:
                     row.append('')
@@ -525,8 +539,16 @@ class Reference(dict):
             self.Identifiers.update(other.Identifiers)
 
             for textref, prop2val in other.snippets.items():
-                for prop, values in prop2val.items():
-                    self.add_sentence_props(textref,prop,values)
+                try:
+                    exist_textref_props = self.snippets[textref]
+                    if exist_textref_props == prop2val:
+                        continue
+                    else:
+                        new_text_ref = textref+':'+str(len(self.snippets))
+                        [self.add_sentence_props(new_text_ref,p,v) for p,v in prop2val.items()]
+                except KeyError:
+                    [self.add_sentence_props(textref,p,v) for p,v in prop2val.items()]
+        return
 
 
     def is_from_abstract(self):
@@ -634,6 +656,10 @@ class Reference(dict):
     
 
     def get_props(self,prop_name:str)->list[str]:
+        '''
+        input:
+            prop_name can be either in self.snippet or self.Identifiers or self
+        '''
         try:
             return list(self[prop_name])
         except KeyError:
@@ -644,10 +670,16 @@ class Reference(dict):
                 props = set()
                 for text_ref, prop_vals in snippet_prop_dic.items():
                     props.update(prop_vals)
-                return list(props)
+                props = list(props)
+                props.sort()
+                return props
 
 
     def get_prop(self,prop_name:str,value_index=0,if_missing_return='')->str|int|bool:
+        '''
+        input:
+            prop_name can be either in self.snippet or self.Identifiers or self
+        '''
         my_props = self.get_props(prop_name)
         if my_props:
             try:
