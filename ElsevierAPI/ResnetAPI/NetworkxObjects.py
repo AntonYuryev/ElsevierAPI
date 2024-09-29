@@ -56,102 +56,133 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
                 return_dict[item] = [ZeepObjectRef[item]]
         return cls(return_dict)
     
+    
+    def get_prop(self,prop_name:str,value_index=0,if_missing_return:str|int|float='')->str|int|float:
+        '''
+        Return
+        ------
+        returns self[prop_name][value_index]
+        '''
+        if prop_name in self.keys():
+            return self[prop_name][value_index]
+        else:
+            return if_missing_return
+
 
     def urn(self):
         '''
-        raises KeyError if URN property does not exist
+        returns empty string if URN property does not exist
         '''
-        try:
-            return str(self['URN'][0])
-        except (IndexError,KeyError):
-            raise KeyError
+        return self.get_prop('URN')
         
     
     def active_urn(self):
         return self.urn()+'a'
     
+
     def repressed_urn(self):
         return self.urn()+'i'
     
+
     def make_active(self):
         activated_self = PSObject(self.copy())
         activated_self['URN'] = [activated_self.active_urn()]
         return activated_self
     
+
     def make_repressed(self):
         repressed_self = PSObject(self.copy())
         repressed_self['URN'] = [repressed_self.repressed_urn()]
         return repressed_self
-        
+
+
     @staticmethod
     def urn2uid(urn:str):
         #return hash(urn)
         my_hash = hashlib.md5(str(urn).encode())
         return int(my_hash.hexdigest(),32)
-        
+
+
     def __hash__(self):
         #__hash__ needs __eq__ to work properly
         return self.urn2uid(self.urn())
+
 
     def __eq__(self, other:"PSRelation"):
         #__hash__ needs __eq__ to work properly
         return self.urn() == other.urn()
 
+
     def uid(self)->int:
         return self.__hash__()
+    
+
+    def propvalues(self,prop_name:str):
+        '''
+        Return
+        ------
+        returns set of all values of prop_names
+        '''
+        return list(self[prop_name])  if prop_name in self.keys() else []
+    
+
+    def get_props(self,prop_names:list):
+        '''
+        Return
+        ------
+        returns set of all values of prop_names
+        '''
+        my_props = set()
+        for prop_name in prop_names:
+            if prop_name in self.keys():
+                my_props.update(self[prop_name])
+
+        return my_props
+    
 
     def dbid(self)->int:
-        try:
-            return int(self[DBID][0])
-        except (IndexError,KeyError):
-            return 0
+        '''
+        output:
+            0 if missing
+        '''
+        return self.get_prop(DBID,if_missing_return=0)
+
 
     def set_property(self, PropId, PropValue: str):
         self[PropId] = [PropValue]
 
     
     def childs(self)->list['PSObject']:
-        try:
-            return list(map(PSObject,self[CHILDS]))
-        except (IndexError,KeyError):
-            return []
+        if CHILDS in self.keys():
+            return self[CHILDS]
+        return []
 
 
     def child_dbids(self):
-        try:
-            children = self[CHILDS]
-            return [c.dbid() for c in children if c.dbid()]
-        except (IndexError,KeyError):
-            return []
+        children = self.childs()
+        return [c.dbid() for c in children if c.dbid()]
 
 
     def child_uids(self):
-        try:
-            children = self[CHILDS]
-            return [c.uid() for c in children if c.dbid()]
-        except (IndexError,KeyError):
-            return []
+        children = self.childs()
+        return [c.uid() for c in children]
 
 
-    def append_property(self, PropId, PropValue):
-        try:
-            self[PropId].append(PropValue)
-        except KeyError:
-            self[PropId] = [PropValue]
+    def update_with_value(self, prop_id:str, new_value):
+        if new_value not in self[prop_id]:
+            self[prop_id].append(new_value)
+
+
+    def update_with_list(self, prop_id:str, new_values):
+        [self[prop_id].append(x) for x in new_values if x not in self[prop_id]]
 
 
     def name(self):
-        try:
-            return str(self['Name'][0])
-        except (IndexError,KeyError):
-            raise KeyError
+        return self.get_prop('Name')
 
 
     def objtype(self):
-        try:
-            return str(self['ObjTypeName'][0])
-        except (IndexError,KeyError):
-            raise KeyError
+        return self.get_prop(OBJECT_TYPE)
 
 
     def organism(self):
@@ -170,77 +201,18 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         assert (state in [ACTIVATED,REPRESSED,UNKNOWN_STATE])
         try:
             self[STATE][0] += state
-        except (IndexError,KeyError):
+        except (IndexError):
             self[STATE] = [state]
 
 
     def state(self):
-        try:
-            return self[STATE][0]
-        except (IndexError,KeyError):
-            return UNKNOWN_STATE
-
+        return str(self.get_prop(STATE,if_missing_return=UNKNOWN_STATE))
+    
 
     def is_from_rnef(self):
-        try:
-            database_id = self[DBID[0]]
-            return False
-        except (IndexError,KeyError):
-            return True
+        return not self.dbid()
     
 
-    def get_prop(self,prop_name:str,value_index=0,if_missing_return:str|int|float='')->str|int|float:
-        '''
-        Return
-        ------
-        returns self[prop_name][value_index]
-        '''
-        try:
-            return self[prop_name][value_index]
-        except (IndexError,ValueError,KeyError):
-            return if_missing_return
-
-
-    def get_props(self,prop_names:list):
-        '''
-        Return
-        ------
-        returns set of all values of prop_names
-        '''
-        my_props = set()
-        for prop_name in prop_names:
-            try:
-                values = self[prop_name]
-                my_props.update(values)
-            except KeyError:
-                continue
-
-        return my_props
-
-
-    @staticmethod
-    def unpack(list_of_lists:list,make_unique=True):
-        flat_list = [item for sublist in list_of_lists for item in sublist]
-        return list(set(flat_list)) if make_unique else flat_list
-
-
-    def update_with_value(self, prop_id:str, new_value):
-        try:
-            values = list(self[prop_id])
-            if new_value not in values:
-                values.append(new_value)
-                self[prop_id] = values
-        except (IndexError,KeyError):
-            self[prop_id] = [new_value]
-
-
-    def update_with_list(self, prop_id:str, new_values):
-        try:
-            [self[prop_id].append(x) for x in new_values if x not in self[prop_id]]
-        except (IndexError,KeyError):
-            self[prop_id] = new_values
-
-    
     def copy(self):
         return PSObject(self)
 
@@ -260,24 +232,19 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         
 
     def _prop2str(self, prop_id:str,cell_sep:str =';'):
-        try:
-            return cell_sep.join(self[prop_id])
-        except (IndexError,KeyError):
-            return ''
+        prop_values = self.propvalues(prop_id)
+        return cell_sep.join(map(str,prop_values))
 
 
     def props2dict(self,prop_ids:list):
         return {k:self._prop2str(k) for k in self.keys() if k in prop_ids}
 
+
     def data2str(self, columnPropNames: list, col_sep='\t', cell_sep=';', endOfline='\n'):
         table_row = str()
         for propName in columnPropNames:
-            try:
-                values = self[propName]
-                prop_val = cell_sep.join(values)
-            except (IndexError,KeyError):
-                prop_val = ''
-
+            values = self.propvalues(propName)
+            prop_val = cell_sep.join(values)
             table_row = table_row + prop_val + col_sep
         return table_row[0:len(table_row) - 1] + endOfline
 
@@ -292,8 +259,8 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         -----
         if "having_values" is empty will return True if self has any value in "with_prop"
         '''
-        try:
-            search_in = self[with_prop]
+        search_in = self.get_props(with_prop)
+        if search_in:
             if having_values:
                 if case_sensitive or with_prop in {DBID,REFCOUNT}:
                     search_set = set(having_values)   
@@ -303,7 +270,8 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
                 return not search_set.isdisjoint(search_in)
             else:
                 return True
-        except (IndexError,KeyError): return False
+        else: 
+            return False
 
 
     def has_value_in(self,prop2values:dict,case_sensitive=False):
@@ -319,17 +287,14 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
 
 
     def prop_values2str(self, prop_name:str, sep=','):
-        try:
-            prop_values = self[prop_name]
-            return sep.join(list(map(str,prop_values)))
-        except (IndexError,KeyError):
-            return ''
+        prop_values = self.propvalues(prop_name)
+        return sep.join(list(map(str,prop_values)))
 
 
     def dump(self,to_file:str):
         with open(to_file+'.pickle', "wb") as outfile:
             # "wb" argument opens the file in binary mode
-            pickle.dump(self, outfile)
+            pickle.dump(dict(self), outfile)
 
 
     @classmethod
@@ -407,6 +372,10 @@ class PSRelation(PSObject):
 
 
     def effect(self)->str:
+        '''
+        output:
+            'positive','negative','unknown'
+        '''
         return str(self.get_prop(EFFECT,if_missing_return='unknown'))
     
 
@@ -421,12 +390,9 @@ class PSRelation(PSObject):
 
 
     def mechanisms(self):
-        try:
-            return self['Mechanism']
-        except (IndexError,KeyError):
-            return []
-
+        return self.propvalues('Mechanism')
      
+
     def mechanism(self):
         return str(self.get_prop('Mechanism'))
     
@@ -453,6 +419,12 @@ class PSRelation(PSObject):
 
 
     def make_urn(self,regulators:list[PSObject],targets:list[PSObject]):
+        '''
+        sets:
+            URN property to self
+        output:
+            calculated URN
+        '''
         reg_urns = [r.urn() for r in regulators]
         tar_urns = [r.urn() for r in targets]
         reg_urns.sort()
@@ -464,9 +436,8 @@ class PSRelation(PSObject):
             try:
                 rel_urn += ':'+ self[EFFECT][0]
             except (IndexError,KeyError): pass
-            try:
+            if 'Mechanism' in self.keys():
                 rel_urn += ':'+self['Mechanism'][0]
-            except (IndexError,KeyError): pass
         else:
             rel_urn += 'in-out:'+':in-out:'.join([u for u in reg_urns])
 
@@ -658,7 +629,7 @@ class PSRelation(PSObject):
     
 
     @classmethod
-    def make_rel(cls,regulator:PSObject,target:PSObject,props:dict,refs=[],is_directional=True):
+    def make_rel(cls,regulator:PSObject,target:PSObject,props:dict[str,list],refs:list[Reference],is_directional=True):
         # props = {prop_name:[prop_values]}
         new_rel = cls(props)
         try:
@@ -675,6 +646,8 @@ class PSRelation(PSObject):
         new_rel._add_refs(refs)
         if REFCOUNT not in new_rel.keys():
             new_rel[REFCOUNT] = [len(refs)]
+        
+        new_rel.make_urn([regulator],[target])
         return new_rel
             
 
@@ -840,8 +813,6 @@ class PSRelation(PSObject):
                 ref.snippets[textref] = {'Sentence':[]} #load empty dict for data consistency
 
         
-
-
     def filter_references(self, keep_prop2values:dict):
         '''
         !!!! does not change self[REFCOUNT] to keep the original number of references !!!!\n
@@ -887,7 +858,7 @@ class PSRelation(PSObject):
         return False
 
 
-    def count_refs(self, count_abstracts=False):
+    def count_refs(self, count_abstracts=False)->int:
         if self.references:
             self[REFCOUNT] = [len(self.references)]
             if count_abstracts:
@@ -1052,7 +1023,6 @@ class PSRelation(PSObject):
                     return list()
 
 
-
     def to_json(self):
         str1 = '{"Relation Properties": ' + json.dumps(self) + '}'
         strP = '{"Relation RefDict": ' + json.dumps(self.PropSetToProps) + '}'
@@ -1088,6 +1058,18 @@ class PSRelation(PSObject):
         except (IndexError,KeyError): 
             return UNKNOWN_STATE
         
+
+    def pX(self):
+        pXs = [float(pX) for ref in self.refs() for pX in ref.get_values('pX')]
+        return max(pXs) if pXs else -1.0
+    
+
+    def set_affinity(self):
+        pXs = [float(pX) for ref in self.refs() for pX in ref.get_values('pX')]
+        if pXs:
+            self['Affinity'].append(max(pXs))
+        return
+    
 
     def _affinity(self):
         try:

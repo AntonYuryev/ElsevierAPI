@@ -1,12 +1,11 @@
-import time
-import math
+import time,os,math
 from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import Reference
-from .ResnetGraph import ResnetGraph,PSObject,EFFECT,df,CHILDS
+from .ResnetGraph import ResnetGraph,PSObject,EFFECT,df
 from .ResnetAPISession import  APISession,len
 from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
 from ..ETM_API.etm import ETMstat
-from ..ETM_API.scibite import SBSstat
+#from ..ETM_API.scibite import SBSstat
 import pandas as pd
 import numpy as np
 
@@ -14,7 +13,7 @@ COUNTS = 'counts'
 PS_BIBLIOGRAPHY = 'PSrefs'
 ETM_BIBLIOGRAPHY = 'ETMrefs'
 CHILDREN_COUNT = 'Number of ontology children'
-RANK = 'Score'
+RANK = 'PRTS rank' # PRTS = Probability of Technical and Regulatory Success
 ONTOLOGY_ANALYSIS = 'ontology'
 
 class SemanticSearch (APISession):
@@ -43,7 +42,7 @@ class SemanticSearch (APISession):
         '''
         my_kwargs = {
                 'what2retrieve':REFERENCE_IDENTIFIERS,
-                'max_ontology_parent': 11
+                'max_ontology_parent': 10
                 }
         my_kwargs.update(kwargs)
         session_kwargs, parameters = self.split_kwargs(my_kwargs)
@@ -195,7 +194,8 @@ class SemanticSearch (APISession):
         return my_df_copy
 
 
-    def load_pandas(self,from_entity_df:df,prop_names_in_header=True,use_cache=False,map2type:list=[],max_children_count=0,expand2=[],with_rels=[]):
+    def load_pandas(self,from_entity_df:df,prop_names_in_header=True,use_cache=False,
+                    map2type:list=[],max_children_count=0,expand2=[],with_rels=[]):
         '''
         Input
         -----
@@ -223,62 +223,64 @@ class SemanticSearch (APISession):
         return refcount_df
     
 
-    def add_temp_id(self,to_df:df,map2column='URN',max_children_count=11,max_threads=10):
+    def add_temp_id(self,to_df:df,map2column='URN',max_child_count=10,max_threads=10):
         mapping_values = to_df[map2column].to_list()
         db_entities = self._props2psobj(mapping_values,[map2column],get_childs=False)
         [o.update_with_value(self.__mapped_by__,o.name()) for o in db_entities]
         
-        children,_ = self.load_children4(db_entities,max_childs=max_children_count,max_threads=max_threads)
+        children,_ = self.load_children4(db_entities,max_childs=max_child_count,max_threads=max_threads)
         for c in children:
             self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
             self.Graph.nodes[c.uid()][self.__resnet_name__] = c.name()
 
         graph_psobjects = self.Graph._get_nodes(ResnetGraph.uids(db_entities))
-        urn2tempids = {o.urn():tuple(o.child_dbids()+[o.dbid()]) for o in graph_psobjects}
+        df_psobjects = [o for o in graph_psobjects if len(o.childs()) <= max_child_count] 
+        print(f'{len(graph_psobjects)-len(df_psobjects)} entities with > ontology children {max_child_count}  were removed from further calculations')
+        urn2tempids = {o.urn():tuple(o.child_dbids()+[o.dbid()]) for o in df_psobjects}
 
         new_df = to_df.merge_dict(urn2tempids,self.__temp_id_col__,map2column)
-        new_df.fillna('', inplace=True) # need to replace NaN to enable cutoff by len(self.__temp_id_col__) next
-        if max_children_count:
-            new_df = self.remove_high_level_entities(new_df,max_children_count)
         self.all_entity_dbids.update(self._all_dbids(new_df))
         return new_df
         
 
-    def load_df(self,from_entities:list,max_child_count=0,max_threads=10): 
-        # do not use self.max_ontology_parent instread of max_child_count to avoid complications for session cloning  
+    def load_df(self,from_entities:list[PSObject],max_child_count=0,max_threads=10): 
+        # do not use self.max_ontology_parent instead of max_child_count to avoid complications for session cloning  
         '''
         Input
         -----
         from_entities - [PSObject]
         
-        Return
-        ------
-        refcount_df with columns 'Name',\n
-        if max_child_count > 0 refcount_df will have "self.__temp_id_col__" column
+        output:
+            refcount_df with columns 'Name',
+            if max_child_count > 0 refcount_df will have "self.__temp_id_col__" column
         '''
         [o.update_with_value(self.__mapped_by__,o.name()) for o in from_entities] 
         if max_child_count:
             if from_entities[0].is_from_rnef():# database ids were not loaded
                 self.load_dbids4(from_entities)
 
-            children,_ = self.load_children4(from_entities, 
-                                                min_connectivity=1,
+            # load_children4() adds empty PSObject in CHILDS property if parents has children > max_child_count 
+            children,_ = self.load_children4(from_entities,
                                                 max_childs=max_child_count,
                                                 max_threads=max_threads)
             for c in children:
                 self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
                 self.Graph.nodes[c.uid()][self.__resnet_name__] = c.name()
 
+            # load_children4() adds empty PSObject in CHILDS property if parents has children > max_child_count 
             graph_psobjects = self.Graph._get_nodes(ResnetGraph.uids(from_entities))
+             # child_dbids() will return empty list if o[CHILDS] has empty PSObject in CHILDS property
+            df_psobjects = [o for o in graph_psobjects if len(o.childs()) <= max_child_count]
+            print(f'{len(graph_psobjects)-len(df_psobjects)} entities with > {max_child_count} ontology children were removed from further calculations')
+
             # "graph_psobjects" and "from_entities" may not have the same 'Name' !!!!
-            names = [o.name() for o in graph_psobjects]
-            urns = [o.urn() for o in graph_psobjects]
-            objtypes = [o.objtype() for o in graph_psobjects]
-            child_dbids = [tuple(o.child_dbids()+[o.dbid()]) for o in graph_psobjects]
+            names = [o.name() for o in df_psobjects]
+            urns = [o.urn() for o in df_psobjects]
+            objtypes = [o.objtype() for o in df_psobjects]
+            child_dbids = [tuple(o.child_dbids()+[o.dbid()]) for o in df_psobjects]
             assert(len(names) == len(child_dbids))
             refcount_df = df.from_dict({'Name':names,'ObjType':objtypes,'URN':urns,self.__temp_id_col__:child_dbids})
-            # all parents with number of children > max_child_count have empty PSObject in CHILDS property
-            refcount_df = self.remove_high_level_entities(refcount_df,max_child_count)
+            #refcount_df = self.remove_high_level_entities(refcount_df,max_child_count)
             
             refcount_dbids = self._all_dbids(refcount_df)
             self.all_entity_dbids.update(refcount_dbids)
@@ -343,7 +345,7 @@ class SemanticSearch (APISession):
         """
         Returns
         -------
-        prop2psobj = {prop_val:{PSObject}}
+        prop2psobj = {prop_val:{dbid:PSObject}}
         where PSObject are annotated with self.__mapped_by__,CHILD_DBIDS,CHILD_UIDS properties
         """
         ent_props = self.entProps
@@ -489,7 +491,8 @@ class SemanticSearch (APISession):
 
         Returns
         -------
-        linked_row_count, linked_entity_ids, my_df = to_entities|ConceptName
+        linked_row_count, linked_entity_ids,
+        my_df = with 3 columns added: "Refcount to {ConceptName}", "Linked {ConceptName} count", "{ConceptName} count"
         """
         
         my_df = df.copy_df(to_entities) if isinstance(to_entities,df) else df.from_pd(to_entities)
@@ -501,18 +504,20 @@ class SemanticSearch (APISession):
             print(f'\nLinking row entities to "{ConceptName}" column which has {number_of_childs} ontology children')
         
         refcount_column = self._col_name_prefix + ConceptName
-        incidence_column = ConceptName + ' incidence'
+        linked_count_column = 'Linked '+ConceptName + ' count'
+        concept_size_column = ConceptName + ' count'
         concepts_uids = set(ResnetGraph.uids(concepts))
         concept_count = len(concepts_uids)
 
+        zero = 0.0 if self.weight_prop else 0
         try:
-            my_df.insert(len(my_df.columns),refcount_column,0)
+            my_df.insert(len(my_df.columns),refcount_column,[zero]*len(my_df))
+            my_df.insert(len(my_df.columns),linked_count_column,[0]*len(my_df))
+            my_df.insert(len(my_df.columns),concept_size_column,[1]*len(my_df)) # assuming all concepts have at least one member 
+            # occurence of linked concepts. Format str(#linked concepts)/str(#total concepts)
         except ValueError:
             print('%s column already exists in dataframe!!!' % refcount_column)
             pass
-
-        if self.weight_prop:
-            my_df[refcount_column] = pd.to_numeric(my_df[refcount_column], downcast="float")
 
         linked_row_count = 0
         linked_entities_counter = set()
@@ -538,13 +543,10 @@ class SemanticSearch (APISession):
                     continue
 
                 row_subgraph = connection_graph.get_subgraph(idx_entities, concepts)
-                concept_incidence = 0.0
-                if concept_count > 1:
-                    connected_concepts = [c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in concepts_uids]
-                    concept_incidence = len(connected_concepts)/concept_count
-                    percentage = round(concept_incidence,2) * 100 
-                    my_df.at[idx,incidence_column] = f'{len(connected_concepts)}/{concept_count} ({percentage:.2f}%)'
-
+                connected_concepts = [c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in concepts_uids]
+                my_df.at[idx,linked_count_column] = len(connected_concepts)
+                my_df.at[idx,concept_size_column] = concept_count
+                    
                 references = row_subgraph.load_references(self.weight_prop,self.weight_dict)
                 if self.weight_prop:
                     ref_weights = [r.get_weight() for r in references]
@@ -552,13 +554,13 @@ class SemanticSearch (APISession):
                 else:
                     row_score = len(references)
 
-                my_df.at[idx,refcount_column] = row_score*(1+concept_incidence)
+                my_df.at[idx,refcount_column] = row_score
+                # concept incidence measures the occurence of concepts linked to row entities among all input concepts
                
                 if references:
                     ref_sum.update(references)
                     linked_row_count += 1
                     linked_entities_counter.update(idx_entities)
-                
 
             effecStr = ','.join(self.__rel_effect__) if len(self.__rel_effect__)>0 else 'all'
             relTypeStr = ','.join(self.__connect_by_rels__) if len(self.__connect_by_rels__)>0 else 'all'
@@ -617,11 +619,15 @@ class SemanticSearch (APISession):
 
 
     def add2report(self,table:df):
-        self.report_pandas[str(table._name_)] = table
+        table_name = table._name_
+        if not table_name:
+            table_name = 'Sheet' + str(len(self.report_pandas))
+        self.report_pandas[str(table_name)] = table
 
 
     def add2raw(self,table:df):
-        self.raw_data[str(table._name_)] = table
+        assert(table._name_)
+        self.raw_data[table._name_] = table
 
 
     def find_ref(self,ref:Reference):
@@ -648,7 +654,7 @@ class SemanticSearch (APISession):
             clean_df = df2print.drop(columns=my_drop)
             clean_df = df.from_pd(clean_df.loc[(clean_df!=0).any(axis=1)]) # removes rows with all zeros
             clean_df.copy_format(report_df)
-            if 'bibliography' in ws_name: 
+            if 'bibliography' in ws_name:
                 clean_df.make_header_horizontal()
             else:
                 clean_df.make_header_vertical()
@@ -680,12 +686,21 @@ class SemanticSearch (APISession):
 
 
     @staticmethod
-    def _merge_counts2norm(counts_df:df,normalized_df:df,entity_id_column='Name',columns2merge=list()):
+    def __merge_counts2norm(counts_df:df,normalized_df:df,entity_id_column='Name',columns2merge=list()):
+        '''
+        Replaces normalized score values in "normalized_df" by original refcounts from "counts_df"
+        '''
         merged_df = df.copy_df(normalized_df)
-        common_columns = columns2merge if columns2merge else set(merged_df.columns).intersection(set(counts_df.columns))
+        if columns2merge:
+            common_columns = columns2merge
+        else:
+            common_columns = set(merged_df.columns).intersection(set(counts_df.columns))
+
         for col in common_columns:
             merge_dict = pd.Series(counts_df[col].values,index=counts_df[entity_id_column]).to_dict()
             merged_df[col] = merged_df[entity_id_column].map(merge_dict)
+            if pd.api.types.is_integer_dtype(counts_df[col]):
+                merged_df[col] = merged_df[col].astype(int)
         return merged_df
 
 
@@ -732,115 +747,127 @@ class SemanticSearch (APISession):
         return pandas2print
         
 
-    def normalize(self,raw_df_named:str,to_df_named:str,entity_column='Name',columns2norm:list[str]=list(),drop_empty_columns:list[str]=[]):
+    def normalize(self,raw_df_named:str,to_df_named:str,entity_column='Name',columns2norm:list[str]=[],drop_empty_columns:list[str]=[]):
         """
-        Input
-        -----
-        if columns2norm is empty uses list of columns with prefix self._col_name_prefix
-
-        Returns
-        -------
-        df with _name_ 'norm.raw_df_named' added to self.raw_data.\n
-        'norm.raw_df' has normalized values from 'raw_df' df and 'Combined score' and 'RANK' columns\n
-        df with _name_='to_df_named' added to self.report_data where normalized values from 'norm.raw_df' are replaced by original counts from raw_df\n
-        df in self.report_data has column RANK
+        input:
+            df with name "raw_df_named" must be in self.raw_data
+            if "columns2norm" is empty uses list of columns with prefix self._col_name_prefix
+        output:
+            rankedf4report with name "to_df_named" in self.report_pandas[to_df_named]
+            normdf4raw with name "norm.to_df_named" in self.raw_data[norm.to_df_named]
         """
         try:
-            is_empty = self.raw_data[raw_df_named].empty
-            if is_empty:
+            if self.raw_data[raw_df_named].empty:
+                print(f'{raw_df_named} worksheet is empty')
                 return df(),df()
         except KeyError:
+            print(f'No worksheet named "{raw_df_named}" is available in raw_data')
             return df(),df()
         
-        counts_df = df.copy_df(self.raw_data[raw_df_named])
+        my_raw_df = self.raw_data[raw_df_named]
+        assert(isinstance(my_raw_df,df))
+        counts_df = df(name= my_raw_df._name_)
+        rawdf_colnames = my_raw_df.columns.to_list()
+        i = 0
+        while i < len(rawdf_colnames): # in range() controls i and cannot be used here
+            colname = rawdf_colnames[i]
+            if colname.startswith(self._col_name_prefix):
+                linked_concepts_count_col = rawdf_colnames[i+1]
+                if max(my_raw_df[linked_concepts_count_col]) >= 1:
+                    # this ensures that refcount column with all zeros is not copied
+                    counts_df[colname] = my_raw_df[colname] 
+                    concepts_count_col = rawdf_colnames[i+2]
+                    counts_df[colname] = my_raw_df[colname]*(1+my_raw_df[linked_concepts_count_col]/my_raw_df[concepts_count_col])
+                    
+                    concept_name = colname[len(self._col_name_prefix):]
+                    incidence_colname = concept_name + ' incidence'
+                    temp_df = df()
+                    temp_df['percentage'] = 100*my_raw_df[linked_concepts_count_col]/my_raw_df[concepts_count_col]
+                    temp_df['percentage'] = temp_df['percentage'].round(decimals=2)
+                    temp_df['percentage_str'] = temp_df['percentage'].apply(lambda x: f"{x:.2f}")
+                    counts_df[incidence_colname] = my_raw_df[linked_concepts_count_col].astype(str)
+                    counts_df[incidence_colname] =  counts_df[incidence_colname] + '/' +my_raw_df[concepts_count_col].astype(str)
+                    counts_df[incidence_colname] = counts_df[incidence_colname] +'('+temp_df['percentage_str']+')'
+                i += 3
+            else:
+                counts_df[colname] = my_raw_df[colname]
+                i += 1
+
         refcount_cols = columns2norm if columns2norm else self.refcount_columns(counts_df)
-        
-        # removing empty columns
-        no_score_cols = list()
-        [no_score_cols.append(col) for col in refcount_cols if counts_df[col].max() < 0.000000000000001]
-        if no_score_cols:
-            [refcount_cols.remove(c) for c in no_score_cols]
-            print('%s columns were excluded from %s because they have no scores' % (no_score_cols,counts_df._name_))
-            
         header = [entity_column]+refcount_cols
-        
-        weights = df(columns=header)
-        #normalized_count_df = df(columns=header)
-        normalized_count_df = df.from_pd(counts_df[header])
-
-        weights.at[0,entity_column] = 'WEIGHTS:'
-      #  normalized_count_df[entity_column] = counts_df[entity_column]
-
+        weights_num = df(columns=header)
+        weights_num.at[0,entity_column] = 'WEIGHTS:'
         # calculating weights for each column in refcount_cols:
         weight_index = 0
         number_of_weights = len(refcount_cols)
         for col in refcount_cols:
-           # col_max = counts_df[col].max()
-           # normalized_count_df[col] = counts_df[col]/col_max
             column_weight = (number_of_weights-weight_index)/number_of_weights
-            weights.at[0,col] = column_weight
+            weights_num.at[0,col] = column_weight
             weight_index += 1
 
         #calculating weighted cumulative score
-        normalized_count_df = normalized_count_df.l2norm(refcount_cols)
+        normdf4raw = df.from_pd(counts_df[header])
+        normdf4raw = normdf4raw.l2norm(refcount_cols)
         combined_scores = list()
-        for i in normalized_count_df.index:
-            row_scores = normalized_count_df.loc[[i]]
+        for i in normdf4raw.index:
+            row_scores = normdf4raw.loc[[i]]
             weighted_sum = 0.0
             for col in refcount_cols:
-                weighted_sum = weighted_sum + row_scores[col]*weights.at[0,col]
+                weighted_sum = weighted_sum + row_scores[col]*weights_num.at[0,col]
             combined_scores.append(weighted_sum)
 
-        # moving all other columns to normalized_count_df
-        added_columns = set(normalized_count_df.columns)
+        # moving all other columns including CHILDREN_COUNT to normdf4raw 
+        # except count columns that were used to create incidence column
+        added_columns = set(normdf4raw.columns)
         for col in list(counts_df.columns):
-            if col not in added_columns:
-                normalized_count_df[col] = counts_df[col]
+            if col not in added_columns and ' count' not in col:
+                normdf4raw[col] = counts_df[col]
 
-        normalized_count_df['Combined score'] = np.array(combined_scores)
-        normalized_count_df[RANK] = normalized_count_df['Combined score']/normalized_count_df[CHILDREN_COUNT]
-        normalized_count_df = normalized_count_df.sort_values(by=[RANK,entity_column],ascending=False)
+        normdf4raw['Combined score'] = np.array(combined_scores)
+        normdf4raw[RANK] = normdf4raw['Combined score']/normdf4raw[CHILDREN_COUNT]
+        normdf4raw = normdf4raw.sort_values(by=[RANK,entity_column],ascending=False)
 
         # removes rows with all zeros
-        normalized_count_df = df.from_pd(normalized_count_df.loc[normalized_count_df[RANK] > 0.0])
-        print(f'Removed {len(counts_df)-len(normalized_count_df)} rows from normalized worksheet with score=0')
+        normdf4raw = df.from_pd(normdf4raw.loc[normdf4raw[RANK] > 0.0])
+        print(f'Removed {len(counts_df)-len(normdf4raw)} rows from normalized worksheet with score=0')
         # this converts values to pretty string and has to be performed at the end
-        normalized_count_df['Combined score'] = normalized_count_df['Combined score'].map(lambda x: '%2.3f' % x)
-        normalized_count_df[RANK] = normalized_count_df[RANK].map(lambda x: '%2.3f' % x)
-
+        normdf4raw['Combined score'] = normdf4raw['Combined score'].map(lambda x: '%2.3f' % x)
+        normdf4raw[RANK] = normdf4raw[RANK].map(lambda x: '%2.3f' % x)
+            
         if drop_empty_columns:
-            normalized_count_df = normalized_count_df.drop_empty_columns()
+            normdf4raw = normdf4raw.drop_empty_columns() 
 
-        # prettifying weights row
-        first_row = ['WEIGHTS:']
-        [first_row.append('{:,.4f}'.format(weights.loc[0,c])) for c in refcount_cols]
-        # must initialize with list(weights.columns) to avoid automatic dtype copying
-        weights_df = df.from_pd(pd.DataFrame([first_row],columns=list(weights.columns)))
-        normalized_count_df = weights_df.append_df(normalized_count_df)
-        weigths_header = list(normalized_count_df.iloc[0].replace(np.nan, ''))
-        normalized_count_df.loc[normalized_count_df.index[0]] = weigths_header # do not use iat. iat for single values only
-        normalized_count_df._name_ = 'norm.'+counts_df._name_
-        self.add2raw(normalized_count_df)
+        first_row = ['WEIGHTS:'] # prettifying weights row
+        [first_row.append('{:,.4f}'.format(weights_num.loc[0,c])) for c in refcount_cols]
 
-        ranked_counts_df = self._merge_counts2norm(counts_df,normalized_count_df,columns2merge=columns2norm)
-        # merge_counts2norm blanks out weigths_header because counts_df does not have it:
-        ranked_counts_df.loc[ranked_counts_df.index[0]] = weigths_header
-        ranked_counts_df.copy_format(counts_df)
-        ranked_counts_df.add_column_format(RANK,'align','center')
-        ranked_counts_df.add_column_format('Combined score','align','center')
-        ranked_counts_df._name_ = to_df_named
-        ranked_counts_df = ranked_counts_df.reindex_df()
+        # make rankedf4report before adding weights row to normdf4raw
+        rankedf4report = self.__merge_counts2norm(my_raw_df,normdf4raw,columns2merge=columns2norm)
+
+        # must initialize with list(weights_num.columns) to avoid automatic dtype copying:
+        assert(weights_num.columns.to_list() == normdf4raw.columns.to_list()[:len(weights_num.columns)])
+        formatted_weights = df.from_pd(pd.DataFrame([first_row],columns=weights_num.columns))
+        
+        normdf4raw = formatted_weights.append_df(normdf4raw) # append will add columns missing in weights_str
+        # normdf4raw has floats in RefCount columns, no need to reformat
+        normdf4raw._name_ = 'norm.'+counts_df._name_
+        self.add2raw(normdf4raw)
+
+        assert(weights_num.columns.to_list() == rankedf4report.columns.to_list()[:len(weights_num.columns)])
+        rankedf4report = formatted_weights.append_df(rankedf4report)# append will add columns missing in weights_str 
+        rankedf4report.copy_format(counts_df)
+        rankedf4report.add_column_format(RANK,'align','center')
+        rankedf4report.add_column_format('Combined score','align','center')
         # adding weigths_header screw up index
         # reindex_df helps with downstream df annotation requiring concat function. 
-        ranked_counts_df_columns = ranked_counts_df.columns.to_list()
-        ranked_counts_df_columns.remove(RANK)
-        ranked_counts_df_columns.remove('URN')
-        ranked_counts_df_columns.insert(1,RANK)
-        ranked_counts_df_columns += ['URN']
-        ranked_counts_df = ranked_counts_df.reorder(ranked_counts_df_columns)
+        rankedf4report_cols = rankedf4report.columns.to_list()
+        remove_cols = ['URN',RANK, self.__temp_id_col__]
+        [rankedf4report_cols.remove(col) for col in remove_cols]
+        reordered_rankedf4report_cols = rankedf4report_cols[:1]+[RANK]+rankedf4report_cols[1:]+['URN']
+        rankedf4report = rankedf4report.reorder(reordered_rankedf4report_cols)
+        rankedf4report._name_ = to_df_named
 
-        self.add2report(ranked_counts_df)
-        return ranked_counts_df,normalized_count_df
+        self.add2report(rankedf4report)
+        return rankedf4report,normdf4raw
 
 
     def refcount_column_name(self,between_names_in_col,and_concepts):
@@ -862,7 +889,7 @@ class SemanticSearch (APISession):
             my_query_func = ETMstat.basic_query
         else:
             TMsoft = 'SBS' 
-            my_query_func = SBSstat.basic_query
+     #       my_query_func = SBSstat.basic_query
 
         print(f'Finding {self.etm_counter._limit()} most relevant articles in {TMsoft} for {len(to_df)} rows \
 in "{to_df._name_} worksheet and {input_names}', flush=True)
@@ -872,13 +899,10 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
 
     def refs2report(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True,skip1strow=True):
         """
-        Input
-        -----
-        df with "to_df_named" must have column RANK
-
-        Adds
-        ----
-        columns etm.ETM_REFS_COLUMN, etm._etm_doi_column_name() to df with name "to_df_name" from self.report_pandas
+        input:
+            df with "to_df_named" must be in self.report_pandas and have column RANK
+        adds:
+            columns etm.ETM_REFS_COLUMN, etm._etm_doi_column_name() to df with name "to_df_name" from self.report_pandas
         """
         my_df = df.copy_df(self.report_pandas[to_df_named])
         if skip1strow:
@@ -901,11 +925,11 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         return my_df
 
 
-    def add_bibliography(self,suffix=''):
+    def add_etm_bibliography(self,suffix=''):
         """
         Adds
         ----
-        df with ETM_BIBLIOGRAPHY name to self.report_pandas
+        df with ETM_BIBLIOGRAPHY name to self.report_pandas from self.etm_counter.counter2df()
         """
         biblio_df = self.etm_counter.counter2df()
         biblio_df._name_ = ETM_BIBLIOGRAPHY
@@ -917,9 +941,8 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
 
     def add_graph_bibliography(self,suffix='',from_graph=ResnetGraph(),add2report=True):
         """
-        Adds
-        ----
-        df with PS_BIBLIOGRAPHY name to self.report_pandas
+        adds:
+            df with PS_BIBLIOGRAPHY-suffix name to self.report_pandas
         """
         my_graph = from_graph if from_graph else self.Graph
         ref_df_name = PS_BIBLIOGRAPHY
@@ -966,7 +989,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         for prop, psobjs in prop2objs.items():
             prop_groups = set()
             for psobj in psobjs:
-                obj_groups = psobj.get_props([BELONGS2GROUPS])
+                obj_groups = psobj.propvalues(BELONGS2GROUPS)
                 if obj_groups:
                     prop_groups.update(obj_groups)
             prop2groups[prop] = ',\n'.join(prop_groups)
@@ -999,14 +1022,12 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         return new_df
 
 
-    def add_ontology_df(self, for_df_name='', add2report=True):
+    def add_ontology_df(self,for_df_name='',add2report=True):
         '''
-        Input
-        -----
-        df with name = for_df_name must be in self.report_pandas
-        Return
-        ------
-        Adds worksheet to "report_pandas" containing statistics for ontology groups listed in 'ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt'
+        input:
+            df with name = for_df_name must be in self.report_pandas
+        output:
+            Adds worksheet to "report_pandas" containing statistics for ontology groups listed in 'ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt'
         '''
         if for_df_name:
             try:
@@ -1014,7 +1035,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
             except KeyError: return df()        
         else: my_df = self.RefCountPandas
 
-        disease_ontology = 'ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt'
+        disease_ontology = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt')
         disease_ontology_groups = [x.strip() for x in open(disease_ontology, 'r').readlines()]
 
         query_node = OQL.get_entities_by_props(disease_ontology_groups, ['Name'])

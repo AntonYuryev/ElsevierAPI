@@ -14,6 +14,7 @@ from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
+from ..utils import unpack
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
@@ -35,7 +36,7 @@ APISESSION_KWARGS = {'what2retrieve','connect2server','no_mess','data_dir',TO_RE
 MAX_SESSIONS = 50 # by default sessions_max=200 in Oracle 
 MAX_PAGE_THREADS = 80
 MAX_OQLSTR_LEN = 65000 # string properties can form long oql queries exceeding 65000 chars limit
-
+ONTOLOGY_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI','__pscache__','ontology_cache.json')
 
 class APISession(PSNetworx):
     '''
@@ -73,35 +74,37 @@ class APISession(PSNetworx):
         self.GOQLquery = str()
         self.DumpFiles = []
 
-        supported_kwargs = {'what2retrieve':NO_REL_PROPERTIES,
+        my_kwargs = {'what2retrieve':NO_REL_PROPERTIES,
                             'ent_props' : ['Name'],
                             'rel_props' : ['URN'],
                             'data_dir' : '',
                             'use_cache' : False,
-                            'oql_queries' : []
+                            'oql_queries' : [],
+                            'add2self':True
                             }
 
         ent_props = kwargs.pop('ent_props',[])
         rel_props = kwargs.pop('rel_props',[])
-        supported_kwargs.update(kwargs)
-        super().__init__(*args, **supported_kwargs)
+        my_kwargs.update(kwargs)
+        super().__init__(*args, **my_kwargs)
         
-        self.set_dir(supported_kwargs.get('data_dir',''))
-        self.use_cache = supported_kwargs.get('use_cache',False)# if True signals to use graph data from cache files instead of retrieving data from database using GOQL queries 
+        self.set_dir(my_kwargs.get('data_dir',''))
+        self.use_cache = my_kwargs.get('use_cache',False)# if True signals to use graph data from cache files instead of retrieving data from database using GOQL queries 
 
-        self.__retrieve(supported_kwargs['what2retrieve']) #__retrieve overides self.relProps, self.entProps
+        self.__retrieve(my_kwargs['what2retrieve']) #__retrieve overides self.relProps, self.entProps
         # properties have to updated after self.__retrieve
         self.add_ent_props(ent_props)
         self.add_rel_props(rel_props)
 
-        self.add2self = True # if False will not add new graph to self.Graph
+        self.add2self = my_kwargs.get('add2self',True) # if False will not add new graph to self.Graph
         self.print_rel21row = False
         self.getLinks = True
         self.__IsOn1st_page = True # to print header in dump file
         self.dump_folder = str()
-        self.my_oql_queries = list(supported_kwargs.get('oql_queries',[])) # [(oql_query,request_name),...] list of GOQL queries tuples for fetching data from database
+        self.my_oql_queries = list(my_kwargs.get('oql_queries',[])) # [(oql_query,request_name),...] list of GOQL queries tuples for fetching data from database
         self.ResultPos = int()
         self.ResultSize = int()
+        self.ontology_cache = dict() # {urn:[urns]}
 
     @staticmethod
     def _what2retrieve(what2retrieve:int):
@@ -148,7 +151,10 @@ class APISession(PSNetworx):
 
     def _clone_session(self,**kwargs):
         """
-        used by self.process_oql to clone session
+        kwargs:
+            what2retrieve - desired relation retreival properties in clone session. Defauls to CURRENT_SPECS
+            load_model - defaults to False to avoid database model reloading
+            copy_graph - copy self.Graph. Defaults to False
         """
         my_kwargs = dict(kwargs)
         my_kwargs['what2retrieve'] = my_kwargs.pop(TO_RETRIEVE,CURRENT_SPECS)
@@ -248,11 +254,11 @@ to retreive {my_sent_props} properties')
     
         if first_iteration > 0:
             self.ResultPos = first_iteration
-            print ('Resuming retrieval from %d position' % first_iteration)
+            print (f'Resuming retrieval from {first_iteration} position' ,flush=True)
             return self.__nextpage__(self.ResultPos)
         else:
-            if not max_result:  # to suppress messages from load_children4
-                print(f'query "{request_name}" found {self.ResultSize} results')
+            if request_name and not max_result:  # to suppress messages from load_children4
+                print(f'query "{request_name}" found {self.ResultSize} results',flush=True)
 
         if not isinstance(zeep_data, type(None)):
             if self.getLinks:
@@ -884,7 +890,7 @@ to retreive {my_sent_props} properties')
             group_graph = self.get_group_members([group_name])
             if isinstance(group_graph,ResnetGraph):
                 group_members = group_graph._get_nodes()
-                [urns2values.append_property(o.urn(),group_name) for o in group_members]
+                [urns2values[o.urn()].append(group_name) for o in group_members]
 
         if _2graph: # my_graph = _2graph if _2graph else self.Graph does not work here
             _2graph.set_node_annotation(urns2values,BELONGS2GROUPS)
@@ -894,13 +900,12 @@ to retreive {my_sent_props} properties')
 
 
     def map_props2objs(self,using_values:list,in_properties:list[str],
-                       case_insensitive=False)->tuple[dict[str,list[PSObject]],dict[int,list[str]]]:
-        """
-        Returns
-        -------
-        propval2objs = {prop_value:[PSObject]}\n
-        objid2propval = {node_id:[prop_values]},\n  where prop_value is from 'using_values'
-        """
+                       case_insensitive=False,only_objtypes:list=[])->tuple[dict[str,list[PSObject]],dict[int,list[str]]]:
+        '''
+        output:\n
+        propval2objs = {prop_value:[PSObject]}, where prop_value is from 'using_values'\n
+        objid2propval = {node_uid:[prop_values]}
+        '''
         propval2objs,uid2propval = self.Graph.props2obj_dict(using_values, in_properties,case_insensitive)
         need_db_mapping = set(using_values).difference(propval2objs.keys())
 
@@ -914,6 +919,8 @@ to retreive {my_sent_props} properties')
 
         prop_name_str,_ = OQL.get_search_strings(in_properties,using_values)
         oql = f'SELECT Entity WHERE ({prop_name_str})' + ' = ({props})'
+        if only_objtypes:
+            oql += f' AND objectType = ({only_objtypes})'
         request_name = f'Mapping {len(using_values)} {prop_name_str}'
         mapping_graph = self.iterate_oql(oql,set(using_values),request_name=request_name)
 
@@ -950,8 +957,9 @@ to retreive {my_sent_props} properties')
             if min_connectivity:
                 query_ontology += f' AND Connectivity >= {min_connectivity}'
 
-            my_session = self._clone_session()
-            request_name = f'Retrieve ontology children for {parent.name()}'
+            my_session = self._clone_session(what2retrieve=NO_REL_PROPERTIES)
+            #request_name = f'Retrieve ontology children for {parent.name()}'
+            request_name = ''
             children_graph = my_session.process_oql(query_ontology,request_name,max_result=max_childs)
         #      if parent.name() == 'physical illness':
         #          print('')
@@ -966,71 +974,60 @@ to retreive {my_sent_props} properties')
             return parent,[]
         
 
-    def load_children4(self,parents:list[PSObject],add2self=True,min_connectivity=0,depth=0,
+    def _load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
                        max_childs=0,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
         '''
-        Input
-        -----
-        if "parents" is empty will use all nodes from self.Graph
-        depth - ontology depth to get children from. If depth=0, all children from all depths are returned\n
-        max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
+        Input:
+            if "parents" is empty will use all nodes from self.Graph
+            depth - ontology depth to get children from. If depth=0, all children from all depths are returned
+            max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
+            min_connectivity - avoid from using.  min_connectivity > 0 slows down children retrival significantly
 
-        Return
-        ------
-        {PSObject},[PSObject] - set of all found children, list of all parents with children\n
-        if max_childs > 0, parents with number of children exeeding max_childs are excluded
-    
-        Updates
-        -------
-        parents in self.Graph with CHILDS properties as [PSObject] children
+        Output:
+            {PSObject},[PSObject] - set of all found children, list of all parents with children\n
+            if max_childs > 0, parents with number of children exeeding max_childs are excluded
+        
+        Updates:
+            parents in self.Graph with CHILDS properties as [PSObject] children
         '''
         process_start = time.time()
-        if parents:
-            annotate_parents = list(set(parents))
-            if add2self:
-                self.Graph.add_psobjs(set(parents)) 
-        else:
-            annotate_parents = self.Graph._get_nodes()
-
-        print(f'Loading ontology children for {len(annotate_parents)} entities')
+        print(f'Loading ontology children for {len(parents)} entities')
         #max_threads = self.max_threads4ontology
-        # by default sessions_max=200 in Oracle 
+        # by default sessions_max=200 in Oracle
         # for Disease optimal max_threads = 5
-        # for Protein+FunctionalCLass+Complex optimal max_threads = 50 
-        thread_name_prefix = f'Childs 4 {len(annotate_parents)} prnts in {max_threads} thrds-'
-        # 4 threads perform a bit faster than 8 threads 
+        # for Protein+FunctionalCLass+Complex optimal max_threads = 50
+        thread_name_prefix = f'Childs 4 {len(parents)} prnts in {max_threads} thrds-'
+        # 4 threads perform a bit faster than 8 threads
         # 288 in 288 disease parents were processed in 0:19:51.732684 by 8 threads
         # 288 in 288 disease parents were processed in 0:18:52.715937 by 4 threads
         max_threaded_time = 0
         need_children = list()
         child_counter = set()
         iteration_counter = 0
-        for p, parent in enumerate(annotate_parents):
-            try:
-                children = self.Graph.nodes[parent.uid()][CHILDS]
-                child_counter.update(children)
-            except KeyError:
+        for p, parent in enumerate(parents):
+            if CHILDS in self.Graph.nodes[parent.uid()]:
+                child_counter.update(self.Graph.nodes[parent.uid()][CHILDS])
+            else:
                 need_children.append(parent)
-                if len(need_children) >= max_threads or p == len(annotate_parents)-1:       
+                if len(need_children) >= max_threads or p == len(parents)-1:
+                    max_workers = min(len(need_children),max_threads)
                     thread_start = time.time()
                     iteration_counter += 1
                     thread_name = thread_name_prefix+str(iteration_counter) + 'iter'
-                    with ThreadPoolExecutor(max_workers=len(need_children), thread_name_prefix=thread_name) as e:
+                    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name) as e:
                         futures = list()
                         [futures.append(e.submit(self.__load_children,nc,min_connectivity,depth,max_childs)) for nc in need_children]
 
                         for future in as_completed(futures):
                             f_parent, children = future.result()
-                            if max_childs:
-                                if len(children) > max_childs: # children has empty PSObjects
-                                    nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
-                                    continue
-                            self.Graph.add_psobjs(children)
+                            # children has empty PSObjects if len(children) <= max_childs
                             nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
-                            child_counter.update(children)
-                                # set_node_attributes() does not update nodes that do not exist in Graph
-                        e.shutdown()
-       
+                            if not max_childs or len(children) <= max_childs:
+                                # case when children has real PSObjects
+                                self.Graph.add_psobjs(children) # set_node_attributes() does not update nodes that do not exist in Graph
+                                child_counter.update(children)
+                    e.shutdown()
+
                     threaded_time = time.time() - thread_start
                     if threaded_time > max_threaded_time:
                         max_threaded_time = threaded_time
@@ -1038,14 +1035,35 @@ to retreive {my_sent_props} properties')
                             print(f'Longest {max_threads}-threaded time {"{}".format(str(timedelta(seconds=max_threaded_time)))} \
 is close to Apache default 5 minutes transaction timeout !!!')
                     if not self.no_mess:
-                        print (f'{p+1} {len(annotate_parents)} parents were processed in {self.execution_time(process_start)[0]}')
+                        print (f'{p+1} {len(parents)} parents were processed in {self.execution_time(process_start)[0]}')
                     need_children.clear()
         
-        print(f'{len(child_counter)} children for {len(annotate_parents)} parent entities were found in database \
+        print(f'{len(child_counter)} children for {len(parents)} parent entities were found in database \
 in {self.execution_time(process_start)[0]}')
         print(f'Longest {max_threads}-threaded time: {"{}".format(str(timedelta(seconds=max_threaded_time)))}')
+
         return child_counter, self.Graph.psobjs_with([CHILDS])
 
+
+    def load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
+                       max_childs=0,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
+        if parents:
+            my_parents = list(set(parents))
+            self.Graph.add_psobjs(set(parents))
+        else:
+            my_parents = self.Graph._get_nodes()
+    
+        '''
+        print(f'Finding entities with children for {len(my_parents)} parents')
+        session_copy = self._clone_session()
+        session_copy.Graph.add_psobjs(set(parents))
+        _,parents = session_copy._load_children4(my_parents, depth = 1)
+        my_parents = [p for p in parents if p.childs() and len(p.childs()) <= max_childs]
+        session_copy.close_connection()
+        print(f'Found {len(my_parents)} parents with children. Begin children retreival')
+        '''
+        return self._load_children4(my_parents,min_connectivity,depth,max_childs,max_threads)
+    
 
     def child_graph(self, propValues:list, search_by_properties=[],include_parents=True):
         if not search_by_properties: search_by_properties = ['Name','Alias']
@@ -1073,8 +1091,8 @@ in {self.execution_time(process_start)[0]}')
             rel = PSRelation({'ObjTypeName':['MemberOf'],'Relationship':['is-a'],'Ontology':['Pathway Studio Ontology']})
             rel.Nodes['Regulators'] = [(child_id,0,0)]
             rel.Nodes['Targets'] = [(parent_id,1,0)]
-            rel.append_property(DBID,child_id)
-            rel.append_property('URN', child_id.urn()) #fake URN
+            rel[DBID].append(child_id)
+            rel['URN'].append(child_id.urn()) #fake URN
             ontology_graph.add_edge(child_id,parent_id,relation=rel)
 
         self.add_rel_props(['Relationship','Ontology'])
@@ -1142,7 +1160,7 @@ in {self.execution_time(process_start)[0]}')
         {name:paths}, where paths has format: path1<EOF>path2<EOF>...
         '''
         list_of_objlists = list(parent2childs.values())
-        children = PSObject.unpack(list_of_objlists)
+        children = unpack(list_of_objlists)
         ontology_graph = self.__ontology_graph(children,ontology_depth)
 
         name2paths = dict()
@@ -1640,10 +1658,7 @@ in {self.execution_time(process_start)[0]}')
         for gv_id, protein_id, rel in prot2gvs_graph.edges.data('relation'):
             protein_node = prot2gvs_graph._psobj(protein_id)
             gene_name = protein_node['Name'][0]
-            try:
-                gvid2genes[gv_id].append(gene_name)
-            except KeyError:
-                gvid2genes[gv_id] = [gene_name]
+            gvid2genes[gv_id].append(gene_name)
 
         return gvid2genes
     
@@ -1711,6 +1726,7 @@ in {self.execution_time(process_start)[0]}')
             urn2dbid = {n.urn():n.dbid() for n in db_nodes}
             mapped_by_urn = list()
             for psobj in no_dbid_objs:
+                assert(isinstance(psobj,PSObject))
                 try:
                     my_dbid = urn2dbid[psobj.urn()]
                     psobj.update_with_value(DBID,my_dbid)

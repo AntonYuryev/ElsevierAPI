@@ -1,20 +1,14 @@
 import pandas as pd
-import sys, json, time, logging, os, gzip, zlib, http.client
+import sys, time, logging, http.client, itertools
 from time import sleep
-from datetime import timedelta
 from .PathwayStudioGOQL import OQL,len
 from zeep import exceptions as zeep_exceptions
 import requests.exceptions as req_exceptions
 from zeep import helpers # converts zeep objects to dict
+from ..utils import execution_time, load_api_config
 
 
 CONNECTION_TIMEOUT = 20
-DEFAULT_CONFIG_DIR = 'D:/Python/ENTELLECT_API/ElsevierAPI/'
-DEFAULT_APICONFIG = DEFAULT_CONFIG_DIR+'APIconfig.json'
-
-def execution_time(execution_start):
-    return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
-
 
 def configure_logging(logger):
     logger.setLevel(logging.DEBUG)
@@ -24,28 +18,6 @@ def configure_logging(logger):
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     return logger
-
-
-def load_api_config(api_config_file=''):# file with your API keys and API URLs
-    if not api_config_file:
-        print('No API config file was specified\nWill use default %s instead'% DEFAULT_APICONFIG)
-        api_config_file = DEFAULT_APICONFIG
-    else:
-        if not os.path.isabs(api_config_file):
-            print(f'APIconfig is specified only by file name {api_config_file}')
-            print(f'Will look for {api_config_file} in default "{DEFAULT_CONFIG_DIR}" directory')
-            api_config_file = DEFAULT_CONFIG_DIR+api_config_file
-
-    try:
-        return dict(json.load(open(api_config_file,'r')))
-    except FileNotFoundError:
-        print("Cannot find API config file: %s" % api_config_file)
-        if api_config_file != DEFAULT_APICONFIG:
-            print('Cannot open %s config file\nWill use default %s instead'% (api_config_file, DEFAULT_APICONFIG))
-            return dict(json.load(open(DEFAULT_APICONFIG,'r')))
-        else:
-            print('No working API server was specified!!! Goodbye')
-            return dict()
 
 
 class DataModel:
@@ -145,6 +117,15 @@ class DataModel:
 
     def get_entity_types(self):
         return self.__id2objtype(1)
+    
+
+    def db_triples(self,skip_nodetypes:list=[],skip_reltypes:list=[]):
+        node_types = self.get_entity_types()
+        relation_types = self.get_relation_types()
+        node_types = [x for x in node_types if x not in skip_nodetypes]
+        relation_types = [x for x in relation_types if x not in skip_reltypes]
+        triples = list(set(itertools.product(node_types, relation_types,node_types)))
+        return sorted(node_types), sorted(relation_types), sorted(triples)
 
 
     def load_folder_tree(self)->dict:

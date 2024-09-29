@@ -317,17 +317,18 @@ class OQL:
 
 
     @staticmethod
-    def find_targets(RegulatorsIDs: list, TargetIDs: list, relation_types=None):
-        relation_types = [] if relation_types is None else relation_types
+    def find_targets(RegulatorsIDs: list, TargetIDs:list=[], relation_types:list=[]):
+        regids_str = ",".join([str(integer) for integer in RegulatorsIDs])
+        oql_query = f"SELECT Relation WHERE NeighborOf downstream (SELECT Entity WHERE id = ({regids_str}))"
 
-        regulators = [str(integer) for integer in RegulatorsIDs]
-        targets = [str(integer) for integer in TargetIDs]
-        reg_ids = ",".join(regulators)
-        target_ids = ",".join(targets)
-        rel_type_list = OQL.join_with_quotes( relation_types)
-        oql_query = "SELECT Relation WHERE objectType = (" + rel_type_list + ") "
-        oql_query += "AND NeighborOf downstream (SELECT Entity WHERE id = (" + reg_ids + ")) "
-        oql_query += "AND NeighborOf upstream (SELECT Entity WHERE id = (" + target_ids + "))"
+        if TargetIDs:
+            targetids_str = ",".join([str(integer) for integer in TargetIDs])
+            oql_query += f" AND NeighborOf upstream (SELECT Entity WHERE id = ({targetids_str}))"
+
+        if relation_types:
+            rel_type_list = OQL.join_with_quotes( relation_types)
+            oql_query = f" AND objectType = ({rel_type_list})"
+        
         return oql_query
 
 
