@@ -4,6 +4,7 @@ from time import sleep
 from ..ETM_API.references import Reference, SCOPUS_CI,ARTICLE_ID_TYPES
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from titlecase import titlecase
+from ..utils import load_api_config
 
 
 AUTHOR_SEARCH = 0
@@ -378,10 +379,10 @@ def loadCI(APIconfig:dict, references:set[Reference])->tuple[set[Reference], set
     return articles_with_ci, no_ci_articles
 
 
-
+'''
 if __name__ == "__main__":
-    #sc = CitationOverview('scopus_id','28773',load_api_config())
+    sc = CitationOverview('scopus_id','28773',load_api_config())
     co = sc._get_results()
     print('')
-
+'''
 
