@@ -3,9 +3,8 @@ import numpy as np
 from numpy import NaN
 from pandas.api.types import is_numeric_dtype
 from pandas import ExcelWriter as ExcelWriter
-import rdfpandas,xlsxwriter
+import rdfpandas,xlsxwriter,string, os
 from ..ResnetAPI.NetworkxObjects import PSObject
-import string
 from openpyxl import load_workbook
 from pandas.api.types import is_string_dtype,is_numeric_dtype
 
@@ -32,6 +31,10 @@ class df(pd.DataFrame):
 
 
     def __init__(self, *args, **kwargs):
+        '''
+        kwargs:
+            name:str
+        '''
         dfname = kwargs.pop('name','')  
         pd.DataFrame.__init__(self,*args, **kwargs)
         self._name_ = dfname
@@ -134,7 +137,8 @@ class df(pd.DataFrame):
         '''
         df_name = kwargs.pop('name','')
         fname = str(args[0])
-        extension = fname[fname.rfind('.')+1:]
+        extension = os.path.splitext(fname)[1][1:] # remove period
+        #extension = fname[fname.rfind('.')+1:]
         if extension == 'xlsx':
             read_formula = kwargs.pop('read_formula',False)
             if read_formula:
@@ -142,8 +146,8 @@ class df(pd.DataFrame):
                 try:
                     sheet = wb[kwargs['sheet_name']]  
                 except KeyError:
-                    sheet_names = wb.get_sheet_names()
-                    sheet = wb[str(sheet_names[0])]
+                    #sheet_names = wb.get_sheet_names()
+                    sheet = wb[str(wb.sheetnames[0])]
 
                 header_pos = kwargs.pop('header',0)
                 skiprows = kwargs.pop('skiprows',0)
@@ -158,19 +162,18 @@ class df(pd.DataFrame):
                # _df._name_ = df_name
                 return _df
             except FileNotFoundError: 
-                print(FileNotFoundError)
-                return df()
+                raise(FileNotFoundError)
+                #return df()
         elif extension in ('tsv','txt'):
             kwargs.pop('sheet_name','')
             kwargs.pop('read_formula',False)
+            my_kwargs = dict(kwargs)
+            my_kwargs['sep'] = '\t'
             try:
-                my_kwargs = dict(kwargs)
-                my_kwargs['sep'] = '\t'
-                _df = df.from_pd(pd.DataFrame(pd.read_csv(*args,**my_kwargs)),df_name)
-                return _df
+                return df.from_pd(pd.DataFrame(pd.read_csv(*args,**my_kwargs)),df_name)
             except FileNotFoundError:
-                print(FileNotFoundError)
-                return df()
+                raise(FileNotFoundError)
+                #return df()
         elif extension == ('csv'):
             kwargs.pop('sheet_name','')
             kwargs.pop('read_formula',False)
@@ -180,8 +183,8 @@ class df(pd.DataFrame):
                 _df =  df.from_pd(pd.DataFrame(pd.read_csv(*args,**my_kwargs)),df_name)
                 return _df
             except FileNotFoundError:
-                print(FileNotFoundError)
-                return df()
+                raise(FileNotFoundError)
+                #return df()
         return df()
 
 
@@ -261,6 +264,10 @@ class df(pd.DataFrame):
 
 
     def append_df(self, other:'df'):
+        '''
+        output:
+            result concatinated df is reindexed
+        '''
         merged_pd = pd.concat([self,other],ignore_index=True)
         merged_pd = merged_pd.reindex()
         merged_df = df.from_pd(merged_pd,dfname=self._name_)
@@ -290,6 +297,7 @@ class df(pd.DataFrame):
         non pd.DataFrame kwargs: 'name','columns'\n
         "on" kwarg has to specify column in both self and right df
         "how" - {"left", "right", "outer", "inner", "cross"}, default "inner"
+        inner: use intersection of keys from both frames,preserve the order of the left keys.
 
         Return
         ------
@@ -461,6 +469,15 @@ class df(pd.DataFrame):
             self.__df2excel(writer,sheet_name)
 
 
+    def _2excel(self, fpath:str,ws_name=''):
+        if not ws_name:
+            ws_name = self._name_ if self._name_ else 'Sheet1'
+
+        f = ExcelWriter(fpath, engine='xlsxwriter')
+        self.df2excel(f,ws_name)
+        f.close()
+
+
     def clean(self):
         clean_pd = self.dropna(how='all',subset=None)
         clean_pd = clean_pd.drop_duplicates()
@@ -493,7 +510,10 @@ class df(pd.DataFrame):
         [no_value_cols.append(col) for col in my_numeric_columns if abs(self[col].max()) < max_abs]
         no_empty_cols = df.from_pd(self.drop(columns = no_value_cols),dfname=self._name_)
         no_empty_cols.copy_format(self)
-        print('%s columns were dropped  because they have all values = 0' % no_value_cols)
+        print(f'{len(no_value_cols)} columns were dropped because they have all values = 0')
+        if len(no_value_cols) < 20:
+            print('Dropped columns:')
+            [print(c) for c in no_value_cols]
         return no_empty_cols
         
 
@@ -734,4 +754,10 @@ class df(pd.DataFrame):
         return splits
 
 
-
+    def sort_columns(self,column_aggregate_func,ascending=False):
+        col_aggregate_values = self.apply(column_aggregate_func) # Calculate the sum of each column
+        assert(isinstance(col_aggregate_values,pd.Series))
+        new_order = col_aggregate_values.sort_values(ascending=ascending).index # Sort the column sums
+        sorted_self = df.from_pd(self[new_order],dfname=self._name_)
+        sorted_self.copy_format(self)
+        return sorted_self # Rearrange the columns based on the sorted sums
