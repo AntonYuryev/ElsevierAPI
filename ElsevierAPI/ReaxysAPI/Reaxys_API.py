@@ -19,31 +19,16 @@
 # A.1. Added optional arguments dbname and context, that are required to formulate group by statements
 #Change Log 1.2.0-beta.1, January 29th, 2021
 
-import http.cookiejar, xml.dom.minidom, re
+import http.cookiejar, xml.dom.minidom, re, os, json
+from lxml import etree as et 
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 import http.client
 from time import sleep
-import json
+from ..utils import load_api_config, all_tags, all_child_parents
+from ..ETM_API.references import Reference,PUBYEAR,AUTHORS,PATENT_APP_NUM,JOURNAL,EFFECT,SENTENCE,MEASUREMENT
+from collections import defaultdict
 
-DEFAULT_APICONFIG = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
-
-def load_api_config(api_config_file=''):# file with your API keys and API URLs
-    #cur_dir = os.getcwd()
-    default_apiconfig = DEFAULT_APICONFIG
-    if not api_config_file:
-        print('No API config file was specified\nWill use default %s instead'% default_apiconfig)
-        api_config_file = default_apiconfig
-    try:
-        return dict(json.load(open(api_config_file)))
-    except FileNotFoundError:
-        print("Cannot find API config file: %s" % api_config_file)
-        if api_config_file != default_apiconfig:
-            print('Cannot open %s config file\nWill use default %s instead'% (api_config_file, default_apiconfig))
-            return dict(json.load(open(default_apiconfig)))
-        else:
-            print('No working API server was specified!!! Goodbye')
-            return None
 
 
 class Reaxys_API:
@@ -60,7 +45,7 @@ class Reaxys_API:
         self.proxy = proxy
         self.port = port
         #specify here the location of your API session file:
-        self.ReaxysAPIjson = 'ElsevierAPI/ReaxysAPI/RxAPIsession.json'
+        self.ReaxysAPIjson = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ReaxysAPI/RxAPIsession.json')
         self.APIconfig = dict()
 
         # Set True for verbose output:
@@ -500,12 +485,11 @@ class Reaxys_API:
         ------
         max pX for drug-target pair
         '''
-
         #move next line to the function that calls this one for speed
         #self.OpenSession()
         ctx = 'DPI'
         #fields = ['DAT.PAUREUS']
-        q = f"IDE.CN={drug_name} and DAT.TNAME='{target_name}' and DAT.CATEG = 'in vitro (efficacy)'"
+        q = f"IDE.CN='{drug_name}' and DAT.TNAME='{target_name}' and DAT.CATEG = 'in vitro (efficacy)'"
 
         self.select(dbname="RX", context=ctx, where_clause=q,order_by="DAT.PAUREUS desc",options="WORKER,NO_CORESULT")
         if type(self.resultsize) != type(None):
@@ -517,8 +501,115 @@ class Reaxys_API:
                 return max_pX
             else:
                 return 0
-
     
+    @staticmethod
+    def _parse_citations(data:et._Element,props:dict=dict())->list[Reference]:
+        refs = list()
+        for citation in data.findall('./citations/citation/CIT'):
+            pui = citation.find('./CIT.PUI').text
+            ref = Reference('PUI',pui)
+            ref[PUBYEAR] = [citation.find('./CIT.PREPY').text]
+            cittype = citation.find('./CIT.DT').text
+            if cittype == 'Patent':
+                ref[AUTHORS] = [citation.find('./CIT.OPA').text]
+                #country = citation.find('./CIT02/CIT.PCC').text
+                pn = str(citation.find('./CIT02/CIT.PN').text)
+                pn = pn.replace('/','')
+                version = citation.find('./CIT02/CIT.PK').text
+                patnum = pn+version
+                ref.Identifiers[PATENT_APP_NUM] = patnum
+            elif cittype in ['Article','Note']:
+                ref[AUTHORS] = [citation.find('./CIT.AU').text]
+                ref[JOURNAL] = [citation.find('./CIT01/CIT.JTS').text]
+                ref['ISSN'] = [citation.find('./CIT01/CIT.ISSN').text]
+                ref.Identifiers['DOI'] = citation.find('./CIT01/CIT.DOI').text
+            else:
+                print('Unknown reference type')
+            
+            textref = ref._make_textref()+'#curation'
+            ref.add_sentence_prop(textref,SENTENCE,'Imported from Reaxys')
+            [ref.add_sentence_prop(textref,propname,value) for propname,value in props.items()]
+            refs.append(ref)
+        return refs
 
 
-        
+    @staticmethod
+    def effect_str(ACTTRG:str):
+        low = ACTTRG.lower()
+        if low in {'agonist','activator','partial agonist'}: return 'positive'
+        if low.startswith('stimulator'): return 'positive'
+        if low.startswith(('radioligand','allosteric')): return 'unknown'
+        return 'negative'
+
+
+    def getTargets(self,drug_name:str)->list[tuple[list,dict,dict]]:
+        '''
+        Return
+        ------
+        [[refs],rel,target]
+        '''
+        #move next line to the function that calls this one for speed
+        #self.OpenSession()
+        ALLOWED_ORGANISM = {'human','mouse','rat','homo sapience','mus musculus','rattus norvegicus'}
+        def organism_name(text:str):
+            vocab = {'human':'Homo sapiens','mouse':'Mus musculus','rat':'Rattus norvegicus'}
+            return vocab.get(text,'')
+
+        q = f"IDE.CN='{drug_name}' and DAT.TNAME='*' and DAT.CATEG = 'in vitro (efficacy)'"
+        rel_target = list()
+        self.select(dbname="RX", context='DPI', where_clause=q,order_by="DAT.PAUREUS desc",options="WORKER,NO_CORESULT")
+        if type(self.resultsize) != type(None):
+            r = self.retrieve(self.resultname, ["DAT","DATIDS"], "1", str(self.resultsize), "", "", "", "")
+            response = et.fromstring(r.encode())
+            #response = json.loads(response)
+            for dpitem in response.findall('./dpitems/dpitem'):
+                data = dpitem.find('./DAT')
+                _organism = data.find('./DAT02/DAT.TSPECIE')
+                if _organism is None or _organism.text.lower() not in ALLOWED_ORGANISM:
+                    continue
+                
+                _eff = data.find('./DAT.ACTTRG')
+                effect = 'unknown' if _eff is None else self.effect_str(_eff.text)
+                rel = defaultdict(list)
+                rel[EFFECT].append(effect)
+
+                ref_props = dict()
+                _px = data.find('./DAT.PAUREUS')
+                if _px is not None:
+                    ref_props['pX'] = _px.text
+
+                _cell = data.find('./DAT05/DAT.BCELL')
+                if _cell is not None:
+                    ref_props['CellLineName'] = _cell.text
+
+                _organ = data.find('./DAT05/DAT.BTISSUE')
+                if _organ is not None:
+                    ref_props['Organ'] = _organ.text
+
+                measurement = ''
+                _measurment = data.find('./DAT.VTYPE')
+                if _measurment is not None:
+                    _value = data.find('./DAT.VALUE')
+                    if _value is not None:
+                        _unit = data.find('./DAT.UNIT')
+                        if _unit is not None:
+                            measurement = _measurment.text+'='+_value.text+_unit.text
+                if measurement:
+                    ref_props[MEASUREMENT] = measurement
+
+                ref_props['Organism'] = organism_name(_organism.text.lower()).capitalize()
+
+                refs = self._parse_citations(data,ref_props)
+
+                dataids = dpitem.find('./DATIDS')
+                target = defaultdict(list)
+                target['Name'].append(data.find('./DAT02/DAT.TSUBUNIT').text)
+                l =  [e.text for e in dataids.findall('./DATIDS.TSUBSYN')]
+                if l:
+                    target['Alias'] += l
+                g = [e.text for e in dataids.findall('./DATIDS.TUNIPROT')]
+                if g:
+                    target['GenBank ID'] += g
+                rel_target.append((refs,dict(rel),dict(target)))
+
+        return rel_target
