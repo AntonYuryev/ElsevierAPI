@@ -1028,9 +1028,14 @@ class PSRelation(PSObject):
         strP = '{"Relation RefDict": ' + json.dumps(self.PropSetToProps) + '}'
         strR = json.dumps(self.Nodes)
         return str1 + '\n' + strP + '\n' + strR + '\n'
+    
+
+    def _set_weight2ref (self, weight:float,weight_name='weight'):
+        for ref in self.refs():
+            ref.set_weight(weight,weight_name)
 
 
-    def _weight2ref (self, weight_by_prop_name:str, proval2weight:dict):
+    def set_weight2ref (self, weight_by_prop_name:str, proval2weight:dict[str,float],weight_name='weight'):
         try:
             values2weight = set(self[weight_by_prop_name])
             max_weight = 0.0
@@ -1039,11 +1044,11 @@ class PSRelation(PSObject):
                     weight = proval2weight[v]
                     if weight > max_weight: max_weight = weight
                 except KeyError: continue
-            for ref in self.RefDict.values():
-                ref.set_weight(max_weight)
+            for ref in self.references:
+                ref.set_weight(max_weight,weight_name)
         except KeyError:
-                for ref in self.RefDict:
-                    ref.set_weight(0.0)
+                for ref in self.references:
+                    ref.set_weight(0.0,weight_name)
 
 
     def effect_sign(self): 

@@ -14,7 +14,7 @@ from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
-from ..utils import unpack
+from ..utils import unpack,execution_time,execution_time2
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
@@ -353,7 +353,7 @@ to retreive {my_sent_props} properties')
                 if not self.no_mess:
                     print('"%s"\nretrieved %d nodes and %d edges in %s by %d parallel iterations' % 
                     (my_request_name, entire_graph.number_of_nodes(), entire_graph.number_of_edges(),
-                            self.execution_time(start_time)[0], pages+1),flush=True)
+                            execution_time(start_time), pages+1),flush=True)
 
         self.ResultRef = ''
         self.ResultPos = 0
@@ -812,7 +812,7 @@ to retreive {my_sent_props} properties')
                                       download=True,step=step)
                 splitter = splitter_splits
                 remaining_iterations = number_of_splits-s
-                executiontime, remaintime = self.execution_time(retreival_start,remaining_iterations,number_of_splits)
+                executiontime, remaintime = execution_time2(retreival_start,remaining_iterations,number_of_splits)
                 print(f'Network retrieval iteration {s} out of {number_of_splits} was completed in {executiontime}')
                 print(f'Estimated remaining time for network retrieval: {remaintime}\n\n')
                 s += 1
@@ -1035,11 +1035,11 @@ to retreive {my_sent_props} properties')
                             print(f'Longest {max_threads}-threaded time {"{}".format(str(timedelta(seconds=max_threaded_time)))} \
 is close to Apache default 5 minutes transaction timeout !!!')
                     if not self.no_mess:
-                        print (f'{p+1} {len(parents)} parents were processed in {self.execution_time(process_start)[0]}')
+                        print (f'{p+1} {len(parents)} parents were processed in {execution_time(process_start)}')
                     need_children.clear()
         
         print(f'{len(child_counter)} children for {len(parents)} parent entities were found in database \
-in {self.execution_time(process_start)[0]}')
+in {execution_time(process_start)}')
         print(f'Longest {max_threads}-threaded time: {"{}".format(str(timedelta(seconds=max_threaded_time)))}')
 
         return child_counter, self.Graph.psobjs_with([CHILDS])
@@ -1448,7 +1448,7 @@ in {self.execution_time(process_start)[0]}')
 
             if not self.no_mess:
                 print('RNEF dump of "%s" graph into %s folder was done in %s' % 
-                    (my_graph.name,to_folder,self.execution_time(dump_start)[0]),flush=True)
+                    (my_graph.name,to_folder,execution_time(dump_start)),flush=True)
                 
         return time.time()-dump_start
 
@@ -1489,7 +1489,7 @@ in {self.execution_time(process_start)[0]}')
                         page_ref_count = iterations_graph.weight()
                         reference_counter += page_ref_count
                         remaining_iterations = number_of_iterations-i-threads
-                        exec_time, remaining_time = self.execution_time(start_time,remaining_iterations,number_of_iterations) 
+                        exec_time, remaining_time = execution_time2(start_time,remaining_iterations,number_of_iterations) 
                         print("With %d in %d iterations, %d %s in %d results with %d references retrieved in %s using %d threads" % 
                         (i+threads,number_of_iterations,self.ResultPos,return_type,result_size,reference_counter,exec_time,threads))
                         if i < number_of_iterations:
@@ -1761,7 +1761,7 @@ in {self.execution_time(process_start)[0]}')
                 new_g = new_session.iterate_oql(oql,urns,use_cache=False,request_name=req_name)
                 new_g.load_references()
                 my_graph.add_graph(new_g)
-                time_passed, remaining_time = self.execution_time(start,number_of_iterations-i,number_of_iterations)
+                time_passed, remaining_time = execution_time2(start,number_of_iterations-i,number_of_iterations)
                 print(f'Retrieved {i+chunk_len} entities out of {len(objs)} in {time_passed}')
                 print(f'Estimated remaining update time: {remaining_time}')
 
@@ -1783,7 +1783,7 @@ in {self.execution_time(process_start)[0]}')
                 my_graph.add_graph(new_g)
                 iteration_counter +=1
                 remaining_iteration = number_of_iterations-iteration_counter
-                time_passed, remaining_time = self.execution_time(start,remaining_iteration,number_of_iterations)
+                time_passed, remaining_time = execution_time2(start,remaining_iteration,number_of_iterations)
                 retreived_len = min(len(urns),i+chunk_len)
                 print(f'Retrieved {retreived_len} relations out of {len(objs)} in {time_passed}')
                 print(f'Estimated remaining update time: {remaining_time}')

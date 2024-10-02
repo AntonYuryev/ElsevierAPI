@@ -3,9 +3,8 @@ from  .PathwayStudioGOQL import OQL
 from  .PathwayStudioZeepAPI import DataModel
 from  .NetworkxObjects import PSObject,PSRelation,len,REGULATORS,TARGETS,EFFECT
 from  .ResnetGraph import ResnetGraph,REFCOUNT
-import math
-import time
-from datetime import timedelta
+from ..utils import execution_time
+import math, time
 
 
 class PSNetworx(DataModel):
@@ -56,33 +55,6 @@ class PSNetworx(DataModel):
 
         return dbid2entity
 
-    
-    @staticmethod
-    def execution_time(execution_start:float,remaining_iterations:int=0,number_of_iterations:int=0):
-        '''
-        Input
-        -----
-        if "number_of_iterations" is supplied assumes that "execution_start" is global start
-        otherwise assumes "execution_start" is the start of the current iteration if "remaining_iterations" is supplied
-        
-        Return
-        ------
-        tuple(time passed from execution_start, remaining_time)
-        '''
-        delta = time.time() - execution_start
-        if number_of_iterations:
-            passed_iterations = number_of_iterations-remaining_iterations
-            if passed_iterations:
-                remaining_time = delta*float(remaining_iterations/passed_iterations)
-            else:
-                remaining_time = 0
-            return "{}".format(str(timedelta(seconds=delta))), "{}".format(str(timedelta(seconds=remaining_time)))
-        elif type(remaining_iterations) != type(None):
-                remaining_time = delta*remaining_iterations
-                return "{}".format(str(timedelta(seconds=delta))), "{}".format(str(timedelta(seconds=remaining_time)))
-        else:
-            return "{}".format(str(timedelta(seconds=delta))),str(0)
-    
 
     def __psrel2dict(self,rels:dict[int,PSRelation]):
         '''
@@ -265,7 +237,7 @@ class PSNetworx(DataModel):
             accumulate_network = accumulate_network.compose(network_iter)
 
             splitter = new_splitter
-            executiontime = self.execution_time(iter_start)
+            executiontime = execution_time(iter_start)
             print('Iteration %d out of %d was completed in %s' % (s,number_of_splits, executiontime))
             s += 1
         return accumulate_network

@@ -578,24 +578,62 @@ class ResnetGraph (nx.MultiDiGraph):
                 return rel.make_urn(regulators, targets)
             
 
-    def load_references(self,weight_by_property='',using_value2weight=dict())->set[Reference]:
+    def load_references(self,weight_by_property='',using_value2weight=dict[str,float],weight_name='relweight')->set[Reference]:
         """
         input:
-            references may be annotated with 'weight_by_property' weight specificafied in 'using_value2weight' 
+            weight_by_property -  relation property which values are used to weight references
+            using_value2weight = {prop_value:weight}
         output:
             all PSRelation in self have reference
+            references areannotated with 'weight_by_property' weight specificafied in 'using_value2weight'
         """
         graph_references = set()
         if weight_by_property:
-            for r, t, rel in self.edges.data('relation'):
+            for r,t,rel in self.edges.data('relation'):
                 assert(isinstance(rel, PSRelation))
                 rel.refs()
-                rel._weight2ref(weight_by_property,using_value2weight)
+                rel.set_weight2ref(weight_by_property,using_value2weight,weight_name)
                 graph_references.update(rel.refs())
         else:
             [graph_references.update(rel.refs()) for r,t,rel in self.edges.data('relation')]
 
         return graph_references
+
+
+    def add_node_weight2ref(self,regurn2weight:dict,tarurn2weight:dict,weight_name='nodeweight'):
+        '''
+        input:
+            nodes must have "regulator weight" and "target weight" properties.  
+            If both regulator and target node has no "weight" property references with no previously annotated weight will receive zero weight property
+        '''
+        for r,t,urn,rel in self.edges.data('relation',keys=True):
+            regulator_weight = regurn2weight.get(self._get_node(r).urn(),0.0)
+            target_weight = tarurn2weight.get(self._get_node(t).urn(),0.0)
+            self[r][t][urn]['relation']._set_weight2ref(regulator_weight+target_weight,weight_name)
+
+
+    def add_weights2neighbors(self,of_nodes:list[PSObject],with_name:str,under_new_name:str,in_direction=''):
+        '''
+        input:
+            in_direction = ['<','>','']
+        '''
+        assert (in_direction in ['<','>',''])
+        urn2weight = {o.urn():o.get_prop(with_name,if_missing_return=0.0) for o in of_nodes}
+        urn2weight4annotation = dict()
+        for r,t,urn,rel in self.edges.data('relation',keys=True):
+            target_weight = regulator_weight = 0.0
+            reg_urn = self._get_node(r).urn()
+            tar_urn = self._get_node(t).urn()
+            if in_direction in ['>','']:
+                regulator_weight = urn2weight.get(reg_urn,0)
+                if regulator_weight:
+                    urn2weight4annotation[tar_urn] = [regulator_weight]
+            if in_direction in ['<','']:
+                target_weight = urn2weight.get(tar_urn,0)
+                if target_weight:
+                    urn2weight4annotation[reg_urn] = [target_weight]
+
+        self.set_node_annotation(urn2weight4annotation,under_new_name)
 
 
     def citation_index(self)->dict[str,Reference]:

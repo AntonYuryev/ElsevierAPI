@@ -128,10 +128,9 @@ class BiomarkerReport(SemanticSearch):
         if self.params['biomarker_type'] == SOLUBLE:
             self.Graph = self.Graph.filter_references({'Tissue':SOLUBLE_BIOMARKERS_TISSUES},QUANTITATIVE_BIOMARKER_RELS)
 
-        if self.journal_filter:
+        if self.journal_filter: # journal_filter = {prop_name:[values]}
             self.Graph = self.Graph.filter_references(self.journal_filter)
-            # journal_filter = {prop_name:[values]}
-
+            
 
     def init_semantic_search (self, reset_pandas = False):
         not_biomarker_types = DISEASE_TYPES+['GeneticVariant']
@@ -227,6 +226,7 @@ class BiomarkerReport(SemanticSearch):
         # decide what to add to the report
         try:
             weighted_df = self.raw_data[WEIGHTED]
+            assert(isinstance(weighted_df,df))
             #weighted_df.drop(columns=[self.__mapped_by__,'Resnet name'],inplace=True)
             weighted_df[RANK] = weighted_df[input_disease_col]
             weighted_df.sort_values(by=[RANK],ascending=False, inplace=True)
