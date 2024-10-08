@@ -217,14 +217,14 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         return PSObject(self)
 
 
-    def merge_obj(self,other:'PSObject',replace_unique=False):
+    def merge_obj(self,other:'PSObject',replace_identity=False):
         '''
         properties from "other" take precedent,
-        if replace_unique URN, Name, ObjTypeName are also replaced
+        if replace_identity URN, Name, ObjTypeName are also replaced
         '''
         my_copy = PSObject(self)
         [my_copy.update_with_list(prop_name,values) for prop_name,values in other.items()]
-        if replace_unique:
+        if replace_identity:
             my_copy['URN'] = other['URN']
             my_copy['Name'] = other['Name']
             my_copy['ObjTypeName'] = other['ObjTypeName']
@@ -425,18 +425,16 @@ class PSRelation(PSObject):
         output:
             calculated URN
         '''
-        reg_urns = [r.urn() for r in regulators]
-        tar_urns = [r.urn() for r in targets]
-        reg_urns.sort()
-        tar_urns.sort()
+        reg_urns = sorted([r.urn() for r in regulators])
+        tar_urns = sorted([r.urn() for r in targets])
         rel_urn = 'urn:agi-'+self.objtype()+':'
         if tar_urns:
-            rel_urn += 'out:'+'out:'.join(tar_urns)
+            rel_urn += 'out:'+'out:'.join(tar_urns) # out:urn:out:
             rel_urn += ':in-out:'+'in-out:'.join(reg_urns)
-            try:
-                rel_urn += ':'+ self[EFFECT][0]
-            except (IndexError,KeyError): pass
-            if 'Mechanism' in self.keys():
+            effect = self.effect()
+            if effect in ['positive','negative']:
+                rel_urn += ':'+ effect
+            if 'Mechanism' in self:
                 rel_urn += ':'+self['Mechanism'][0]
         else:
             rel_urn += 'in-out:'+':in-out:'.join([u for u in reg_urns])
@@ -575,7 +573,10 @@ class PSRelation(PSObject):
     
 
     def merge_rel(self, other:'PSRelation'):
-        my_copy = self.make_copy()
+        '''
+        does not copy other.Nodes
+        '''
+        my_copy = self.copy()
         my_copy.merge_obj(other)
         my_copy._add_refs(other.__load_refs())
         return my_copy
@@ -602,7 +603,7 @@ class PSRelation(PSObject):
         return new_psobj
 
         
-    def make_copy(self):
+    def copy(self):
         my_copy = PSRelation(self)
         my_copy.PropSetToProps = self.PropSetToProps.copy()
         my_copy.Nodes = self.Nodes.copy()
@@ -633,15 +634,15 @@ class PSRelation(PSObject):
         # props = {prop_name:[prop_values]}
         new_rel = cls(props)
         try:
-            effect_val = props[EFFECT]
+            effect_val = props[EFFECT][0]
         except (IndexError,KeyError):
             effect_val = str()
 
-        new_rel.Nodes[REGULATORS] = [(regulator.uid(), '0', effect_val)]
         if is_directional:
-            new_rel.Nodes[TARGETS] = [(target.uid(), '1', effect_val)]
+            new_rel.Nodes[REGULATORS] = [regulator]
+            new_rel.Nodes[TARGETS] = [target]
         else:
-            new_rel.Nodes[REGULATORS].append((target.uid(), '0', effect_val))
+            new_rel.Nodes[REGULATORS] = [regulator,target]
 
         new_rel._add_refs(refs)
         if REFCOUNT not in new_rel.keys():
@@ -653,25 +654,15 @@ class PSRelation(PSObject):
 
     def is_directional(self):
         return len(self.Nodes) == 2
-    
 
-    ''' 
-    TO DO - convert sel.Nodes from (uid(), '0', effect_val) to PSObject
-    def regulators(self):
-        return list(map(PSObject,self.Nodes[REGULATORS]))
-
-
-    def targets(self):
-        return list(map(PSObject,self.Nodes[TARGETS])) if TARGETS in self.Nodes else []
-    '''
 
     def regulator_uids(self):
-        nodeIds = [x[0] for x in self.Nodes[REGULATORS]]
+        nodeIds = [x.uid() for x in self.Nodes[REGULATORS]]
         return list(nodeIds)
     
     
     def target_uids(self)->list[int]:    
-        return [x[0] for x in self.Nodes[TARGETS]] if TARGETS in self.Nodes else []
+        return [x.uid() for x in self.Nodes[TARGETS]] if TARGETS in self.Nodes else []
 
 
     def entities_uids(self):
@@ -839,7 +830,7 @@ class PSRelation(PSObject):
         ref2keep = {ref for ref in all_refs if not ref.has_values_in(with_prop2values)}
         if ref2keep:
             if len(ref2keep) < len(all_refs):
-                mycopy = self.make_copy()
+                mycopy = self.copy()
                 mycopy.RefDict = {k:r for k,r in self.RefDict.items() if r in ref2keep}
                 mycopy.references.clear()
                 mycopy.refs()
@@ -909,9 +900,9 @@ class PSRelation(PSObject):
             targetIDs = str()
             for k, v in self.Nodes.items():
                 if k == REGULATORS:
-                    regulatorIDs = ','.join([str(x[0]) for x in v])
+                    regulatorIDs = ','.join([str(x.dbid()) for x in v])
                 else:
-                    targetIDs = ','.join([str(x[0]) for x in v])
+                    targetIDs = ','.join([str(x.dbid()) for x in v])
 
             for r in range(0, rowCount):
                 table[r][col_count-2] = regulatorIDs
@@ -958,9 +949,9 @@ class PSRelation(PSObject):
             targetIDs = str()
             for k, v in self.Nodes.items():
                 if k == REGULATORS:
-                    regulatorIDs = ','.join([str(x[0]) for x in v])
+                    regulatorIDs = ','.join([str(x.dbid()) for x in v])
                 else:
-                    targetIDs = ','.join([str(x[0]) for x in v])
+                    targetIDs = ','.join([str(x.dbid()) for x in v])
 
                 table[col_count-2] = regulatorIDs
                 table[col_count-1] = targetIDs
@@ -1001,14 +992,14 @@ class PSRelation(PSObject):
         all possible pairwise combinations for non-directional self
         """
         if self.is_directional():
-            return [(r[0],t[0]) for r in self.Nodes[REGULATORS] for t in self.Nodes[TARGETS]]
+            return [(r.uid(),t.uid()) for r in self.Nodes[REGULATORS] for t in self.Nodes[TARGETS]]
         else:
             # for non-directions relations
             assert(len(self.Nodes) == 1)
             if REGULATORS in self.Nodes:
-                uIdList = [x[0] for x in self.Nodes[REGULATORS]]
+                uIdList = [x.uid() for x in self.Nodes[REGULATORS]]
             else:
-                uIdList = [x[0] for x in self.Nodes[TARGETS]]
+                uIdList = [x.uid() for x in self.Nodes[TARGETS]]
    
             pairs = list(itertools.combinations(uIdList, 2))
             if pairs:

@@ -1162,7 +1162,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             print('Linked %d indications as toxicities for %s %s' % (linked_row_count,t_n,drug_class))
             new_session.close_connection()
         
-        
+
         if hasattr(self, 'PathwayComponents'):
             #references linking target pathways to indication
             colname = target_in_header + ' pathway components'
@@ -1330,7 +1330,7 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
 
             if self.params['add_bibliography']:
                 indication_etmrefs = etm_future.result()
-                etm_ref_colname = self.refcount_column_name('Name',self.target_names())
+                etm_ref_colname = self.etm_refcount_colname('Name',self.target_names())
                 doi_ref_colname = self.doi_column_name('Name',self.target_names())
                 for ws in self.__dfnames_map().values():
                     if ws in self.report_pandas.keys():

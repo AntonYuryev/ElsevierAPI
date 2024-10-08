@@ -185,26 +185,22 @@ class ResnetGraph (nx.MultiDiGraph):
         [self.__add_rel(rel) for rel in rels2add]
         
         
-    def __copy_rel(self,rel:PSRelation,from_graph:"ResnetGraph"):
+    def __copy_rel(self,rel:PSRelation):
         '''
-        copies rel and its nodes specified in rel based on their URNs rather than database identifiers from ['Id'][0]\n
-        re-assigns node identifiers in rel.Nodes to make them consistent with relations in "self" if necessary
+        copies rel and its nodes specified in rel if they do not exist in self. 
+        Otherwise copies node from self to rel  
         '''
-        rel2add = rel.make_copy()
+        rel2add = rel.copy()
         nodes2add = list()
-        for s, node_tup_list in rel.Nodes.items():
-            for i, node_tup in enumerate(node_tup_list):
-                from_graph_node_id = node_tup[0]
-                my_node = from_graph._psobj(from_graph_node_id)
-                try:
-                    exist_node = self.urn2node(my_node.urn())
-                    exist_node_id = exist_node.uid()
-                    rel2add.Nodes[s][i] = (exist_node_id,node_tup[1],node_tup[2])
-                except KeyError:
-                    nodes2add.append((my_node.uid(),my_node.items()))
-                   # self.urn2obj[my_node.urn()] = my_node
+        for s, node_list in rel.Nodes.items():
+            for i, node_from_graph in enumerate(node_list):
+                node_from_graph_uid = node_from_graph.uid()
+                if node_from_graph_uid in self.nodes():
+                    rel2add.Nodes[s][i] = self._psobj(node_from_graph_uid)
+                else:
+                    nodes2add.append(node_from_graph)
                     
-        self.add_nodes_from(nodes2add)
+        self.add_psobjs(nodes2add)
         self.add_rel(rel2add)
         return
 
@@ -263,7 +259,7 @@ class ResnetGraph (nx.MultiDiGraph):
             self.add_psobj(replace_with)
 
         for rel in self.get_neighbors_rels({n}):
-            new_rel = rel.make_copy()
+            new_rel = rel.copy()
             if flip_effect < 0:
                 new_rel.flip_effect()
             elif not flip_effect:
@@ -1002,6 +998,12 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
 ######################   GET GET GET   ######################################
+    def iterate(self):
+        for r,t,rel in self.edges.data('relation'):
+            assert(isinstance(rel,PSRelation))
+            yield self._get_node(r), self._get_node(t), rel
+
+
     def get_node_attributes(self,prop_name):
         '''
         Returns
@@ -1266,7 +1268,7 @@ class ResnetGraph (nx.MultiDiGraph):
         {PSRelation} - list of all unique relations in graph
         \n bi-directional duplicates from non-directional relations are removed
         """
-        return {PSRelation.make_copy(r) for n1,n2,r in self.edges.data('relation')}
+        return {PSRelation.copy(r) for n1,n2,r in self.edges.data('relation')}
     
 
     def relation_dbids(self):
@@ -1293,7 +1295,7 @@ class ResnetGraph (nx.MultiDiGraph):
                 if isinstance(rel,PSRelation):
                     for prop_name in in_properties:
                         if rel.is_annotated(prop_name, with_values):
-                            relations2return.add(PSRelation.make_copy(rel))
+                            relations2return.add(PSRelation.copy(rel))
                             break
         else:
             relations2return = self._psrels()
@@ -2144,14 +2146,14 @@ class ResnetGraph (nx.MultiDiGraph):
             if TARGETS in rel.Nodes:
                 linktype4reg = 'in'
                 for t in rel.Nodes[TARGETS]:
-                    target_local_id = self.nodes[t[0]]['URN'][0]
+                    target_local_id = self.nodes[t.uid()]['URN'][0]
                     et.SubElement(xml_control, 'link', {'type': 'out', 'ref': target_local_id},nsmap=None)
             else:
                 linktype4reg = 'in-out'
 
             for r in rel.Nodes[REGULATORS]:
                 try:
-                    regulator_local_id = self.nodes[r[0]]['URN'][0]
+                    regulator_local_id = self.nodes[r.uid()]['URN'][0]
                     et.SubElement(xml_control, 'link', {'type':linktype4reg, 'ref':regulator_local_id},nsmap=None)
                 except IndexError or KeyError:
                     continue
@@ -2405,14 +2407,14 @@ class ResnetGraph (nx.MultiDiGraph):
             if is_valid_rel:
                 valid_nodes.update(psobjs4rel)
                 ps_rel = PSRelation(dict())
-                effect = rel.find('./Effect')
-                effect_val = 'unknown' if type(effect) == type(None) else effect.text
+                #effect = rel.find('./Effect')
+                #effect_val = 'unknown' if type(effect) == type(None) else effect.text
 
                 for reg in regulators:
-                    ps_rel.Nodes[REGULATORS].append((reg.uid(), '0', effect_val))
+                    ps_rel.Nodes[REGULATORS].append(reg)
                     
                 for targ in targets:
-                    ps_rel.Nodes[TARGETS].append((targ.uid(), '1', effect_val))
+                    ps_rel.Nodes[TARGETS].append(targ)
 
                 for attr in rel.findall('attr'):
                     prop_id = attr.get('name')
@@ -2623,7 +2625,7 @@ class ResnetGraph (nx.MultiDiGraph):
             tree_rn.add_psobjs(set(tree_nodes))
             for r,t in tree.edges():
                 rels = self._psrels4(r,t)
-                [tree_rn.__copy_rel(rel,self) for rel in rels]
+                [tree_rn.__copy_rel(rel) for rel in rels]
             return tree_rn
         except NetworkXError:
             print(f'{root.name()} nodes was not found in graph {self.name}')
@@ -2643,7 +2645,7 @@ class ResnetGraph (nx.MultiDiGraph):
         largest_tree_rn.add_psobjs(set(self._get_nodes(largest_tree.nodes())))
         for r,t in largest_tree.edges():
             rels = self._psrels4(r,t)
-            [largest_tree_rn.__copy_rel(rel,self) for rel in rels]
+            [largest_tree_rn.__copy_rel(rel) for rel in rels]
         
         return largest_tree_rn
 
@@ -3355,8 +3357,8 @@ class ResnetGraph (nx.MultiDiGraph):
         for child in children:
             #child_id = m.uid()
             rel = PSRelation({OBJECT_TYPE:['MemberOf'],'Relationship':['is-a'],'Ontology':['Pathway Studio Ontology']})
-            rel.Nodes[REGULATORS] = [(child.uid(),0,0)]
-            rel.Nodes[TARGETS] = [(add2parent.uid(),1,0)]
+            rel.Nodes[REGULATORS] = [child]
+            rel.Nodes[TARGETS] = [add2parent]
             resnet.add_rel(rel)
 
         return resnet
@@ -3379,8 +3381,8 @@ class ResnetGraph (nx.MultiDiGraph):
             ontology_graph.add_psobjs(p[CHILDS])
             for child in p[CHILDS]:
                 rel = PSRelation({OBJECT_TYPE:['MemberOf'],'Relationship':['is-a'],'Ontology':['Pathway Studio Ontology']})
-                rel.Nodes[REGULATORS] = [(child.uid(),0,0)]
-                rel.Nodes[TARGETS] = [(p.uid(),1,0)]
+                rel.Nodes[REGULATORS] = [child]
+                rel.Nodes[TARGETS] = [p]
                 ontology_graph.add_rel(rel,merge=False)
         return ontology_graph
 
@@ -3619,13 +3621,13 @@ class ResnetGraph (nx.MultiDiGraph):
                 target_combinations = map_node_tuples(rel.Nodes[TARGETS])
                 for reg_tuples in regulator_combinations:
                     for targ_tuples in target_combinations:
-                        new_rel = rel.make_copy()
+                        new_rel = rel.copy()
                         new_rel.Nodes[REGULATORS] = list(reg_tuples)
                         new_rel.Nodes[TARGETS] = list(targ_tuples)
                         new_rels.append(new_rel)
             else:
                 for reg_tuples in regulator_combinations:
-                    new_rel = rel.make_copy()
+                    new_rel = rel.copy()
                     new_rel.Nodes[REGULATORS] = list(reg_tuples)
                     new_rels.append(new_rel)
             
@@ -3682,7 +3684,7 @@ class ResnetGraph (nx.MultiDiGraph):
                 if len(mapped_new_nodes) > 1: #make sure that mapping is done between objects with same object type
                     mapped_new_nodes = [n for n in mapped_new_nodes if n.objtype() == graph_node.objtype()]
 
-                new_nodes = [graph_node.copy().merge_obj(n,replace_unique=True) for n in mapped_new_nodes]
+                new_nodes = [graph_node.copy().merge_obj(n,replace_identity=True) for n in mapped_new_nodes]
                 uid_remap[graph_node.uid()] = ResnetGraph.uids(new_nodes)
                 remapped_nodes.update(new_nodes)
             else:

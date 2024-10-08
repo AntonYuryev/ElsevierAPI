@@ -113,16 +113,16 @@ class PSNetworx(DataModel):
                 link = (graph_node.uid(), direction, l[EFFECT])
 
                 if direction == 1:
-                    new_relations[rel_id].Nodes[TARGETS].append(link)
+                    new_relations[rel_id].Nodes[TARGETS].append(graph_node)
                 else:
-                    new_relations[rel_id].Nodes[REGULATORS].append(link) 
+                    new_relations[rel_id].Nodes[REGULATORS].append(graph_node) 
                     # non-directional relations will have only REGULATORS
 
             # at this point all rels have rel.Nodes[REGULATORS] and some rel.Nodes[TARGETS]
             for rel_id, rel in new_relations.items():
-                rel.Nodes[REGULATORS].sort(key=lambda x:x[0])
+                rel.Nodes[REGULATORS].sort(key=lambda x:x.name())
                 if TARGETS in rel.Nodes:
-                    rel.Nodes[TARGETS].sort(key=lambda x:x[0])
+                    rel.Nodes[TARGETS].sort(key=lambda x:x.name())
                     
             [rel.refs() for rel in new_relations.values()]
             [new_graph.add_rel(rel,merge=False) for rel in new_relations.values()]
@@ -186,7 +186,7 @@ class PSNetworx(DataModel):
             return ResnetGraph()
 
 
-    def connect_entities(self, PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list,
+    def __connect_entities(self, PropertyValues1: list, SearchByProperties1: list, EntityTypes1: list,
                          PropertyValues2: list, SearchByProperties2: list, EntityTypes2: list,
                          REL_PROPS=None, connect_by_rel_types=None, ENTITY_PROPS=None):
 

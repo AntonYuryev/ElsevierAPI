@@ -870,6 +870,15 @@ to retreive {my_sent_props} properties')
             return self.iterate_oql2(f'{oql_query}',node_dbids1,my_dbids2,use_relation_cache,request_name=req_name,step=step)
    
 
+    def connect_entities(self,objs:list[PSObject],and_obj:list[PSObject],
+                         by_relation_type=[],with_effect=[],in_direction=''):
+        dbids1 = set(ResnetGraph.dbids(objs))
+        dbids2 = set(ResnetGraph.dbids(and_obj))
+        assert(dbids1)
+        assert(dbids2)
+        return self.connect_nodes(dbids1,dbids2,by_relation_type,with_effect,in_direction)
+    
+
     def get_group_members(self, group_names:list):
         groups = OQL.join_with_quotes(group_names)
         oql_query = f'SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = ({groups}))'
@@ -1042,7 +1051,9 @@ is close to Apache default 5 minutes transaction timeout !!!')
 in {execution_time(process_start)}')
         print(f'Longest {max_threads}-threaded time: {"{}".format(str(timedelta(seconds=max_threaded_time)))}')
 
-        return child_counter, self.Graph.psobjs_with([CHILDS])
+        parent_with_children = self.Graph.psobjs_with([CHILDS])
+        parent_with_children = [p for p in parent_with_children if p.childs()]
+        return child_counter, parent_with_children
 
 
     def load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
@@ -1053,15 +1064,6 @@ in {execution_time(process_start)}')
         else:
             my_parents = self.Graph._get_nodes()
     
-        '''
-        print(f'Finding entities with children for {len(my_parents)} parents')
-        session_copy = self._clone_session()
-        session_copy.Graph.add_psobjs(set(parents))
-        _,parents = session_copy._load_children4(my_parents, depth = 1)
-        my_parents = [p for p in parents if p.childs() and len(p.childs()) <= max_childs]
-        session_copy.close_connection()
-        print(f'Found {len(my_parents)} parents with children. Begin children retreival')
-        '''
         return self._load_children4(my_parents,min_connectivity,depth,max_childs,max_threads)
     
 
@@ -1688,7 +1690,7 @@ in {execution_time(process_start)}')
         my_psobjs = self.iterate_oql(oql_query,set(propValues),request_name=rn,step=iteration_size)._get_nodes()
 
         if get_childs:
-            children, parents_with_children = self.load_children4(my_psobjs,add2self)
+            children, parents_with_children = self.load_children4(my_psobjs)
             my_psobjs = self.Graph._get_nodes(ResnetGraph.uids(my_psobjs))+list(children)
         elif add2self:
             self.Graph.add_psobjs(set(my_psobjs))
@@ -1744,7 +1746,7 @@ in {execution_time(process_start)}')
         return mapped_objs,no_dbid_objs
     
 
-    def update(self, g:ResnetGraph,with_node_props:list[str],with_rel_props:list[str],inplace=True):
+    def update_graph(self,g:ResnetGraph,with_node_props:list[str],with_rel_props:list[str],inplace=True):
         my_graph = g if inplace else g.copy()
         new_session = self._clone_session()
         new_session.add2self = False
@@ -1789,6 +1791,41 @@ in {execution_time(process_start)}')
                 print(f'Estimated remaining update time: {remaining_time}')
 
         return None if inplace else my_graph
+    
+
+    def child_update(self,g:ResnetGraph,make_new_rels=False):
+        '''
+            make_new_rels - if True will create for all child entities the same relations as their parent have
+        '''
+        myG = g.copy() if g else self.Graph.copy()
+        graph_entities = myG._get_nodes()
+        children, parents_with_children = self.load_children4(graph_entities)
+        myG.add_psobjs(parents_with_children+list(children))
+
+        visited_parents = set()
+        add2g = ResnetGraph()
+        for r,t,rel in myG.iterate():
+            for i,parent in enumerate([r,t]):
+                if parent not in visited_parents and parent in parents_with_children:
+                    visited_parents.add(parent)
+                    n_neighborhood = myG.neighborhood([parent])
+                    n_neighbors = n_neighborhood._get_nodes()
+                    n_neighbors.remove(parent)
+                    parent_childs = parent.childs()
+                    connections = self.connect_entities(n_neighbors,parent_childs)
+                    add2g = add2g.compose(connections)
+                    if make_new_rels:
+                        for n1,n2,parent_rel in n_neighborhood.iterate():
+                            # must use dict(parent_rel) to make new rel
+                            if n1 == parent:
+                                for c in parent_childs:
+                                    add2g.add_triple(c,n2,dict(parent_rel),parent_rel.refs(),parent_rel.is_directional())
+                            else:
+                                for c in parent_childs:
+                                    add2g.add_triple(n1,c,dict(parent_rel),parent_rel.refs(),parent_rel.is_directional())
+                
+        return myG.compose(add2g)
+
 
 ##################### EXPERIMENT EXPERIMENT EXPERIMENT EXPERIMENT ###########################
     def map_experiment(self, exp:Experiment):
@@ -1880,6 +1917,5 @@ in {execution_time(process_start)}')
                     e.shutdown()
         print(f'Retrieved protein-protein interaction network with {ppi_keeper.number_of_nodes()} nodes and {ppi_keeper.number_of_edges()} edges')
         return ppi_keeper
-
 
 

@@ -79,7 +79,9 @@ class RepurposeDrug(Indications4targets):
 
     def set_drugs(self):
         '''
-        uses self.params to load:
+        input:
+            self.params
+        output:
             self.drugs
             self.drug2targetG
             self.activated_targets
@@ -631,13 +633,19 @@ class RepurposeDrug(Indications4targets):
         drugs2targets.name = 'Reaxys drug targets'
         drugs2targets.add_psobjs(self.drugs)
         drugs2targets.add_psobjs(all_targets)
+
+
         [drugs2targets.add_rel(rel) for rel in all_rels] # need to add rels on by one here to merge their references, pX and other attributes
         drugs2targets = drugs2targets.make_simple()
-        [drugs2targets[r][t][urn]['relation'].set_affinity() for r,t,urn in drugs2targets.edges(keys=True)]
 
+        [drugs2targets[r][t][urn]['relation'].set_affinity() for r,t,urn in drugs2targets.edges(keys=True)]
+        # filtering out weak affinity targets:
         edges2remove = [(r,t,urn,rel) for r,t,urn,rel in drugs2targets.edges.data('relation',keys=True) if rel._affinity()<minpX]
         [drugs2targets.remove_edge(r,t,urn) for r,t,urn,rel in edges2remove]
         drugs2targets.remove_nodes_by_degree(1)
+
+        drugs2targets = self.child_update(drugs2targets,make_new_rels=True)
+        drugs2targets = drugs2targets.make_simple()
         
         return drugs2targets
     
@@ -932,7 +940,7 @@ class RepurposeDrug(Indications4targets):
         other_effects_future.result()
         if self.params['add_bibliography']:
             etm_refs_df = etm_biblio_future.result()
-            etm_ref_colname = self.refcount_column_name('Name',self.drug_names_str())
+            etm_ref_colname = self.etm_refcount_colname('Name',self.drug_names_str())
             doi_ref_colname = self.doi_column_name('Name',self.drug_names_str())
             for ws in ranked_df_names:
                 self.report_pandas[ws] = self.report_pandas[ws].merge_df(etm_refs_df,on='Name',columns=[etm_ref_colname,doi_ref_colname])

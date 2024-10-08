@@ -780,11 +780,8 @@ class SemanticSearch (APISession):
             sort_by = __col2sort__(my_df)
             count_df.sort_values(sort_by,ascending=False,inplace=True)
 
-        count_df_cols = count_df.columns.to_list()
-        if self.__colname4GV__ in count_df_cols:
-            count_df_cols.remove(self.__colname4GV__)
-            count_df_cols.append(self.__colname4GV__)
-            count_df_cols = df.copy_df(count_df,count_df_cols)
+        if self.__colname4GV__ in count_df.columns:
+            count_df.move_cols({self.__colname4GV__:len(count_df.columns)})
 
         count_df.copy_format(my_df)
         count_df._name_ = with_name
@@ -897,21 +894,17 @@ class SemanticSearch (APISession):
             if col not in added_columns and ' count' not in col:
                 normdf4raw[col] = counts_df[col]
 
-        #normdf4raw['Combined score'] = np.array(combined_scores)
         normdf4raw[RANK] = normdf4raw['Combined score']/normdf4raw[CHILDREN_COUNT]
         normdf4raw = normdf4raw.sort_values(by=[RANK,entity_column],ascending=False)
 
-        # removes rows with all zeros
-        normdf4raw = df.from_pd(normdf4raw.loc[normdf4raw[RANK] >= 0.001])
+        normdf4raw = df.from_pd(normdf4raw.loc[normdf4raw[RANK] >= 0.001]) # removes rows with all zeros
         print(f'Removed {len(counts_df)-len(normdf4raw)} rows from normalized worksheet with score=0')
-        # this converts values to pretty string and has to be performed at the end
+        # prettyfying scores in df:
         normdf4raw['Combined score'] = normdf4raw['Combined score'].map(lambda x: '%2.3f' % x)
         normdf4raw[RANK] = normdf4raw[RANK].map(lambda x: '%2.3f' % x)
             
         if drop_empty_columns:
             normdf4raw = normdf4raw.drop_empty_columns() 
-
-        weights_df = df.from_pd(weights_df.map(lambda x: f'{x:,.4f}' if isinstance(x,float) else x)) #prettyfying header
 
         rename = dict()
         header4rankedf = [entity_column]
@@ -920,22 +913,25 @@ class SemanticSearch (APISession):
                 refcount_colname = c[len(self._col_name_prefix):]
                 rename[c] = refcount_colname
                 header4rankedf.append(refcount_colname)
-
-        weights_df = df.copy_df(weights_df,rename2=rename)
+        #prettyfying weighter_df header:
+        weights_df = df.from_pd(weights_df.map(lambda x: f'{x:,.4f}' if isinstance(x,float) else x))
+        # renaming weight_df columns from "weighted " to "RefCount to ":
+        weights_df = df.copy_df(weights_df,rename2=rename) 
 
         normdf4raw_cols = normdf4raw.columns.to_list()
         forbidden_cols = set(refcount_header+header4rankedf+[self.__temp_id_col__,'URN',RANK,'ObjType',self.__colname4GV__])
         other_cols4rankedf = [x for x in normdf4raw_cols if x not in forbidden_cols]
         header4rankedf += other_cols4rankedf
-        header4rankedf +=  [RANK,'URN','ObjType',self.__colname4GV__]
+        header4rankedf +=  [RANK,'URN','ObjType']
+        if self.__colname4GV__ in normdf4raw_cols:
+            header4rankedf.append(self.__colname4GV__)
+        # at this point: header4rankedf = [entity_column]+refcount_colnames+other_cols4rankedf+[RANK,'URN','ObjType',self.__colname4GV__]
 
         rankedf4report = df.copy_df(normdf4raw,only_columns=header4rankedf)
-
-        # now can finish normdf4raw
+        # now finish normdf4raw by adding weights to df and df to raw data:
         normdf4raw = weights_df.append_df(normdf4raw)
         normdf4raw._name_ = 'norm.'+counts_df._name_
         self.add2raw(normdf4raw)
-
 
         assert(weights_df.columns.to_list() == rankedf4report.columns.to_list()[:len(weights_df.columns)])
         rankedf4report = weights_df.append_df(rankedf4report)# append will add columns missing in weights_str 
@@ -950,7 +946,7 @@ class SemanticSearch (APISession):
         return rankedf4report,normdf4raw
 
 
-    def refcount_column_name(self,between_names_in_col,and_concepts):
+    def etm_refcount_colname(self,between_names_in_col,and_concepts):
         return self.etm_counter.refcount_column_name(between_names_in_col,and_concepts)
     
 
@@ -977,12 +973,14 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         return self.etm_counter.add_refs(to_df,entity_name_col,input_names,my_query_func,add2query,max_row)
 
 
-    def refs2report(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True,skip1strow=True):
+    def __refs2report(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True,skip1strow=True):
         """
         input:
             df with "to_df_named" must be in self.report_pandas and have column RANK
-        adds:
-            columns etm.ETM_REFS_COLUMN, etm._etm_doi_column_name() to df with name "to_df_name" from self.report_pandas
+        output:
+            copy of "to_df_named" with added columns:
+                etm.ETM_REFS_COLUMN
+                etm._etm_doi_column_name()
         """
         my_df = df.copy_df(self.report_pandas[to_df_named])
         if skip1strow:
