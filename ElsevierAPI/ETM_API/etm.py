@@ -1,4 +1,3 @@
-import certifi.core
 from .references import DocMine,Reference,Author,len,pubmed_hyperlink,make_hyperlink,re
 from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,SENTENCE,EMAIL,REF_ID_TYPES,RELEVANCE, ETM_CITATION_INDEX,IN_OPENACCESS,PUBLISHER
 from urllib.error import HTTPError
@@ -9,7 +8,8 @@ from ..pandas.panda_tricks import pd, df
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 from ..NCBI.pubmed import medlineTA2issn
-import certifi 
+from ..utils import  load_api_config, execution_time
+from time import sleep
 
 
 SCOPUS_AUTHORIDS = 'scopusAuthors'
@@ -22,28 +22,6 @@ MAX_ETM_SESSIONS = 5 #ETM performance deteriorates if number of concurrent sessi
 DEFAULT_ETM = 'https://covid19-services.elseviertextmining.com/api'
 DEFAULT_APICONFIG = 'D:/Python/ENTELLECT_API/ElsevierAPI/APIconfig.json'
 GRANT_APPLICATION = 'Grant Application'
-
-
-def execution_time(execution_start):
-    return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
-
-
-def load_api_config(api_config_file=''):# file with your API keys and API URLs
-    #cur_dir = os.getcwd()
-    default_apiconfig = DEFAULT_APICONFIG
-    if not api_config_file:
-        print('No API config file was specified\nWill use default %s instead'% default_apiconfig)
-        api_config_file = default_apiconfig
-    try:
-        return dict(json.load(open(api_config_file)))
-    except FileNotFoundError:
-        print("Cannot find API config file: %s" % api_config_file)
-        if api_config_file != default_apiconfig:
-            print('Cannot open %s config file\nWill use default %s instead'% (api_config_file, default_apiconfig))
-            return dict(json.load(open(default_apiconfig)))
-        else:
-            print('No working API server was specified!!! Goodbye')
-            return dict({})
 
 
 def remove_the(t:str):
@@ -377,10 +355,6 @@ class ETMstat:
         self.JournalInfo - {normalize_journal:(publisher,CiteScore)}
         '''
         self.abbrev2journal, self.journal2issn = medlineTA2issn()
-     #   try:
-      #      self.JournalInfo = json.load(open(self.scopus_jinfo_cache(),'r',encoding='utf-8'))
-       # except FileNotFoundError:
-        #    self.JournalInfo = dict()
 
     
     def _load_scopus_citation(self,ref:ETMjson):
@@ -516,6 +490,7 @@ class ETMstat:
                     result = json.loads(the_page.decode('utf-8'))
                     if attempt > 1:
                         print(f'ETM connection was restored on the {attempt} attempt')
+                    sleep(5)
                     return list(result['article-data']), int(result['total-hits='])
                 else:
                     return list(),int(0)
@@ -567,7 +542,7 @@ class ETMstat:
         used to count references from ETM
         """
         first_col = RELEVANCE if use_relevance else ETM_CITATION_INDEX
-        header = [first_col,PUBYEAR,'Citation','Identifier type',IDENTIFIER_COLUMN]
+        header = [first_col,PUBYEAR,'Identifier type',IDENTIFIER_COLUMN,'Citation']
 
         table_rows = set()
         for identifier, ref_count in self.ref_counter.items():
@@ -580,7 +555,7 @@ class ETMstat:
                 identifier = pubmed_hyperlink([identifier],identifier)
             elif id_type == 'DOI':
                 identifier = make_hyperlink(identifier,'http://dx.doi.org/')
-            table_rows.add(tuple([score,ref.pubyear(),biblio_str,id_type,identifier]))
+            table_rows.add(tuple([score,ref.pubyear(),id_type,identifier,biblio_str]))
 
         return_pd = df.from_rows(list(table_rows),header)
         if use_relevance:
@@ -598,7 +573,7 @@ class ETMstat:
 
 
     @staticmethod
-    def external_counter2pd(ref_counter:set, stat_prop=RELEVANCE):
+    def external_counter2pd(ref_counter:set[Reference], stat_prop=RELEVANCE):
         '''
         use for external ref_counter = {Reference} where Reference objects are annotated as Reference[stat_prop]
         used to count references in ResnetGraph()
@@ -612,9 +587,9 @@ class ETMstat:
                 identifier = make_hyperlink(identifier,'http://dx.doi.org/')
             elif id_type == 'NCT ID':
                 identifier = make_hyperlink(identifier,'https://clinicaltrials.gov/ct2/show/')
-            table_rows.add(tuple([ref[stat_prop][0],biblio_str,id_type,identifier]))
+            table_rows.add(tuple([ref[stat_prop][0],id_type,identifier,biblio_str]))
 
-        header = [stat_prop,'Citation','Identifier type',IDENTIFIER_COLUMN]
+        header = [stat_prop,'Identifier type',IDENTIFIER_COLUMN,'Citation']
         return_pd = df.from_rows(list(table_rows),header)
         if stat_prop == RELEVANCE:
             return_pd[RELEVANCE] = return_pd[RELEVANCE].astype(float).round(2)

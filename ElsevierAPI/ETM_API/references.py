@@ -614,19 +614,37 @@ class Reference(dict):
         return textref if textref else self._make_non_standard_textref()
 
 
-    def set_weight(self, weight:float):
+    def set_weight(self, weight:float,weight_name='weight'):
+        '''
+            create property "weight_name" with value = weight
+            old value is replaced if it is smaller than input "weight_name"
+        '''
         try:
-            w = float(self['weight'][0])
+            w = float(self[weight_name][0])
             if w < weight:
-                self['weight'] = [weight]
+                self[weight_name] = [weight]
         except KeyError:
-            self['weight'] = [weight]
+            self[weight_name] = [weight]
 
-    def get_weight(self):
+
+    def  add_weight(self, weight:float,weight_name='weight'):
+        '''
+        adds:
+            weight to property "weight_name"
+        '''
+        assert(weight <= 1.00)
         try:
-            return self['weight'][0]
+            w = float(self[weight_name][0])
+            self[weight_name] = [w+weight]
         except KeyError:
-            return 0.0
+            self[weight_name] = [weight]
+
+
+    def get_weight(self,weight_name='weight'):
+        try:
+            return self[weight_name][0]
+        except KeyError:
+            return 0.0 # allows to exclude cerain references from counting
 
 
     def _sort_key(self, by_property, is_numerical=True):
