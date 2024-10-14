@@ -63,10 +63,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         ------
         returns self[prop_name][value_index]
         '''
-        if prop_name in self.keys():
-            return self[prop_name][value_index]
-        else:
-            return if_missing_return
+        return self[prop_name][value_index] if prop_name in self else if_missing_return
 
 
     def urn(self):
@@ -199,9 +196,9 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
     
     def set_state(self, state:int):
         assert (state in [ACTIVATED,REPRESSED,UNKNOWN_STATE])
-        try:
+        if STATE in self:
             self[STATE][0] += state
-        except (IndexError):
+        else:
             self[STATE] = [state]
 
 
@@ -259,7 +256,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         -----
         if "having_values" is empty will return True if self has any value in "with_prop"
         '''
-        search_in = self.get_props(with_prop)
+        search_in = self.get_props([with_prop])
         if search_in:
             if having_values:
                 if case_sensitive or with_prop in {DBID,REFCOUNT}:
@@ -1068,16 +1065,15 @@ class PSRelation(PSObject):
     
 
     def _affinity(self):
-        try:
+        if 'Affinity' in self:
             return float(self['Affinity'][0])
-        except (IndexError,KeyError):
-            try:
+        elif 'pX' in self:
                return float(self['pX'][0]) 
-            except (IndexError,KeyError):
-                return -1.0
+        else:
+            return -1.0
 
 
-    def isdirect(self):
+    def isprimarytarget(self):
         my_affinity = self._affinity()
         if my_affinity >= MINAFFINITY4DIRECT:
             return DIRECT

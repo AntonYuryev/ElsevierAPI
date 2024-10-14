@@ -1,7 +1,7 @@
 from math import log2, isnan
 import time
 from .ResnetGraph import ResnetGraph,PSObject
-from ..pandas.panda_tricks import df, pd, NaN
+from ..pandas.panda_tricks import df, pd,np
 from  .PathwayStudioZeepAPI import DataModel
 import scipy.stats as stats
 from datetime import timedelta
@@ -157,7 +157,7 @@ class Experiment(PSObject):
             if sample_copy.has_pvalue():
                 for idx in sample_copy.data.index:
                     if sample_copy.data.at[idx,'pvalue'] > max_pval:
-                        sample_copy.data.loc[idx,'value'] = NaN
+                        sample_copy.data.loc[idx,'value'] = np.nan
                         masked_counter += 1
             masked_experiment.samples[sample['Name'][0]] = sample_copy
             print(f'{masked_counter} rows out of {len(sample.data)} total in sample {sample.name()} were masked because their p-value was greater than {max_pval}')
@@ -195,7 +195,7 @@ class Experiment(PSObject):
             results = ps_api.SOAPclient.service.GetExperimentValues(experiment['Id'][0],sample_id, 0, len(experiment_identifiers))
             values =  [row['Value'] for row in results]
             pvalues = [row['PValue'] for row in results]
-            # <PValue>NaN</PValue> in experiments with no p-value columns
+            # <PValue>np.nan</PValue> in experiments with no p-value columns
 
             sample.data = df.from_dict({'value':values,'pvalue':pvalues})
             experiment.samples[sample['Name'][0]] = sample

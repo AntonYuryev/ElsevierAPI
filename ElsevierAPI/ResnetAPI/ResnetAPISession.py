@@ -18,6 +18,7 @@ from ..utils import unpack,execution_time,execution_time2
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
+ALL_CHILDS = 0
 # options for TO_RETRIEVE argument:
 NO_REL_PROPERTIES = -2
 CURRENT_SPECS = -1 # keep current retrieval properties
@@ -152,7 +153,7 @@ class APISession(PSNetworx):
     def _clone_session(self,**kwargs):
         """
         kwargs:
-            what2retrieve - desired relation retreival properties in clone session. Defauls to CURRENT_SPECS
+            what2retrieve - desired relation properties in clone session. Defaults to CURRENT_SPECS
             load_model - defaults to False to avoid database model reloading
             copy_graph - copy self.Graph. Defaults to False
         """
@@ -950,7 +951,7 @@ to retreive {my_sent_props} properties')
         return propval2objs, uid2propval
 
 ################################# ONTOLOGY  ONTOLOGY ############################################
-    def __load_children(self,parent:PSObject,min_connectivity=0,depth=0,max_childs=0)->tuple[PSObject,list[PSObject]]:
+    def __load_children(self,parent:PSObject,min_connectivity=0,depth=0,max_childs=ALL_CHILDS)->tuple[PSObject,list[PSObject]]:
         '''
         Input
         -----
@@ -984,7 +985,7 @@ to retreive {my_sent_props} properties')
         
 
     def _load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
-                       max_childs=0,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
+                       max_childs=ALL_CHILDS,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
         '''
         Input:
             if "parents" is empty will use all nodes from self.Graph
@@ -1031,7 +1032,7 @@ to retreive {my_sent_props} properties')
                             f_parent, children = future.result()
                             # children has empty PSObjects if len(children) <= max_childs
                             nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
-                            if not max_childs or len(children) <= max_childs:
+                            if max_childs == ALL_CHILDS or len(children) <= max_childs:
                                 # case when children has real PSObjects
                                 self.Graph.add_psobjs(children) # set_node_attributes() does not update nodes that do not exist in Graph
                                 child_counter.update(children)
@@ -1057,7 +1058,21 @@ in {execution_time(process_start)}')
 
 
     def load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
-                       max_childs=0,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
+                       max_childs=ALL_CHILDS,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
+        '''
+            Input:
+                if "parents" is empty will use all nodes from self.Graph
+                depth - ontology depth to get children from. If depth=0, all children from all depths are returned
+                max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
+                min_connectivity - avoid from using.  min_connectivity > 0 slows down children retrival significantly
+
+            Output:
+                {PSObject},[PSObject] - set of all found children, list of all parents with children\n
+                if max_childs > 0, parents with number of children exeeding max_childs are excluded
+            
+            Updates:
+                parents in self.Graph with CHILDS properties as [PSObject] children
+        '''
         if parents:
             my_parents = list(set(parents))
             self.Graph.add_psobjs(set(parents))
@@ -1292,7 +1307,9 @@ in {execution_time(process_start)}')
             with open(dump_file, 'rb') as f:  # Open in binary mode to avoid potential line ending issues
                 f.seek(-2, 2)  # Seek to the second-to-last byte (to handle newline variations)
                 while f.read(1) != b'\n':  # Move backward until a newline is found
-                    f.seek(-2, 1) 
+                    if not f.tell():
+                        break
+                    f.seek(-2, 1)
                 last_line = f.readline().decode('utf-8').strip()  # Read and decode the last line
                 return "</batch>" == last_line  # Check if "</batch>" is present
         except FileNotFoundError:

@@ -11,7 +11,6 @@ class DrugTargetConsistency(APIcache):
     self.drug_target_confidence = {(drug.uid(),target.uid(),effect):1 + consistency_coefficient},  where\n
     consistency_coefficient = (consistency_counter-inconsistency_counter) / (consistency_counter+inconsistency_counter)   
     '''
-    network = ResnetGraph()
     drugs2targets = ResnetGraph()
     cache_name = 'drug2target'
     cache_ent_props = ['Name','PharmaPendium ID']
@@ -57,31 +56,30 @@ class DrugTargetConsistency(APIcache):
         super().__init__(*args,**my_kwargs)
 
 
-    def load_drug_graph(self,for_targets:set,limit2drugs=set(),directly_from_db=False):
-        '''
-        Input
-        -----
-        for_targets,limit2drugs - {PSObject}
+    def d2t_from_db(self,for_targets:set[PSObject],limit2drugs:set[PSObject]={}):
+        rn = f'Loading drugs for {len(for_targets)} targets from database'
+        target_names = {t.name() for t in for_targets}
+        if limit2drugs:
+            get_targets = 'SELECT Entity WHERE Name = ({props2})' # works without join to string!!!!
+            drug_names = {d.name() for d in limit2drugs}
+            get_drugs = 'SELECT Entity WHERE Name = ({props1})'
+            oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'
+            return self.iterate_oql2(oql_query,drug_names,target_names,request_name=rn)
+        else:
+            get_targets = 'SELECT Entity WHERE Name = ({props})'
+            get_drugs = OQL.select_drugs()
+            oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'
+            return self.iterate_oql(oql_query,target_names,request_name=rn)
 
-        Return
-        ------
-        self.drugs2targets - subgraph of self.network limited to "for_targets" and "limit2drugs"
+
+    def load_drug_graph(self,for_targets:set[PSObject],limit2drugs:set[PSObject]={},directly_from_db=False):
+        '''
+        output:
+            self.drugs2targets - subgraph of self.network limited to "for_targets" and "limit2drugs"
         '''
         if not self.network:
             if directly_from_db:
-                rn = f'Loading drugs for {len(for_targets)} targets from database'
-                target_names = {t.name() for t in for_targets}
-                if limit2drugs:
-                    get_targets = 'SELECT Entity WHERE Name = ({props2})' # works without join to string!!!!
-                    drug_names = {d.name() for d in limit2drugs}
-                    get_drugs = 'SELECT Entity WHERE Name = ({props1})'
-                    oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'
-                    self.drugs2targets = self.iterate_oql2(oql_query,drug_names,target_names,request_name=rn)
-                else:
-                    get_targets = 'SELECT Entity WHERE Name = ({props})'
-                    get_drugs = OQL.select_drugs()
-                    oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'
-                    self.drugs2targets = self.iterate_oql(oql_query,target_names,request_name=rn)
+                self.drugs2targets = self.d2t_from_db(for_targets,limit2drugs)
             else:
                 self.network = self._load_cache(cache_name=self.cache_name)
         
@@ -90,6 +88,14 @@ class DrugTargetConsistency(APIcache):
             self.drugs2targets = self.network.get_subgraph(limit2drugs,list(for_targets))
         else:
             self.drugs2targets = self.network.neighborhood(for_targets)
+            
+        all_targets = {PSObject(y) for x,y in self.drugs2targets.nodes(data=True) if self.drugs2targets.in_degree(x)}
+        missing_targets = for_targets.difference(all_targets)
+        add2network = self.d2t_from_db(missing_targets,limit2drugs)
+        add2network = add2network.subtract(self.drugs2targets)
+        if add2network:
+            self.add2cache(add2network)
+            self.drugs2targets = self.drugs2targets.compose(add2network)
 
         return self.drugs2targets
 
@@ -102,7 +108,7 @@ class DrugTargetConsistency(APIcache):
 
         Annotates
         ---------
-        in self.network with CONSISTENCY all drug-targets relationsfor all drug-target pairs from drug_target_tup\n
+        in self.network with CONSISTENCY all drug-targets relations for all drug-target pairs from "drug_target_tup"\n
         there more drug-target combinations than drug-target tuples in drug_target_tup
         '''
         drugs_need_consistency = {tup[0] for tup in drug_target_tup}
@@ -110,7 +116,7 @@ class DrugTargetConsistency(APIcache):
         targets4drugs_need_consistency = {tup[1] for tup in drug_target_tup}
         target_names = {t.name() for t in targets4drugs_need_consistency}
 
-        drug2target2disease_graph = self.common_neighbors_with_effect(
+        d2t2dG = self.common_neighbors_with_effect(
                     with_entity_types=['Disease','Virus'], 
                     of_dbids1=list(drug_names),
                     reltypes12=['Regulation'],
@@ -120,28 +126,26 @@ class DrugTargetConsistency(APIcache):
                     dir23='',
                     id_type='Name')
         
-        if drug2target2disease_graph:
-            d2t_sub = self.drugs2targets.get_subgraph(list(drugs_need_consistency),list(targets4drugs_need_consistency))
-            drug2target2disease_graph = drug2target2disease_graph.compose(d2t_sub)
-            # re-annotating self.drug2target_network for caching CONSISTENCY after algorithm run
+        if d2t2dG:# re-annotating self.drug2target_network for caching CONSISTENCY after algorithm run
+            d2t_need = self.drugs2targets.get_subgraph(list(drugs_need_consistency),list(targets4drugs_need_consistency))
+            d2t2dG = d2t2dG.compose(d2t_need)
             update4consistency = defaultdict(float) # {(drug_uid,target_uid,effect):consistency_coefficient}
             for drug in drugs_need_consistency:
-                for (drug_uid, target_uid, effect), consistency_coefficient in self.__consistency4(drug, drug2target2disease_graph).items():
+                for (drug_uid, target_uid, effect), consistency_coefficient in self.__consistency4(drug, d2t2dG).items():
                     update4consistency[(drug_uid, target_uid, effect)] = consistency_coefficient
                    
             if update4consistency:
-                # update4consistency can be emty if drug-target pair dies not have common diseases linked with known Effect 
+                # update4consistency can be empty if drug-target pair have no common diseases linked with known Effect 
                 print(f'Additional consistency coefficients for {len(update4consistency)} drug-target pairs were calculated using data from database')
                 self.drug_target_confidence.update(update4consistency)
 
                 for (drug_uid,target_uid,effect),consistency_coefficient in update4consistency.items():
                     drug2target_rels = self.network.find_relations([drug_uid],[target_uid],with_effects=[effect])
                     for rel in drug2target_rels:
-                        if replace_consistencies or not rel[CONSISTENCY]:
+                        if replace_consistencies or CONSISTENCY not in rel:
                             self.cache_was_modified = True
                             self.network.set_edge_annotation(drug_uid,target_uid,rel.urn(),CONSISTENCY,[consistency_coefficient])
-                        else:
-                            continue
+
         return
                 
     
@@ -170,21 +174,16 @@ class DrugTargetConsistency(APIcache):
             dt_with_consistency = 0
             drugs_have_consistency = set()
             targets_have_consistency = set()
-            for d,t,rel in self.drugs2targets.edges.data('relation'):
-                drug = self.drugs2targets._psobj(d)
-                if drug.objtype() == 'SmallMol': # safeguard for Binding that has no direction and 
-                                        # will produce drug-target and target-drug pair in the Graph
-                    target = self.drugs2targets._psobj(t)
-                    assert(isinstance(rel,PSRelation))
-                    if rel.effect() != 'unknown': # safeguard for Binding with no effect that cannot have CONSISTENCY
-                        try:
-                            consistensy = float(rel[CONSISTENCY][-1])
-                            self.drug_target_confidence[(drug.uid(),target.uid(),rel.effect())] = consistensy
-                            dt_with_consistency += 1
-                            drugs_have_consistency.add(drug)
-                            targets_have_consistency.add(target)
-                        except (IndexError,KeyError):
-                            dt_need_consistency.append((drug,target))
+            for drug,target,rel in self.drugs2targets.iterate():
+                if rel.objtype() != 'Binding': # Binding cannot have consistency
+                    if CONSISTENCY in rel:
+                        consistensy = float(rel[CONSISTENCY][-1])
+                        self.drug_target_confidence[(drug.uid(),target.uid(),rel.effect())] = consistensy
+                        dt_with_consistency += 1
+                        drugs_have_consistency.add(drug)
+                        targets_have_consistency.add(target)
+                    else:
+                        dt_need_consistency.append((drug,target))
     
             print(f'Found consistency coefficients for {dt_with_consistency} drug-target pairs ({len(drugs_have_consistency)} drugs, {len(targets_have_consistency)} targets) in "{self.cache_name}.rnef" file')
         
@@ -220,25 +219,27 @@ class DrugTargetConsistency(APIcache):
         except KeyError:
             return 1
     
-
+    '''
     @staticmethod
     def __consist_coeffOLD(consistent_count:int,inconsistent_count:int):
        total_count = consistent_count+inconsistent_count
        return 1.0 + float(consistent_count-inconsistent_count)/(total_count) if total_count else 1.0
-
+    '''
 
     @staticmethod
     def __consist_coeff(consistent_count:int,inconsistent_count:int):
+        '''
+        consistency becomes negative when inconsistent_count == consistent_count\n
+        if drug-target has only one disease in common consistency = 0.315
+        '''
         zero_adj = 0.1
-        zscore= log(consistent_count+zero_adj/inconsistent_count+zero_adj,10)
-        std = sqrt( (1.0/(consistent_count+zero_adj)) + (1.0/(inconsistent_count+zero_adj)) )
-        # consistency becomes negative if inconsistent_count == consistent_count
-        # if drug-target has only one disease in common consistency is 0.315
+        zscore= log((consistent_count+zero_adj)/(inconsistent_count+zero_adj),10)
+        std = sqrt((1.0/(consistent_count+zero_adj)) + (1.0/(inconsistent_count+zero_adj)))
         return zscore/std 
 
 
     @staticmethod
-    def __consistency4(drug:PSObject,in_drug2diseases2target:ResnetGraph)->dict[tuple[int,int,str],float]:
+    def __consistency4(drug:PSObject,in_d2t2d:ResnetGraph)->dict[tuple[int,int,str],float]:
         '''
         Returns
         -------
@@ -247,48 +248,39 @@ class DrugTargetConsistency(APIcache):
         '''
         targets = list()
         diseases = list()
-        for r,t,rel in in_drug2diseases2target.edges(drug.uid(),data='relation'):
-            target = in_drug2diseases2target._get_node(t)
+        target_types = PROTEIN_TYPES + ['SmallMol']
+        for r,target,rel in in_d2t2d.targets_of(drug):
             target_objtype = target.objtype()
             if target_objtype in ['Disease','Virus','CellProcess']:
                 diseases.append(target)
-            elif target_objtype in PROTEIN_TYPES:
-                assert(isinstance(rel,PSRelation))
-                if not rel[CONSISTENCY]:
+            elif target_objtype in target_types:
+                if CONSISTENCY not in rel:
                     targets.append(target)
-                else:
-                    continue
-            else:
-                continue
 
         if not targets or not diseases:
             return dict()
 
-        drug2target_consistencies = defaultdict(lambda: 1.0)
+        d2t_consistencies = defaultdict(lambda: 1.0)
         for target in targets:
-            known_drug2target_effect = in_drug2diseases2target.effect_vote(drug,target)
-            if not known_drug2target_effect: 
-                continue
-            effect_str = 'positive' if known_drug2target_effect == 1 else 'negative'
-            # marking that consistency was considered for saving imfo to cache file
-            #my_tuple = tuple([drug.uid(),target.uid(),effect_str])
-            #drug2target_consistencies[my_tuple] = 1.0        
-            consistency_counter = 0
-            inconsistency_counter = 0
-            for disease in diseases:
-                known_target2disease_effect = in_drug2diseases2target.effect_vote(target,disease,any_direction=True)
-                # any_direction must be True because Regulation and QuantitativeChange have opposite directions
-                if not known_target2disease_effect: continue
-                predicted_drug2disease_effect = known_drug2target_effect*known_target2disease_effect
-            
-                known_drug2disease_effect = in_drug2diseases2target.effect_vote(drug,disease)
-                if not known_drug2disease_effect: continue
+            known_drug2target_effect = in_d2t2d.effect_vote(drug,target)
+            if known_drug2target_effect: # not unknown
+                effect_str = 'positive' if known_drug2target_effect == 1 else 'negative'
+                consistency_counter = 0
+                inconsistency_counter = 0
+                for disease in diseases:
+                    known_target2disease_effect = in_d2t2d.effect_vote(target,disease,any_direction=True)
+                    # any_direction must be True because Regulation and QuantitativeChange have opposite directions
+                    if not known_target2disease_effect: continue
+                    predicted_drug2disease_effect = known_drug2target_effect*known_target2disease_effect
+                
+                    known_drug2disease_effect = in_d2t2d.effect_vote(drug,disease)
+                    if not known_drug2disease_effect: continue
 
-                if predicted_drug2disease_effect == known_drug2disease_effect:
-                    consistency_counter += 1
-                else:
-                    inconsistency_counter += 1
+                    if predicted_drug2disease_effect == known_drug2disease_effect:
+                        consistency_counter += 1
+                    else:
+                        inconsistency_counter += 1
 
-            consistency_coeff = DrugTargetConsistency.__consist_coeff(consistency_counter,inconsistency_counter)
-            drug2target_consistencies[(drug.uid(),target.uid(),effect_str)] = round(consistency_coeff,3)
-        return drug2target_consistencies
+                consistency_coeff = DrugTargetConsistency.__consist_coeff(consistency_counter,inconsistency_counter)
+                d2t_consistencies[(drug.uid(),target.uid(),effect_str)] = round(consistency_coeff,3)
+        return d2t_consistencies

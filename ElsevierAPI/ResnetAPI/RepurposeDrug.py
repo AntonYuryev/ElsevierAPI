@@ -658,7 +658,7 @@ class RepurposeDrug(Indications4targets):
         '''
         was_initiated = False
         indication_df = self.load_df(list(self.DrugIndications),
-                                         max_child_count=self.max_ontology_parent,
+                                         max_childs=self.max_ontology_parent,
                                          max_threads=self.max_threads4ontology)
         if not indication_df.empty:
             indication_df._name_ = INDICATION_COUNT
@@ -669,7 +669,7 @@ class RepurposeDrug(Indications4targets):
             print(f'No idications found for {self.drug_names()}')
 
         toxicity_df = self.load_df(list(self.DrugToxicities),
-                                         max_child_count=self.max_ontology_parent,
+                                         max_childs=self.max_ontology_parent,
                                          max_threads=self.max_threads4ontology)
         if not toxicity_df.empty:
             toxicity_df._name_ = TOXICITY_COUNT
@@ -889,7 +889,6 @@ class RepurposeDrug(Indications4targets):
             self.modulators_effects()
             self.get_pathway_components(self.activated_targets|self.inhibited_targets,self.activated_partners|self.inhibited_partners)
         self.resolve_conflict_indications()
-
 
         etm_other = ThreadPoolExecutor(thread_name_prefix='ETMother')
         other_effects_future = etm_other.submit(self.other_effects)

@@ -6,7 +6,7 @@ from .ResnetAPISession import APISession,ResnetGraph,PSObject
 from .ResnetGraph import EFFECT
 from contextlib import redirect_stdout
 
-CACHE_DIR = 'D:/Python/ENTELLECT_API/ElsevierAPI/ResnetAPI/__pscache__/'
+CACHE_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI/__pscache__/')
 DEFAULT_CACHE_NAME = 'Resnet subset'
 
 class APIcache(APISession):
@@ -84,6 +84,8 @@ class APIcache(APISession):
     def __path2cache(self,cache_name:str,extension='.rnef'):
         return self.data_dir+'simple/'+cache_name+extension
     
+    def __path2rawdir(self,cache_name:str):
+        return os.path.join(self.data_dir,'raw',cache_name+'_raw')
 
     @staticmethod
     def cache_filename(parameters:dict):
@@ -98,9 +100,7 @@ class APIcache(APISession):
         refprop_minmax = kwargs.pop('refprop_minmax',0)
 
         simple_graph = database_g.copy()
-
-        if kwargs['make_simple']:
-            simple_graph = simple_graph.make_simple(rank4simplifying)
+        simple_graph = simple_graph.make_simple(rank4simplifying)
 
         #converting sentence properties to relation properties before making a dump.  Used for pX dump
         for refprop, relprop in refprop2rel.items():
@@ -114,9 +114,10 @@ class APIcache(APISession):
             modified_rels_graph.name = 'relations with predicted effect'
             modified_rels_graph.dump2rnef('Effect predicted4',self.entProps,self.relprops2rnef)
         
-        if kwargs['no_id_version']:
+        if kwargs.get('remove_version',False):
             for ent_prop in self.entProps:
-                if ent_prop[-3:] == ' ID':
+                if ent_prop.endswith(' ID'):
+                    print(f'Removing version numbers from {ent_prop} node property')
                     simple_graph = simple_graph.clean_version_number(ent_prop)
 
         return simple_graph
@@ -268,23 +269,27 @@ class APIcache(APISession):
                 return database_graph
 
 
+    def add2raw(self,graph:ResnetGraph):
+        self._dump2rnef(graph,self.network.name+'_raw','raw')
+
+
     def replace_cache(self,cache_name:str,with_network:ResnetGraph,
                       ent_props:list[str]=['Name'],rel_props:list[str]=['URN'],
                       do_backup=True,replace_raw=False):
         if replace_raw:
-            my_cache_dir = self.data_dir+cache_name
+            my_cache_dir = os.path.join(self.data_dir,'raw',cache_name+'_raw')
             listing = glob.glob(my_cache_dir+'*.rnef')
             [os.remove(file) for file in listing]
-            self._dump2rnef(with_network,cache_name)
+            self.add2raw(with_network)
             print(f'{cache_name} raw cache files were replaced')
 
-        my_cache_file = self.__path2cache(cache_name)
+        path2cache = self.__path2cache(cache_name)
         if do_backup:
             backup_cache = self.__path2cache(cache_name,'_backup.zip')
             with zipfile.ZipFile(backup_cache,'w',zipfile.ZIP_DEFLATED) as z:
-                z.write(my_cache_file)
+                z.write(path2cache,arcname=os.path.basename(path2cache))
         
-        with_network.dump2rnef(my_cache_file,ent_props,rel_props)
+        with_network.dump2rnef(path2cache,ent_props,rel_props)
         print(f'{cache_name} cache file was replaced')
 
         if self.example_node:
@@ -314,11 +319,14 @@ class APIcache(APISession):
 
 
     def add2cache(self,graph:ResnetGraph,**kwargs):
+        '''
+        kwargs:
+            add2raw - if True adds "graph" only to raw directory.  Defaults to False
+        '''
         print(f'Adding {graph.number_of_nodes()} and {graph.number_of_edges()} edges to {self.network.name} cache')
         add2raw = kwargs.pop('add2raw',False)
-        if add2raw:
-           self._dump2rnef(graph,self.network.name)
-        else:
+        self.add2raw(graph)
+        if not add2raw:
             cache_name = self.network.name
             combined_network = graph.compose(self.network)
             print(f'New cache has {combined_network.number_of_nodes()} nodes, {combined_network.number_of_edges()} edges')
