@@ -1,8 +1,6 @@
 import pandas as pd
 import numpy as np
-from numpy import NaN
-from pandas.api.types import is_numeric_dtype
-from pandas import ExcelWriter as ExcelWriter
+from pandas import ExcelWriter
 import rdfpandas,xlsxwriter,string, os
 from ..ResnetAPI.NetworkxObjects import PSObject
 from openpyxl import load_workbook
@@ -51,10 +49,10 @@ class df(pd.DataFrame):
 
 
     def copy_format(self, from_df:'df'):
-        self.header_format = from_df.header_format
-        self.column2format = from_df.column2format
-        self.conditional_frmt = from_df.conditional_frmt
-        self.tab_format = from_df.tab_format
+        self.header_format = from_df.header_format.copy()
+        self.column2format = from_df.column2format.copy()
+        self.conditional_frmt = from_df.conditional_frmt.copy()
+        self.tab_format = from_df.tab_format.copy()
 
 
     def __copy_attrs(self,from_df:'df'):
@@ -64,16 +62,19 @@ class df(pd.DataFrame):
 
     @classmethod
     def copy_df(cls, other:'df',only_columns:list=[], rename2:dict=dict()) ->'df':
+        '''
+        output:
+            df with columns ordered by "only_columns" and renamed by "rename2"
+        '''
+        newpd = other.copy()
         if only_columns:
-            newdf = df.from_pd(pd.DataFrame.from_records(other, columns=only_columns))
-            newdf.header_format = other.header_format
-            newdf.column2format = {k:v for k,v in other.column2format if k in only_columns}
-        else:
-            newdf = df.from_pd(other.copy(),other._name_)
-            newdf.copy_format(other)
-
+            newpd = newpd[only_columns]
         if rename2:
-            newdf = df.from_pd(newdf.rename(columns=rename2),other._name_)
+            newpd = newpd.rename(columns=rename2)
+        newpd = newpd.reindex()
+
+        newdf = df.from_pd(newpd,other._name_)
+        newdf.copy_format(other)
         return newdf
     
 
@@ -703,16 +704,16 @@ class df(pd.DataFrame):
                 if exist_value:
                     return ';'.join({exist_value,new_value}) if new_value else exist_value
                 else:
-                    return new_value if new_value else np.NaN
+                    return new_value if new_value else np.nan
             else:
                 # if how2replace='false' - do not replace
                 if exist_value:
                     return exist_value
                 else:
-                    return new_value if new_value else np.NaN
+                    return new_value if new_value else np.nan
 
         copy_df = df.copy_df(self)
-        if copy2column not in copy_df.columns: copy_df[copy2column] = np.NaN
+        if copy2column not in copy_df.columns: copy_df[copy2column] = np.nan
         copy_df[copy2column] = copy_df.apply(__my_value, axis=1)
         return copy_df
 
@@ -724,6 +725,17 @@ class df(pd.DataFrame):
         copy_df._name_ = self._name_
         return copy_df
     
+
+    def move_cols(self,col2pos:dict[str,int]):
+        '''
+        input:
+            col2pos = {colulmn_nae:position}
+        '''
+        my_columns = [c for c in self.columns.to_list() if c not in col2pos]
+        sorted_col2pos = dict(sorted(col2pos.items(), key=lambda item: item[1]))
+        [my_columns.insert(pos,c) for c,pos in sorted_col2pos.items()]
+        return self.reorder(my_columns)
+            
 
     def l2norm(self,columns:list|dict=[]):
         '''
