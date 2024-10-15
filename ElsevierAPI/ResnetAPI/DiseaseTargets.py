@@ -883,9 +883,14 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         adds ETM_BIBLIOGRAPHY worksheet to report
         '''
         print('Adding ETM bibliography for ranked targets', flush=True)
+        etm_refcount_colname = self.etm_refcount_colname('Name',self.input_names())
+        move2 = {etm_refcount_colname:2}
         self.refs2report(ANTAGONIST_TARGETS_WS,self.input_names())
+        self.report_pandas[ANTAGONIST_TARGETS_WS] = self.report_pandas[ANTAGONIST_TARGETS_WS].move_cols(move2)
         self.refs2report(AGONIST_TARGETS_WS,self.input_names())
+        self.report_pandas[AGONIST_TARGETS_WS] = self.report_pandas[AGONIST_TARGETS_WS].move_cols(move2)
         self.refs2report(UNKNOWN_TARGETS_WS,self.input_names())
+        self.report_pandas[UNKNOWN_TARGETS_WS] = self.report_pandas[UNKNOWN_TARGETS_WS].move_cols(move2)
         super().add_etm_bibliography()
 
 

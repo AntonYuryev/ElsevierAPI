@@ -837,7 +837,7 @@ class SemanticSearch (APISession):
                     temp_df = df()
                     temp_df['percentage'] = 100*raw_df[linked_concepts_count_col]/raw_df[concepts_count_col]
                     temp_df['percentage'] = temp_df['percentage'].round(decimals=2)
-                    temp_df['percentage_str'] = temp_df['percentage'].apply(lambda x: f"{x:.2f}")
+                    temp_df['percentage_str'] = temp_df['percentage'].apply(lambda x: f"{x:.0f}")+'%'
                     incidence_df[incidence_colname] = raw_df[linked_concepts_count_col].astype(str)
                     incidence_df[incidence_colname] =  incidence_df[incidence_colname] + '/' +raw_df[concepts_count_col].astype(str)
                     incidence_df[incidence_colname] = incidence_df[incidence_colname] +'('+temp_df['percentage_str']+')'
@@ -1003,19 +1003,21 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
                 etm.ETM_REFS_COLUMN
                 etm._etm_doi_column_name()
         """
-        my_df = df.copy_df(self.report_pandas[to_df_named])
         if skip1strow:
+            my_df = df.copy_df(self.report_pandas[to_df_named])
             weights = my_df.iloc[[0]].copy()
-            my_df = df.from_pd(my_df.drop(0, axis=0,inplace=False), self.report_pandas[to_df_named]._name_)
-            if my_df.empty: return my_df
-            my_df.copy_format(self.report_pandas[to_df_named])
-            my_df = self.bibliography(my_df,input_names,entity_name_col,add2query,max_row=len(my_df))
-
-            #rank_counts_pd = rank_counts_df.sort_values(RANK,ascending=False)
-            rank_counts_pd = pd.concat([weights, my_df]).reset_index(drop=True)
-            my_df = df.from_pd(rank_counts_pd,self.report_pandas[to_df_named]._name_)     
-            my_df.copy_format(self.report_pandas[to_df_named])
+            df_name = self.report_pandas[to_df_named]._name_
+            df_no_weights = df.from_pd(my_df.drop(0, axis=0,inplace=False), df_name)
+            df_no_weights.copy_format(self.report_pandas[to_df_named])
+            if not my_df.empty:       
+                df_with_links = self.bibliography(df_no_weights,input_names,entity_name_col,add2query,max_row=len(df_no_weights))
+                pd_withlinks = pd.concat([weights, df_with_links]).reset_index(drop=True)
+                my_df = df.from_pd(pd_withlinks,df_name)     
+                my_df.copy_format(df_with_links)
+            else:
+                return my_df
         else:
+            my_df = self.report_pandas[to_df_named]
             my_df = self.bibliography(my_df,input_names,entity_name_col,add2query,max_row=len(my_df))
             
         if add2report:
