@@ -720,9 +720,8 @@ class df(pd.DataFrame):
 
     def reorder(self,columns_in_new_order:list[str]):
         new_pd = self[columns_in_new_order]
-        copy_df = df.from_pd(new_pd)
+        copy_df = df.from_pd(new_pd,self._name_)
         copy_df.copy_format(self)
-        copy_df._name_ = self._name_
         return copy_df
     
 
