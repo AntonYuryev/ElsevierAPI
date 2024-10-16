@@ -12,6 +12,7 @@ NUMBER_OF_REFERENCE = 'Number of references'
 
 
 class df(pd.DataFrame):
+    # re-writing parent pd.DataFrame function is a BAD idea. Use other names
     pass
     header_format = {
                     'bold': True,
@@ -60,23 +61,19 @@ class df(pd.DataFrame):
         self.copy_format(from_df)
 
 
-    @classmethod
-    def copy_df(cls, other:'df',only_columns:list=[], rename2:dict=dict()) ->'df':
-        '''
-        output:
-            df with columns ordered by "only_columns" and renamed by "rename2"
-        '''
-        newpd = other.copy()
+    def dfcopy(self,only_columns:list=[], rename2:dict=dict(),deep=True) ->'df':
+        # re-writing parent pd.DataFrame function is a BAD idea. Use other names
+        newpd = super().copy(deep)
         if only_columns:
             newpd = newpd[only_columns]
         if rename2:
             newpd = newpd.rename(columns=rename2)
         newpd = newpd.reindex()
 
-        newdf = df.from_pd(newpd,other._name_)
-        newdf.copy_format(other)
+        newdf = df.from_pd(newpd,self._name_)
+        newdf.copy_format(self)
         return newdf
-    
+
 
     @staticmethod
     def _hyperlink(identifier:str,url:str,display_str=''):
@@ -89,6 +86,7 @@ class df(pd.DataFrame):
         self.header_format.update(from_df.header_format)
         self.column2format.update(from_df.column2format)
         self.conditional_frmt.update(from_df.conditional_frmt)
+        self.tab_format.update(from_df.tab_format)
 
 
     def set_col_format(self,fmt:dict):
@@ -253,14 +251,14 @@ class df(pd.DataFrame):
         new df with values from dict2add.values() in "new_col" 
         '''
         pd2merge = df.from_dict2(dict2add,map2column,new_col)
-        in2pd = df.copy_df(self)
+        in2df = self.dfcopy()
         if not case_sensitive_match:
             pd2merge[map2column].apply(lambda x: str(x).lower())
-            in2pd[map2column].apply(lambda x: str(x).lower())
+            in2df[map2column].apply(lambda x: str(x).lower())
 
         how = 'outer' if add_all else 'left'
-        merged_df = df.from_pd(in2pd.merge(pd2merge,how, on=map2column))
-        merged_df.__copy_attrs(self)
+        merged_df = in2df.merge_df(pd2merge,how=how, on=map2column)
+        #merged_df.copy_format(self)
         return merged_df
 
 
@@ -290,7 +288,7 @@ class df(pd.DataFrame):
         return reindexed_df
 
 
-    def merge_df(self, df2merge:'df', **kwargs):
+    def merge_df(self, df2merge:'df', **kwargs)->'df':
         '''
         Input
         -----
@@ -311,13 +309,11 @@ class df(pd.DataFrame):
         merge_on_column = kwargs.get('on')
         if columns2copy:
             columns2copy.append(merge_on_column)
-            copy_df = df.from_pd(df2merge[columns2copy])
-            copy_df.copy_format(from_df=df2merge)
-            my_df2merge = copy_df
+            my_df2merge = df2merge.dfcopy(columns2copy)
         else:
             my_df2merge = df2merge
 
-        merged_df = df.from_pd(self.merge(my_df2merge, **kwargs),dfname=df_name)
+        merged_df = df.from_pd(self.merge(pd.DataFrame(my_df2merge), **kwargs),dfname=df_name)
         merged_df.add_format(from_df=df2merge)
         merged_df.add_format(from_df=self)
         return merged_df
@@ -339,7 +335,7 @@ class df(pd.DataFrame):
     def merge_psobject(self, obj:PSObject, new_col:str, map2column:str, 
             add_all=False, values21cell=False, sep=';', case_sensitive_match = False):
 
-        in2pd = df.copy_df(self)
+        in2pd = self.dfcopy()
         if not case_sensitive_match:
             in2pd[map2column] = self[map2column].apply(lambda x: str(x).lower())
 
@@ -584,7 +580,7 @@ class df(pd.DataFrame):
 
 
     def clean4doc(self,max_row=int(),only_columns=[],ref_limit=dict(), as_str=True):    
-        clean_df = self.sort_columns_by_list(only_columns) if only_columns else df.copy_df(self)
+        clean_df = self.sort_columns_by_list(only_columns) if only_columns else self.dfcopy()
         clean_df.dropna(how='all',subset=None,inplace=True)
         clean_df.drop_duplicates(inplace=True)
         clean_df.fillna('', inplace=True)
@@ -712,28 +708,21 @@ class df(pd.DataFrame):
                 else:
                     return new_value if new_value else np.nan
 
-        copy_df = df.copy_df(self)
+        copy_df = self.dfcopy()
         if copy2column not in copy_df.columns: copy_df[copy2column] = np.nan
         copy_df[copy2column] = copy_df.apply(__my_value, axis=1)
         return copy_df
 
 
-    def reorder(self,columns_in_new_order:list[str]):
-        new_pd = self[columns_in_new_order]
-        copy_df = df.from_pd(new_pd,self._name_)
-        copy_df.copy_format(self)
-        return copy_df
-    
-
     def move_cols(self,col2pos:dict[str,int]):
         '''
         input:
-            col2pos = {colulmn_nae:position}
+            col2pos = {colulmn_name:position}
         '''
         my_columns = [c for c in self.columns.to_list() if c not in col2pos]
         sorted_col2pos = dict(sorted(col2pos.items(), key=lambda item: item[1]))
         [my_columns.insert(pos,c) for c,pos in sorted_col2pos.items()]
-        return self.reorder(my_columns)
+        return self.dfcopy(my_columns)
             
 
     def l2norm(self,columns:list|dict=[]):
@@ -743,7 +732,7 @@ class df(pd.DataFrame):
         columns = {column2normalize:column_with_normalization}
         '''
         my_cols = columns if columns else self.columns
-        copy_df = df.copy_df(self)
+        copy_df = self.dfcopy()
         for col in my_cols:
             if is_numeric_dtype(copy_df[col]):
                 vec = copy_df[[col]].to_numpy(float)
@@ -772,3 +761,24 @@ class df(pd.DataFrame):
         sorted_self = df.from_pd(self[new_order],dfname=self._name_)
         sorted_self.copy_format(self)
         return sorted_self # Rearrange the columns based on the sorted sums
+    
+    def pvalue4(self,column:str):
+        def calculate_p_values(scores):
+            """Calculates empirical p-values for a list of scores."""
+            scores = np.array(scores)
+            p_values = [(scores >= score).mean() for score in scores]
+            return p_values
+
+        # Calculate p-values for the 'RANK' column
+        pval_colname = column+' pvalue'
+        copedf = self.dfcopy()
+        copedf[pval_colname] = calculate_p_values(copedf[column])
+        return copedf
+    
+
+    def sortrows(self,by:str|list[str],ascending=False):
+        # re-writing parent pd.DataFrame function is a BAD idea. Use other names
+        newpd = pd.DataFrame(self.sort_values(by,ascending=ascending,inplace=False))
+        newdf = df.from_pd(newpd,self._name_)
+        newdf.copy_format(self)
+        return newdf
