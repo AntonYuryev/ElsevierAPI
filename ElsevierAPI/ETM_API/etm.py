@@ -557,19 +557,19 @@ class ETMstat:
                 identifier = make_hyperlink(identifier,'http://dx.doi.org/')
             table_rows.add(tuple([score,ref.pubyear(),id_type,identifier,biblio_str]))
 
-        return_pd = df.from_rows(list(table_rows),header)
+        return_df = df.from_rows(list(table_rows),header)
         if use_relevance:
-            return_pd[RELEVANCE] = return_pd[RELEVANCE].astype(float).round(2)
+            return_df[RELEVANCE] = return_df[RELEVANCE].astype(float).round(2)
         else:
-            return_pd[ETM_CITATION_INDEX] = return_pd[ETM_CITATION_INDEX].astype(int)
+            return_df[ETM_CITATION_INDEX] = return_df[ETM_CITATION_INDEX].astype(int)
 
-        return_pd[PUBYEAR] = pd.to_numeric(return_pd[PUBYEAR], errors='coerce')
-        return_pd.sort_values(first_col,ascending=False,inplace=True)
-        return_pd.add_column_format('Citation','width',150)
-        return_pd.add_column_format('Citation','wrap_text',True)
-        return_pd.make_header_horizontal()
-        return_pd.set_hyperlink_color([IDENTIFIER_COLUMN])
-        return return_pd
+        return_df[PUBYEAR] = pd.to_numeric(return_df[PUBYEAR], errors='coerce')
+        return_df = return_df.sortrows(by=first_col)
+        return_df.add_column_format('Citation','width',150)
+        return_df.add_column_format('Citation','wrap_text',True)
+        return_df.make_header_horizontal()
+        return_df.set_hyperlink_color([IDENTIFIER_COLUMN])
+        return return_df
 
 
     @staticmethod
@@ -590,17 +590,17 @@ class ETMstat:
             table_rows.add(tuple([ref[stat_prop][0],id_type,identifier,biblio_str]))
 
         header = [stat_prop,'Identifier type',IDENTIFIER_COLUMN,'Citation']
-        return_pd = df.from_rows(list(table_rows),header)
+        return_df = df.from_rows(list(table_rows),header)
         if stat_prop == RELEVANCE:
-            return_pd[RELEVANCE] = return_pd[RELEVANCE].astype(float).round(2)
+            return_df[RELEVANCE] = return_df[RELEVANCE].astype(float).round(2)
         else:
-            return_pd[stat_prop] = return_pd[stat_prop].astype(int)
-        return_pd.sort_values(stat_prop,ascending=False,inplace=True)
-        return_pd.add_column_format('Citation','width',150)
-        return_pd.add_column_format('Citation','wrap_text',True)
-        return_pd.make_header_horizontal()
-        return_pd.set_hyperlink_color([IDENTIFIER_COLUMN])
-        return return_pd
+            return_df[stat_prop] = return_df[stat_prop].astype(int)
+        return_df = return_df.sortrows(by=stat_prop)
+        return_df.add_column_format('Citation','width',150)
+        return_df.add_column_format('Citation','wrap_text',True)
+        return_df.make_header_horizontal()
+        return_df.set_hyperlink_color([IDENTIFIER_COLUMN])
+        return return_df
 
    
     @staticmethod
@@ -874,7 +874,7 @@ class ETMstat:
 
 
     def __add_refs1(self,to_df:df,between_names_in_col:str,and_concepts:list,my_query,add2query=[]):
-        my_df = df.copy_df(to_df)
+        my_df = to_df.dfcopy()
         etm_ref_column_name = self.refcount_column_name(between_names_in_col,and_concepts)
         doi_ref_column_name = self.doi_column_name(between_names_in_col,and_concepts)
         my_df[[etm_ref_column_name,doi_ref_column_name]] = my_df[between_names_in_col].apply(lambda row: self.__get_refs(row,and_concepts,my_query,add2query)).apply(pd.Series)
@@ -901,9 +901,9 @@ class ETMstat:
             df2annotate = df.from_pd(to_df.iloc[:max_row])
             unannoated_rows = df.from_pd(to_df.iloc[max_row:])
         else:
-            df2annotate = df.copy_df(to_df)
+            df2annotate = to_df.dfcopy()
             unannoated_rows = df()
-        #my_df = to_df.copy_df(to_df)
+        #my_df = to_to_df.copy()
         row_count = len(to_df)
         
         if row_count > 9:
@@ -931,8 +931,10 @@ class ETMstat:
         etm_ref_column_name = self.refcount_column_name(between_names_in_col,and_concepts)
         self.etm_ref_column_name.append(etm_ref_column_name)
         annotated_df.add_column_format(etm_ref_column_name,'align','center')
+
         etm_doi_column_name = self.doi_column_name(between_names_in_col,and_concepts)
-        self.etm_doi_column_name.append(etm_ref_column_name)
+        self.etm_doi_column_name.append(etm_doi_column_name)
+
         annotated_df.set_hyperlink_color([etm_ref_column_name,etm_doi_column_name])
         
         rows_annotated = max_row if max_row else len(to_df)
@@ -942,7 +944,7 @@ class ETMstat:
 
   
     def __etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[]):
-        my_df = df.copy_df(in_df)
+        my_df = in_df.dfcopy()
         etm_ref_column_name = self.refcount_column_name(between_col,and_col)
         doi_ref_column_name = self.doi_column_name(between_col,and_col)
         for i in in_df.index:
@@ -961,7 +963,7 @@ class ETMstat:
             df2annotate = df.from_pd(in_df.iloc[:max_row])
             unannoated_rows = df(in_df.iloc[max_row:])
         else:
-            df2annotate = df.copy_df(in_df)
+            df2annotate = in_df.dfcopy()
             unannoated_rows = df()
 
         partition_size = 100
@@ -988,7 +990,6 @@ class ETMstat:
         self.etm_ref_column_name.append(etm_ref_column_name)
         self.etm_doi_column_name.append(doi_ref_column_name)
 
-        annotated_df.set_hyperlink_color([etm_ref_column_name,doi_ref_column_name])
         annotated_df.add_column_format(etm_ref_column_name,'align','center')
         annotated_df.set_hyperlink_color([etm_ref_column_name,doi_ref_column_name])
         print('Annotated %d rows from %s with ETM references in %s' % 
