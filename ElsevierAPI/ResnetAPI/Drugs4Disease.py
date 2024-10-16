@@ -121,7 +121,7 @@ Adds columns DRUG2TARGET_REGULATOR_SCORE to drug_df.  Used for SNEA
                 if direct_target_uids or indirect_target_uids:
                     rank2add2drug[node.name()] = float(node.get_prop(DRUG2TARGET_REGULATOR_SCORE))
 
-        df_copy = df.copy_df(drug_df)
+        df_copy = drug_df.dfcopy()
         if DRUG2TARGET_REGULATOR_SCORE not in list(df_copy.columns):
         # intitalizing columns with default values if df was not visited:
             df_copy[DRUG2TARGET_REGULATOR_SCORE] = np.nan
@@ -183,7 +183,7 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
                     columns2add2drug[drug.name()] = [drug_score,drug_class,direct_target_names_str,indirect_target_names_str]
 
         # making dataframe
-        df_copy = df.copy_df(drug_df)
+        df_copy = drug_df.dfcopy()
         if DRUG2TARGET_REGULATOR_SCORE not in list(df_copy.columns):
         # intitalizing columns with default values if df was not visited:
             df_copy[DRUG2TARGET_REGULATOR_SCORE] = np.nan
@@ -226,7 +226,7 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
     def subtract_antigraph(self,my_df:df, antigraph:ResnetGraph):
         drug_objs = antigraph.psobjs_with(only_with_values=['SmallMol'])
         drug2rank = {d.name():float(d.get_prop(DRUG2TARGET_REGULATOR_SCORE)) for d in drug_objs}
-        df_copy = df.copy_df(my_df)
+        df_copy = my_df.dfcopy()
 
         for idx in df_copy.index:
             drug_name = df_copy.at[idx,'Name']
@@ -371,7 +371,7 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
         new_ranked_df = new_ranked_df.greater_than(0,DRUG2TARGET_REGULATOR_SCORE)
         disnames = ','.join(self.input_names())
         new_ranked_df._name_ = f'Drugs for {disnames}'
-        new_ranked_df = df.from_pd(new_ranked_df.sort_values(by=[DRUG2TARGET_REGULATOR_SCORE],ascending=False))
+        new_ranked_df = new_ranked_df.sortrows(by=[DRUG2TARGET_REGULATOR_SCORE])
         print('Found %d drugs for %d antagonist targets and %d agonist targets for "%s"' % 
             (len(new_ranked_df),len(self.targets4antagonists),len(self.targets4agonists),self.input_names()),flush=True)
         return new_ranked_df
@@ -389,7 +389,7 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
             # max_childs_count must be zero (=ALL_CHILDS) to avoid removal of drugs with children 
             # and to merge with results of SemanticSearch.bibliography() future
         else:
-            drug_df = df.copy_df(in_drugdf)
+            drug_df = in_drugdf.dfcopy()
 
         print('\n\nLinking %d drugs with %s by ClinicalTrial' % (len(drug_df),self._disease2str()),flush=True)
         colname = self._disease2str()+' clinical trials'
@@ -489,12 +489,13 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
             drugdf_columns = list(ranked_drugs_df.columns)
             drugdf_columns.remove(PHARMAPENDIUM_ID)
             drugdf_columns = [PHARMAPENDIUM_ID]+drugdf_columns
-            ranked_drugs_df = ranked_drugs_df.reorder(drugdf_columns)
+            ranked_drugs_df = ranked_drugs_df.dfcopy(drugdf_columns)
             
             ranked_drugs_df.tab_format['tab_color'] = 'green'
             ranked_drugs_df._name_ = 'Drugs'
             if self.params['add_bibliography']:
-                ranked_drugs_df = ranked_drugs_df.move_cols({etm_ref_colname:2})
+                pos = list(ranked_drugs_df.columns).index(RANK +' pvalue')
+                ranked_drugs_df = ranked_drugs_df.move_cols({etm_ref_colname:pos+1})
             self.add2report(ranked_drugs_df)
 
             print("Drug ranking was done in %s" % execution_time(start_time), flush=True)

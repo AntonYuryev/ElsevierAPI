@@ -215,7 +215,7 @@ class SemanticSearch (APISession):
             row_dbids.update(ResnetGraph.dbids(list(enity_neighbors)))
             return tuple(list(row_dbids)), ','.join(ResnetGraph.names(list(enity_neighbors))),len(enity_neighbors)
 
-        my_df_copy = df.copy_df(in_df)
+        my_df_copy = in_df.dfcopy()
         my_df_copy[[self.__temp_id_col__,'ExpandedBy','Expand Size']] = my_df_copy[self.__temp_id_col__].apply(lambda x: pd.Series(__expand_row(x)))
         return my_df_copy
 
@@ -336,7 +336,7 @@ class SemanticSearch (APISession):
         
         map2types = self.__only_map2types__
         PropName2Prop2psobj = dict()
-        RemainToMap = df.copy_df(EntityPandas)
+        RemainToMap = EntityPandas.dfcopy()
         mapped_count = 0
         for propName in EntityPandas.columns:
             identifiers = list(map(str,list(RemainToMap[propName])))
@@ -361,7 +361,7 @@ class SemanticSearch (APISession):
         df2return = df()
         df2return._name_ = df_name
         for propName in EntityPandas.columns:
-            MappedEntitiesByProp = df.copy_df(EntityPandas)
+            MappedEntitiesByProp = EntityPandas.dfcopy()
             MappedEntitiesByProp = df.apply_and_concat(MappedEntitiesByProp,propName,get_entIDs,
                                         [self.__resnet_name__,self.__mapped_by__,self.__temp_id_col__])
             MappedEntitiesByProp = df.from_pd(MappedEntitiesByProp[MappedEntitiesByProp[self.__temp_id_col__].notnull()])
@@ -520,7 +520,7 @@ class SemanticSearch (APISession):
 
 
     def init_concept(self,my_df:df, concept_name:str):
-        in_df = df.copy_df(my_df)
+        in_df = my_df.dfcopy()
         refcount_column = self._refcount_colname(concept_name)
         weighted_refcount_column = self._weighted_refcount_colname(concept_name) 
         linked_count_column = self._linkedconcepts_colname(concept_name)
@@ -548,7 +548,7 @@ class SemanticSearch (APISession):
                 "Linked {ConceptName} count", 
                 "{ConceptName} count"
         """
-        my_df = df.copy_df(to_entities) if isinstance(to_entities,df) else df.from_pd(to_entities)
+        my_df = to_entities.dfcopy() if isinstance(to_entities,df) else df.from_pd(to_entities)
 
         concept_size = len(concepts)-1 if concepts else 0
         if (len(concepts) > 501 and len(my_df) > 500):
@@ -719,7 +719,8 @@ class SemanticSearch (APISession):
             my_pandas = self.report_pandas
 
         for ws_name, report_df in my_pandas.items():
-            df2print = df.copy_df(report_df)
+            assert(isinstance(report_df,df))
+            df2print = report_df.dfcopy()
             report_df_columns = set(df2print.columns)
             my_drop = [c for c in self.columns2drop if c in report_df_columns]
             clean_df = df2print.drop(columns=my_drop)
@@ -737,7 +738,8 @@ class SemanticSearch (APISession):
         if hasattr(self,'raw_data'):
             for ws_name, rawdf in self.raw_data.items():
                 sh_name = ws_prefix+'_'+ws_name if ws_prefix else ws_name
-                raw_df = df.copy_df(rawdf)
+                assert(isinstance(rawdf,df))
+                raw_df = rawdf.dfcopy()
                 raw_df.make_header_vertical()
                 raw_df.df2excel(writer, sheet_name=sh_name[:30])
 
@@ -773,7 +775,7 @@ class SemanticSearch (APISession):
         df with_name from_df with formatted CHILDREN_COUNT column, soreted by first refcount_column
         '''
         my_df = self.RefCountPandas if from_rawdf.empty else from_rawdf
-        count_df = df.copy_df(my_df)
+        count_df = my_df.dfcopy()
         if self.__temp_id_col__ in count_df.columns:
             def sortlen(x):
                 return 0 if x is np.nan else max(len(list(x)),1)
@@ -791,12 +793,11 @@ class SemanticSearch (APISession):
                     return str(my_df.columns[1])
 
             sort_by = __col2sort__(my_df)
-            count_df.sort_values(sort_by,ascending=False,inplace=True)
+            count_df = count_df.sortrows(by=sort_by)
 
         if self.__colname4GV__ in count_df.columns:
             count_df.move_cols({self.__colname4GV__:len(count_df.columns)})
 
-        count_df.copy_format(my_df)
         count_df._name_ = with_name
         print (f'Created {count_df._name_} table with {len(count_df)} rows' )
         return count_df
@@ -848,6 +849,7 @@ class SemanticSearch (APISession):
                 incidence_df[colname] = raw_df[colname]
                 i += 1
 
+        incidence_df.copy_format(raw_df)
         return incidence_df,empty_refcount_cols
 
 
@@ -891,7 +893,7 @@ class SemanticSearch (APISession):
             weight_index += 1
 
         #calculating weighted cumulative score
-        normdf4raw = df.copy_df(incidence_df,refcount_header)
+        normdf4raw = incidence_df.dfcopy(refcount_header)
         normdf4raw = normdf4raw.l2norm(refcount_cols)
         weights = weights_df.loc[0, refcount_cols].values.tolist()
         for i in normdf4raw.index:
@@ -908,16 +910,16 @@ class SemanticSearch (APISession):
                 normdf4raw[col] = incidence_df[col]
 
         normdf4raw[RANK] = normdf4raw['Combined score']/normdf4raw[CHILDREN_COUNT]
-        normdf4raw = normdf4raw.sort_values(by=[RANK,entity_column],ascending=False)
-
         normdf4raw = df.from_pd(normdf4raw.loc[normdf4raw[RANK] >= 0.001]) # removes rows with all zeros
+        normdf4raw = normdf4raw.sortrows(by=[RANK,entity_column])
+        normdf4raw = normdf4raw.pvalue4(RANK)
         print(f'Removed {len(incidence_df)-len(normdf4raw)} rows from normalized worksheet with score=0')
         # prettyfying scores in df:
         normdf4raw['Combined score'] = normdf4raw['Combined score'].map(lambda x: '%2.3f' % x)
         normdf4raw[RANK] = normdf4raw[RANK].map(lambda x: '%2.3f' % x)
             
         if drop_empty_columns:
-            normdf4raw = normdf4raw.drop_empty_columns() 
+            normdf4raw = normdf4raw.drop_empty_columns()
 
         rename_cols = dict()
         header4rankedf = [entity_column]
@@ -932,22 +934,23 @@ class SemanticSearch (APISession):
         #prettyfying weighter_df header:
         weights_df = df.from_pd(weights_df.map(lambda x: f'{x:,.4f}' if isinstance(x,float) else x))
         # renaming weight_df columns from "weighted " to "RefCount to ":
-        weights_df = df.copy_df(weights_df,rename2=rename_cols) 
+        weights_df = weights_df.dfcopy(rename2=rename_cols) 
 
         # re-ordering normdf4raw colums for clarity:
         normdf4raw_cols = normdf4raw.columns.to_list()
         forbidden_cols = set(refcount_header+header4rankedf)
-        forbidden_cols.update([self.__temp_id_col__,'URN',RANK,'ObjType',self.__colname4GV__,'Combined score',CHILDREN_COUNT])
+        rank_pval = RANK+' pvalue'
+        forbidden_cols.update([self.__temp_id_col__,'URN',RANK,rank_pval,'ObjType',self.__colname4GV__,'Combined score',CHILDREN_COUNT])
         # refcount_header has "WEIGHTED ..." columns
         # header4rankedf has "Refcount to ..." columns
         other_cols4rankedf = [x for x in normdf4raw_cols if x not in forbidden_cols]
         header4rankedf += other_cols4rankedf
-        header4rankedf +=  [RANK,'Combined score',CHILDREN_COUNT,'URN','ObjType']
+        header4rankedf +=  [RANK,rank_pval,'Combined score',CHILDREN_COUNT,'URN','ObjType']
         if self.__colname4GV__ in normdf4raw_cols:
             header4rankedf.append(self.__colname4GV__)
         # at this point: header4rankedf = [entity_column]+refcount_colnames+other_cols4rankedf+[RANK,'URN','ObjType',self.__colname4GV__]
 
-        rankedf4report = df.copy_df(normdf4raw,only_columns=header4rankedf)
+        rankedf4report = normdf4raw.dfcopy(only_columns=header4rankedf)
         # now finish normdf4raw by adding weights to df and df to raw data:
         normdf4raw = weights_df.append_df(normdf4raw)
         normdf4raw._name_ = 'norm.'+incidence_df._name_
@@ -956,6 +959,7 @@ class SemanticSearch (APISession):
         assert(weights_df.columns.to_list() == rankedf4report.columns.to_list()[:len(weights_df.columns)])
         rankedf4report = weights_df.append_df(rankedf4report)# append will add columns missing in weights_str 
         rankedf4report = rankedf4report.move_cols({RANK:1})
+        rankedf4report = rankedf4report.move_cols({rank_pval:2})
 
         rankedf4report.copy_format(incidence_df)
         rankedf4report.add_column_format(RANK,'align','center')
@@ -1004,7 +1008,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
                 etm._etm_doi_column_name()
         """
         if skip1strow:
-            my_df = df.copy_df(self.report_pandas[to_df_named])
+            my_df = self.report_pandas[to_df_named].copy()
             weights = my_df.iloc[[0]].copy()
             df_name = self.report_pandas[to_df_named]._name_
             df_no_weights = df.from_pd(my_df.drop(0, axis=0,inplace=False), df_name)
@@ -1075,7 +1079,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
                     prop_groups.update(obj_groups)
             prop2groups[prop] = ',\n'.join(prop_groups)
 
-        new_df = df.copy_df(_2df)
+        new_df = _2df.dfcopy()
         new_df = new_df.merge_dict(prop2groups,'Groups',for_entities_in_column)
         self.add2report(new_df)
         return new_df
@@ -1097,7 +1101,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
             if prop_values:
                 prop2values[prop] = ','.join(prop_values)
 
-        new_df = df.copy_df(in_df)
+        new_df = in_df.dfcopy()
         new_df = new_df.merge_dict(prop2values,_2column,for_entities_in_column)
         self.add2report(new_df)
         return new_df
@@ -1153,7 +1157,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         ontology_df = df.from_rows(rows,['Ontology category',stats_colname,'Percentage'])
         ontology_df._name_ = ONTOLOGY_ANALYSIS+'4'+ _4df._name_ if _4df._name_ else ONTOLOGY_ANALYSIS
 
-        ontology_df.sort_values(by=stats_colname,ascending=False,inplace=True)
+        ontology_df = ontology_df.sortrows(by=stats_colname)
         print('Created "Ontology analysis" table')
 
         if add2report:
@@ -1162,7 +1166,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
 
 
     def remove_high_level_entities(self,from_df:df, max_childs=MAX_CHILDS):
-        return_df = df.copy_df(from_df)
+        return_df = from_df.dfcopy()
         if max_childs:
             return_df = df.from_pd(return_df[return_df.apply(lambda x: len(x[self.__temp_id_col__]) <= max_childs, axis=1)])
             print('%d entities with > %d ontology children were removed from further calculations' %

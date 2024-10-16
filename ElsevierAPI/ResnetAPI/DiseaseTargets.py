@@ -633,7 +633,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
 
     def score_partners(self):
         print(f'\n\nFinding semantic references supporting links between target partners and {self._disease2str()}')
-        my_df = df.copy_df(self.RefCountPandas)
+        my_df = self.RefCountPandas.dfcopy()
         partners_dbids = list()
         partner_names = list()
         target_names = list()
@@ -884,7 +884,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         '''
         print('Adding ETM bibliography for ranked targets', flush=True)
         etm_refcount_colname = self.etm_refcount_colname('Name',self.input_names())
-        move2 = {etm_refcount_colname:2}
+        move2 = {etm_refcount_colname:3}
         self.refs2report(ANTAGONIST_TARGETS_WS,self.input_names())
         self.report_pandas[ANTAGONIST_TARGETS_WS] = self.report_pandas[ANTAGONIST_TARGETS_WS].move_cols(move2)
         self.refs2report(AGONIST_TARGETS_WS,self.input_names())
@@ -915,7 +915,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
 
         input_df = df.from_rows(rows,header=['Name','Connectivity','Children','URN'])
         input_df['Connectivity'] = input_df['Connectivity'].astype(int)
-        input_df = df.from_pd(input_df.sort_values(by='Connectivity',ascending=False))
+        input_df = input_df.sortrows(by='Connectivity')
         input_df._name_ = 'Disease subtypes'
         return input_df
     

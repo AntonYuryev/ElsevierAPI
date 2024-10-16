@@ -377,7 +377,7 @@ class RepurposeDrug(Indications4targets):
         output:
             df with scores
         '''
-        my_df = df.copy_df(in_df)
+        my_df = in_df.dfcopy()
         if my_df._name_ == INDICATION_COUNT:
             colname = self.params['input_compound'] + ' clinical trials'
             kwargs = {'connect_by_rels':['ClinicalTrial']}
@@ -922,7 +922,8 @@ class RepurposeDrug(Indications4targets):
                         diseases = self.DrugToxicities
                     e.submit(self.add_graph_bibliography,suffix,diseases)
                 
-                ranked_df = df.copy_df(self.report_pandas[ranked_df_name])
+                ranked_df = self.report_pandas[ranked_df_name].copy()
+                assert(isinstance(ranked_df,df))
                 id2paths = add_parent_future.result()
                 ranked_df = ranked_df.merge_dict(id2paths,'Ontology parents','Name')
                 ontology_df = ontology_df_future.result()
@@ -943,6 +944,6 @@ class RepurposeDrug(Indications4targets):
             doi_ref_colname = self.doi_column_name('Name',self.drug_names_str())
             for ws in ranked_df_names:
                 self.report_pandas[ws] = self.report_pandas[ws].merge_df(etm_refs_df,on='Name',columns=[etm_ref_colname,doi_ref_colname])
-                self.report_pandas[ws] = self.report_pandas[ws].move_cols({etm_ref_colname:2})
+                self.report_pandas[ws] = self.report_pandas[ws].move_cols({etm_ref_colname:3})
             self.add_etm_bibliography()
         return 

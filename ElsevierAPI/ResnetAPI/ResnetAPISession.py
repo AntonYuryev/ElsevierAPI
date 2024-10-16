@@ -1715,6 +1715,28 @@ in {execution_time(process_start)}')
         return my_psobjs
 
 
+    def __dbid4prop(self,prop:str,psobjs:list[PSObject])->tuple[set[PSObject],set[PSObject]]:
+        prop_values = unpack([list(o.get_props(prop)) for o in psobjs])
+        prop2objs,_ = self.map_props2objs(prop_values,[prop])
+        prop2dbid = dict()
+        for propval,objs in prop2objs.items():
+            for obj in objs:
+                prop2dbid[propval] = obj.dbid()
+
+        mapped_objs = set()
+        notmapped_objs = set(psobjs)
+        for psobj in psobjs:
+            for propval in psobj.get_props(prop):
+                try:
+                    my_dbid = prop2dbid[propval]
+                    psobj.update_with_value(DBID,my_dbid)
+                    mapped_objs.add(psobj)
+                    notmapped_objs.discard(psobj)
+                except KeyError:
+                    continue
+        return mapped_objs, notmapped_objs
+
+
     def load_dbids4(self,psobjs:list[PSObject]):
         '''
         Return
@@ -1722,45 +1744,26 @@ in {execution_time(process_start)}')
         mapped_objs,no_dbid_objs - [PSObject],[PSObject]
         mapping is done first by Name then by URN
         '''
+        
         print(f'Reterieving database identifiers for {len(psobjs)} entities using Name identifier')
         kwargs = {TO_RETRIEVE:NO_REL_PROPERTIES}
         my_session = self._clone_session(**kwargs)
-        names = ResnetGraph.names(psobjs)
-        db_nodes = self._props2psobj(names,['Name'],get_childs=False)
-        name2dbid = {n.name():n.dbid() for n in db_nodes}
-        mapped_objs = list()
-        no_dbid_objs = list()
-        for psobj in psobjs:
-            try:
-                my_dbid = name2dbid[psobj.name()]
-                psobj.update_with_value(DBID,my_dbid)
-                mapped_objs.append(psobj)
-            except KeyError:
-                no_dbid_objs.append(psobj)
-                continue
+        mapped_objs, notmapped_objs = my_session.__dbid4prop('Name',psobjs)
         
-        if no_dbid_objs:
-            urns_need_mapping = ResnetGraph.urns(no_dbid_objs)
-            db_nodes = self._props2psobj(urns_need_mapping,['URN'],get_childs=False)
-            urn2dbid = {n.urn():n.dbid() for n in db_nodes}
-            mapped_by_urn = list()
-            for psobj in no_dbid_objs:
-                assert(isinstance(psobj,PSObject))
-                try:
-                    my_dbid = urn2dbid[psobj.urn()]
-                    psobj.update_with_value(DBID,my_dbid)
-                    mapped_by_urn.append(psobj)
-                except KeyError:
-                    continue
-
-            mapped_objs += mapped_by_urn
-            no_dbid_objs = [obj for obj in no_dbid_objs if obj not in mapped_by_urn]
+        if notmapped_objs:
+            mo, notmapped_objs = my_session.__dbid4prop('URN',notmapped_objs)
+            mapped_objs.update(mo)
+        
+        if notmapped_objs:
+            [x.set_property('Alias',x.name()) for x in notmapped_objs]
+            mo,_ = my_session.__dbid4prop('Alias',notmapped_objs)
+            mapped_objs.update(mo)
 
         urn2dbids = {n.urn():n[DBID] for n in mapped_objs}
         self.Graph.set_node_annotation(urn2dbids,DBID)
         print(f'Loaded {len(mapped_objs)} database identitiers for {len(psobjs)} entities')
         my_session.close_connection()
-        return mapped_objs,no_dbid_objs
+        return mapped_objs,notmapped_objs
     
 
     def update_graph(self,g:ResnetGraph,with_node_props:list[str],with_rel_props:list[str],inplace=True):

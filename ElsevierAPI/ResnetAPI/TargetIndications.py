@@ -994,7 +994,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         ------
         adds Refcount score columns "in_worksheet" from self.raw_data
         """
-        my_df = df.copy_df(in_df)
+        my_df = in_df.dfcopy()
         score4antagonists = True if with_effect_on_indication == 'positive' else False
         if self._is_strict():
             booster_reltypes = ['Regulation','Biomarker','GeneticChange','QuantitativeChange','StateChange','FunctionalAssociation']

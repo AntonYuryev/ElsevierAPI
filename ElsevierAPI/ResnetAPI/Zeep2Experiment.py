@@ -20,7 +20,7 @@ class Sample(PSObject):
     def copy(self, with_data=True):
         my_copy = Sample(self)
         if with_data:
-            my_copy.data = df.copy_df(self.data)
+            my_copy.data = self.data.dfcopy()
         return my_copy
 
 
@@ -34,7 +34,7 @@ class Sample(PSObject):
 
 
     def mapped_data(self):
-        mapped_data = df(self.data.copy())
+        mapped_data = df(self.data.dfcopy())
         mapped_data = mapped_data.dropna(subset=['URN'])
         return mapped_data
 
@@ -111,7 +111,7 @@ class Experiment(PSObject):
         try:
             mapping_name = self.identifiers.columns[0]
             if mapping_name.upper()[:7] == 'ENSEMBL': # To replace "ENSEMBLE_ID","ENSEMBLE ID"
-                self.identifiers = df.copy_df(self.identifiers,colname_mapper={mapping_name:'Ensembl ID'})
+                self.identifiers = self.identifiers.copy_df(colname_mapper={mapping_name:'Ensembl ID'})
                 mapping_name = 'Ensembl ID'
             return mapping_name
         except KeyError:
@@ -150,7 +150,7 @@ class Experiment(PSObject):
     
     def mask_by_pval(self, max_pval=0.05):
         masked_experiment = Experiment(self)
-        masked_experiment.identifiers = df.copy_df(self.identifiers)
+        masked_experiment.identifiers = self.identifiers.dfcopy()
         for sample in self.get_samples():
             masked_counter = 0
             sample_copy = sample.copy()
@@ -399,10 +399,10 @@ class Experiment(PSObject):
 
         if deduplicate:
             if sample.has_pvalue():
-                sample_pd.sort_values(['URN','pvalue'], ascending=True, inplace=True)
+                sample_pd.sort_values(by=['URN','pvalue'], ascending=True, inplace=True)
                 sample_pd.drop_duplicates(subset=['URN'], inplace=True, ignore_index=True)
             else:
-                sample_pd.sort_values(['URN','value'], ascending=False, inplace=True)
+                sample_pd.sort_values(by=['URN','value'], ascending=False, inplace=True)
                 sample_pd.drop_duplicates(subset=['URN'], inplace=True, ignore_index=True)
 
         return sample_pd

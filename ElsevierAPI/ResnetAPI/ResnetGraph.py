@@ -714,7 +714,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
     def add_recent_refs(self,_2df:df,between_col:str,and_col:str,map2prop='Name'):
-        annotated_df = df.copy_df(_2df)
+        annotated_df = _2df.dfcopy()
         for row in _2df.index:
             node1_prop = annotated_df.loc[row][between_col]
             node2_prop = annotated_df.loc[row][and_col]
@@ -761,7 +761,7 @@ class ResnetGraph (nx.MultiDiGraph):
                     refcount = str(total_refs)
             return_df.iat[row_counter] = [regulator_name,target_name,refcount,total_refs,pathway]
             row_counter += 1
-        return_df.sort_values(by='Number of References',ascending=False, inplace=True)
+        return_df = return_df.sortrows(by='Number of References')
         return return_df
 
 
@@ -830,7 +830,7 @@ class ResnetGraph (nx.MultiDiGraph):
         snippet_df = df.from_rows(rows,header)
         snippet_df[PS_CITATION_INDEX] = snippet_df[PS_CITATION_INDEX].astype(int)
         # PUBYEAR can have multiple values and cannot be int
-        snippet_df.sort_values(['Concept','Entity',PS_CITATION_INDEX], inplace=True, ascending=False)
+        snippet_df = snippet_df.sortrows(['Concept','Entity',PS_CITATION_INDEX])
         snippet_df._name_ = df_name
         snippet_df.set_hyperlink_color(ref_identifiers)
         return snippet_df
@@ -1216,7 +1216,7 @@ class ResnetGraph (nx.MultiDiGraph):
         header = [year_col_name,'Total Counts','Abstract Counts','>1 ref counts','>2 ref counts','>3 ref counts']
         stats_df = df.from_rows(rows,header)
         stats_df[year_col_name] = stats_df[year_col_name].astype(int)
-        stats_df.sort_values(by=[year_col_name])
+        stats_df = stats_df.sortrows(by=[year_col_name])
         return stats_df
 
 
