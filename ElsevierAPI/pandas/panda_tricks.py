@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from pandas import ExcelWriter
+from scipy.stats import expon
 import rdfpandas,xlsxwriter,string, os
 from ..ResnetAPI.NetworkxObjects import PSObject
 from openpyxl import load_workbook
@@ -485,7 +486,9 @@ class df(pd.DataFrame):
 
 
     def filter_by(self,values:list, in_column:str):
-        return df.from_pd(self[self[in_column].isin(values)])
+        copedf = df.from_pd(self[self[in_column].isin(values)],self._name_)
+        copedf.copy_format(self)
+        return copedf
 
 
     def greater_than(self, value:float, in_column:str):
@@ -717,7 +720,7 @@ class df(pd.DataFrame):
     def move_cols(self,col2pos:dict[str,int]):
         '''
         input:
-            col2pos = {colulmn_name:position}
+            col2pos = {colulmn_name : position}
         '''
         my_columns = [c for c in self.columns.to_list() if c not in col2pos]
         sorted_col2pos = dict(sorted(col2pos.items(), key=lambda item: item[1]))
@@ -769,7 +772,6 @@ class df(pd.DataFrame):
             p_values = [(scores >= score).mean() for score in scores]
             return p_values
 
-        # Calculate p-values for the 'RANK' column
         pval_colname = column+' pvalue'
         copedf = self.dfcopy()
         copedf[pval_colname] = calculate_p_values(copedf[column])
@@ -782,3 +784,15 @@ class df(pd.DataFrame):
         newdf = df.from_pd(newpd,self._name_)
         newdf.copy_format(self)
         return newdf
+    
+
+    def expo_pvalue4(self,column:str):
+        def calculate_p_values(scores):
+            lambda_hat = expon.fit(scores, floc=0)[1] # Fit an exponential distribution
+            p_values = expon.sf(scores, scale=lambda_hat) # Calculate p-values
+            return p_values
+
+        pval_colname = column+' expopvalue'
+        copedf = self.dfcopy()
+        copedf[pval_colname] = calculate_p_values(copedf[column])
+        return copedf
