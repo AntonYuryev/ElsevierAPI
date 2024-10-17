@@ -9,7 +9,7 @@ from .NetworkxObjects import PSObject,PSRelation,len, DIRECT, INDIRECT, DBID
 from .NetworkxObjects import REGULATORS,TARGETS,CHILDS,REFCOUNT,STATE,DIRECT_RELTYPES,OBJECT_TYPE
 from ..ETM_API.references import Reference, pubmed_hyperlink, make_hyperlink
 from ..ETM_API.references import PUBYEAR,EFFECT,TITLE,REFERENCE_PROPS,INT_PROPS,PS_CITATION_INDEX,SENTENCE_PROPS,SENTENCE
-from ..ETM_API.etm import ETMstat,IDENTIFIER_COLUMN
+from ..ETM_API.etm import RefStats,IDENTIFIER_COLUMN
 from itertools import product
 from typing import Optional
 from torch_geometric.data import HeteroData
@@ -702,7 +702,7 @@ class ResnetGraph (nx.MultiDiGraph):
             sub_graph = sub_graph.subgraph_by_relprops(with_effect,['Effect'])
         
         references = sub_graph.citation_index() # annotates
-        ref_df = ETMstat.external_counter2pd(set(references.values()),stat_prop=PS_CITATION_INDEX)
+        ref_df = RefStats.external_counter2pd(set(references.values()),stat_prop=PS_CITATION_INDEX)
         ref_df._name_ = df_name
 
         clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],

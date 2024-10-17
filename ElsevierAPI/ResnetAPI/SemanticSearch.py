@@ -4,7 +4,7 @@ from ..ETM_API.references import Reference
 from .ResnetGraph import ResnetGraph,PSObject,EFFECT,df
 from .ResnetAPISession import APISession,len,ALL_CHILDS
 from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
-from ..ETM_API.etm import ETMstat
+from ..ETM_API.etm import RefStats
 from ..utils import execution_time
 #from ..ETM_API.scibite import SBSstat
 import pandas as pd
@@ -68,9 +68,8 @@ class SemanticSearch (APISession):
         self.__connect_by_rels__= list()
         self.__rel_effect__ = list()
         self.references = dict() # {identifier:Reference} made by self.Graph.citation_index()
-        self.etm_counter = ETMstat(self.APIconfig,limit=10)
-        #self.etm_counter = SBSstat(self.APIconfig,limit=10)
-        self.etm_counter.min_relevance = self.min_etm_relevance
+        search_kwargs = {'limit':10,'min_relevance':self.min_etm_relevance}
+        self.RefStats = RefStats(self.APIconfig,**search_kwargs)
         self.all_entity_dbids = set()
         self.columns2drop = [self.__temp_id_col__] # columns to drop before printing pandas
         self.__boost_with__ = list()
@@ -79,27 +78,13 @@ class SemanticSearch (APISession):
         self.max_ontology_parent = self.params.get('max_ontology_parent',10)
         self.nodeweight_prop = str()
         self._Ontology = list()
-
-
-    def reset(self):
-        score_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
-        for col in score_columns:
-                self.RefCountPandas[col] = 0.0
-        print('DataFrame was reset')
-
-
-    def refcount_columns(self,counts_df=df(),column_prefix=''):
-        d = self.RefCountPandas if counts_df.empty else counts_df
-        refcount_column_prefix = column_prefix if column_prefix else self._col_name_prefix # self._col_name_prefix=WEIGHTED
-        to_return = [col for col in d.columns if refcount_column_prefix in col]
-        return to_return
+        self.TMsearch = 'ETMbasicSearch'
 
 
     def _clone(self, **kwargs):
         '''
-        Return
-        ------
-        Copy of SemanticSearch object with copy of self.Graph
+        output:
+            SemanticSearch object copy of self with copy of self.Graph
         '''
         my_kwargs = dict(kwargs)
         my_kwargs['copy_graph'] = True # need to copy self.Graph to enable using cache in link2concept
@@ -115,6 +100,7 @@ class SemanticSearch (APISession):
         new_session.relweight_prop = self.relweight_prop
         new_session.relweight_dict = self.relweight_dict
         new_session.iteration_step = self.iteration_step
+        new_session.TMsearch = self.TMsearch
         if self.__rel_effect__:
             new_session.add_rel_props([EFFECT])
         
@@ -123,6 +109,27 @@ class SemanticSearch (APISession):
         # therefore new_session.add2self is set to false
         return new_session
     
+
+    def reset(self):
+        score_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
+        for col in score_columns:
+                self.RefCountPandas[col] = 0.0
+        print('DataFrame was reset')
+
+
+    def refcount_columns(self,counts_df=df(),column_prefix=''):
+        d = self.RefCountPandas if counts_df.empty else counts_df
+        refcount_column_prefix = column_prefix if column_prefix else self._col_name_prefix # self._col_name_prefix=WEIGHTED
+        to_return = [col for col in d.columns if refcount_column_prefix in col]
+        return to_return
+    
+
+    def report_df(self,dfname:str)->df:
+        return self.report_pandas[dfname]
+
+    def raw_df(self,dfname:str)->df:
+        return self.raw_data[dfname]
+
 
     def __concept(self,colname:str):
         return colname[len(self._col_name_prefix+self._col_name_prefix2):]
@@ -721,11 +728,34 @@ class SemanticSearch (APISession):
         for ws_name, report_df in my_pandas.items():
             assert(isinstance(report_df,df))
             df2print = report_df.dfcopy()
-            report_df_columns = set(df2print.columns)
+            report_df_columns = df2print.columns.to_list()
             my_drop = [c for c in self.columns2drop if c in report_df_columns]
             clean_df = df2print.drop(columns=my_drop)
             clean_df = df.from_pd(clean_df.loc[(clean_df!=0).any(axis=1)]) # removes rows with all zeros
+
+            # moves RANK columns to front after 'Name' column:
+            clean_df_columns = clean_df.columns.to_list()
+            try:
+                rank_pos = clean_df_columns.index('Name') +1
+            except ValueError:
+                rank_pos = 1
+
+            move2 = dict()
+            for c in clean_df_columns:
+                if RANK in c:
+                    move2[c] = rank_pos
+                    rank_pos += 1
+
+            # moves etm_ref_col next to rank columns:
+            for c in self.RefStats.refcols:
+                if c in clean_df_columns:
+                    move2[c] = rank_pos
+                    rank_pos += 1
+
+            clean_df = clean_df.move_cols(move2)
+
             clean_df.copy_format(report_df)
+
             if 'bibliography' in ws_name:
                 clean_df.make_header_horizontal()
             else:
@@ -744,18 +774,18 @@ class SemanticSearch (APISession):
                 raw_df.df2excel(writer, sheet_name=sh_name[:30])
 
 
-    def print_report(self, xslx_file:str, ws_prefix=''):
-        fout = self.data_dir+xslx_file
-        writer = pd.ExcelWriter(fout, engine='xlsxwriter')
+    def print_report(self, path2report:str, ws_prefix=''):
+        writer = pd.ExcelWriter(path2report, engine='xlsxwriter')
         self.add2writer(writer,ws_prefix)
         writer.close()
+        print('Report is in "%s"' % path2report)
 
 
-    def print_rawdata(self, xslx_file:str, ws_prefix=''):
-        fout = self.data_dir+xslx_file
-        writer = pd.ExcelWriter(fout, engine='xlsxwriter')
+    def print_rawdata(self, path2report:str, ws_prefix=''):
+        writer = pd.ExcelWriter(path2report, engine='xlsxwriter')
         self.addraw2writer(writer,ws_prefix)
         writer.close()
+        print('Raw data is in "%s"' % path2report)
 
 
     def read_cache(self):# returns last concept linked in cache
@@ -795,7 +825,7 @@ class SemanticSearch (APISession):
             sort_by = __col2sort__(my_df)
             count_df = count_df.sortrows(by=sort_by)
 
-        if self.__colname4GV__ in count_df.columns:
+        if self.__colname4GV__ in count_df.columns: # moves column with GVs to the end 
             count_df.move_cols({self.__colname4GV__:len(count_df.columns)})
 
         count_df._name_ = with_name
@@ -911,13 +941,18 @@ class SemanticSearch (APISession):
 
         normdf4raw[RANK] = normdf4raw['Combined score']/normdf4raw[CHILDREN_COUNT]
         normdf4raw = df.from_pd(normdf4raw.loc[normdf4raw[RANK] >= 0.001]) # removes rows with all zeros
-        normdf4raw = normdf4raw.sortrows(by=[RANK,entity_column])
-        normdf4raw = normdf4raw.pvalue4(RANK)
         print(f'Removed {len(incidence_df)-len(normdf4raw)} rows from normalized worksheet with score=0')
+
+        normdf4raw = normdf4raw.pvalue4(RANK)
+        normdf4raw = normdf4raw.expo_pvalue4(RANK)
+        rank_pval = RANK+' pvalue'
+        rank_expopval = RANK + ' expopvalue'
+    
         # prettyfying scores in df:
         normdf4raw['Combined score'] = normdf4raw['Combined score'].map(lambda x: '%2.3f' % x)
         normdf4raw[RANK] = normdf4raw[RANK].map(lambda x: '%2.3f' % x)
-            
+        normdf4raw = normdf4raw.sortrows(by=[RANK,rank_pval,entity_column], ascending=[False, True])
+
         if drop_empty_columns:
             normdf4raw = normdf4raw.drop_empty_columns()
 
@@ -939,13 +974,12 @@ class SemanticSearch (APISession):
         # re-ordering normdf4raw colums for clarity:
         normdf4raw_cols = normdf4raw.columns.to_list()
         forbidden_cols = set(refcount_header+header4rankedf)
-        rank_pval = RANK+' pvalue'
-        forbidden_cols.update([self.__temp_id_col__,'URN',RANK,rank_pval,'ObjType',self.__colname4GV__,'Combined score',CHILDREN_COUNT])
+        forbidden_cols.update([self.__temp_id_col__,'URN',RANK,rank_pval,rank_expopval,'ObjType',self.__colname4GV__,'Combined score',CHILDREN_COUNT])
         # refcount_header has "WEIGHTED ..." columns
         # header4rankedf has "Refcount to ..." columns
         other_cols4rankedf = [x for x in normdf4raw_cols if x not in forbidden_cols]
         header4rankedf += other_cols4rankedf
-        header4rankedf +=  [RANK,rank_pval,'Combined score',CHILDREN_COUNT,'URN','ObjType']
+        header4rankedf +=  [RANK,rank_pval,rank_expopval,'Combined score',CHILDREN_COUNT,'URN','ObjType']
         if self.__colname4GV__ in normdf4raw_cols:
             header4rankedf.append(self.__colname4GV__)
         # at this point: header4rankedf = [entity_column]+refcount_colnames+other_cols4rankedf+[RANK,'URN','ObjType',self.__colname4GV__]
@@ -958,8 +992,8 @@ class SemanticSearch (APISession):
 
         assert(weights_df.columns.to_list() == rankedf4report.columns.to_list()[:len(weights_df.columns)])
         rankedf4report = weights_df.append_df(rankedf4report)# append will add columns missing in weights_str 
-        rankedf4report = rankedf4report.move_cols({RANK:1})
-        rankedf4report = rankedf4report.move_cols({rank_pval:2})
+        #rankedf4report = rankedf4report.move_cols({RANK:1})
+        #rankedf4report = rankedf4report.move_cols({rank_pval:2})
 
         rankedf4report.copy_format(incidence_df)
         rankedf4report.add_column_format(RANK,'align','center')
@@ -971,30 +1005,22 @@ class SemanticSearch (APISession):
 
 
     def etm_refcount_colname(self,between_names_in_col,and_concepts):
-        return self.etm_counter.refcount_column_name(between_names_in_col,and_concepts)
+        return self.RefStats.refcount_column(between_names_in_col,and_concepts)
     
 
-    def doi_column_name(self,between_names_in_col,and_concepts):
-        return self.etm_counter.doi_column_name(between_names_in_col,and_concepts)
+    def doi_column(self,between_names_in_col,and_concepts):
+        return self.RefStats.doi_column(between_names_in_col,and_concepts)
 
 
     def bibliography(self,to_df:df,input_names:list,entity_name_col:str='Name',add2query=[],max_row=300):
         '''
-        Returns
-        -------
-        copy of to_df with added columns REFS_COLUMN,DOIs
+        output:
+            copy of "to_df" with added columns: REFS_COLUMN,DOIs
         '''
-        if isinstance(self.etm_counter,ETMstat):
-            TMsoft = 'ETM' 
-            my_query_func = ETMstat.basic_query
-        else:
-            TMsoft = 'SBS' 
-     #       my_query_func = SBSstat.basic_query
-
-        print(f'Finding {self.etm_counter._limit()} most relevant articles in {TMsoft} for {len(to_df)} rows \
+        print(f'Finding {self.RefStats._limit()} most relevant articles using {self.TMsearch} for {len(to_df)} rows \
 in "{to_df._name_} worksheet and {input_names}', flush=True)
         
-        return self.etm_counter.add_refs(to_df,entity_name_col,input_names,my_query_func,add2query,max_row)
+        return self.RefStats.add_refs(to_df,entity_name_col,input_names,self.TMsearch,add2query,max_row)
 
 
     def refs2report(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True,skip1strow=True):
@@ -1005,12 +1031,12 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         output:
             copy of "to_df_named" with added columns:
                 etm.ETM_REFS_COLUMN
-                etm._etm_doi_column_name()
+                etm._doi_column()
         """
         if skip1strow:
-            my_df = self.report_pandas[to_df_named].copy()
+            my_df = self.report_df(to_df_named).dfcopy()
+            df_name = my_df._name_ # may not be the same as to_df_named
             weights = my_df.iloc[[0]].copy()
-            df_name = self.report_pandas[to_df_named]._name_
             df_no_weights = df.from_pd(my_df.drop(0, axis=0,inplace=False), df_name)
             df_no_weights.copy_format(self.report_pandas[to_df_named])
             if not my_df.empty:       
@@ -1030,13 +1056,13 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         return my_df
 
 
-    def add_etm_bibliography(self,suffix=''):
+    def add_tm_bibliography_df(self,suffix=''):
         """
         Adds
         ----
-        df with ETM_BIBLIOGRAPHY name to self.report_pandas from self.etm_counter.counter2df()
+        df with ETM_BIBLIOGRAPHY name to self.report_pandas from self.RefStats.counter2df()
         """
-        biblio_df = self.etm_counter.counter2df()
+        biblio_df = self.RefStats.counter2df()
         biblio_df._name_ = ETM_BIBLIOGRAPHY
         if suffix: biblio_df._name_ += '-'+suffix
         biblio_df._name_ = biblio_df._name_[:31]

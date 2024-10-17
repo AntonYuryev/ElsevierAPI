@@ -944,6 +944,6 @@ class RepurposeDrug(Indications4targets):
             doi_ref_colname = self.doi_column_name('Name',self.drug_names_str())
             for ws in ranked_df_names:
                 self.report_pandas[ws] = self.report_pandas[ws].merge_df(etm_refs_df,on='Name',columns=[etm_ref_colname,doi_ref_colname])
-                self.report_pandas[ws] = self.report_pandas[ws].move_cols({etm_ref_colname:3})
+                #self.report_pandas[ws] = self.report_pandas[ws].move_cols({etm_ref_colname:3})
             self.add_etm_bibliography()
         return 

@@ -202,7 +202,8 @@ class DiseaseTargets(SemanticSearch):
         
     
     def metabolite2inhibit(self):
-        try:
+        metabolites2inhibit = self.params.get('metabolites2inhibit',[])
+        if metabolites2inhibit:
             metabolites2inhibit = ','.join(self.params['metabolites2inhibit'])
             select_metabolite = f'SELECT Entity WHERE Name = {metabolites2inhibit}'
             oql = f'SELECT Relation WHERE NeighborOf ({self.find_disease_oql}) AND NeighborOf ({select_metabolite})'
@@ -211,7 +212,7 @@ class DiseaseTargets(SemanticSearch):
             [metbolite2diseaseG.set_edge_annotation(r.uid(),t.uid(),rel.urn(),EFFECT,['positive']) for r,t,rel in metbolite2diseaseG.iterate()]
             self.Graph.add_graph(metbolite2diseaseG) # to ensure propert targets state in set_target_stae
             return metbolite2diseaseG._psobjs_with('SmallMol',OBJECT_TYPE)
-        except KeyError:
+        else:
             return list()
         
 
@@ -260,6 +261,7 @@ class DiseaseTargets(SemanticSearch):
                             t_regulators = expanded_targets_g.get_neighbors({t})
                             reg2target_namedict = dict({r.name():t.name() for r in t_regulators})       
                             self.expanded_targets.update(reg2target_namedict)
+                        print(f'Addded {len(reg2target_namedict)} regulators for {target2expand_names}')
                         self.Graph = self.Graph.compose(expanded_targets_g)
 
 
@@ -883,15 +885,11 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         adds ETM_BIBLIOGRAPHY worksheet to report
         '''
         print('Adding ETM bibliography for ranked targets', flush=True)
-        etm_refcount_colname = self.etm_refcount_colname('Name',self.input_names())
-        move2 = {etm_refcount_colname:3}
+        #etm_refcount_colname = self.etm_refcount_colname('Name',self.input_names())
         self.refs2report(ANTAGONIST_TARGETS_WS,self.input_names())
-        self.report_pandas[ANTAGONIST_TARGETS_WS] = self.report_pandas[ANTAGONIST_TARGETS_WS].move_cols(move2)
         self.refs2report(AGONIST_TARGETS_WS,self.input_names())
-        self.report_pandas[AGONIST_TARGETS_WS] = self.report_pandas[AGONIST_TARGETS_WS].move_cols(move2)
         self.refs2report(UNKNOWN_TARGETS_WS,self.input_names())
-        self.report_pandas[UNKNOWN_TARGETS_WS] = self.report_pandas[UNKNOWN_TARGETS_WS].move_cols(move2)
-        super().add_etm_bibliography()
+        self.add_tm_bibliography_df()
 
 
     def add_graph_bibliography(self):

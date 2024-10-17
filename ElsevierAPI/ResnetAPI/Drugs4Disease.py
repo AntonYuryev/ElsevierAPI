@@ -368,7 +368,12 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
         new_ranked_df = self.subtract_antigraph(new_ranked_df,antagonist_antigraph)
         new_ranked_df = self.subtract_antigraph(new_ranked_df,agonist_antigraph)
 
-        new_ranked_df = new_ranked_df.greater_than(0,DRUG2TARGET_REGULATOR_SCORE)
+        predicted_drugs = new_ranked_df.greater_than(0,DRUG2TARGET_REGULATOR_SCORE)['Name'].to_list()
+        known_drugs = ResnetGraph.names(self.drugs_linked2disease)
+        drugs2score = known_drugs + predicted_drugs
+        new_ranked_df = new_ranked_df.filter_by(drugs2score,'Name')
+        new_ranked_df[DRUG2TARGET_REGULATOR_SCORE] = new_ranked_df[DRUG2TARGET_REGULATOR_SCORE].fillna(0.0)
+
         disnames = ','.join(self.input_names())
         new_ranked_df._name_ = f'Drugs for {disnames}'
         new_ranked_df = new_ranked_df.sortrows(by=[DRUG2TARGET_REGULATOR_SCORE])
@@ -456,7 +461,7 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
             if self.params['add_bibliography']:
                 with ThreadPoolExecutor(max_workers=30,thread_name_prefix='ScoreDrugs') as sd:
                     futures = dict()
-                    futures['bibliography'] = sd.submit(self.bibliography,ranked_df,self.input_names()) # adds etm refs to drug_df
+                    futures['bibliography'] = sd.submit(self.bibliography,ranked_df,self.input_names(),'Name',[],len(ranked_df)) # adds etm refs to drug_df
                     futures['link2disease_concepts'] = sd.submit(self.link2disease_concepts,ranked_df) # links drugs to disease-related concepts
 
                     try:
@@ -467,7 +472,7 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
                     try:
                         drugs_df_with_etmrefs = futures['bibliography'].result()
                     except Exception as m:
-                        print(f'"bibliography" finised with exception {m}' )
+                        print(f'"bibliography" finished with exception {m}' )
                         raise m
                     #merging results of two threads:
                     etm_ref_colname = self.etm_refcount_colname('Name',self.input_names())
@@ -493,9 +498,6 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
             
             ranked_drugs_df.tab_format['tab_color'] = 'green'
             ranked_drugs_df._name_ = 'Drugs'
-            if self.params['add_bibliography']:
-                pos = list(ranked_drugs_df.columns).index(RANK +' pvalue')
-                ranked_drugs_df = ranked_drugs_df.move_cols({etm_ref_colname:pos+1})
             self.add2report(ranked_drugs_df)
 
             print("Drug ranking was done in %s" % execution_time(start_time), flush=True)
@@ -590,19 +592,21 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
     def make_report(self):
         start_time = time.time()
         self.find_rank_targets() # creating target ranking worksheets
-        with ThreadPoolExecutor(max_workers=20, thread_name_prefix='RankDrugs_ETM4targets') as re:
-            futures = dict()
-            futures['init_load_score'] = re.submit(self.init_load_score) #finds and scores drugs
-            if self.params['add_bibliography']:
-                futures['add_bibliography4targets'] = re.submit(self.add_bibliography4targets)
-            
-            for func_name, future in futures.items():
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"{func_name} failed with exception:({e})")
-                    raise(e)
-            re.shutdown()
+        future_dic = dict()
+        with ThreadPoolExecutor(max_workers=2) as e:
+            future_dic['init_load_score'] = e.submit(self.init_load_score) #finds and scores drugs
+            future_dic['refs2report4'+ANTAGONIST_TARGETS_WS] = e.submit(self.refs2report,ANTAGONIST_TARGETS_WS,self.input_names())
+            future_dic['refs2report4'+AGONIST_TARGETS_WS] = e.submit(self.refs2report,AGONIST_TARGETS_WS,self.input_names())
+            future_dic['refs2report4'+UNKNOWN_TARGETS_WS] = e.submit(self.refs2report,UNKNOWN_TARGETS_WS,self.input_names())
+
+        for name,future in future_dic.items():
+            try:
+               future.result()
+            except Exception as x:
+                print(f'{name} thread has finished with error {x}') 
+                raise(x)
+# this step cannot be multithreaded because previous steps mutate self.RefStats.ref_counter:        
+        self.add_tm_bibliography_df()
 
         self.report_pandas[ANTAGONIST_TARGETS_WS] = self.report_pandas[ANTAGONIST_TARGETS_WS].merge_psobject(self.direct_target2drugs,'Directly Inhibited by','Name',values21cell=True)
         self.report_pandas[ANTAGONIST_TARGETS_WS] = self.report_pandas[ANTAGONIST_TARGETS_WS].merge_psobject(self.indirect_target2drugs,'Indirectly Inhibited by','Name',values21cell=True)

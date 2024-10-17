@@ -1335,7 +1335,7 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
                 for ws in self.__dfnames_map().values():
                     if ws in self.report_pandas.keys():
                         self.report_pandas[ws] = self.report_pandas[ws].merge_df(indication_etmrefs,how='left',on='Name',columns=[etm_ref_colname,doi_ref_colname])
-                        self.report_pandas[ws] = self.report_pandas[ws].move_cols({etm_ref_colname:2})
+                        #self.report_pandas[ws] = self.report_pandas[ws].move_cols({etm_ref_colname:2})
                 self.add_etm_bibliography()
                 self.add_graph_bibliography()
                 other_effects_future.result()
