@@ -1,10 +1,10 @@
 import urllib.request,urllib.parse,json
 from xml.etree.ElementTree import fromstring
 from time import sleep
-from ..ETM_API.references import Reference, SCOPUS_CI,ARTICLE_ID_TYPES
+from ..ETM_API.references import Reference, Author, DocMine
+from ..ETM_API.references import SCOPUS_CI,ARTICLE_ID_TYPES,INSTITUTIONS,AUTHORS,PUBLISHER
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from titlecase import titlecase
-from ..utils import load_api_config
 
 
 AUTHOR_SEARCH = 0
@@ -12,6 +12,10 @@ AUTHOR_RETRIEVAL = 1
 SCOPUS_API_BASEURL = 'https://api.elsevier.com/content/'
 SCOPUS_CACHE_DIR = 'D:/Python/ENTELLECT_API/ElsevierAPI/ScopusAPI/__scpcache__/'
 # for Scopus query limits read https://dev.elsevier.com/guides/Scopus%20API%20Guide_V1_20230907.pdf
+SCOPUS_AUTHORIDS = 'scopusAuthors'
+SCOPUS_CITESCORE = 'CiteScore'
+SCOPUS_SJR = 'Scientific Journal Rankings'
+SCOPUS_SNIP = 'Source Normalized Impact per Paper'
 
 
 class Scopus:
@@ -92,9 +96,14 @@ class Scopus:
             return bool(oa)
         except Exception as e:
                 return True
+        
+    
+    def is_in_open_access(self,ref:Reference):
+        doi = ref.identifier('DOI')
+        return Scopus.oa_status(doi) if doi else True
     
 
-    def journal_info(self,issn:str,j_title=''):
+    def __journal_info(self,issn:str,j_title=''):
         try:
             return self.JournalInfo[issn]
         except KeyError:
@@ -155,21 +164,51 @@ class Scopus:
                 return ''
 
 
-    def normalize_affiliations(self,affils:list):
+    def normalize_affiliations(self,ref:Reference):
         '''
         input:
             list of not normalized institution name
         output:
             list of institution names normalized by Scopus
         '''
+        affils = ref.get(INSTITUTIONS,[])
         normalized_institutions = list()
         for aff in affils:
             norm_aff = self.get_affiliation(aff)
             if norm_aff:
                 normalized_institutions.append(norm_aff)
 
+        if normalized_institutions:
+            ref[INSTITUTIONS] = normalized_institutions
         return normalized_institutions
+    
 
+    def scopus_stats4(self,ref:Reference)->tuple[str,str,str,str,str]:
+        '''
+        output:
+            journal_title,publisher,CiteScore,SJRscore,SNIPscore
+        '''
+        for issn in ref.get_props('ISSN'):
+            j_title,publisher,CiteScore,SJRscore,SNIPscore = self.__journal_info(issn,ref.journal())
+            if publisher:
+                ref[PUBLISHER] = [publisher]
+                ref[SCOPUS_CITESCORE] = [CiteScore]
+                ref[SCOPUS_SJR] = SJRscore
+                ref[SCOPUS_SNIP] = SNIPscore
+
+                return j_title,publisher,CiteScore,SJRscore,SNIPscore
+        return '','','','',''
+    
+
+    def citation_overview(self,ref:Reference):
+        id_type,identifier = ref.get_doc_id()
+        id_name = 'pubmed_id' if id_type == 'PMID' else id_type
+        self.url = 'https://api.elsevier.com/content/abstract/citations?'
+        self.params.update({id_name:identifier})
+
+        result = self._get_results()
+        return result["abstract-citations-response"]
+    
 
 class AuthorRetreival(Scopus):
     def __init__(self,author_id:str, APIconfig:dict):
@@ -200,11 +239,6 @@ class AuthorSearch(Scopus):
         surname = author_name['surname']
         self.author_cache[affiliation] = {surname:{given_name:author_id}}
         return int(author_id),str(given_name),str(initials),str(surname),affiliation
-
-
- #   def _get_results(self):
- #       result = super()._get_results()
-#        return result["search-results"]["entry"]
 
 
     def get_author_id(self, auLast:str, au1st='', institutions=[])->tuple[int,str,str,str]:
@@ -249,6 +283,19 @@ class AuthorSearch(Scopus):
             else:
                 print('Author info %s,%s is ambigious' % (auLast,au1st))
                 return (0,'','','')
+
+
+    def get_authors(self,ref:DocMine):
+        authors = ref[AUTHORS]
+        instituts = ref[INSTITUTIONS]
+        for author in authors:
+            au_names = str(author).split(' ')
+            surname = au_names[0]
+            _1stname = au_names[1] if len(au_names) > 1 else ''
+            scopus_author = self.get_author_id(surname,_1stname,instituts)
+            ref.authors.append(Author(surname,_1stname,instituts[0]))
+        return scopus_author
+
 
     @staticmethod
     def authorid(author_info:tuple):
@@ -297,19 +344,6 @@ class ScopusSearch(Scopus):
               return str('DOI'), str(article["prism:doi"])
             except KeyError:
                 return str(),str() 
-
-
-class CitationOverview(Scopus):
-    def __init__(self,identifier_type:str,identifier:str,APIconfig:dict):
-        my_identifier_type = 'pubmed_id' if identifier_type == 'PMID' else identifier_type
-        add_param = {my_identifier_type:identifier}
-        super().__init__(APIconfig,add_param)
-        self.url = 'https://api.elsevier.com/content/abstract/citations?'
-
-    def _get_results(self):
-        result = super()._get_results()
-        return result["abstract-citations-response"]
-    
 
 
 def g_index(APIconfig:dict,last_name:str,first_name:str,institution = ''):
@@ -377,6 +411,7 @@ def loadCI(APIconfig:dict, references:set[Reference])->tuple[set[Reference], set
             [no_ci_articles,articles_with_ci][ref.has_property(SCOPUS_CI)].add(ref)
 
     return articles_with_ci, no_ci_articles
+
 
 
 '''
