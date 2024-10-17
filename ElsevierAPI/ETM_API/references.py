@@ -77,7 +77,7 @@ class Reference(dict):
     pass
 
     def __init__(self, idType:str, ID:str):
-        super().__init__(dict({})) # self{BIBLIO_PROPS[i]:[values]};
+        super().__init__(dict()) # self{BIBLIO_PROPS[i]:[values]};
         self.Identifiers = {idType:ID} #from REF_ID_TYPES
         self.snippets = dict() # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP           
 
@@ -783,7 +783,7 @@ class DocMine (Reference):
     use this class to normalize annotations from references in disparate sources, e.g. ETM,USPO,EPO,Pubmed\n
     DocMine stores text in sections: Abstract, Results,Discussion, Claims, Descriptions
     '''
-    def __init__(self, doc_id_type, doc_id):
+    def __init__(self, doc_id_type:str, doc_id:str):
         super().__init__(doc_id_type, doc_id)
         self.sections = dict() #{{abstract:[text]}, {claims:[claims]}. Texts to be markerd up by NLP.
         self.authors = list() # [Author]
