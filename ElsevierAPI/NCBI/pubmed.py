@@ -1,6 +1,6 @@
 
 #C:Windows> py -m pip install entrezpy --user
-import urllib.request, urllib.parse, json, datetime
+import urllib.request, urllib.parse, json, datetime,os
 import xml.etree.ElementTree as ET
 from time import sleep
 from collections import defaultdict
@@ -9,7 +9,7 @@ from titlecase import titlecase
 PUBMED_URL = 'https://pubmed.ncbi.nlm.nih.gov/?'
 DOI_URL = 'http://dx.doi.org/'
 RETMAX = 10000
-NCBI_CACHE = 'D:/Python/ENTELLECT_API/ElsevierAPI/NCBI/__ncbicache__/'
+NCBI_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__ncbicache__/')
 #query = ['Aquilegia OR Arabidopsis OR Hordeum OR Brassica OR Theobroma OR Phaseolus OR Gossypium OR "Vitis vinifera" OR Mesembryanthemum OR Lactuca OR "Zea mays" OR Medicago OR "Nicotiana benthamiana" OR Allium OR Capsicum OR "Petunia hybrida" OR Pinus OR Strobus OR Solanum OR Oryza OR Secale OR "Sorghum bicolor" OR Picea OR Saccharum OR Helianthus OR Festuca OR Lycopersicon OR Triphysaria OR Triticum OR Populus OR anthocyanin OR "abscisic acid" OR brassinolide OR brassinosteroid OR brassinosteroids OR cytokinin OR cytokinins OR gibberellin OR gibberellins OR "gibberellic acid" OR "jasmonic acid" OR jasmonate OR jasmonates OR cultivar OR cultivars OR endosperm AND ((2021/08/07[PDat]:3019/12/31[PDat])','ArabidopsisUpdate']
 #query = ['(rice OR oryza OR sativa) AND (2021/08/07[PDat]:3019/12/31[PDat])','RiceUpdate']
 #query= ['(corn OR maize OR zea OR mays) AND (2021/08/07[PDat]:3019/12/31[PDat])','CornUpdate']
@@ -198,51 +198,55 @@ def normalize_journal(journal_title:str):
     return all_names
 
 
-def medlineTA2issn():
+def medlineTA2issn()->tuple[dict[str,str],dict[str,str]]:
     abbrev2journal = dict()
-    j2issn = defaultdict(list)
-    with open(NCBI_CACHE+'J_Medline.txt','r',encoding='utf-8') as m:
-            line = m.readline().strip()
-            journal = str()
-            j_abbrev = str()
-            IsoAbbr = str()
-            issn_print = str()
-            issn_online = str()
-            while line:
-                if line.startswith('JrId'):
-                    if journal:
-                        jnames = normalize_journal(journal)
-                        norm_journal = jnames[0]
-                        abbrev2journal[j_abbrev] = norm_journal
-                        if IsoAbbr != j_abbrev:
-                            abbrev2journal[IsoAbbr] = norm_journal
-                        if issn_print:
-                            j2issn[norm_journal].append(issn_print)
-                        if issn_online:
-                            j2issn[norm_journal].append(issn_online)
+    journal2issns = defaultdict(list)
+    path2cache = NCBI_CACHE+'J_Medline.txt'
+    try: 
+        m = open(path2cache,'r',encoding='utf-8')
+        line = m.readline().strip()
+        journal = str()
+        j_abbrev = str()
+        IsoAbbr = str()
+        issn_print = str()
+        issn_online = str()
+        while line:
+            if line.startswith('JrId'):
+                if journal:
+                    jnames = normalize_journal(journal)
+                    norm_journal = jnames[0]
+                    abbrev2journal[j_abbrev] = norm_journal
+                    if IsoAbbr != j_abbrev:
+                        abbrev2journal[IsoAbbr] = norm_journal
+                    if issn_print:
+                        journal2issns[norm_journal].append(issn_print)
+                    if issn_online:
+                        journal2issns[norm_journal].append(issn_online)
 
-                        if len(jnames) > 1:
-                            for j in jnames:
-                                abbrev2journal[j] = norm_journal
-                            
-                    journal = ''
-                    j_abbrev = ''
-                    issn_print = ''
-                    issn_online = ''
-                    IsoAbbr = ''
-                elif line.startswith('JournalTitle'):
-                    journal = line[len('JournalTitle')+2:]
-                elif line.startswith('MedAbbr'):
-                    j_abbrev = line[len('MedAbbr')+2:]
-                elif line.startswith('ISSN (Print)'):
-                    issn_print = line[len('ISSN (Print)')+2:]
-                elif line.startswith('ISSN (Online)'):
-                    issn_online = line[len('ISSN (Online)')+2:]
-                elif line.startswith('IsoAbbr'):
-                    IsoAbbr = line[len('IsoAbbr')+2:]
-                line = m.readline().strip()
-        
-    return abbrev2journal, dict(j2issn)
+                    if len(jnames) > 1:
+                        for j in jnames:
+                            abbrev2journal[j] = norm_journal
+                        
+                journal = ''
+                j_abbrev = ''
+                issn_print = ''
+                issn_online = ''
+                IsoAbbr = ''
+            elif line.startswith('JournalTitle'):
+                journal = line[len('JournalTitle')+2:]
+            elif line.startswith('MedAbbr'):
+                j_abbrev = line[len('MedAbbr')+2:]
+            elif line.startswith('ISSN (Print)'):
+                issn_print = line[len('ISSN (Print)')+2:]
+            elif line.startswith('ISSN (Online)'):
+                issn_online = line[len('ISSN (Online)')+2:]
+            elif line.startswith('IsoAbbr'):
+                IsoAbbr = line[len('IsoAbbr')+2:]
+            line = m.readline().strip()
+    except FileNotFoundError:
+        print(f'Cannot find {path2cache}')
+        pass
+    return abbrev2journal, dict(journal2issns)
 
 
 if __name__ == "__main__":
