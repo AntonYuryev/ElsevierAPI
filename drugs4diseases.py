@@ -22,10 +22,7 @@ def do_the_job(dt:Drugs4Targets):
 if __name__ == "__main__":
     print(f'Script was started at {datetime.now()}')
     start = time.time()
-    parameters_list = json.load(open("D:/Customers/EveryCure/diseases.json", "r"))
-    # parameters_list = json.load(open("D:/Customers/WakeForest/diseases.json", "r"))
-    #parameters_list = json.load(open("D:/Customers/Insilico Medicine/diseases.json", "r"))
-
+    
     for parameters in parameters_list:
         assert isinstance(parameters,dict)
         skip = parameters.pop('skip', False)
