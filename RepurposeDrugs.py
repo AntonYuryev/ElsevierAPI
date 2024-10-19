@@ -60,11 +60,6 @@ if __name__ == "__main__":
      """
 
         global_start = time.time()
-        #drug_parameters =  "D:/Customers/Serokell/Cadmium.json"  
-        #drug_parameters =  "D:/Customers/Neo7/CanLab.json"
-        #drug_parameters =  "D:/Customers/EveryCure/drugs.json"
-        #drug_parameters =  "D:/Customers/WakeForest/drugs.json"
-        drug_parameters =  "D:/Customers/VFP/drugs.json"
         parameters_list = list(json.load(open(drug_parameters, "r")))
 
         for parameters in parameters_list:
