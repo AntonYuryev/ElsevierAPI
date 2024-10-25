@@ -118,7 +118,7 @@ class SBSapi():
   def SBSearch(self):  # This is actually regenerating a new builder request object.
       s.set_url(self.APIconfig['SBSurl'])
       s.set_auth_url(self.APIconfig['SBStoken_url'])
-      s.set_oauth2(self.APIconfig['SBSuser'], self.APIconfig['SBSecret'])
+      s.set_oauth2(self.APIconfig['SBSclientID'], self.APIconfig['SBSecret'])
       self.timestamp = datetime.now()
       return s  # This is actually regenerating a new builder request object.
   
