@@ -7,6 +7,7 @@ from collections import defaultdict
 from titlecase import titlecase
 
 PUBMED_URL = 'https://pubmed.ncbi.nlm.nih.gov/?'
+PMC_URL = 'https://www.ncbi.nlm.nih.gov/pmc/?'
 DOI_URL = 'http://dx.doi.org/'
 RETMAX = 10000
 NCBI_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__ncbicache__/')
@@ -186,6 +187,29 @@ def pubmed_hyperlink(pmids:list,display_str='',as_excel_formula=True):
         params = {'term':','.join(ids4hyperlink)}
         data = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         return PUBMED_URL+data
+
+
+def pmc_hyperlink(pmcs:list,display_str='',as_excel_formula=True):
+    if as_excel_formula:
+        ids4hyperlink = pmcs[:20] 
+        # hyperlink in Excel does not work with long URLs
+        terms_string = '+OR+'.join(ids4hyperlink)
+        query_string = f'term={terms_string}'
+
+        #params = {'term':ids4hyperlink}
+        if display_str:
+            to_display = str(display_str)
+        elif len(pmcs) == 1:
+            to_display = str(pmcs[0])
+        else:
+            to_display = str(len(pmcs))
+        
+        return '=HYPERLINK("'+PMC_URL+query_string+'",\"{}\")'.format(to_display)
+    else:
+        ids4hyperlink = pmcs[:100]
+        terms_string = '+OR+'.join(ids4hyperlink)
+        query_string = f'term={terms_string}'
+        return PMC_URL+query_string
 
 
 def normalize_journal(journal_title:str):
