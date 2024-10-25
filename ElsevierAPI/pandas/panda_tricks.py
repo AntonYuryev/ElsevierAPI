@@ -409,7 +409,7 @@ class df(pd.DataFrame):
         self.header_format.pop('valign','not_found')
 
 
-    def __df2excel(self,writer:ExcelWriter,sheet_name:str):
+    def __df2excel(self,writer:ExcelWriter,sheet_name:str,**kwargs):
         '''
         Column format specifications must be in self.column2format\n
         Header format specification must be in self.header_format\n
@@ -420,7 +420,10 @@ class df(pd.DataFrame):
         height,width,wrap_text,inch_width\n
         other format parameters are at https://xlsxwriter.readthedocs.io/format.html
         '''
-        self.to_excel(writer, sheet_name=sheet_name, startrow=1, header=False, index=False, float_format='%g')
+        my_kwargs = {'startrow':1,'header':False,'index':False,'float_format':'%g'}
+        my_kwargs.update(kwargs)
+
+        self.to_excel(writer, sheet_name=sheet_name, **my_kwargs)
         assert isinstance(writer.book,xlsxwriter.workbook.Workbook)
 
         my_worksheet = writer.sheets[sheet_name]
@@ -459,12 +462,12 @@ class df(pd.DataFrame):
             pass
 
 
-    def df2excel(self,writer:ExcelWriter,sheet_name:str):
+    def df2excel(self,writer:ExcelWriter,sheet_name:str,**kwargs):
         if len(self) > 1000000:
             chunks = [df.from_pd(self[i:i+1000000]) for i in range(0, len(self), 1000000)]
-            [d.__df2excel(writer,sheet_name+str(i+1)) for i,d in enumerate(chunks)]
+            [d.__df2excel(writer,sheet_name+str(i+1),**kwargs) for i,d in enumerate(chunks)]
         else:
-            self.__df2excel(writer,sheet_name)
+            self.__df2excel(writer,sheet_name,**kwargs)
 
 
     def _2excel(self, fpath:str,ws_name=''):
