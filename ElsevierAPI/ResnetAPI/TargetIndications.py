@@ -28,7 +28,7 @@ ANY_MOA = 0
 
 class Indications4targets(SemanticSearch):
     pass
-    max_threads4ontology = 10
+    max_threads4ontology = 50
     max_cell_indications = 1000 # to limit number indications for popular ligands like TNF
   
     def __init__(self, *args, **kwargs):
@@ -50,7 +50,7 @@ class Indications4targets(SemanticSearch):
     # if not in strict mode algorithm also predicts and rank additional indications based on target expression or genetic profiles in disease
                  'data_dir':'',
                  'add_bibliography' : True,
-                 'what2retrieve':BIBLIO_PROPERTIES,
+                 'what2retrieve':BIBLIO_PROPERTIES, # need biblio props to create PSbibliography
                  'mode_of_action':ANY_MOA,
                  'max_ontology_parent': 10
                 }
@@ -234,6 +234,7 @@ class Indications4targets(SemanticSearch):
         input:
             partner_params - {target_name:partner_class:[partner_names]}
         '''
+        if not _4targets: return []
         _4target_names = {n.name():n for n in _4targets}
         partner_names = dict() #{name:(class,weight)}
         for target_name, c2p in partner_params.items():
@@ -306,7 +307,6 @@ class Indications4targets(SemanticSearch):
         OQLquery = 'SELECT Relation WHERE objectType = (CellExpression,MolTransport) AND NeighborOf ({select_targets}) AND NeighborOf (SELECT Entity WHERE objectType = Cell)'
         secreting_cellsG = self.process_oql(OQLquery.format(select_targets=oql4ligands),REQUEST_NAME)
         if isinstance(secreting_cellsG,ResnetGraph):
-            print('Found %d cell types producing %s' % (len(self.__TargetSecretingCells),t_n))
             return secreting_cellsG._psobjs_with('CellType','ObjTypeName')
         else:
             print(f'No secreting cells found for {t_n}')
@@ -489,6 +489,7 @@ class Indications4targets(SemanticSearch):
         targets_regulome = target_pathways.get_regulome(set(targets))
         self.PathwayComponents = set(targets_regulome._get_nodes())
         self.PathwayComponents = self.PathwayComponents.difference(targets|partners)
+        self.Graph.add_psobjs(self.PathwayComponents) # to avoid their retrieval during linking
         print (f'Found regulome for {self.target_names_str()} with {len(self.PathwayComponents)} components')
 
 ########################### FIND INDICATIONS ########################## FIND INDICATIONS ###################
@@ -501,7 +502,7 @@ class Indications4targets(SemanticSearch):
             indications, indications_strict
         '''
         assert(with_effect_on_indications in ['positive','negative'])
-        #effect = 'positive' if moa == ANTAGONIST else 'negative'
+        if not targets: return []
         t_n = ResnetGraph.names(targets)
 
         REQUEST_NAME = 'Find indications {effect}ly regulating {target}'.format(effect=with_effect_on_indications, target=t_n)
@@ -554,12 +555,13 @@ class Indications4targets(SemanticSearch):
         return
 
 
-    def _indications4partners(self,targets:list[PSObject],partners:list[PSObject],effect_on_indications:str):
+    def _indications4partners(self,targets:list[PSObject],partners:list[PSObject],effect_on_indications:str)->list[PSObject]:
         OQLtemplate = 'SELECT Relation WHERE objectType = (Regulation,QuantitativeChange) AND \
 Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
         assert(effect_on_indications in ['positive','negative'])
 
         #effect = 'positive' if moa == ANTAGONIST else 'negative'
+        if not targets or not partners: return []
         t_n = ','.join(ResnetGraph.names(targets))
         p_c = ','.join(ResnetGraph.classes(partners))
         oql4indications,_ = self._oql4indications_type()
@@ -641,7 +643,7 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
         return toxicities
 
 
-    def __indications4cells(self,secreting:list[PSObject],targets:list[PSObject],with_effect_on_indication:str):
+    def __indications4cells(self,secreting:list[PSObject],targets:list[PSObject],with_effect_on_indication:str)->list[PSObject]:
         '''
            effect_on_indication in ['positive','negative']
         '''
@@ -661,11 +663,11 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
             return cell2disease._get_nodes(best_indications_uids)
 
         #effect = 'positive' if moa == ANTAGONIST else 'negative'
-        REQUEST_NAME = f'Find indications {with_effect_on_indication}ely linked to cell secreting {t_n}'
+        REQUEST_NAME = f'Find indications {with_effect_on_indication}ly linked to cell secreting {t_n}'
         OQLtemplate = 'SELECT Relation WHERE Effect = {effect} AND NeighborOf (SELECT Entity WHERE \
             objectType = ({indication_type})) AND NeighborOf (SELECT Entity WHERE id = ({cell_ids}))'
         
-        secreting_cells_dbids = ResnetGraph.dbids(secreting)   
+        secreting_cells_dbids = ResnetGraph.dbids(secreting)
         OQLquery = OQLtemplate.format(effect=with_effect_on_indication,cell_ids=OQL.id2str(secreting_cells_dbids),indication_type=','.join(self.params['indication_types']))
         CellDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
         if isinstance(CellDiseaseNetwork,ResnetGraph):
@@ -685,18 +687,24 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
             indications, 
             if "secreting" is empty adds cells to "secreting"
         '''
-        assert(effect_on_targets in ['positive','negative'])
-        my_ligands = [o for o in targets if o.get_prop('Class') == 'Ligand']
-        if my_ligands:
-            if not secreting:
-                secreting.update(self.__find_cells_secreting(my_ligands))
+        if targets:
+          assert(effect_on_targets in ['positive','negative'])
+          my_ligands = [o for o in targets if o.get_prop('Class') == 'Ligand']
+          if my_ligands:
+              if not secreting:
+                  secreting.update(self.__find_cells_secreting(my_ligands))
 
-            indications = list()
-            if secreting:
-                indications = self.__indications4cells(secreting,my_ligands,effect_on_targets)
-            return indications
+              indications = list()
+              if secreting:
+                  indications = self.__indications4cells(secreting,my_ligands,effect_on_targets)
+                  t_n = ResnetGraph.names(my_ligands)
+                  print(f'Found {len(indications)} indications for {len(secreting)} cells secreting {t_n}')
+              return indications
+          else:
+              print('Target list contains no ligands. No secreting cell can be found')
+              return []
         else:
-            print('Target list contains no ligands. No secreting cell can be found')
+            print(f'Target list for {effect_on_targets} effect on targets is empty')
             return []
         
 
@@ -704,23 +712,26 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
         if self._is_strict(): 
             print('Scipt runs in strict mode.  No indications for cells secreting targets will be used')
             self.__TargetSecretingCells = self.__find_cells_secreting(self.__targets)
+            t_n = ','.join(ResnetGraph.names(self.__targets))
+            print('Found %d cell types producing %s' % (len(self.__TargetSecretingCells),t_n))
             # loaded here self.__TargetSecretingCells is used for target ranking
             return
-        
-        exist_indication_count = len(self.__my_indications())
-        if self.__moa() in [ANTAGONIST,ANY_MOA]:
-            indications,secreting_cells = self._indications4cells(self.__TargetSecretingCells,self.__targets,ANTAGONIST)
-            self.__TargetSecretingCells.update(secreting_cells)
-            self.__indications4antagonists.update(indications)
+        else:
+          exist_indication_count = len(self.__my_indications())
+          if self.__moa() in [ANTAGONIST,ANY_MOA]:
+              indications,secreting_cells = self._indications4cells(self.__TargetSecretingCells,self.__targets,ANTAGONIST)
+              self.__TargetSecretingCells.update(secreting_cells)
+              self.__indications4antagonists.update(indications)
 
-        if self.__moa() in [AGONIST,ANY_MOA]:
-            indications, secreting_cells = self._indications4cells(self.__TargetSecretingCells,self.__targets,AGONIST)
-            self.__TargetSecretingCells.update(secreting_cells)
-            self.__indications4agonists.update(indications)
-            
-        new_indication_count = len(self.__my_indications()) - exist_indication_count
-        print('%d indications for %d cells producing %s were not found by previous searches' %  
-                (new_indication_count, len(self.__TargetSecretingCells),self.target_names()))
+          if self.__moa() in [AGONIST,ANY_MOA]:
+              indications, secreting_cells = self._indications4cells(self.__TargetSecretingCells,self.__targets,AGONIST)
+              self.__TargetSecretingCells.update(secreting_cells)
+              self.__indications4agonists.update(indications)
+              
+          new_indication_count = len(self.__my_indications()) - exist_indication_count
+          print('%d indications for %d cells producing %s were not found by previous searches' %  
+                  (new_indication_count, len(self.__TargetSecretingCells),self.target_names()))
+          return
 
 
     def __resolve_conflict_indications(self):
@@ -1168,7 +1179,8 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             colname = target_in_header + ' pathway components'
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [with_effect_on_indication],
-                  'step' : 125 # boosting with unknown effect Regulation
+                  'boost_by_reltypes' : ['Regulation'],  # boosting with unknown effect Regulation
+                  'step' : 50
                   }
             # cloning session to avoid adding relations to self.Graph
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
@@ -1327,16 +1339,16 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
         
         if self.init_semantic_search():
             self.perform_semantic_search()
-
+            
             if self.params['add_bibliography']:
                 indication_etmrefs = etm_future.result()
-                etm_ref_colname = self.etm_refcount_colname('Name',self.target_names())
-                doi_ref_colname = self.doi_column_name('Name',self.target_names())
+                etm_ref_colname = self.refcount_column('Name',self.target_names())
+                doi_ref_colname = self.doi_column('Name',self.target_names())
                 for ws in self.__dfnames_map().values():
                     if ws in self.report_pandas.keys():
                         self.report_pandas[ws] = self.report_pandas[ws].merge_df(indication_etmrefs,how='left',on='Name',columns=[etm_ref_colname,doi_ref_colname])
                         #self.report_pandas[ws] = self.report_pandas[ws].move_cols({etm_ref_colname:2})
-                self.add_etm_bibliography()
+                self.add_tm_bibliography_df()
                 self.add_graph_bibliography()
                 other_effects_future.result()
 

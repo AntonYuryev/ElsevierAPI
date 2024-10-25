@@ -9,7 +9,7 @@ from .NetworkxObjects import PSObject,PSRelation,len, DIRECT, INDIRECT, DBID
 from .NetworkxObjects import REGULATORS,TARGETS,CHILDS,REFCOUNT,STATE,DIRECT_RELTYPES,OBJECT_TYPE
 from ..ETM_API.references import Reference, pubmed_hyperlink, make_hyperlink
 from ..ETM_API.references import PUBYEAR,EFFECT,TITLE,REFERENCE_PROPS,INT_PROPS,PS_CITATION_INDEX,SENTENCE_PROPS,SENTENCE
-from ..ETM_API.etm import RefStats,IDENTIFIER_COLUMN
+from ..ETM_API.RefStats import RefStats,IDENTIFIER_COLUMN
 from itertools import product
 from typing import Optional
 from torch_geometric.data import HeteroData

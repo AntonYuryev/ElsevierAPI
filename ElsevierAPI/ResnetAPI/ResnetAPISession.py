@@ -8,8 +8,7 @@ from datetime import timedelta
 from collections import defaultdict
 
 from .ZeepToNetworkx import PSNetworx, len
-from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS
-from .NetworkxObjects import DBID,PSObject,PSRelation
+from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,PSRelation
 from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
@@ -55,11 +54,7 @@ class APISession(PSNetworx):
     data_dir = ''
     sep = '\t'
     dump_oql_queries = False
-    max_threads4ontology = 4
-    # 4 threads perform a bit faster than 8 threads 
-    # 288 disease parents in 288 were processed in 0:19:51.732684 by 8 threads
-    # 288 disease parents in 288 were processed in 0:18:52.715937 by 4 threads
-    
+    max_threads4ontology = 50
 
 ######################################  CONFIGURATION  ######################################
     def __init__(self,*args,**kwargs):
@@ -278,21 +273,22 @@ to retreive {my_sent_props} properties')
         -----
         result_pos - resut position to begin download. Provide explicitly to initiate multithreading
         '''
-        # current_pos does not change during multithreading initiation!!!!  
-        if int(self.ResultPos) < int(self.ResultSize):
-            obj_props = self.relProps if self.getLinks else self.entProps
-            zeep_data, self.ResultSize, current_pos = self.get_session_page(self.ResultRef, result_pos, self.PageSize,
-                                                                       self.ResultSize,obj_props,getLinks=self.getLinks)                                                          
-            if not isinstance(zeep_data, type(None)):
-                if self.getLinks and len(zeep_data.Links.Link) > 0:
-                    obj_dbids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
-                    zeep_objects = self.get_object_properties(obj_dbids, self.entProps)
-                    return self._load_graph(zeep_data, zeep_objects,self.add2self)
-                else:
-                    return self._load_graph(None, zeep_data,self.add2self)
-            else:
-                return ResnetGraph()
-        else: return ResnetGraph()
+        with threading.Lock():
+          # current_pos does not change during multithreading initiation!!!! 
+          if int(self.ResultPos) < int(self.ResultSize):
+              obj_props = self.relProps if self.getLinks else self.entProps
+              zeep_data, self.ResultSize, current_pos = self.get_session_page(self.ResultRef, result_pos, self.PageSize,
+                                                                        self.ResultSize,obj_props,getLinks=self.getLinks)                                                          
+              if not isinstance(zeep_data, type(None)):
+                  if self.getLinks and len(zeep_data.Links.Link) > 0:
+                      obj_dbids = list(set([x['EntityId'] for x in zeep_data.Links.Link]))
+                      zeep_objects = self.get_object_properties(obj_dbids, self.entProps)
+                      return self._load_graph(zeep_data, zeep_objects,self.add2self)
+                  else:
+                      return self._load_graph(None, zeep_data,self.add2self)
+              else:
+                  return ResnetGraph()
+          else: return ResnetGraph()
 
 
     def __thread__(self,pages:int,process_name='oql_results'):
@@ -329,38 +325,39 @@ to retreive {my_sent_props} properties')
         if max_result is not 0 and number of results exceeds max_result returns int = self.ResultSize\n
         otherwise returns ResnetGraph with query results
         '''
-        self.__replace_goql(oql_query)
-        start_time = time.time()
-        return_type = 'relations' if self.getLinks else 'entities'
-        entire_graph = self.__init_session(max_result=max_result,request_name=request_name)
-        if debug: return entire_graph
+        with threading.Lock():
+          self.__replace_goql(oql_query)
+          start_time = time.time()
+          return_type = 'relations' if self.getLinks else 'entities'
+          entire_graph = self.__init_session(max_result=max_result,request_name=request_name)
+          if debug: return entire_graph
 
-        if max_result and self.ResultSize > max_result:
-            return self.ResultSize
+          if max_result and self.ResultSize > max_result:
+              return self.ResultSize
 
-        if entire_graph:
-            pages = int(self.ResultSize / self.PageSize)
-            if pages:
-                my_request_name = request_name if request_name else self.GOQLquery[:100]+'...'
-                if not self.no_mess:
-                    print('\n\"%s\"\nrequest found %d %s.\n%d is retrieved. Remaining %d results will be retrieved in %d iterations' % 
-                (my_request_name,self.ResultSize,return_type,self.ResultPos,(self.ResultSize-self.PageSize),pages))
-                try:
-                    iterations_graph = self.__thread__(pages,process_name=request_name)
-                    entire_graph = entire_graph.compose(iterations_graph)
-                except exceptions.TransportError:
-                    raise exceptions.TransportError('Table lock detected!!! Aborting operation!!!')
+          if entire_graph:
+              pages = int(self.ResultSize / self.PageSize)
+              if pages:
+                  my_request_name = request_name if request_name else self.GOQLquery[:100]+'...'
+                  if not self.no_mess:
+                      print('\n\"%s\"\nrequest found %d %s.\n%d is retrieved. Remaining %d results will be retrieved in %d iterations' % 
+                  (my_request_name,self.ResultSize,return_type,self.ResultPos,(self.ResultSize-self.PageSize),pages))
+                  try:
+                      iterations_graph = self.__thread__(pages,process_name=request_name)
+                      entire_graph = entire_graph.compose(iterations_graph)
+                  except exceptions.TransportError:
+                      raise exceptions.TransportError('Table lock detected!!! Aborting operation!!!')
 
-                if not self.no_mess:
-                    print('"%s"\nretrieved %d nodes and %d edges in %s by %d parallel iterations' % 
-                    (my_request_name, entire_graph.number_of_nodes(), entire_graph.number_of_edges(),
-                            execution_time(start_time), pages+1),flush=True)
+                  if not self.no_mess:
+                      print('"%s"\nretrieved %d nodes and %d edges in %s by %d parallel iterations' % 
+                      (my_request_name, entire_graph.number_of_nodes(), entire_graph.number_of_edges(),
+                              execution_time(start_time), pages+1),flush=True)
 
-        self.ResultRef = ''
-        self.ResultPos = 0
-        self.ResultSize = 0
-        self.__IsOn1st_page = True
-        return entire_graph
+          self.ResultRef = ''
+          self.ResultPos = 0
+          self.ResultSize = 0
+          self.__IsOn1st_page = True
+          return entire_graph
 
 
     def __annotate_dbid_graph__(self,id_only_graph:ResnetGraph,use_cache=True,request_name='',step=1000):
@@ -638,9 +635,13 @@ to retreive {my_sent_props} properties')
         dbid_only_graph = self.__iterate_oql2__(oql_query,search_values1,search_values2,request_name,step)
         self.close_connection()
         if dbid_only_graph:
+            #sleep(10)
             print('Will retrieve annotated graph with %d entities and %d relations' 
                         %(dbid_only_graph.number_of_nodes(),dbid_only_graph.number_of_edges()))
+            old_max = self.max_sessions
+            self.max_sessions = 10 # reducing self.max_sessions to allow sessions from __iterate_oql2__ to close
             annotated_graph = self.__annotate_dbid_graph__(dbid_only_graph,use_cache,request_name)
+            self.max_sessions = old_max
             return annotated_graph
         else:
             return ResnetGraph()
@@ -985,7 +986,7 @@ to retreive {my_sent_props} properties')
         
 
     def _load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
-                       max_childs=ALL_CHILDS,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
+                       max_childs=ALL_CHILDS,max_threads=50)->tuple[set[PSObject],list[PSObject]]:
         '''
         Input:
             if "parents" is empty will use all nodes from self.Graph
@@ -1002,14 +1003,8 @@ to retreive {my_sent_props} properties')
         '''
         process_start = time.time()
         print(f'Loading ontology children for {len(parents)} entities')
-        #max_threads = self.max_threads4ontology
         # by default sessions_max=200 in Oracle
-        # for Disease optimal max_threads = 5
-        # for Protein+FunctionalCLass+Complex optimal max_threads = 50
         thread_name_prefix = f'Childs 4 {len(parents)} prnts in {max_threads} thrds-'
-        # 4 threads perform a bit faster than 8 threads
-        # 288 in 288 disease parents were processed in 0:19:51.732684 by 8 threads
-        # 288 in 288 disease parents were processed in 0:18:52.715937 by 4 threads
         max_threaded_time = 0
         need_children = list()
         child_counter = set()
@@ -1054,11 +1049,12 @@ in {execution_time(process_start)}')
 
         parent_with_children = self.Graph.psobjs_with([CHILDS])
         parent_with_children = [p for p in parent_with_children if p.childs()]
+        child_counter = {x for x in child_counter if x} #sometimes they are empty?
         return child_counter, parent_with_children
 
 
     def load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
-                       max_childs=ALL_CHILDS,max_threads=10)->tuple[set[PSObject],list[PSObject]]:
+                       max_childs=ALL_CHILDS,max_threads=50)->tuple[set[PSObject],list[PSObject]]:
         '''
             Input:
                 if "parents" is empty will use all nodes from self.Graph
@@ -1131,7 +1127,7 @@ in {execution_time(process_start)}')
         child_dbids = ResnetGraph.dbids(my_childs)
 
         my_session = self._clone_session(what2retrieve=NO_REL_PROPERTIES)
-        my_session.max_threads4ontology = 25
+        my_session.max_threads4ontology = 50
         get_parent_query = 'SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology=\'Pathway Studio Ontology\' AND Relationship=\'is-a\') inRange {steps} over (SELECT OntologicalNode WHERE id = ({ids}))'
         oql_query = get_parent_query.format(steps=str(depth),ids=','.join(list(map(str,child_dbids))))
         request_name = f'Find parents of {len(my_childs)} nodes with depth {depth}'

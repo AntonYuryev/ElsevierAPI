@@ -1,8 +1,8 @@
 from .DiseaseTargets import DiseaseTargets,execution_time
 from .DiseaseTargets import ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,REFERENCE_IDENTIFIERS,UNKNOWN_TARGETS_WS
 from .ResnetGraph import ResnetGraph,PSObject
-from .SemanticSearch import RANK,ALL_CHILDS
-from .ResnetAPISession import APISession,NO_REL_PROPERTIES,BIBLIO_PROPERTIES
+from .SemanticSearch import RANK
+from .ResnetAPISession import APISession,NO_REL_PROPERTIES,BIBLIO_PROPERTIES,ALL_CHILDS
 from ..pandas.panda_tricks import df,np
 from numpy import nan_to_num
 import time
@@ -592,6 +592,7 @@ DRUG2TARGET_REGULATOR_SCORE,\n'Directly inhibited targets',\n'Indirectly inhibit
     def make_report(self):
         start_time = time.time()
         self.find_rank_targets() # creating target ranking worksheets
+        self.refs2report(ANTAGONIST_TARGETS_WS,self.input_names())
         future_dic = dict()
         with ThreadPoolExecutor(max_workers=2) as e:
             future_dic['init_load_score'] = e.submit(self.init_load_score) #finds and scores drugs

@@ -1,18 +1,18 @@
 import time,os,math
+import pandas as pd
+import numpy as np
 from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import Reference
 from .ResnetGraph import ResnetGraph,PSObject,EFFECT,df
-from .ResnetAPISession import APISession,len,ALL_CHILDS
+from .ResnetAPISession import APISession,len
 from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
-from ..ETM_API.etm import RefStats
+from ..ETM_API.RefStats import RefStats
 from ..utils import execution_time
-#from ..ETM_API.scibite import SBSstat
-import pandas as pd
-import numpy as np
+
 
 COUNTS = 'counts'
 PS_BIBLIOGRAPHY = 'EBKGrefs'
-ETM_BIBLIOGRAPHY = 'ETMrefs'
+TM_BIBLIOGRAPHY = 'TMrefs'
 CHILDREN_COUNT = 'Number of ontology children'
 RANK = 'PRTS rank' # PRTS = Probability of Technical and Regulatory Success
 ONTOLOGY_ANALYSIS = 'ontology'
@@ -78,7 +78,8 @@ class SemanticSearch (APISession):
         self.max_ontology_parent = self.params.get('max_ontology_parent',10)
         self.nodeweight_prop = str()
         self._Ontology = list()
-        self.TMsearch = 'ETMbasicSearch'
+        #self.TMsearch = 'ETMbasicSearch'
+        self.TMsearch = 'SBSsearch'
 
 
     def _clone(self, **kwargs):
@@ -256,7 +257,7 @@ class SemanticSearch (APISession):
         return refcount_df
     
 
-    def add_temp_id(self,to_df:df,map2column='URN',max_childs=MAX_CHILDS,max_threads=10):
+    def add_temp_id(self,to_df:df,map2column='URN',max_childs=MAX_CHILDS,max_threads=50):
         '''
         input:
             if max_childs=0 (=ALL_CHILDS) loads __temp_id_col__ column for all rows in "to_df"
@@ -283,7 +284,7 @@ class SemanticSearch (APISession):
         return new_df
         
 
-    def load_df(self,from_entities:list[PSObject],max_childs=MAX_CHILDS,max_threads=10): 
+    def load_df(self,from_entities:list[PSObject],max_childs=MAX_CHILDS,max_threads=50): 
         # do not use self.max_ontology_parent instead of max_childs to avoid complications for session cloning  
         '''
         Input
@@ -304,8 +305,8 @@ class SemanticSearch (APISession):
                                                 max_childs=max_childs,
                                                 max_threads=max_threads)
             for c in children:
-                self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
-                self.Graph.nodes[c.uid()][self.__resnet_name__] = c.name()
+                  self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
+                  self.Graph.nodes[c.uid()][self.__resnet_name__] = c.name()
 
             # load_children4() adds empty PSObject in CHILDS property if parents has children > max_childs 
             graph_psobjects = self.Graph._get_nodes(ResnetGraph.uids(from_entities))
@@ -383,7 +384,7 @@ class SemanticSearch (APISession):
 
     def map_prop2entities(self,propValues:list,propName:str,map2types=[],
                           get_childs=False,MinConnectivity=1,max_childs=MAX_CHILDS,
-                          max_threads=10)->dict[str,dict[int,PSObject]]:
+                          max_threads=50)->dict[str,dict[int,PSObject]]:
         """
         Returns
         -------
@@ -740,6 +741,9 @@ class SemanticSearch (APISession):
             except ValueError:
                 rank_pos = 1
 
+            clean_df = clean_df.move_cols({CHILDREN_COUNT:rank_pos})
+            rank_pos += 1
+
             move2 = dict()
             for c in clean_df_columns:
                 if RANK in c:
@@ -751,7 +755,6 @@ class SemanticSearch (APISession):
                 if c in clean_df_columns:
                     move2[c] = rank_pos
                     rank_pos += 1
-
             clean_df = clean_df.move_cols(move2)
 
             clean_df.copy_format(report_df)
@@ -761,7 +764,7 @@ class SemanticSearch (APISession):
             else:
                 clean_df.make_header_vertical()
             sh_name = ws_prefix+'_'+ws_name if ws_prefix else ws_name
-            clean_df.df2excel(writer, sheet_name=sh_name[:30])
+            clean_df.df2excel(writer, sheet_name=sh_name[:30],float_format='%.3f')
 
 
     def addraw2writer(self, writer:pd.ExcelWriter, ws_prefix=''):
@@ -945,13 +948,10 @@ class SemanticSearch (APISession):
 
         normdf4raw = normdf4raw.pvalue4(RANK)
         normdf4raw = normdf4raw.expo_pvalue4(RANK)
-        rank_pval = RANK+' pvalue'
+        rank_pval = RANK+' empirpvalue'
         rank_expopval = RANK + ' expopvalue'
     
-        # prettyfying scores in df:
-        normdf4raw['Combined score'] = normdf4raw['Combined score'].map(lambda x: '%2.3f' % x)
-        normdf4raw[RANK] = normdf4raw[RANK].map(lambda x: '%2.3f' % x)
-        normdf4raw = normdf4raw.sortrows(by=[RANK,rank_pval,entity_column], ascending=[False, True])
+        normdf4raw = normdf4raw.sortrows(by=[RANK,rank_pval,entity_column], ascending=[False, True,True])
 
         if drop_empty_columns:
             normdf4raw = normdf4raw.drop_empty_columns()
@@ -1004,7 +1004,7 @@ class SemanticSearch (APISession):
         return rankedf4report,normdf4raw
 
 
-    def etm_refcount_colname(self,between_names_in_col,and_concepts):
+    def refcount_column(self,between_names_in_col,and_concepts):
         return self.RefStats.refcount_column(between_names_in_col,and_concepts)
     
 
@@ -1063,7 +1063,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         df with ETM_BIBLIOGRAPHY name to self.report_pandas from self.RefStats.counter2df()
         """
         biblio_df = self.RefStats.counter2df()
-        biblio_df._name_ = ETM_BIBLIOGRAPHY
+        biblio_df._name_ = TM_BIBLIOGRAPHY
         if suffix: biblio_df._name_ += '-'+suffix
         biblio_df._name_ = biblio_df._name_[:31]
         self.add2report(biblio_df)

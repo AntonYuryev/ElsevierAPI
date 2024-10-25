@@ -1,5 +1,5 @@
 from .TargetIndications import Indications4targets,OQL,UNKEFFECTDF,ANTAGONIST,AGONIST,time
-from ..pandas.panda_tricks import df,os
+from ..pandas.panda_tricks import df
 from .ResnetGraph import ResnetGraph,PSObject,PSRelation,OBJECT_TYPE,PROTEIN_TYPES
 from ..ETM_API.references import MEASUREMENT,PATENT_APP_NUM,PS_REFERENCE_PROPS
 from ..ReaxysAPI.Reaxys_API import Reaxys_API
@@ -16,7 +16,6 @@ TOXICITY_COUNT = 'ToxicityCnt'
 INDICATIONS = 'Indications'
 TOXICITIES = 'Toxicities'
 
-pct = '%'
 class RepurposeDrug(Indications4targets):
     pass
     def __init__(self, *args, **kwargs):
@@ -56,19 +55,6 @@ class RepurposeDrug(Indications4targets):
         self.DrugIndirectAgonists = set()
         self.DrugIndirectAntagonists = set()
 
-    '''
-    def __target2indication_effect(self):
-        if self.params['drug_effect'] == INHIBIT and self.params['mode_of_action'] == ANTAGONIST:
-            return str('positive') #most often case for drugs and their disease indications
-        elif self.params['drug_effect'] == ACTIVATE and self.params['mode_of_action'] == ANTAGONIST:
-            return str('negative') # can be used only with CellProcess
-        elif self.params['drug_effect'] == ACTIVATE and self.params['mode_of_action'] == AGONIST:
-            return str('positive') # can be used only with CellProcess
-        elif self.params['drug_effect'] == INHIBIT and self.params['mode_of_action'] == AGONIST:
-            return str('negative') #find disease indications for drugs that are agonist of their target(s)
-        else:
-            return ''
-    '''
 
     def target_names_str(self):
         """
@@ -94,49 +80,58 @@ class RepurposeDrug(Indications4targets):
         self.drugs = drug_graph._get_nodes()
         self.drugs.sort(key=lambda x: int(x['Connectivity'][0]), reverse=True)
 
-        if self.drugs and not self.params['target_names']:
+        if self.drugs:
+          oql = f"SELECT Relation WHERE NeighborOf downstream (SELECT Entity WHERE id = ({ResnetGraph.dbids(self.drugs)}))"
+          oql += ' AND Effect = (positive,negative)'
+          if self.params['target_names']:
+              self.add_ent_props(['Class'])
+              oql += f' AND NeighborOf upstream (SELECT Entity WHERE Name = ({self.params['target_names']})'
+              oql += ')'
+              self.drug2targetG = self.process_oql(oql,'Find drug-targets relations in Pathway Studio')
+              ref_df = self.drug2targetG.snippets2df('fromResnet',add_nodetype=True)  
+          else:
             print('Input parameters contain no drug target names. Attempting to find targets in Reaxys')
             self.drug2targetG = self.Reaxys_targets()
             print(f'Found {len(self.drug2targetG)-len(self.drugs)} in Reaxys')
-            if not self.drug2targetG:
+            if self.drug2targetG:
+              refprops2print = ['Organism',MEASUREMENT,'pX'] # additional props from Reaxys
+              ref_ids = ['PMID','DOI',PATENT_APP_NUM]
+              ref_df = self.drug2targetG.snippets2df('fromReaxys',add_nodetype=True,
+                                                      ref_identifiers=ref_ids,
+                                                      ref_sentence_props=refprops2print) 
+            else:
                 print('Attempting to find targets in Pathway Studio')
-                oql = f"SELECT Relation WHERE NeighborOf downstream (SELECT Entity WHERE id = ({ResnetGraph.dbids(self.drugs)}))"
-                oql += ' AND Effect = (positive,negative)'
                 oql += f' AND objectType = DirectRegulation'
                 oql += f' AND NeighborOf upstream (SELECT Entity WHERE objectType = ({PROTEIN_TYPES})'
 
                 self.drug2targetG = self.process_oql(oql,'Find targets in Pathway Studio')
-                dt_rels = list(self.drug2targetG._psrels())
-                if len(dt_rels) > 10:
-                    dt_rels.sort(key=lambda x: len(x.refs()),reverse=True)
-                    dt_rels = dt_rels[:10]
-                    self.drug2targetG = self.drug2targetG.subgraph_by_rels(dt_rels)
-                if not self.drug2targetG:       
-                    print(f'Targets for {self.drug_names_str()} cannot be found')
+                if self.drug2targetG:
+                  dt_rels = list(self.drug2targetG._psrels())
+                  if len(dt_rels) > 10: # taking top 10 targets in PS
+                      dt_rels.sort(key=lambda x: len(x.refs()),reverse=True)
+                      dt_rels = dt_rels[:10]
+                      self.drug2targetG = self.drug2targetG.subgraph_by_rels(dt_rels)
+                
+                  [self.drug2targetG[r][t][urn]['relation'].set_affinity() for r,t,urn in self.drug2targetG.edges(keys=True)]
+                  ref_df = self.drug2targetG.snippets2df('fromResnet',add_nodetype=True)
                 else:
-                   
-                   ref_df = self.drug2targetG.snippets2df('fromResnet',add_nodetype=True) 
-            else:
-                refprops2print = ['Organism',MEASUREMENT,'pX'] # additional props from Reaxys
-                ref_ids = ['PMID','DOI',PATENT_APP_NUM]
-                ref_df = self.drug2targetG.snippets2df('fromReaxys',add_nodetype=True,
-                                                       ref_identifiers=ref_ids,
-                                                       ref_sentence_props=refprops2print)
+                    print(f'Targets for {self.drug_names_str()} cannot be found')
 
             if not ref_df.empty:
-                fname = f'Targets4{self.params['input_compound']}.xlsx'
-                fpath = os.path.join(self.data_dir,fname)
-                ref_df._2excel(fpath)
+                ref_df._name_ = 'Targets'
+                self.add2report(ref_df)
+        else:
+            print('Add drug-target relations into Pathway Studio database')  
 
         urn2regweight = dict()
         urn2tarweight = dict()
-        for r,t,rel in self.drug2targetG.edges.data('relation'):
-            assert(isinstance(rel,PSRelation))
-            affinity = float(rel.get_prop('Affinity',if_missing_return=0))
-            node_weight =  1 + affinity/12
-            target_urn = self.drug2targetG._get_node(t).urn()
-            urn2regweight[target_urn] = [node_weight]
-            urn2tarweight[target_urn] = [node_weight]
+        for r,t,rel in self.drug2targetG.iterate():
+            if 'Affinity' in rel:
+              affinity = float(rel['Affinity'][0])
+              node_weight =  1 + affinity/12
+              target_urn = t.urn()
+              urn2regweight[target_urn] = [node_weight]
+              urn2tarweight[target_urn] = [node_weight]
             
         if urn2regweight:
             self.drug2targetG.set_node_annotation(urn2regweight,'regulator weight')
@@ -168,19 +163,6 @@ class RepurposeDrug(Indications4targets):
                 my_targets.add(self.drug2targetG._get_node(target_uid))
         return my_targets
     
-
-    '''
-    def __effect_str(self):
-        if self.params['drug_effect'] == INHIBIT: return 'negative'
-        if self.params['drug_effect'] == ACTIVATE: return 'positive'
-        return 'unknown'
-    '''
-
- #   def needs_clinical_trial(self):
- #      if 'CellProcess' in self.params['indication_types'] and self.params['drug_effect'] == ACTIVATE: return True
- #       if 'Disease' in self.params['indication_types'] and self.params['drug_effect'] == INHIBIT: return True
- #       return False
-
 
     def find_drug_indications(self)->set[PSObject]:
         indications = set()
@@ -225,13 +207,6 @@ class RepurposeDrug(Indications4targets):
 
     def drug_names_str(self)->str:
         return ','.join(self.drug_names())
-    
-
-    def __etm_ref_column_name(self):
-        return self.etm_counter.refcount_column_name('Name',self.drug_names())
-    
-    def __etm_doi_column_name(self):
-        return self.etm_counter.refcount_column_name('Name',self.drug_names())
 
 
     def find_indications4similars(self)->list[PSObject]:
@@ -260,7 +235,6 @@ class RepurposeDrug(Indications4targets):
             indications2return.update(found_indications)
             print('Found %d indications reported in scientific literature or drugs similar to %s' % (len(found_indications), self.params['input_compound']))
 
-        #self.DrugIndications.update(indications2return)
         return list(indications2return)
     
 
@@ -788,7 +762,7 @@ class RepurposeDrug(Indications4targets):
         return
 
 
-    def __resolve_conflicts(self,conflicts:set[PSObject],using_neighbors:list[PSObject],effect2become_indication:str):
+    def __resolve_conflicts(self,conflicts:set[PSObject],using_neighbors:list[PSObject],effect2become_indication:str)->set[PSObject]:
 
         def __resolve(conflicting:list[PSRelation], using_rel_type:str):
             only_rels_with_type = [r for r in conflicting if r.objtype() == using_rel_type]
@@ -833,11 +807,11 @@ class RepurposeDrug(Indications4targets):
         print(f'{conflict_count - len(conflicts)} out of {conflict_count} were resolved')
         if conflicts:
             print(f'{len(conflicts)} unresolved conflicts:')
-            [print(c) for c in conflicts]
+            [print(c.name()+'\t'+c.urn()) for c in conflicts]
         return
 
 
-    def target_effects4(self,df_name:str):
+    def target_effects4(self,df_name:str)->set[PSObject]:
         '''
         input:
             self.activated_targets, self.inhibited_targets
@@ -890,15 +864,15 @@ class RepurposeDrug(Indications4targets):
             self.get_pathway_components(self.activated_targets|self.inhibited_targets,self.activated_partners|self.inhibited_partners)
         self.resolve_conflict_indications()
 
-        etm_other = ThreadPoolExecutor(thread_name_prefix='ETMother')
-        other_effects_future = etm_other.submit(self.other_effects)
+        tm_other = ThreadPoolExecutor(thread_name_prefix='TMother')
+        other_effects_future = tm_other.submit(self.other_effects)
         if self.params['add_bibliography']:
             all_effects = self.DrugIndications|self.DrugToxicities
             indication_names = [n.name() for n in all_effects]
             df4etm = df.from_dict({'Name':indication_names})
             drug_names = self.drug_names()
             df4etm._name_ = f'Indication4 {drug_names}'
-            etm_biblio_future = etm_other.submit(self.bibliography,df4etm,drug_names,'Name',[],len(df4etm))
+            tm_biblio_future = tm_other.submit(self.bibliography,df4etm,drug_names,'Name',[],len(df4etm))
         
 
         if self.init_semantic_search():
@@ -911,7 +885,6 @@ class RepurposeDrug(Indications4targets):
                 assert(ranked_df_name == df_name)
                 ranked_df_names.append(ranked_df_name)
                 with ThreadPoolExecutor(max_workers=4, thread_name_prefix='Report annotation') as e:
-                    #etm_biblio_future = e.submit(self.refs2report, norm_df_name,self.drug_names(),'Name',[],False)
                     ontology_df_future = e.submit(self.add_ontology_df,ranked_df4report)
                     add_parent_future = e.submit(self.id2paths,ranked_df4report)
                     if df_name == INDICATIONS:
@@ -922,28 +895,23 @@ class RepurposeDrug(Indications4targets):
                         diseases = self.DrugToxicities
                     e.submit(self.add_graph_bibliography,suffix,diseases)
                 
-                ranked_df = self.report_pandas[ranked_df_name].copy()
+                ranked_df = self.report_pandas[ranked_df_name].dfcopy()
                 assert(isinstance(ranked_df,df))
                 id2paths = add_parent_future.result()
                 ranked_df = ranked_df.merge_dict(id2paths,'Ontology parents','Name')
                 ontology_df = ontology_df_future.result()
                 e.shutdown()
 
-                columns_names = ranked_df.columns.to_list()
-                columns_names.remove('URN')
-                columns_names.remove(RANK)
-                columns_names = columns_names[:1]+[RANK]+columns_names[1:]+['URN']
-                ranked_df = ranked_df.reorder(columns_names)
-                self.add2report(ranked_df) # will replace norm_df created by previous steps
+                self.add2report(ranked_df)
                 self.add2report(ontology_df)
 
         other_effects_future.result()
         if self.params['add_bibliography']:
-            etm_refs_df = etm_biblio_future.result()
-            etm_ref_colname = self.etm_refcount_colname('Name',self.drug_names_str())
-            doi_ref_colname = self.doi_column_name('Name',self.drug_names_str())
+            tm_refs_df = tm_biblio_future.result()
+            tm_ref_colname = self.refcount_column('Name',self.drug_names_str())
+            doi_ref_colname = self.doi_column('Name',self.drug_names_str())
             for ws in ranked_df_names:
-                self.report_pandas[ws] = self.report_pandas[ws].merge_df(etm_refs_df,on='Name',columns=[etm_ref_colname,doi_ref_colname])
-                #self.report_pandas[ws] = self.report_pandas[ws].move_cols({etm_ref_colname:3})
-            self.add_etm_bibliography()
-        return 
+                self.report_pandas[ws] = self.report_pandas[ws].merge_df(tm_refs_df,on='Name',columns=[tm_ref_colname,doi_ref_colname])
+                #self.report_pandas[ws] = self.report_pandas[ws].move_cols({tm_ref_colname:3})
+            self.add_tm_bibliography_df()
+        return
