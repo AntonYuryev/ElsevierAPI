@@ -2,7 +2,7 @@ from builtins import len
 from .medscan import MedScan
 import xlsxwriter,re,time,json,unicodedata
 from datetime import timedelta
-from ..NCBI.pubmed import pubmed_hyperlink
+from ..NCBI.pubmed import pubmed_hyperlink,pmc_hyperlink
 from titlecase import titlecase
 
 AUTHORS = 'Authors'
@@ -31,6 +31,7 @@ hGRAPHID = 'hGraph ID'
 EDMID = 'EDM ID'
 IN_OPENACCESS = 'is_openaccess'
 PUBLISHER = 'Publisher'
+GRANT_APPLICATION = 'Grant Application'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
 INT_PROPS = {RELEVANCE,PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX,SBS_CITATION_INDEX}
@@ -67,6 +68,12 @@ def make_hyperlink(identifier:str,url:str,display_str=''):
         display_str = display_str if display_str else identifier
         return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
 
+def pii_hyperlink(identifier:str,display_str=''):
+        # hyperlink in Excel does not work with long URLs, 
+        display_str = display_str if display_str else identifier
+        identif = identifier.replace('-','').replace('_','')
+        url = 'https://www.sciencedirect.com/science/article/pii/'
+        return '=HYPERLINK("'+url+identif+'",\"{}\")'.format(display_str)
 
 class Reference(dict):
     '''
@@ -356,6 +363,8 @@ class Reference(dict):
                             identifier = pubmed_hyperlink([identifier])
                         elif t == 'DOI':
                             identifier = make_hyperlink(identifier,'http://dx.doi.org/')
+                        elif t == 'PMC':
+                            identifier = pmc_hyperlink([identifier])
                         elif t == PATENT_APP_NUM:
                             identifier = make_hyperlink(identifier,'https://patents.google.com/patent/')
                     row.append(identifier)
@@ -526,29 +535,28 @@ class Reference(dict):
         return biblio+sep+id_type+':'+identifier
 
 
-    def _merge(self, other):
-        if isinstance(other, Reference):
-            for prop, values in other.items():
-                if prop in INT_PROPS:
-                    clean_vals = set(map(int,values))
-                else:
-                    clean_vals = {str(v).strip(' .') for v in values if v is not None}
+    def _merge(self, other:"Reference"):
+      for prop, values in other.items():
+          if prop in INT_PROPS:
+              clean_vals = set(map(int,values))
+          else:
+              clean_vals = {str(v).strip(' .') for v in values if v is not None}
 
-                self.update_with_list(prop,list(clean_vals))
+          self.update_with_list(prop,list(clean_vals))
 
-            self.Identifiers.update(other.Identifiers)
+      self.Identifiers.update(other.Identifiers)
 
-            for textref, prop2val in other.snippets.items():
-                try:
-                    exist_textref_props = self.snippets[textref]
-                    if exist_textref_props == prop2val:
-                        continue
-                    else:
-                        new_text_ref = textref+':'+str(len(self.snippets))
-                        [self.add_sentence_props(new_text_ref,p,v) for p,v in prop2val.items()]
-                except KeyError:
-                    [self.add_sentence_props(textref,p,v) for p,v in prop2val.items()]
-        return
+      for textref, prop2val in other.snippets.items():
+          try:
+              exist_textref_props = self.snippets[textref]
+              if exist_textref_props == prop2val:
+                  continue
+              else:
+                  new_text_ref = textref+':'+str(len(self.snippets))
+                  [self.add_sentence_props(new_text_ref,p,v) for p,v in prop2val.items()]
+          except KeyError:
+              [self.add_sentence_props(textref,p,v) for p,v in prop2val.items()]
+      return
 
 
     def is_from_abstract(self):
