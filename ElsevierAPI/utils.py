@@ -5,9 +5,10 @@ from xml.dom import minidom
 from urllib.parse import quote
 from requests.auth import HTTPBasicAuth
 from lxml import etree as et
-from base64 import b64encode
 DEFAULT_CONFIG_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/')
 DEFAULT_APICONFIG = os.path.join(DEFAULT_CONFIG_DIR,'APIconfig.json')
+
+PCT = '%'
 
 
 def execution_time(execution_start):
@@ -143,37 +144,99 @@ def sortdict(indic:dict,by_key=True,reverse=False):
     return dict(sorted(indic.items(), key=lambda item: item[i],reverse=reverse))
 
 
+GREEK2ENGLISH = {
+      "α": "alpha",
+      "β": "beta",
+      "γ": "gamma",
+      "δ": "delta",
+      "ε": "epsilon",
+      "ζ": "zeta",
+      "η": "eta",
+      "θ": "theta",
+      "ι": "iota",
+      "κ": "kappa",
+      "λ": "lambda",
+      "μ": "mu",
+      "ν": "nu",
+      "ξ": "xi",
+      "ο": "omicron",
+      "π": "pi",
+      "ρ": "rho",
+      "σ": "sigma",
+      "τ": "tau",
+      "υ": "upsilon",
+      "φ": "phi",
+      "χ": "chi",
+      "ψ": "psi",
+      "ω": "omega",
+      "Α": "Alpha",
+      "Β": "Beta",
+      "Γ": "Gamma",
+      "Δ": "Delta",
+      "Ε": "Epsilon",
+      "Ζ": "Zeta",
+      "Η": "Eta",
+      "Θ": "Theta",
+      "Ι": "Iota",
+      "Κ": "Kappa",
+      "Λ": "Lambda",
+      "Μ": "Mu",
+      "Ν": "Nu",
+      "Ξ": "Xi",
+      "Ο": "Omicron",
+      "Π": "Pi",
+      "Ρ": "Rho",
+      "Σ": "Sigma",
+      "Τ": "Tau",
+      "Υ": "Upsilon",
+      "Φ": "Phi",
+      "Χ": "Chi",
+      "Ψ": "Psi",
+      "Ω": "Omega"
+  }
+def greek2english(text:str):
+  for symbol, spelling in GREEK2ENGLISH.items():
+    text = text.replace(symbol, spelling)
+  return text
+
 def get_auth_token(**kwargs):
     """
     kwargs:
         token_url,
         client_id,
-        secret,
+        client_secret,
         username,
-        password,
+        password
     output:
-        token, retreival time stamp
+        authorization header, retreival time stamp
     """
     try:
-        auth = HTTPBasicAuth(kwargs['client_id'], kwargs['secret'])
+        auth = HTTPBasicAuth(kwargs.pop('username'), kwargs.pop('password'))
+        data = {"grant_type": 'password'}
+        response = requests.post(kwargs['token_url'], auth=auth, data=data)
     except KeyError:
-        pass
-
-    data = {'username': kwargs['username'], 'password': kwargs['password']}
-    response = requests.post(kwargs['token_url'], auth=auth, data=data)
+        try:
+            data = {'client_id':kwargs['client_id'],'client_secret':kwargs['client_secret']}
+            data.update({"grant_type": 'client_credentials'})
+            response = requests.post(kwargs['token_url'],  data=data)
+        except KeyError:
+            print('No valid credetials are supplied to access SBS server')
+            return None
+        
+    body = response.json()
+    token = str(body['access_token'])
 
     '''
+    using urllib.request for some websites:
     req = urllib.request.Request(kwargs['token_url'], method='POST')
     us_pas = '{}:{}'.format(kwargs['username'],kwargs['password'])
     us_pas_e = us_pas.encode()
     base64string = b64encode(us_pas_e)
     req.add_header("Authorization", "Basic %s" % base64string.decode())
     response = urllib.request.urlopen(req)
-    '''
     body = json.loads(response.read())
-    token = body['access_token']
-    return token, time.time()
-
+    '''
+    return {"Authorization": "Bearer " + token}, time.time()
 
 class Tee(object):
     def __init__(self, filename, mode="w"):
