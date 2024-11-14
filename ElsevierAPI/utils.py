@@ -1,5 +1,5 @@
 
-import time,sys,os,json,urllib.request, requests
+import time,sys,os,json, requests
 from datetime import timedelta
 from xml.dom import minidom
 from urllib.parse import quote
@@ -32,7 +32,6 @@ def execution_time2(execution_start:float,current_iteration:int,number_of_iterat
     return time_passed, remaining_time_str
 
 
-
 def load_api_config(api_config_file=''):# file with your API keys and API URLs
     if not api_config_file:
         print('No API config file was specified\nWill use default %s instead'% DEFAULT_APICONFIG)
@@ -54,7 +53,6 @@ def load_api_config(api_config_file=''):# file with your API keys and API URLs
             print('No working API server was specified!!! Goodbye')
             return dict()
 
-    
 
 def dir2flist(path2dir:str,include_subdirs=True,subdirs_only=False,file_ext='',fnames_has:list[str]=[]):
     my_path = os.path.join(path2dir, '')
@@ -70,19 +68,19 @@ def dir2flist(path2dir:str,include_subdirs=True,subdirs_only=False,file_ext='',f
 
 
 def normalize_filename(name:str) -> str:
-    """
-    Normalizes a filename by replacing illegal characters.
-    """
-    replacements = {'>': '-', '<': '-', '|': '-', '/': '-', ':': '_'}
-    return "".join(replacements.get(char, char) for char in name)
+  """
+  Normalizes a filename by replacing illegal characters.
+  """
+  replacements = {'>': '-', '<': '-', '|': '-', '/': '-', ':': '_'}
+  return "".join(replacements.get(char, char) for char in name)
     
 
 def pretty_xml(xml_string:str, remove_declaration = False):
-        '''
-        xml_string must have xml declration
-        '''
-        pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
-        return pretty_xml[pretty_xml.find('\n')+1:] if remove_declaration else pretty_xml
+  '''
+  xml_string must have xml declration
+  '''
+  pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
+  return pretty_xml[pretty_xml.find('\n')+1:] if remove_declaration else pretty_xml
 
 
 def file_head(full_path:str,number_of_lines = 10000):
@@ -142,6 +140,13 @@ def urn_encode(string:str,prefix:str):
 def sortdict(indic:dict,by_key=True,reverse=False):
     i = 0 if by_key else 1
     return dict(sorted(indic.items(), key=lambda item: item[i],reverse=reverse))
+
+
+def str2str(dic:dict):
+    new_dic = dict()
+    for k,v in dic.items():
+      new_dic[k] = ';'.join(map(str,v))
+    return new_dic
 
 
 GREEK2ENGLISH = {
