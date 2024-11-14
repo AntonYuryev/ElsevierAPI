@@ -1,7 +1,7 @@
-from .TargetIndications import Indications4targets,OQL,UNKEFFECTDF,ANTAGONIST,AGONIST,time
+from .TargetIndications import Indications4targets,OQL,UNKEFFECTDF,ANTAGONIST,AGONIST,time,SNIPPET_PROPERTIES
 from ..pandas.panda_tricks import df
 from .ResnetGraph import ResnetGraph,PSObject,PSRelation,OBJECT_TYPE,PROTEIN_TYPES
-from ..ETM_API.references import MEASUREMENT,PATENT_APP_NUM,PS_REFERENCE_PROPS
+from ..ETM_API.references import MEASUREMENT,PATENT_APP_NUM,PS_REFERENCE_PROPS,PS_SENTENCE_PROPS
 from ..ReaxysAPI.Reaxys_API import Reaxys_API
 from ..utils import  execution_time
 from concurrent.futures import ThreadPoolExecutor
@@ -81,47 +81,43 @@ class RepurposeDrug(Indications4targets):
         self.drugs.sort(key=lambda x: int(x['Connectivity'][0]), reverse=True)
 
         if self.drugs:
+          ref_ids = ['PMID','DOI',PATENT_APP_NUM]
+          refprops2print = list()
           oql = f"SELECT Relation WHERE NeighborOf downstream (SELECT Entity WHERE id = ({ResnetGraph.dbids(self.drugs)}))"
           oql += ' AND Effect = (positive,negative)'
           if self.params['target_names']:
-              self.add_ent_props(['Class'])
-              oql += f' AND NeighborOf upstream (SELECT Entity WHERE Name = ({self.params['target_names']})'
-              oql += ')'
-              self.drug2targetG = self.process_oql(oql,'Find drug-targets relations in Pathway Studio')
-              ref_df = self.drug2targetG.snippets2df('fromResnet',add_nodetype=True)  
+            self.add_ent_props(['Class'])
+            oql += f' AND NeighborOf upstream (SELECT Entity WHERE Name = ({self.params['target_names']})'
+            oql += ')'
+            my_session = self._clone_session(to_retrieve = SNIPPET_PROPERTIES)
+            my_session.add_rel_props(self.relProps)
+            self.drug2targetG = my_session.process_oql(oql,'Find drug-targets relations in Pathway Studio')
           else:
             print('Input parameters contain no drug target names. Attempting to find targets in Reaxys')
             self.drug2targetG = self.Reaxys_targets()
             print(f'Found {len(self.drug2targetG)-len(self.drugs)} in Reaxys')
             if self.drug2targetG:
               refprops2print = ['Organism',MEASUREMENT,'pX'] # additional props from Reaxys
-              ref_ids = ['PMID','DOI',PATENT_APP_NUM]
-              ref_df = self.drug2targetG.snippets2df('fromReaxys',add_nodetype=True,
-                                                      ref_identifiers=ref_ids,
-                                                      ref_sentence_props=refprops2print) 
             else:
-                print('Attempting to find targets in Pathway Studio')
-                oql += f' AND objectType = DirectRegulation'
-                oql += f' AND NeighborOf upstream (SELECT Entity WHERE objectType = ({PROTEIN_TYPES})'
-
-                self.drug2targetG = self.process_oql(oql,'Find targets in Pathway Studio')
-                if self.drug2targetG:
-                  dt_rels = list(self.drug2targetG._psrels())
-                  if len(dt_rels) > 10: # taking top 10 targets in PS
-                      dt_rels.sort(key=lambda x: len(x.refs()),reverse=True)
-                      dt_rels = dt_rels[:10]
-                      self.drug2targetG = self.drug2targetG.subgraph_by_rels(dt_rels)
-                
-                  [self.drug2targetG[r][t][urn]['relation'].set_affinity() for r,t,urn in self.drug2targetG.edges(keys=True)]
-                  ref_df = self.drug2targetG.snippets2df('fromResnet',add_nodetype=True)
-                else:
-                    print(f'Targets for {self.drug_names_str()} cannot be found')
-
-            if not ref_df.empty:
-                ref_df._name_ = 'Targets'
-                self.add2report(ref_df)
+              print('Attempting to find targets in Pathway Studio')
+              oql += f' AND objectType = DirectRegulation'
+              oql += f' AND NeighborOf upstream (SELECT Entity WHERE objectType = ({PROTEIN_TYPES})'
+              my_session = self._clone_session(to_retrieve = SNIPPET_PROPERTIES)
+              my_session.add_rel_props(self.relProps)
+              self.drug2targetG = my_session.process_oql(oql,'Find targets in Pathway Studio')
+              if self.drug2targetG:
+                dt_rels = list(self.drug2targetG._psrels())
+                if len(dt_rels) > 10: # taking top 10 targets in PS
+                    dt_rels.sort(key=lambda x: len(x.refs()),reverse=True)
+                    dt_rels = dt_rels[:10]
+                    self.drug2targetG = self.drug2targetG.subgraph_by_rels(dt_rels)
+              
+                [self.drug2targetG[r][t][urn]['relation'].set_affinity() for r,t,urn in self.drug2targetG.edges(keys=True)]
+                refprops2print = PS_SENTENCE_PROPS
+              else:
+                print(f'Targets for {self.drug_names_str()} cannot be found')
         else:
-            print('Add drug-target relations into Pathway Studio database')  
+          print('Add drug-target relations into Pathway Studio database')
 
         urn2regweight = dict()
         urn2tarweight = dict()
@@ -142,8 +138,12 @@ class RepurposeDrug(Indications4targets):
 
         self.activated_targets = self.__targets('positive')
         self.inhibited_targets = self.__targets('negative')
-        self.set_partners()
-
+        
+        self.drug2targetG = self.drug2targetG.compose(self.set_partners())
+        ref_df = self.drug2targetG.snippets2df('Targets',add_nodetype=True,ref_identifiers=ref_ids,ref_sentence_props=refprops2print)
+        ref_df.tab_format['tab_color'] = 'brown'
+        self.add2report(ref_df)
+        
         all_targets = self.activated_targets|self.inhibited_targets
         self.GVs2DiseaseGraph = self._GVindicationsG(all_targets)
         self.targetGVs = self.GVs2DiseaseGraph._psobjs_with('GeneticVariant','ObjTypeName')
@@ -161,6 +161,8 @@ class RepurposeDrug(Indications4targets):
         for rel in dt_rels:
             for reg_uid,target_uid in rel.get_regulators_targets():
                 my_targets.add(self.drug2targetG._get_node(target_uid))
+        childs,parents = self.load_children4(my_targets)
+        my_targets.update(childs)
         return my_targets
     
 
@@ -258,30 +260,30 @@ class RepurposeDrug(Indications4targets):
 
 
     def clean_indications(self):
-        if self.params['drug_effect'] == ACTIVATE: # == report is for toxicities
+      if self.params['drug_effect'] == ACTIVATE: # == report is for toxicities
 # clinical trials report their indications as toxicities 
 # to check if patient condition is not worsening after drug treatment
-            if 'Disease' in self.params['indication_types']:
-                #indications = self.DrugIndications
-                before_clean_indications_count = len(self.DrugIndications)
-                indication_childs,_ = self.load_children4(list(self.DrugIndications))
-                all_indications = self.DrugIndications | indication_childs
+        if 'Disease' in self.params['indication_types']:
+            #indications = self.DrugIndications
+            before_clean_indications_count = len(self.DrugIndications)
+            indication_childs,_ = self.load_children4(list(self.DrugIndications))
+            all_indications = self.DrugIndications | indication_childs
 
-                all_drugs = self.drugs+self.SimilarDrugs
-                oql_query = 'SELECT Entity WHERE objectType = Disease AND id = ({ids1}) AND Connected by (SELECT Relation WHERE objectType = ClinicalTrial)  \
-                    to (SELECT Entity WHERE id = ({ids2}))'
-                all_indications_dbid = ResnetGraph.dbids(list(all_indications))
-                all_drugs_dbids = ResnetGraph.dbids(all_drugs)
-                clinical_trial_graph = self.iterate_oql2(oql_query,set(all_indications_dbid),set(all_drugs_dbids))
-                clinical_trial_indications = clinical_trial_graph._psobjs_with('Disease','ObjTypeName')
-                clintrial_indication_parents,_ = self.Graph.find_parents4(clinical_trial_indications)
-                clinical_trial_indications += list(clintrial_indication_parents)
+            all_drugs = self.drugs+self.SimilarDrugs
+            oql_query = 'SELECT Entity WHERE objectType = Disease AND id = ({ids1}) AND Connected by (SELECT Relation WHERE objectType = ClinicalTrial)  \
+                to (SELECT Entity WHERE id = ({ids2}))'
+            all_indications_dbid = ResnetGraph.dbids(list(all_indications))
+            all_drugs_dbids = ResnetGraph.dbids(all_drugs)
+            clinical_trial_graph = self.iterate_oql2(oql_query,set(all_indications_dbid),set(all_drugs_dbids))
+            clinical_trial_indications = clinical_trial_graph._psobjs_with('Disease','ObjTypeName')
+            clintrial_indication_parents,_ = self.Graph.find_parents4(clinical_trial_indications)
+            clinical_trial_indications += list(clintrial_indication_parents)
 
-                #removing clinical_trial_indications from the list of indications for target drugs
-                self.DrugIndications = self.DrugIndications.difference(clinical_trial_indications)
-                after_clean_indications_count = len(self.DrugIndications)
-                print('%d toxicities were removed because they are indications for %s in clinical trials' % 
-                        (before_clean_indications_count-after_clean_indications_count,self.drug_names()))
+            #removing clinical_trial_indications from the list of indications for target drugs
+            self.DrugIndications = self.DrugIndications.difference(clinical_trial_indications)
+            after_clean_indications_count = len(self.DrugIndications)
+            print('%d toxicities were removed because they are indications for %s in clinical trials' % 
+                    (before_clean_indications_count-after_clean_indications_count,self.drug_names()))
     
 
     def _drug_connect_params(self,direct_modulators:bool,score_antagonists:bool):
@@ -352,14 +354,17 @@ class RepurposeDrug(Indications4targets):
             df with scores
         '''
         my_df = in_df.dfcopy()
+        max_rank = 0
         if my_df._name_ == INDICATION_COUNT:
-            colname = self.params['input_compound'] + ' clinical trials'
+            concept = self.params['input_compound'] + ' clinical trials'
             kwargs = {'connect_by_rels':['ClinicalTrial']}
             how2connect = self.set_how2connect (**kwargs)
-            linked_entities_count, _, my_df = self.link2concept(colname, self.drugs,my_df,how2connect)
+            linked_entities_count, _, my_df = self.link2concept(concept, self.drugs,my_df,how2connect)
+            if linked_entities_count:
+              self._set_rank(concept)
             print('%s has clinical trials for %d indications' % (self.params['input_compound'], linked_entities_count))
 
-            colname = 'Inhibited by ' + self.params['input_compound']
+            concept = 'Inhibited by ' + self.params['input_compound']
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : ['negative'],
                   'boost_by_reltypes' :['Regulation']
@@ -367,7 +372,7 @@ class RepurposeDrug(Indications4targets):
             how2connect = self.set_how2connect (**kwargs)
             regulated = 'inhibited'
         else:
-            colname = 'Activated by ' + self.params['input_compound']
+            concept = 'Activated by ' + self.params['input_compound']
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : ['positive'],
                   'boost_by_reltypes' :['Regulation']
@@ -375,32 +380,38 @@ class RepurposeDrug(Indications4targets):
             how2connect = self.set_how2connect (**kwargs)
             regulated = 'activated'
 
-        linked_entities_count, _, my_df = self.link2concept(colname, self.drugs,my_df,how2connect)
+        linked_entities_count, _, my_df = self.link2concept(concept, self.drugs,my_df,how2connect)
+        if linked_entities_count:
+          self._set_rank(concept)
         print('%d indications %s by %s' % (linked_entities_count, regulated, self.params['input_compound']))
-        self.drugcolname = self._col_name_prefix+colname
+        self.drugcolname = self._col_name_prefix+concept
         
         if hasattr(self,'similar_drugs'):
             if my_df._name_ == INDICATION_COUNT:
-                colname = 'similar drugs clinical trials'
+                concept = 'similar drugs clinical trials'
                 kwargs = {'connect_by_rels':['ClinicalTrial']}
                 how2connect = self.set_how2connect (**kwargs)
-                linked_entities_count, _, my_df = self.link2concept(colname, self.SimilarDrugs,my_df,how2connect)
+                linked_entities_count, _, my_df = self.link2concept(concept, self.SimilarDrugs,my_df,how2connect)
+                if linked_entities_count:
+                  self._set_rank(concept)
                 print('%s has clinical trials for %s indications' % (','.join(self.params['similars']), linked_entities_count))
 
-                colname = 'Inhibited by similar drugs'
+                concept = 'Inhibited by similar drugs'
                 kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : ['negative'],
                   'boost_by_reltypes' :['Regulation']
                   }
                 how2connect = self.set_how2connect (**kwargs)
             else:
-                colname = 'Activated by similar drugs'
+                concept = 'Activated by similar drugs'
                 kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : ['positive'],
                   'boost_by_reltypes' :['Regulation']
                   }
                 how2connect = self.set_how2connect (**kwargs)
-            linked_entities_count, _, my_df = self.link2concept(colname,self.SimilarDrugs,my_df,how2connect)
+            linked_entities_count, _, my_df = self.link2concept(concept,self.SimilarDrugs,my_df,how2connect)
+            if linked_entities_count:
+                self._set_rank(concept)
             print('%d indications %s by %s' % (linked_entities_count, regulated, ','.join(self.params['similars'])))
 
         return my_df
@@ -479,7 +490,7 @@ class RepurposeDrug(Indications4targets):
         my_session = RepurposeDrug(**self.params)
         my_session.relProps = PS_REFERENCE_PROPS
         print(f'Started retreiving sentences for indications with unknown effects')
-        select_indications,indication_str = self._oql4indications_type()
+        select_indications,indication_str = self.oql4indications()
         
         REQUEST_NAME = f'Find {indication_str} modulated by {self.drug_names_str()} with unknown effect'
         select_indications = f'SELECT Entity WHERE objectType = ({indication_str})'
@@ -499,45 +510,69 @@ class RepurposeDrug(Indications4targets):
             self.add2report(other_indications_df)
         return other_indications_df
 
-
-    def make_count_df(self,from_rawdf:df,with_name:str,effect_on_indication:str):
-        assert(from_rawdf._name_ in [INDICATION_COUNT,TOXICITY_COUNT])
-        a_targets_indication_df = self.semscore4(self.activated_targets,effect_on_indication,
-                                           self.activated_partners,from_rawdf)
-        i_targets_indication_df = self.semscore4(self.inhibited_targets,effect_on_indication,
-                                           self.activated_partners,from_rawdf)
+    
+    def semscore4(self,targets:list[PSObject],with_effect_on_indication:str, with_partners:list[PSObject],in_df:df):
+      if targets:
+        targets_indication_df = super().semscore4(targets,with_effect_on_indication, with_partners,in_df) 
+        targets_indication_df.fillna(0)
+        return targets_indication_df, dict(self.col2rank)
+      else:
+          return df(),dict()
         
-        assert(len(a_targets_indication_df) == len(i_targets_indication_df))
-        assert(len(a_targets_indication_df.columns) == len(i_targets_indication_df.columns))
-        assert(a_targets_indication_df['Name'].to_list() == i_targets_indication_df['Name'].to_list())
-        a_targets_indication_df.fillna(0)
-        i_targets_indication_df.fillna(0)
+        
+    def make_count_df(self,from_rawdf:df,with_name:str,effect_on_indication:str)->tuple[df,dict[str,int]]:
+        drug_indication_df = self.semscore4drugs(from_rawdf) # need to go first to assign rank to columns
+        drug_col2rank = dict(self.col2rank)
 
-        sum_indication_df = df()
-        colnames = a_targets_indication_df.columns.to_list()
-        i = 0
-        while (i < len(colnames)):
-            colname = colnames[i]
-            if colname.startswith(self._col_name_prefix):
-                sum_indication_df[colname] = a_targets_indication_df[colname]+i_targets_indication_df[colname]
-                refcount_column = colnames[i+1]
-                sum_indication_df[refcount_column] = a_targets_indication_df[refcount_column]+i_targets_indication_df[refcount_column]
-                linked_concept_count_col = colnames[i+2]
-                sum_indication_df[linked_concept_count_col] = a_targets_indication_df[linked_concept_count_col]+i_targets_indication_df[linked_concept_count_col]
-                concept_count_col = colnames[i+3]
-                sum_indication_df[concept_count_col] = a_targets_indication_df[concept_count_col]+i_targets_indication_df[concept_count_col]
-                i += 4
-            else:
-                if colname not in ['ObjType','URN',self.__temp_id_col__]:
-                    # to avoid columns duplication by merge_df. 'ObjType','URN' come from load_df
-                    sum_indication_df[colname] = a_targets_indication_df[colname]
-                i += 1
+        assert(from_rawdf._name_ in [INDICATION_COUNT,TOXICITY_COUNT])
+        a_targets_indication_df,a_col2rank = self.semscore4(self.activated_targets,effect_on_indication,self.activated_partners,from_rawdf)
 
-        drug_indication_df = self.semscore4drugs(from_rawdf)
-        combined_df = drug_indication_df.merge_df(sum_indication_df,on='Name')
-        assert(self.__temp_id_col__ in combined_df.columns) 
-        # self.__temp_id_col__ is needed to creat CHILDREN_COUNT
-        return super().make_count_df(combined_df,with_name=with_name)
+        self.col2rank = drug_col2rank
+        i_targets_indication_df,i_col2rank = self.semscore4(self.inhibited_targets,effect_on_indication,self.inhibited_partners,from_rawdf)
+        
+        if a_targets_indication_df.empty:
+          if i_targets_indication_df.empty:
+              print('Drug has not partners.  Aborting execution')
+              return None,None
+          else:
+            cols2merge = [c for c in i_targets_indication_df.columns if c not in ['ObjType','URN',self.__temp_id_col__]]
+            i_targets_indication_df = i_targets_indication_df.dfcopy(cols2merge)
+            combined_df = drug_indication_df.merge_df(i_targets_indication_df,on='Name')
+            return super().make_count_df(combined_df,with_name=with_name),i_col2rank
+        elif i_targets_indication_df.empty:
+          cols2merge = [c for c in a_targets_indication_df.columns if c not in ['ObjType','URN',self.__temp_id_col__]]
+          a_targets_indication_df = a_targets_indication_df.dfcopy(cols2merge)
+          combined_df = drug_indication_df.merge_df(a_targets_indication_df,on='Name')
+          return super().make_count_df(combined_df,with_name=with_name),a_col2rank
+        else: # case when both dfs were created
+          assert(len(a_targets_indication_df) == len(i_targets_indication_df))
+          assert(len(a_targets_indication_df.columns) == len(i_targets_indication_df.columns))
+          assert(a_targets_indication_df['Name'].to_list() == i_targets_indication_df['Name'].to_list())
+
+          ai_indication_df = df()
+          colnames = a_targets_indication_df.columns.to_list()
+          i = 0
+          while (i < len(colnames)):
+              colname = colnames[i]
+              if colname.startswith(self._col_name_prefix): # column is weighted_refcount_column
+                  ai_indication_df[colname] = a_targets_indication_df[colname]+i_targets_indication_df[colname]
+                  refcount_column = colnames[i+1]
+                  ai_indication_df[refcount_column] = a_targets_indication_df[refcount_column]+i_targets_indication_df[refcount_column]
+                  linked_concept_count_col = colnames[i+2]
+                  ai_indication_df[linked_concept_count_col] = a_targets_indication_df[linked_concept_count_col]+i_targets_indication_df[linked_concept_count_col]
+                  concept_count_col = colnames[i+3]
+                  ai_indication_df[concept_count_col] = a_targets_indication_df[concept_count_col]+i_targets_indication_df[concept_count_col]
+                  i += 4
+              else:
+                  if colname not in ['ObjType','URN',self.__temp_id_col__]:
+                      # to avoid columns duplication by merge_df. 'ObjType','URN' come from load_df
+                      ai_indication_df[colname] = a_targets_indication_df[colname]
+                  i += 1
+
+          combined_df = drug_indication_df.merge_df(ai_indication_df,on='Name')
+          assert(self.__temp_id_col__ in combined_df.columns) 
+          real_col2rank = {k:max(v,i_col2rank[k]) for k,v in a_col2rank.items()}
+          return super().make_count_df(combined_df,with_name=with_name),real_col2rank
     
 
     def perform_semantic_search(self):
@@ -550,14 +585,16 @@ class RepurposeDrug(Indications4targets):
             self.raw_data[TOXICITIES]
         '''
         start_time = time.time()
-        indication_df = self.make_count_df(self.raw_data[INDICATION_COUNT],INDICATIONS,effect_on_indication='negative')
+        indication_df,ind_col2rank = self.make_count_df(self.raw_data[INDICATION_COUNT],INDICATIONS,effect_on_indication='negative')
         self.add2raw(indication_df)
-        toxicity_df = self.make_count_df(self.raw_data[TOXICITY_COUNT],TOXICITIES,effect_on_indication='positive')
+
+        self.col2rank.clear()
+        toxicity_df,tox_col2rank  = self.make_count_df(self.raw_data[TOXICITY_COUNT],TOXICITIES,effect_on_indication='positive')
         self.add2raw(toxicity_df)
 
         print("%s repurposing using %s as targets was done in %s" % 
         (self.params['input_compound'],self.target_names_str(),execution_time(start_time)))
-        return
+        return ind_col2rank, tox_col2rank
         
 
     def add_graph_bibliography(self,suffix:str, _4diseases:list[PSObject]):
@@ -657,25 +694,34 @@ class RepurposeDrug(Indications4targets):
 
 
     def set_partners(self):
-        '''
-        ouput:
-            self.activated_partners
-            self.inhibited_partners
-            self.find_activated_partners_oql
-            self.find_inhibited_partners_oql
-        '''
-        try:
-            partner_params = dict(self.params['partners'])
-            self.activated_partners = set(self.params2partners(partner_params,self.activated_targets))
-            self.inhibited_partners = set(self.params2partners(partner_params,self.inhibited_targets))
-        except KeyError:
-            partner_classes = ResnetGraph.classes(self.activated_targets)
-            if partner_classes:
-                [self.activated_partners.update(self.find_partners(cl)) for cl in partner_classes]
-            
-            partner_classes = ResnetGraph.classes(self.inhibited_targets)
-            if partner_classes:
-                [self.inhibited_partners.update(self.find_partners(cl)) for cl in partner_classes]
+      '''
+      ouput:
+          self.activated_partners
+          self.inhibited_partners
+          self.find_activated_partners_oql
+          self.find_inhibited_partners_oql
+      '''
+      try:
+        partner_params = dict(self.params['partners'])
+        self.activated_partners,t2pGa = self.params2partners(partner_params,self.activated_targets)
+        self.inhibited_partners,t2pGi = self.params2partners(partner_params,self.inhibited_targets)
+        t2pG = t2pGa.compose(t2pGi)
+      except KeyError:
+        partner_classes = ResnetGraph.classes(self.activated_targets)
+        t2pG = ResnetGraph()
+        if partner_classes:
+          for cl in partner_classes:
+            partners, t2pGa = self.find_partners(cl)
+            self.activated_partners.update(partners)
+            t2pG = t2pG.compose(t2pGa)
+          
+        partner_classes = ResnetGraph.classes(self.inhibited_targets)
+        if partner_classes:
+          for cl in partner_classes:
+            partners, t2pGi = self.find_partners(cl)
+            self.inhibited_partners.update(partners)
+            t2pG = t2pG.compose(t2pGi)
+      return t2pG
 
 
     def modulators_effects(self):
@@ -749,9 +795,9 @@ class RepurposeDrug(Indications4targets):
  
         if not self._is_strict():
             indication_count = len(self.DrugIndications)
-            add2DrugIndications = self.find_indications4(self.DrugDirectAgonists)
+            add2DrugIndications = set(self.find_indications4(self.DrugDirectAgonists))
             toxicity_count = len(self.DrugToxicities)
-            add2DrugToxicities = self.find_indications4(self.DrugDirectAntagonists)
+            add2DrugToxicities = set(self.find_indications4(self.DrugDirectAntagonists))
             conflicts = add2DrugToxicities.intersection(add2DrugIndications)
             self.DrugIndications.update(add2DrugIndications.difference(conflicts))
             self.DrugToxicities.update(add2DrugToxicities.difference(conflicts))
@@ -876,14 +922,12 @@ class RepurposeDrug(Indications4targets):
         
 
         if self.init_semantic_search():
-            self.perform_semantic_search()
+            col2ranks = self.perform_semantic_search()
             ranked_df_names = list()
-            for df_name in [INDICATIONS,TOXICITIES]:
+            for i,df_name in enumerate([INDICATIONS,TOXICITIES]):
+                col2rank = col2ranks[i]
                 drop_empty_cols = list(self.params.get('drop_empty_columns_from_report',[]))
-                ranked_df4report,_ = self.normalize(df_name,df_name,drop_empty_columns=drop_empty_cols)
-                ranked_df_name = ranked_df4report._name_
-                assert(ranked_df_name == df_name)
-                ranked_df_names.append(ranked_df_name)
+                ranked_df4report,_ = self.normalize(df_name,df_name,col2rank=col2rank,drop_empty_columns=drop_empty_cols)
                 with ThreadPoolExecutor(max_workers=4, thread_name_prefix='Report annotation') as e:
                     ontology_df_future = e.submit(self.add_ontology_df,ranked_df4report)
                     add_parent_future = e.submit(self.id2paths,ranked_df4report)
@@ -895,16 +939,16 @@ class RepurposeDrug(Indications4targets):
                         diseases = self.DrugToxicities
                     e.submit(self.add_graph_bibliography,suffix,diseases)
                 
-                ranked_df = self.report_pandas[ranked_df_name].dfcopy()
-                assert(isinstance(ranked_df,df))
                 id2paths = add_parent_future.result()
-                ranked_df = ranked_df.merge_dict(id2paths,'Ontology parents','Name')
+                ranked_df = ranked_df4report.merge_dict(id2paths,'Ontology parents','Name')
                 ontology_df = ontology_df_future.result()
                 e.shutdown()
 
                 self.add2report(ranked_df)
                 self.add2report(ontology_df)
 
+        self.report_pandas[INDICATIONS].tab_format['tab_color'] = 'blue'
+        self.report_pandas[TOXICITIES].tab_format['tab_color'] = 'pink'
         other_effects_future.result()
         if self.params['add_bibliography']:
             tm_refs_df = tm_biblio_future.result()

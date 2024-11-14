@@ -35,6 +35,9 @@ class SemanticSearch (APISession):
     iteration_step = 1000
     min_etm_relevance = 0.0
     __colname4GV__  = ''
+    #TMsearch = 'ETMbasicSearch'
+    TMsearch = 'SBSsearch'
+    DOfile = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt')
 
     
     def __init__(self,*args,**kwargs):
@@ -61,25 +64,26 @@ class SemanticSearch (APISession):
         self.PageSize = 1000
         self.RefCountPandas = df() # stores result of semantic retreival
         self.RefCountPandas._name_ = COUNTS
+        self.__Ontology__ = list()
 
-        self.report_pandas=dict() # stores pandas used to generate report file
-        self.raw_data = dict() # stores raw data pandas used for generation pandas in self.report_pandas
         self.__only_map2types__ = list()
         self.__connect_by_rels__= list()
         self.__rel_effect__ = list()
-        self.references = dict() # {identifier:Reference} made by self.Graph.citation_index()
-        search_kwargs = {'limit':10,'min_relevance':self.min_etm_relevance}
-        self.RefStats = RefStats(self.APIconfig,**search_kwargs)
+        #self.references = dict() # {identifier:Reference} made by self.Graph.citation_index()
         self.all_entity_dbids = set()
         self.columns2drop = [self.__temp_id_col__] # columns to drop before printing pandas
         self.__boost_with__ = list()
         self.relweight_prop = str()
         self.relweight_dict = dict() # = dict[str,float]
-        self.max_ontology_parent = self.params.get('max_ontology_parent',10)
         self.nodeweight_prop = str()
-        self._Ontology = list()
-        #self.TMsearch = 'ETMbasicSearch'
-        self.TMsearch = 'SBSsearch'
+        self.max_ontology_parent = self.params.get('max_ontology_parent',10)
+        
+
+        search_kwargs = {'limit':10,'min_relevance':self.min_etm_relevance}
+        self.RefStats = RefStats(self.APIconfig,**search_kwargs)
+
+        self.report_pandas=dict() # stores pandas used to generate report file
+        self.raw_data = dict() # stores raw data pandas used for generation pandas in self.report_pandas
 
 
     def _clone(self, **kwargs):
@@ -118,15 +122,30 @@ class SemanticSearch (APISession):
         print('DataFrame was reset')
 
 
-    def refcount_columns(self,counts_df=df(),column_prefix=''):
+    def __refcount_columns(self,counts_df=df(),column_prefix=''):
         d = self.RefCountPandas if counts_df.empty else counts_df
         refcount_column_prefix = column_prefix if column_prefix else self._col_name_prefix # self._col_name_prefix=WEIGHTED
         to_return = [col for col in d.columns if refcount_column_prefix in col]
         return to_return
     
 
+    def rank2weight(self,column2rank:dict[str:int]):
+        '''
+        input:
+          rank is in ascending order: 0 or 1 most important
+        '''
+        unique_ranks = set(column2rank.values())
+        unique_ranks =  sorted(list(unique_ranks))
+        number_of_weights = len(unique_ranks)
+        weight_step = 1.0/number_of_weights
+        r2w = {rank:(1.0-i*weight_step) for i,rank in enumerate(unique_ranks)}
+        column2weight = {c:r2w[r] for c,r in column2rank.items()}
+        return column2weight
+        
+
     def report_df(self,dfname:str)->df:
         return self.report_pandas[dfname]
+
 
     def raw_df(self,dfname:str)->df:
         return self.raw_data[dfname]
@@ -155,7 +174,7 @@ class SemanticSearch (APISession):
         columns with refcount prefix before redoing semantic search with weighted reference count
         """
         d = self.RefCountPandas if counts_df.empty else counts_df
-        ref_count_columns = self.refcount_columns(d)
+        ref_count_columns = self.__refcount_columns(d)
         d.drop(columns=ref_count_columns, inplace=True) #defaults to deleting rows, column must be specified
         print('%d refcount columns were dropped' % len(ref_count_columns))
 
@@ -564,8 +583,8 @@ class SemanticSearch (APISession):
         else:
             print(f'\nLinking row entities to "{ConceptName}" column which has {concept_size} ontology children')
 
-        refcount_column = self._refcount_colname(ConceptName)
         weighted_refcount_column = self._weighted_refcount_colname(ConceptName) 
+        refcount_column = self._refcount_colname(ConceptName)
         linked_count_column = self._linkedconcepts_colname(ConceptName)
         concept_size_column = self._concept_size_colname(ConceptName)
 
@@ -595,7 +614,8 @@ class SemanticSearch (APISession):
             self.__annotate_rels(connection_graph, ConceptName)
             ref_sum = set()
             for idx in my_df.index:
-                idx_entities = connection_graph.psobj_with_dbids(set(my_df.at[idx,self.__temp_id_col__]))
+                entities_dbids = set(my_df.at[idx,self.__temp_id_col__])
+                idx_entities = connection_graph.psobj_with_dbids(entities_dbids)
                 if self.__rel_dir__ =='>':
                     row_has_connection = connection_graph.relation_exist(idx_entities,concepts,
                                                 self.__connect_by_rels__,self.__rel_effect__,[],False)
@@ -610,8 +630,9 @@ class SemanticSearch (APISession):
                     continue
 
                 row_subgraph = connection_graph.get_subgraph(idx_entities, concepts)
-                connected_concepts = [c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in concepts_uids]
-                my_df.at[idx,linked_count_column] = len(connected_concepts)
+                connected_concepts_uids = [c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in concepts_uids]
+                my_df.at[idx,linked_count_column] = len(connected_concepts_uids) # used to calculate concept incidence at normalization step
+                #it measures the occurence of concepts linked to row entities among all input concepts
 
                 if self.nodeweight_prop:
                     row_subgraph.add_node_weight2ref(regurn2weight,tarurn2weight)
@@ -629,10 +650,15 @@ class SemanticSearch (APISession):
                 else:
                     row_score = len(references)
                 
-                my_df.at[idx,weighted_refcount_column] = row_score
+                number_of_children = len(list(my_df.at[idx,self.__temp_id_col__]))
+                entities_uids = ResnetGraph.uids(idx_entities)
+                connected_entities_count = len([c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in entities_uids])
+                corrected_row_score = row_score * (1+connected_entities_count/number_of_children)/number_of_children
+                # normalize by number of entity components
+                # boost by multiple component connectivity
+                my_df.at[idx,weighted_refcount_column] = corrected_row_score
                 my_df.at[idx,refcount_column] = len(references)
-                # concept incidence measures the occurence of concepts linked to row entities among all input concepts
-               
+                
                 if references:
                     ref_sum.update(references)
                     linked_row_count += 1
@@ -741,8 +767,9 @@ class SemanticSearch (APISession):
             except ValueError:
                 rank_pos = 1
 
-            clean_df = clean_df.move_cols({CHILDREN_COUNT:rank_pos})
-            rank_pos += 1
+            if CHILDREN_COUNT in clean_df.columns:
+              clean_df = clean_df.move_cols({CHILDREN_COUNT:rank_pos})
+              rank_pos += 1
 
             move2 = dict()
             for c in clean_df_columns:
@@ -756,7 +783,7 @@ class SemanticSearch (APISession):
                     move2[c] = rank_pos
                     rank_pos += 1
             clean_df = clean_df.move_cols(move2)
-
+            clean_df = df.from_pd(clean_df.fillna('')) # critical for printing WEIGHTS header
             clean_df.copy_format(report_df)
 
             if 'bibliography' in ws_name:
@@ -817,7 +844,7 @@ class SemanticSearch (APISession):
 
         if sort_by_1stcol:
             def __col2sort__(my_df:df):
-                refcount_columns = self.refcount_columns(my_df)
+                refcount_columns = self.__refcount_columns(my_df)
                 if refcount_columns: return refcount_columns[0]
                 else:
                     for c in my_df.columns.tolist():
@@ -847,7 +874,8 @@ class SemanticSearch (APISession):
         output:
             copy of raw_df with follwoing columns:
             [weighted Refcount to {concept},Refcount to {concept}, {concept} incidence
-        """   
+        """
+
         incidence_df = df(name = raw_df._name_)
         rawdf_colnames = raw_df.columns.to_list()
         empty_refcount_cols = list()
@@ -886,7 +914,7 @@ class SemanticSearch (APISession):
         return incidence_df,empty_refcount_cols
 
 
-    def normalize(self,raw_df_named:str,to_df_named:str,entity_column='Name',columns2norm:list[str]=[],drop_empty_columns:list[str]=[]):
+    def normalize(self,raw_df_named:str,to_df_named:str,entity_column='Name',col2rank:dict[str:float]={},drop_empty_columns:list[str]=[]):
         """
         input:
             df with name "raw_df_named" must be in self.raw_data
@@ -909,22 +937,19 @@ class SemanticSearch (APISession):
         
         incidence_df,empty_cols = self.__adjust4concept_incidence(self.raw_data[raw_df_named])
 
-        if columns2norm:
-            refcount_cols = [x for x in columns2norm if x not in empty_cols]
+        if not col2rank:
+            refcount_cols = self.__refcount_columns(incidence_df)
+            col2rank = {c:i for c in refcount_cols}
         else:
-            refcount_cols = self.refcount_columns(incidence_df)
+           col2rank = {k:v for k,v in col2rank.items() if k not in empty_cols}
+           refcount_cols = list(col2rank.keys())
 
-        refcount_header = [entity_column]+refcount_cols # first adding refcount columns that start with "weighed "
-        weights_df = df(columns=refcount_header)
-        weights_df.at[0,entity_column] = 'WEIGHTS:'
-        # calculating weights for each column in refcount_cols:
-        weight_index = 0
-        number_of_weights = len(refcount_cols)
-        for col in refcount_cols:
-            column_weight = (number_of_weights-weight_index)/number_of_weights
-            weights_df.at[0,col] = column_weight
-            weight_index += 1
-
+        weight_row = {entity_column:'WEIGHTS:'}
+        col2weight = self.rank2weight(col2rank)
+        weight_row.update(col2weight)
+        weights_df = df([weight_row])
+        refcount_header = weights_df.columns.to_list()
+        
         #calculating weighted cumulative score
         normdf4raw = incidence_df.dfcopy(refcount_header)
         normdf4raw = normdf4raw.l2norm(refcount_cols)
@@ -933,7 +958,7 @@ class SemanticSearch (APISession):
             row_scores = normdf4raw.loc[i,refcount_cols].values.tolist()
             assert(len(weights) == len(row_scores))
             weighted_sum = sum(s*w for s,w in zip(row_scores, weights))
-            normdf4raw.loc[i,'Combined score'] = weighted_sum
+            normdf4raw.loc[i,RANK] = weighted_sum
 
         # moving all other columns including CHILDREN_COUNT to normdf4raw 
         # except count columns that were used to create incidence column
@@ -942,15 +967,13 @@ class SemanticSearch (APISession):
             if col not in added_columns and ' count' not in col:
                 normdf4raw[col] = incidence_df[col]
 
-        normdf4raw[RANK] = normdf4raw['Combined score']/normdf4raw[CHILDREN_COUNT]
         normdf4raw = df.from_pd(normdf4raw.loc[normdf4raw[RANK] >= 0.001]) # removes rows with all zeros
         print(f'Removed {len(incidence_df)-len(normdf4raw)} rows from normalized worksheet with score=0')
 
-        normdf4raw = normdf4raw.pvalue4(RANK)
-        normdf4raw = normdf4raw.expo_pvalue4(RANK)
         rank_pval = RANK+' empirpvalue'
+        normdf4raw[rank_pval] = df.calculate_pvalues(normdf4raw[RANK])
         rank_expopval = RANK + ' expopvalue'
-    
+        normdf4raw[rank_expopval] = df.calculate_expo_pvalues(normdf4raw[RANK])
         normdf4raw = normdf4raw.sortrows(by=[RANK,rank_pval,entity_column], ascending=[False, True,True])
 
         if drop_empty_columns:
@@ -974,12 +997,12 @@ class SemanticSearch (APISession):
         # re-ordering normdf4raw colums for clarity:
         normdf4raw_cols = normdf4raw.columns.to_list()
         forbidden_cols = set(refcount_header+header4rankedf)
-        forbidden_cols.update([self.__temp_id_col__,'URN',RANK,rank_pval,rank_expopval,'ObjType',self.__colname4GV__,'Combined score',CHILDREN_COUNT])
+        forbidden_cols.update([self.__temp_id_col__,'URN',RANK,rank_pval,rank_expopval,'ObjType',self.__colname4GV__,CHILDREN_COUNT])
         # refcount_header has "WEIGHTED ..." columns
         # header4rankedf has "Refcount to ..." columns
         other_cols4rankedf = [x for x in normdf4raw_cols if x not in forbidden_cols]
         header4rankedf += other_cols4rankedf
-        header4rankedf +=  [RANK,rank_pval,rank_expopval,'Combined score',CHILDREN_COUNT,'URN','ObjType']
+        header4rankedf +=  [RANK,rank_pval,rank_expopval,CHILDREN_COUNT,'URN','ObjType']
         if self.__colname4GV__ in normdf4raw_cols:
             header4rankedf.append(self.__colname4GV__)
         # at this point: header4rankedf = [entity_column]+refcount_colnames+other_cols4rankedf+[RANK,'URN','ObjType',self.__colname4GV__]
@@ -992,12 +1015,9 @@ class SemanticSearch (APISession):
 
         assert(weights_df.columns.to_list() == rankedf4report.columns.to_list()[:len(weights_df.columns)])
         rankedf4report = weights_df.append_df(rankedf4report)# append will add columns missing in weights_str 
-        #rankedf4report = rankedf4report.move_cols({RANK:1})
-        #rankedf4report = rankedf4report.move_cols({rank_pval:2})
 
         rankedf4report.copy_format(incidence_df)
         rankedf4report.add_column_format(RANK,'align','center')
-        rankedf4report.add_column_format('Combined score','align','center') 
         rankedf4report._name_ = to_df_named
         self.add2report(rankedf4report)
         
@@ -1134,19 +1154,20 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
 
 
     def __load_ontology(self):
-        disease_ontology = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt')
-        disease_ontology_groups = [x.strip() for x in open(disease_ontology, 'r').readlines()]
+        if not self.__Ontology__:
+          disease_ontology_groups = [x.strip() for x in open(self.DOfile, 'r').readlines()]
 
-        query_node = OQL.get_entities_by_props(disease_ontology_groups, ['Name'])
-        new_session = self._clone_session() #to avoid mutating self.Graph in parallel calculations
-        disease_ontology_groups_graph = new_session.process_oql(query_node)
-        if isinstance(disease_ontology_groups_graph,ResnetGraph):
-            disease_ontology_groups = disease_ontology_groups_graph._get_nodes()
-        else:
-            disease_ontology_groups = list()
-        _, ontology = new_session.load_children4(disease_ontology_groups,
-                                                                max_threads=50)
-        new_session.close_connection()
+          query_node = OQL.get_entities_by_props(disease_ontology_groups, ['Name'])
+          new_session = self._clone_session() #to avoid mutating self.Graph in parallel calculations
+          disease_ontology_groups_graph = new_session.process_oql(query_node)
+          if isinstance(disease_ontology_groups_graph,ResnetGraph):
+              disease_ontology_groups = disease_ontology_groups_graph._get_nodes()
+          else:
+              disease_ontology_groups = list()
+          _, ontology = new_session.load_children4(disease_ontology_groups,
+                                                                  max_threads=50)
+          new_session.close_connection()
+          self.__Ontology__ = ontology
         return ontology
 
 
@@ -1157,8 +1178,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         output:
             Adds worksheet to "report_pandas" containing statistics for ontology groups listed in 'ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt'
         '''
-        if not self._Ontology:
-            self._Ontology = self.__load_ontology()
+        self.__load_ontology()
 
         try:
             scored_disease_names = _4df[self.__resnet_name__].to_list()
@@ -1170,7 +1190,7 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
         grant_total = len(scored_diseases)
         rows = [['All diseases',grant_total,100]]
         all_scored_children_counter = set()
-        for parent_disease in self._Ontology:
+        for parent_disease in self.__Ontology__:
             parent_ontology = [parent_disease] + parent_disease.childs()
             scored_children_in_parent_ontology = set(parent_ontology).intersection(scored_diseases)
             group_stat = len(scored_children_in_parent_ontology)

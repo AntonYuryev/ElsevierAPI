@@ -13,7 +13,7 @@ from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
-from ..utils import unpack,execution_time,execution_time2
+from ..utils import unpack,execution_time,execution_time2,load_api_config
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
@@ -1048,7 +1048,7 @@ in {execution_time(process_start)}')
         print(f'Longest {max_threads}-threaded time: {"{}".format(str(timedelta(seconds=max_threaded_time)))}')
 
         parent_with_children = self.Graph.psobjs_with([CHILDS])
-        parent_with_children = [p for p in parent_with_children if p.childs()]
+        parent_with_children = [p for p in parent_with_children if p.childs() and p in parents]
         child_counter = {x for x in child_counter if x} #sometimes they are empty?
         return child_counter, parent_with_children
 
@@ -1935,3 +1935,6 @@ in {execution_time(process_start)}')
         return ppi_keeper
 
 
+def open_api_session(api_config_file='',what2retrieve=1) -> APISession:
+  APIconfig = load_api_config(api_config_file)
+  return APISession(APIconfig,what2retrieve=what2retrieve)

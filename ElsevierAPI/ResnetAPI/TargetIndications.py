@@ -1,5 +1,5 @@
 from .SemanticSearch import SemanticSearch,len,df,pd
-from .ResnetAPISession import REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,NO_REL_PROPERTIES
+from .ResnetAPISession import BIBLIO_PROPERTIES,NO_REL_PROPERTIES,SNIPPET_PROPERTIES,REFERENCE_IDENTIFIERS
 from .ResnetGraph import REFCOUNT, PSObject, ResnetGraph, OBJECT_TYPE
 from ..ETM_API.references import PS_SENTENCE_PROPS,EFFECT,PS_BIBLIO_PROPS
 from .PathwayStudioGOQL import OQL
@@ -79,6 +79,7 @@ class Indications4targets(SemanticSearch):
         self.__DirectAntagonists = set()
 
         self.targets_have_weights = False
+        self.col2rank = dict()
 
 ############################## UTILITIES ############################ UTILITIES #############################
     def input_target_names_str(self):
@@ -145,7 +146,7 @@ class Indications4targets(SemanticSearch):
         return self.params['strict_mode']
     
 
-    def _oql4indications_type(self):
+    def oql4indications(self):
         indication_types_str = ','.join(self.params['indication_types'])
         return f'SELECT Entity WHERE objectType = ({indication_types_str})', indication_types_str
   
@@ -190,75 +191,85 @@ class Indications4targets(SemanticSearch):
         else: return ''
 
 
-    def find_partners(self,_4targets:list[PSObject])->list[PSObject]:
-        """
-        Finds
-        -----
-        Ligands if targets are Receptor, Receptors if targets are Ligand linked to target(s) with Effect=positive\n
-        dose not work for any other target class
-        output:
-            self.partnets
-        """
-        allowed_target_clases = ['Ligand','Receptor']
-        all_partners = set()
-        for clas in allowed_target_clases:
-            class_targets = [o for o in _4targets if o.get_prop('Class') == clas]
-            if class_targets:
-                partner_class = self._partner_class(clas)
-                select_targets = OQL.get_objects(ResnetGraph.dbids(class_targets))
-                target_names = OQL.get_objects(ResnetGraph.names(class_targets))
+    def targets_with(self,property='Class',value=''):
+        if value:
+            return 
 
-                REQUEST_NAME = f'Find {partner_class}s for {target_names}'
-                SELECTpartners = f'SELECT Entity WHERE Class = {partner_class} AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_targets})'
-                partners_graph = self.process_oql(SELECTpartners,REQUEST_NAME)
-                if isinstance(partners_graph,ResnetGraph):
-                    if partner_class == 'Ligand':
-                        # request to find additional secreted molecules not annotated with Class=Ligand
-                        SELECTsecretedpartners = 'SELECT Entity WHERE "Cell Localization" = Secreted AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
-                        secreted_partners = self.process_oql(SELECTsecretedpartners.format(select_target=self.oql4targets),f'Find secreted partners for {target_names}')
-                        if isinstance(secreted_partners,ResnetGraph):
-                            partners_graph = secreted_partners.compose(partners_graph)
 
-                    partners = partners_graph._get_nodes()
-                    partners_names = ','.join(ResnetGraph.names(partners))
-                    print(f'Found {partners_names} {clas}s as partners for {target_names}')
-                    all_partners.update(partners)
-        
-        return all_partners
+    def find_partners(self,_4targets:list[PSObject])->tuple[list[PSObject],ResnetGraph]:
+      """
+      Finds
+      -----
+      Ligands if targets are Receptor, Receptors if targets are Ligand linked to target(s) with Effect=positive\n
+      dose not work for any other target class
+      output:
+          self.partnets
+      """
+      allowed_target_clases = ['Ligand','Receptor']
+      partners_graph = ResnetGraph()
+      my_session = self._clone_session(to_retrieve = SNIPPET_PROPERTIES)
+      for clas in allowed_target_clases:
+        class_targets = [o for o in _4targets if o.get_prop('Class') == clas]
+        if class_targets:
+            partner_class = self._partner_class(clas)
+            select_targets = OQL.get_objects(ResnetGraph.dbids(class_targets))
+            target_names = OQL.get_objects(ResnetGraph.names(class_targets))
+
+            REQUEST_NAME = f'Find {partner_class}s for {target_names}'
+            #SELECTpartners = f'SELECT Entity WHERE Class = {partner_class} AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_targets})'
+            SELECTpartners = f'SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive AND NeigborOf (SELECT Entity WHERE Class = {partner_class}) AND NeigborOf ({select_targets})'
+            partners_graph = partners_graph.compose(my_session.process_oql(SELECTpartners,REQUEST_NAME))
+            assert(isinstance(partners_graph,ResnetGraph))
+            if partner_class == 'Ligand':
+                # request to find additional secreted molecules not annotated with Class=Ligand
+                #SELECTsecretedpartners = 'SELECT Entity WHERE "Cell Localization" = Secreted AND objectType = Protein AND Connected by (SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive) to ({select_target})'
+                SELECTsecretedpartners = f'SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive AND NeigborOf (SELECT Entity WHERE "Cell Localization" = Secreted AND objectType = Protein) AND NeigborOf ({select_targets})'
+                secreted_partners = my_session.process_oql(SELECTsecretedpartners,f'Find secreted partners for {target_names}')
+                assert isinstance(secreted_partners,ResnetGraph)
+                partners_graph = secreted_partners.compose(partners_graph)
+
+      partners = set(partners_graph._get_nodes()).difference(_4targets)
+      partners_names = ','.join(ResnetGraph.names(partners))
+      print(f'Found {partners_names} {clas}s as partners for {target_names}')
+      return partners, partners_graph
     
 
-    def params2partners(self, partner_params:dict,_4targets:list[PSObject])->list[PSObject]:
-        '''
-        case when self.params has 'partner_names' and 'partner_class' explicitly\n
-        use it when receptor partners are metabolites and therefore cannot be found by select_partners()\n
-        input:
-            partner_params - {target_name:partner_class:[partner_names]}
-        '''
-        if not _4targets: return []
-        _4target_names = {n.name():n for n in _4targets}
-        partner_names = dict() #{name:(class,weight)}
-        for target_name, c2p in partner_params.items():
-            if target_name in _4target_names:
-                assert(isinstance(c2p,dict))
-                for p_class, p_names in c2p.items():
-                    for name in p_names:
-                        partner_weight = _4target_names[target_name].get_prop('target weight',if_missing_return=0)
-                        partner_names[str(name).lower()] = (p_class,partner_weight)
+    def params2partners(self, partner_params:dict,_4targets:list[PSObject])->tuple[set[PSObject],ResnetGraph]:
+      '''
+      case when self.params has 'partner_names' and 'partner_class' explicitly\n
+      use it when receptor partners are metabolites and therefore cannot be found by select_partners()\n
+      input:
+          partner_params - {target_name:partner_class:[partner_names]}
+      '''
+      if not _4targets: return set(),ResnetGraph()
+      _4target_names = {n.name():n for n in _4targets}
+      partner_names = dict() #{name:(class,weight)}
+      t2pG = ResnetGraph()
+      my_session = self._clone_session(to_retrieve = SNIPPET_PROPERTIES)
+      for target_name, c2p in partner_params.items():
+        if target_name in _4target_names:
+          assert(isinstance(c2p,dict))
+          for p_class, p_names in c2p.items():
+              for p_name in p_names:
+                partner_weight = _4target_names[target_name].get_prop('target weight',if_missing_return=0)
+                partner_names[str(p_name).lower()] = (p_class,partner_weight)
+                target_partner_oql = f"SELECT Relation WHERE NeighborOf (SELECT Entity WHERE Name = '{target_name}') AND  NeighborOf (SELECT Entity WHERE Name = '{p_name}')"
+                req_name = f'Finding partners4{target_name}'
+                t2pG =  t2pG.compose(my_session.process_oql(target_partner_oql,req_name))
 
-        partners_names_s = OQL.join_with_quotes(list(partner_names.keys()))
-        SELECTpartners = f'SELECT Entity WHERE Name = ({partners_names_s})'
-        req_name = f'Finding partners4{_4target_names.keys()}'
-        partners_graph = self.process_oql(SELECTpartners,req_name)
-        if isinstance(partners_graph,ResnetGraph):
-            partners = partners_graph._get_nodes()
-            for p in partners:
-                p_class, p_weight = partner_names[p.name().lower()]
-                p['Class'] = [p_class]
-                p['target weight'] = [p_weight]
-                p['regulator weight'] = [p_weight]
-            return partners
-        else:
-            return []
+      nodes = t2pG._get_nodes()
+      partners = set()
+      for p in nodes:
+          try:
+            p_class, p_weight = partner_names[p.name().lower()]
+            p['Class'] = [p_class]
+            p['target weight'] = [p_weight]
+            p['regulator weight'] = [p_weight]
+            partners.add(p)
+          except KeyError:
+              continue
+
+      return partners,t2pG
 
 
     def set_partners(self,_4targets:list[PSObject]):
@@ -273,19 +284,26 @@ class Indications4targets(SemanticSearch):
         """
         try:
             partner_params = dict(self.params['partners'])
-            self.__partners = self.params2partners(partner_params,_4targets)
+            self.__partners,t2pG = self.params2partners(partner_params,_4targets)
         except KeyError:
             self.partner_class = ResnetGraph.classes(self.__targets)
             if self.partner_class:
-                self.__partners = self.find_partners()
-        return
+                self.__partners,t2pG = self.find_partners()
+        return t2pG
     
 
     def _partner_class_str(self):
         clases = {ResnetGraph.classes(self.__partners)}
         return ','.join(clases)
+    
 
+    def _set_rank(self,concept:str,my_rank=0):
+        if not my_rank:
+          my_rank = max(self.col2rank.values()) if self.col2rank else 0
+          my_rank += 1
+        self.col2rank[self._weighted_refcount_colname(concept)] = my_rank
         
+
     def report_path(self, extension='.xlsx'):
         indics = ','.join(self.params['indication_types'])
         rep_pred = 'suggested ' if self.params['strict_mode'] else 'suggested,predicted '
@@ -510,7 +528,7 @@ class Indications4targets(SemanticSearch):
             NeighborOf({target}) AND NeighborOf ({indications})' 
             
         f_t = OQL.get_objects(ResnetGraph.dbids(targets))
-        f_i,_ = self._oql4indications_type()
+        f_i,_ = self.oql4indications()
         indications = set()
 
         OQLquery =  OQLquery.format(target=f_t,effect = with_effect_on_indications,indications=f_i)  
@@ -564,7 +582,7 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
         if not targets or not partners: return []
         t_n = ','.join(ResnetGraph.names(targets))
         p_c = ','.join(ResnetGraph.classes(partners))
-        oql4indications,_ = self._oql4indications_type()
+        oql4indications,_ = self.oql4indications()
         oql4partners = OQL.get_objects(ResnetGraph.dbids(partners))
 
         OQLquery = OQLtemplate.format(eff=effect_on_indications,partners=oql4partners,indications=oql4indications)
@@ -602,45 +620,51 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
     
 
     def find_indications4(self,modulators:list[PSObject])->set[PSObject]:
-        assert(len(modulators) < 1000)
-        indications = set()
-        get_modulators = OQL.get_objects(ResnetGraph.dbids(modulators))
-        indications_type=','.join(self.params['indication_types'])
-        REQUEST_NAME = f'Find indications for {len(modulators)} modulators'
-        OQLquery = f'SELECT Relation WHERE objectType = Regulation AND Effect = negative AND \
-        NeighborOf (SELECT Entity WHERE objectType = ({indications_type})) AND NeighborOf ({get_modulators})'
-        InhibitorsIndicationNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-        if isinstance(InhibitorsIndicationNetwork,ResnetGraph):
-            indications = set(InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types']))
-            print(f'Found {len(indications)} indications for {len(modulators)} substances')
+        if modulators:
+          assert(len(modulators) < 1000)
+          indications = set()
+          get_modulators = OQL.get_objects(ResnetGraph.dbids(modulators))
+          indications_type=','.join(self.params['indication_types'])
+          REQUEST_NAME = f'Find indications for {len(modulators)} modulators'
+          OQLquery = f'SELECT Relation WHERE objectType = Regulation AND Effect = negative AND \
+          NeighborOf (SELECT Entity WHERE objectType = ({indications_type})) AND NeighborOf ({get_modulators})'
+          InhibitorsIndicationNetwork = self.process_oql(OQLquery,REQUEST_NAME)
+          if isinstance(InhibitorsIndicationNetwork,ResnetGraph):
+              indications = set(InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types']))
+              print(f'Found {len(indications)} indications for {len(modulators)} substances')
 
-        REQUEST_NAME = f'Find clinical trials for {len(modulators)} modulators'
-        OQLquery = f'SELECT Relation WHERE objectType = ClinicalTrial AND \
-        NeighborOf (SELECT Entity WHERE objectType = ({indications_type})) AND NeighborOf ({get_modulators})'
-        ct_g = self.process_oql(OQLquery,REQUEST_NAME)
-        ct_indications = ct_g.psobjs_with(only_with_values=self.params['indication_types'])
-        if isinstance(ct_g,ResnetGraph):
-            indications.update(ct_indications)
+          REQUEST_NAME = f'Find clinical trials for {len(modulators)} modulators'
+          OQLquery = f'SELECT Relation WHERE objectType = ClinicalTrial AND \
+          NeighborOf (SELECT Entity WHERE objectType = ({indications_type})) AND NeighborOf ({get_modulators})'
+          ct_g = self.process_oql(OQLquery,REQUEST_NAME)
+          ct_indications = ct_g.psobjs_with(only_with_values=self.params['indication_types'])
+          if isinstance(ct_g,ResnetGraph):
+              indications.update(ct_indications)
 
-        print(f'Found {len(ct_indications)} indications on clinical trials with {len(modulators)} substances')
-        return indications
+          print(f'Found {len(ct_indications)} indications on clinical trials with {len(modulators)} substances')
+          return indications
+        else: 
+            return []
 
 
     def find_toxicities4(self,modulators:list[PSObject])->set[PSObject]:
-        assert(len(modulators) < 1000)
-        toxicities = set()
-        get_modulators = OQL.get_objects(ResnetGraph.dbids(modulators))
-        indications_type=','.join(self.params['indication_types'])
-        REQUEST_NAME = f'Find toxicities for {len(modulators)} modulators'
-        OQLquery = f'SELECT Relation WHERE objectType = Regulation AND Effect = positive AND \
-        NeighborOf (SELECT Entity WHERE objectType = ({indications_type})) AND NeighborOf ({get_modulators})'
-        InhibitorsIndicationNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-        if isinstance(InhibitorsIndicationNetwork,ResnetGraph):
-            toxicities = set(InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types']))
-            print(f'Found {len(toxicities)} indications for {len(modulators)} substances')
+        if modulators:
+          assert(len(modulators) < 1000)
+          toxicities = set()
+          get_modulators = OQL.get_objects(ResnetGraph.dbids(modulators))
+          indications_type=','.join(self.params['indication_types'])
+          REQUEST_NAME = f'Find toxicities for {len(modulators)} modulators'
+          OQLquery = f'SELECT Relation WHERE objectType = Regulation AND Effect = positive AND \
+          NeighborOf (SELECT Entity WHERE objectType = ({indications_type})) AND NeighborOf ({get_modulators})'
+          InhibitorsIndicationNetwork = self.process_oql(OQLquery,REQUEST_NAME)
+          if isinstance(InhibitorsIndicationNetwork,ResnetGraph):
+              toxicities = set(InhibitorsIndicationNetwork.psobjs_with(only_with_values=self.params['indication_types']))
+              print(f'Found {len(toxicities)} indications for {len(modulators)} substances')
 
-        print(f'Found {len(toxicities)} toxicities on clinical trials with {len(modulators)} substances')
-        return toxicities
+          print(f'Found {len(toxicities)} toxicities on clinical trials with {len(modulators)} substances')
+          return toxicities
+        else:
+            return []
 
 
     def __indications4cells(self,secreting:list[PSObject],targets:list[PSObject],with_effect_on_indication:str)->list[PSObject]:
@@ -683,16 +707,18 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
 
     def _indications4cells(self,secreting:set[PSObject],targets:list[PSObject],effect_on_targets:str)->list[PSObject]:
         '''
+        input:
+          "secreting" - list of cells secreting "targets"
         ouput:
-            indications, 
-            if "secreting" is empty adds cells to "secreting"
+          indications, 
+          if "secreting" is empty adds cells to "secreting"
         '''
         if targets:
           assert(effect_on_targets in ['positive','negative'])
           my_ligands = [o for o in targets if o.get_prop('Class') == 'Ligand']
           if my_ligands:
-              if not secreting:
-                  secreting.update(self.__find_cells_secreting(my_ligands))
+            if not secreting:
+              secreting.update(self.__find_cells_secreting(my_ligands))
 
               indications = list()
               if secreting:
@@ -813,19 +839,21 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         REQUEST_NAME = f'Find genetic variants linked to {t_n}'
         GV2targetsG = self.process_oql(findGVs_oql,REQUEST_NAME)
         allGVs = GV2targetsG._psobjs_with('GeneticVariant',OBJECT_TYPE)
-        selectGVs = OQL.get_objects(ResnetGraph.dbids(allGVs))
-
-        REQUEST_NAME = f'Find indications linked to {t_n} genetic variants'
-        indication_type=','.join(self.params['indication_types'])
-        OQLquery = f'SELECT Relation WHERE NeighborOf({selectGVs}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_type}))'
-        GVsInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-        if isinstance(GVsInDiseaseNetwork,ResnetGraph):
-            if self.targets_have_weights:
-                # need to do it in both directions because GV-Disease link is non-directional
-                GVsInDiseaseNetwork = GVsInDiseaseNetwork.compose(GV2targetsG)
-                GVsInDiseaseNetwork.add_weights2neighbors(_4targets,'target weight','regulator weight','<')
-                #GVsInDiseaseNetwork.add_weights2neighbors(_4targets,'regulator weight','target weight','>')
-            return GVsInDiseaseNetwork
+        if allGVs:
+          selectGVs = OQL.get_objects(ResnetGraph.dbids(allGVs))
+          REQUEST_NAME = f'Find indications linked to {t_n} genetic variants'
+          indication_type=','.join(self.params['indication_types'])
+          OQLquery = f'SELECT Relation WHERE NeighborOf({selectGVs}) AND NeighborOf (SELECT Entity WHERE objectType = ({indication_type}))'
+          GVsInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
+          if isinstance(GVsInDiseaseNetwork,ResnetGraph):
+              if self.targets_have_weights:
+                  # need to do it in both directions because GV-Disease link is non-directional
+                  GVsInDiseaseNetwork = GVsInDiseaseNetwork.compose(GV2targetsG)
+                  GVsInDiseaseNetwork.add_weights2neighbors(_4targets,'target weight','regulator weight','<')
+                  #GVsInDiseaseNetwork.add_weights2neighbors(_4targets,'regulator weight','target weight','>')
+              return GVsInDiseaseNetwork
+          else:
+             return ResnetGraph() 
         else:
             return ResnetGraph()
         
@@ -850,7 +878,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         OQLquery = 'SELECT Relation WHERE objectType = Biomarker AND NeighborOf({select_target}) AND NeighborOf ({indications})'
 
         f_t = OQL.get_objects(ResnetGraph.dbids(_4targets))
-        oql4indications,_ = self._oql4indications_type()
+        oql4indications,_ = self.oql4indications()
         OQLquery = OQLquery.format(select_target=f_t,indications=oql4indications)
         BiomarkerInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
         if isinstance(BiomarkerInDiseaseNetwork,ResnetGraph):
@@ -927,7 +955,8 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
                         df2score.at[i,weighted_refcount_column] = GVscore
                         df2score.at[i,refcount_column] = refcount
                         df2score.at[i,linked_count_column] = rowGVs_count
-                
+            
+            self._set_rank(concept_name)
             print('Found %d indications linked to %d GVs' % (gvlinkcounter, len(self.targetGVs)))
 
 
@@ -1015,11 +1044,11 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         t_n = self.target_names_str()
         target_in_header = t_n if len(t_n) < 45 else 'targets'
         if target_in_header == 'targets':
-             colname = 'Regulated by ' + target_in_header
+             concept = 'Regulated by ' + target_in_header
         elif with_effect_on_indication == 'positive':
-            colname = 'Activated by '+target_in_header
+            concept = 'Activated by '+target_in_header
         else:
-            colname = 'Inhibited by '+target_in_header
+            concept = 'Inhibited by '+target_in_header
         
         kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [with_effect_on_indication],
@@ -1028,59 +1057,62 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         if self.targets_have_weights:
             kwargs.update({'nodeweight_prop': 'regulator weight'})
         how2connect = self.set_how2connect(**kwargs)
-        linked_row_count,_,my_df = self.link2concept(colname,targets,my_df,how2connect)
+        linked_row_count,_,my_df = self.link2concept(concept,targets,my_df,how2connect)
+        self._set_rank(concept)
         print('%d indications are %sly regulated by %s' % 
             (linked_row_count,with_effect_on_indication,t_n))
         self.nodeweight_prop = ''
 
         self.score_GVs(my_df)
 
-        link_effect, drug_class, concepts = self._drug_connect_params(True,score4antagonists)
-        if concepts:
+        link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=True,score_antagonists=score4antagonists)
+        if drug_connect_concepts:
             # references suggesting that known drugs for the target as treatments for indication
-            colname = target_in_header+' '+drug_class+' clin. trials'
-            colname = target_in_header+' '+drug_class
+            concept = target_in_header+' '+drug_class+' clin. trials'
+            concept = target_in_header+' '+drug_class
             kwargs = {'connect_by_rels':['ClinicalTrial']}
             if self.targets_have_weights:
                 kwargs.update({'nodeweight_prop': 'regulator weight'})
             how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(colname,concepts,my_df,how2connect)
-            print('Linked %d clinical trial indictions for %s %s' % 
-                  (linked_row_count,t_n,drug_class))
+            linked_row_count,_,my_df = self.link2concept(concept,drug_connect_concepts,my_df,how2connect)
+            self._set_rank(concept)
+            print(f'Linked {linked_row_count} clinical trial indictions for {t_n} {drug_class}')
 
-            colname = target_in_header+' '+drug_class
+            concept = target_in_header+' '+drug_class
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [link_effect],
                   'boost_by_reltypes' :['Regulation','FunctionalAssociation']
                   }
             how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(colname,concepts,my_df,how2connect)
-            print('Linked %d indications for %s %s' % 
-                  (linked_row_count,t_n,drug_class))
+            linked_row_count,_,my_df = self.link2concept(concept,drug_connect_concepts,my_df,how2connect)
+            self._set_rank(concept)
+            print(f'Linked {linked_row_count} indications for {t_n} {drug_class}')
 
         #references reporting target agonists exacerbating indication or causing indication as adverse events
-        link_effect, drug_class, concepts = self._drug_tox_params(direct_modulators=True,
-                                                                   score_antagonists=score4antagonists)
+        link_effect, drug_class, concepts = self._drug_tox_params(direct_modulators=True,score_antagonists=score4antagonists)
         if concepts:
-            colname = target_in_header+' '+drug_class
+            concept = target_in_header+' '+drug_class
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [link_effect],
                   'boost_by_reltypes' :['Regulation','FunctionalAssociation']
                   }
             how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(colname,concepts,my_df,how2connect)
-            print('Linked %d indications as toxicities for %s %s' % 
-                  (linked_row_count,t_n,drug_class))
+            linked_row_count,_,my_df = self.link2concept(concept,concepts,my_df,how2connect)
+            max_rank = max(self.col2rank.values()) 
+            if not drug_connect_concepts:
+              max_rank += 1 # advancing max_rank only if drug_connect_concepts were empty, otherwise they have the same max_rank
+            self._set_rank(concept,max_rank)
+
+            print(f'Linked {linked_row_count} indications as toxicities for {t_n} {drug_class}')
 
         #references where target expression or activity changes in the indication
         if target_in_header == 'targets':
              indication_types = ','.join(self.params['indication_types'])
-             colname = target_in_header + f' changes in {indication_types}'
+             concept = target_in_header + f' changes in {indication_types}'
         elif with_effect_on_indication == 'positive':
-            colname = target_in_header+' is upregulated'
+            concept = target_in_header+' is upregulated'
         else:
-            colname = target_in_header+' is downregulated'
-
+            concept = target_in_header+' is downregulated'
 
         kwargs = {'connect_by_rels':['QuantitativeChange'],
                   'with_effects' : [with_effect_on_indication],
@@ -1089,14 +1121,14 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         if self.targets_have_weights:
             kwargs.update({'nodeweight_prop': 'target weight'})
         how2connect = self.set_how2connect(**kwargs)
-        linked_row_count,_,my_df= self.link2concept(colname,targets,my_df,how2connect)
-        print('%d indications %sly regulate %s' % 
-            (linked_row_count,with_effect_on_indication,t_n))
+        linked_row_count,_,my_df= self.link2concept(concept,targets,my_df,how2connect)
+        self._set_rank(concept)
+        print(f'{linked_row_count} indications {with_effect_on_indication}ly regulate {t_n}')
         self.nodeweight_prop = ''
 
         #references suggesting target partners as targets for indication
         if with_partners:
-            colname = f'{target_in_header} partners'
+            concept = f'{target_in_header} partners'
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [with_effect_on_indication],
                   'boost_by_reltypes' : ['Regulation','FunctionalAssociation']
@@ -1104,7 +1136,8 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             if self.targets_have_weights:
                  kwargs.update({'nodeweight_prop': 'regulator weight'})
             how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(colname,with_partners,my_df,how2connect)
+            linked_row_count,_,my_df = self.link2concept(concept,with_partners,my_df,how2connect)           
+            self._set_rank(concept)
             print('Linked %d indications for %d %s partners' % 
                 (linked_row_count,len(with_partners),t_n))
             self.nodeweight_prop = ''
@@ -1112,7 +1145,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         # references reporting that cells producing the target linked to indication  
         # only used if taregts are secretred ligands
         if hasattr(self, '__TargetSecretingCells'):
-            colname = f'{target_in_header} secreting cells'
+            concept = f'{target_in_header} secreting cells'
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [with_effect_on_indication],
                   'boost_by_reltypes' : ['Regulation','FunctionalAssociation']
@@ -1120,28 +1153,27 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             if self.targets_have_weights:
                 kwargs.update({'nodeweight_prop': 'regulator weight'})
             how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(colname,self.__TargetSecretingCells,my_df,how2connect)
-            print('Liked %d indications linked %d cells producing %s' % 
-                  (linked_row_count,len(self.__TargetSecretingCells),t_n))
+            linked_row_count,_,my_df = self.link2concept(concept,self.__TargetSecretingCells,my_df,how2connect)           
+            self._set_rank(concept)
+            print(f'Liked {linked_row_count} indications linked {len(self.__TargetSecretingCells)} cells producing {t_n}')
 
-        link_effect, drug_class, concepts = self._drug_connect_params(direct_modulators=False,
+        link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=False,
                                                                       score_antagonists=score4antagonists)
-        if concepts:
+        if drug_connect_concepts:
             # references suggesting that known drugs for the target as treatments for indication
-            colname = target_in_header+' '+drug_class+' clin. trials'
+            concept = target_in_header+' '+drug_class+' clin. trials'
             kwargs = {'connect_by_rels':['ClinicalTrial']}
             if self.targets_have_weights:
                 kwargs.update({'nodeweight_prop': 'regulator weight'})
             # cloning session to avoid adding relations to self.Graph
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             how2connect = new_session.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = new_session.link2concept(colname,concepts,my_df,how2connect)
-            print('Linked %d clinical trial indications for %s %s' % 
-                  (linked_row_count,t_n,drug_class))
+            linked_row_count,_,my_df = new_session.link2concept(concept,drug_connect_concepts,my_df,how2connect)           
+            self._set_rank(concept)
+            print(f'Linked {linked_row_count} clinical trial indications for {t_n} {drug_class}')
             new_session.close_connection()
 
-
-            colname = target_in_header+' '+drug_class
+            concept = target_in_header+' '+drug_class
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [link_effect],
                   'boost_by_reltypes' : ['Regulation'] # boosting with unknown effect Regulation
@@ -1151,7 +1183,8 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             # cloning session to avoid adding relations to self.Graph
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             how2connect = new_session.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = new_session.link2concept(colname,concepts,my_df,how2connect)
+            linked_row_count,_,my_df = new_session.link2concept(concept,drug_connect_concepts,my_df,how2connect)          
+            self._set_rank(concept)
             print('Linked %d indications for %s %s' % (linked_row_count,t_n,drug_class))
             new_session.close_connection()
 
@@ -1159,7 +1192,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         link_effect, drug_class, concepts = self._drug_tox_params(direct_modulators=False,
                                                                    score_antagonists=score4antagonists)
         if concepts:
-            colname = target_in_header+' '+drug_class
+            concept = target_in_header+' '+drug_class
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [link_effect],
                   'boost_by_reltypes' : ['Regulation'] # boosting with unknown effect Regulation
@@ -1169,14 +1202,18 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             # cloning session to avoid adding relations to self.Graph
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             how2connect = new_session.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = new_session.link2concept(colname,concepts,my_df,how2connect)
+            linked_row_count,_,my_df = new_session.link2concept(concept,concepts,my_df,how2connect)
+            max_colrank = max(self.col2rank.values())
+            if not drug_connect_concepts:
+              max_colrank += 1 # advancing max_rank only if drug_connect_concepts were empty, otherwise they have the same max_rank
+            self._set_rank(concept,max_colrank)
             print('Linked %d indications as toxicities for %s %s' % (linked_row_count,t_n,drug_class))
             new_session.close_connection()
         
 
         if hasattr(self, 'PathwayComponents'):
             #references linking target pathways to indication
-            colname = target_in_header + ' pathway components'
+            concept = target_in_header + ' pathway components'
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [with_effect_on_indication],
                   'boost_by_reltypes' : ['Regulation'],  # boosting with unknown effect Regulation
@@ -1185,7 +1222,9 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             # cloning session to avoid adding relations to self.Graph
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             how2connect = new_session.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = new_session.link2concept(colname,list(self.PathwayComponents),my_df,how2connect)
+            linked_row_count,_,my_df = new_session.link2concept(concept,list(self.PathwayComponents),my_df,how2connect)
+            
+            self._set_rank(concept)
             print('Linked %d indications to %s pathway components' % (linked_row_count,t_n))
             new_session.close_connection()
  
@@ -1268,7 +1307,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         t_n = self.target_names_str()
         
         request_name = f'Find indications modulated by {t_n} with unknown effect'
-        oql4indications,_ = self._oql4indications_type()
+        oql4indications,_ = self.oql4indications()
         OQLquery = f'SELECT Relation WHERE objectType = (Regulation,QuantitativeChange) AND Effect = unknown AND \
 NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
         to_return = self.process_oql(OQLquery,request_name)
