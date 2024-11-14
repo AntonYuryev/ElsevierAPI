@@ -32,8 +32,8 @@ class RefStats:
         self.APIconfig = APIconfig if APIconfig else load_api_config()
         self.AuthorSearch = AuthorSearch(self.APIconfig)
         self.Scopus = Scopus(self.APIconfig)
-        self.ETMsearch = ETMsearch(APIconfig,**kwargs)
-        self.SBSsearch = SBSapi(APIconfig,**kwargs)
+        self.ETMsearch = ETMsearch(self.APIconfig,**kwargs)
+        self.SBSsearch = SBSapi(self.APIconfig,**kwargs)
         self.ref_limit = kwargs.get('limit',5)
     
         self.abbrev2journal, self.journal2issn = medlineTA2issn() # {journal_title:"[issn_print,issn_online]}
