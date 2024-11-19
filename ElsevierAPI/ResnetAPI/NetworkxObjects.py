@@ -332,6 +332,26 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
         my_copy = self.copy()
         [my_copy.pop(p,'') for p in prop_names]
         return my_copy
+    
+
+class PSObjectEncoder(json.JSONEncoder):
+  def default(self, obj):
+    if isinstance(obj, PSObject):
+      obj['hook'] = 'PSObject'
+      obj_dict = {k:v for k,v in obj if not str(k).endswith('Id')}
+      return dict(obj_dict)  # Convert PSObject to a regular dictionary
+    return super().default(obj)  # Let the base class handle other types
+
+
+class PSObjectDecoder(json.JSONDecoder):
+  def __init__(self, *args, **kwargs):
+    json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
+
+  def object_hook(self, obj):
+    hook = obj.pop('hook','')
+    if hook == 'PSObject':
+      return PSObject(obj)
+    return obj
 
 
 class PSRelation(PSObject):
@@ -1149,3 +1169,4 @@ class PSRelation(PSObject):
       return dic,[x.todict(relname=relname) for x in my_refs] 
     else:
       return dic,[]
+    

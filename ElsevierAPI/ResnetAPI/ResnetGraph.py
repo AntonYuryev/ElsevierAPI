@@ -46,7 +46,7 @@ class ResnetGraph (nx.MultiDiGraph):
       return cp
 
   def load_urn_dicts(self):
-      self.urn2rel = {self.rel_urn(rel['relation']):rel['relation'] for r,t,rel in self.edges(data=True)}
+      self.urn2rel = {rel['relation'].urn():rel['relation'] for r,t,rel in self.edges(data=True)}
 
   @staticmethod
   def execution_time(execution_start):
@@ -123,7 +123,7 @@ class ResnetGraph (nx.MultiDiGraph):
       non-directional relations are duplicated in all possible directions\n
       use "__copy_rel" to move relation from one graph to another or to add nodes together with "rel"
       """
-      rel_urn = self.rel_urn(rel) # will raise error if nodes for relation do not exists in graph
+      rel_urn = rel.urn() # will raise error if nodes for relation do not exists in graph
       if merge:
           try:
               self.urn2rel[rel_urn] = self.urn2rel[rel_urn].merge_rel(rel)
@@ -866,7 +866,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def remove_relation(self, rel:PSRelation):
-      rel_urn = self.rel_urn(rel)
+      rel_urn = rel.urn()
       for pair in rel.get_regulators_targets():
           if self.has_edge(pair[0], pair[1], key=rel_urn):
               self.remove_edge(pair[0], pair[1], key=rel_urn)
@@ -1022,7 +1022,7 @@ class ResnetGraph (nx.MultiDiGraph):
       return PSObject(self.nodes[with_uid])
 
 
-  def _get_nodes(self, with_uids:list[int]=[]):
+  def _get_nodes(self, with_uids:list[int]=[])->list[PSObject]:
       '''
       output:
           [PSObject] for graph nodes with_uids
@@ -2071,7 +2071,7 @@ class ResnetGraph (nx.MultiDiGraph):
       xml_controls = et.SubElement(resnet, 'controls',attrib=None,nsmap=None)
       graph_relations = self._psrels()
       for rel in graph_relations:
-          control_id = self.rel_urn(rel)
+          control_id = rel.urn()
           xml_control = et.SubElement(xml_controls, 'control', {'local_id':control_id},nsmap=None)
           et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':str(rel[OBJECT_TYPE][0])},nsmap=None)
           
@@ -2079,15 +2079,13 @@ class ResnetGraph (nx.MultiDiGraph):
           if TARGETS in rel.Nodes:
               linktype4reg = 'in'
               for t in rel.Nodes[TARGETS]:
-                  target_local_id = self.nodes[t.uid()]['URN'][0]
-                  et.SubElement(xml_control, 'link', {'type': 'out', 'ref': target_local_id},nsmap=None)
+                  et.SubElement(xml_control, 'link', {'type': 'out', 'ref': t.urn()},nsmap=None)
           else:
               linktype4reg = 'in-out'
 
           for r in rel.Nodes[REGULATORS]:
               try:
-                  regulator_local_id = self.nodes[r.uid()]['URN'][0]
-                  et.SubElement(xml_control, 'link', {'type':linktype4reg, 'ref':regulator_local_id},nsmap=None)
+                  et.SubElement(xml_control, 'link', {'type':linktype4reg, 'ref':r.urn()},nsmap=None)
               except IndexError or KeyError:
                   continue
 
@@ -3973,6 +3971,23 @@ class ResnetGraph (nx.MultiDiGraph):
     #nodes_df.to_csv(save2dir+f'{self.name}Nodes.neo4j'+extension,sep=sep,index=False,quoting=csv.QUOTE_MINIMAL)
     relations_df.to_csv(save2dir+f'{self.name}Relations.neo4j'+extension,sep=sep,index=False,quoting=csv.QUOTE_MINIMAL)
 
+
+  def make_map(self,using_props:list, from_nodes:list=[]):
+    nodes = from_nodes if from_nodes else self._get_nodes()
+    mapdic = defaultdict(dict)
+    for n in nodes:
+      for prop in using_props:
+        try:
+          propvals = n.get_props([prop])
+          val_dic = {v:n for v in propvals}
+          try:
+            mapdic[n.objtype()][prop].update(val_dic)
+          except KeyError:
+            mapdic[n.objtype()].update({prop:val_dic})
+        except KeyError:
+            continue
+        
+    return dict(mapdic)
 
 '''
 class Regulome(ResnetGraph):

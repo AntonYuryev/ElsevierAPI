@@ -8,6 +8,7 @@ from datetime import timedelta
 from collections import defaultdict
 
 from .ZeepToNetworkx import PSNetworx, len
+from .NetworkxObjects import PSObjectEncoder,PSObjectDecoder
 from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,PSRelation
 from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
@@ -76,7 +77,8 @@ class APISession(PSNetworx):
                             'data_dir' : '',
                             'use_cache' : False,
                             'oql_queries' : [],
-                            'add2self':True
+                            'add2self':True,
+                            'connect2server':True
                             }
 
         ent_props = kwargs.pop('ent_props',[])
@@ -1434,36 +1436,37 @@ in {execution_time(process_start)}')
         execution time
         '''
         dump_start = time.time()
-        my_graph = graph.copy() if graph else self.Graph.copy()
         # making input graph copy to release it for multithreading
-        if my_graph:
-            my_graph = my_graph.remove_undirected_duplicates()
-            section_rels = set()
-            for r, t, e in my_graph.edges(data='relation'):
-                section_rels.add(e)
-                if len(section_rels) == self.resnet_size:
-                    resnet_section = my_graph.subgraph_by_rels(list(section_rels))
-                    rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-                    rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
-                    # dumps section
-                    self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
-                    resnet_section.clear_resnetgraph()
-                    section_rels.clear()
+        my_graph = graph.copy() if graph else self.Graph.copy()
         
-            # dumps leftover resnet_section with size < self.resnet_size
-            resnet_section = my_graph.subgraph_by_rels(list(section_rels))
-            rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-            rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
-            self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
+        if my_graph:
+          my_graph = my_graph.remove_undirected_duplicates()
+          section_rels = set()
+          for r,t,e in my_graph.edges(data='relation'):
+            section_rels.add(e)
+            if len(section_rels) == self.resnet_size:
+              resnet_section = my_graph.subgraph_by_rels(list(section_rels))
+              rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
+              rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+              # dumps section
+              self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
+              resnet_section.clear_resnetgraph()
+              section_rels.clear()
+      
+          # dumps leftover resnet_section with size < self.resnet_size
+          resnet_section = my_graph.subgraph_by_rels(list(section_rels))
+          rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
+          rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+          self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
 
-            if my_graph.number_of_edges() == 0:
-                rnef_str = my_graph.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-                rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
-                self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
+          if my_graph.number_of_edges() == 0:
+              rnef_str = my_graph.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
+              rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+              self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
 
-            if not self.no_mess:
-                print('RNEF dump of "%s" graph into %s folder was done in %s' % 
-                    (my_graph.name,to_folder,execution_time(dump_start)),flush=True)
+          if not self.no_mess:
+              print('RNEF dump of "%s" graph into %s folder was done in %s' % 
+                  (my_graph.name,to_folder,execution_time(dump_start)),flush=True)
                 
         return time.time()-dump_start
 
@@ -1887,7 +1890,7 @@ in {execution_time(process_start)}')
         graph_psobjs = graph.psobjs_with(map_by)
         obj_props = graph.node_props(map_by,graph_psobjs)
         my_session._props2psobj(list(obj_props),map_by,get_childs=False)
-        props2objs,uid2propval  = my_session.Graph.props2obj_dict([],map_by,case_insensitive=True)
+        props2objs,_  = my_session.Graph.props2obj_dict([],map_by,case_insensitive=True)
 
         return graph.remap_graph(props2objs,map_by)
     
@@ -1933,6 +1936,34 @@ in {execution_time(process_start)}')
                     e.shutdown()
         print(f'Retrieved protein-protein interaction network with {ppi_keeper.number_of_nodes()} nodes and {ppi_keeper.number_of_edges()} edges')
         return ppi_keeper
+    
+
+    def get_map(self,_4nodetypes:list,using_props:list,dump2file='mapfile')->dict[str,dict[str,dict[str:PSObject]]]:
+      '''
+      output:
+        {node_type:{prop:{val:PSObject}}}
+      '''
+      def make_dump_path(dump2file:str):
+        dump_path = os.path.join(self.data_dir,dump2file)
+        if dump_path[-5:] != '.json':
+          dump_path += '.json'
+        return dump_path
+      
+      dump_path = make_dump_path(dump2file)
+      try:
+        f = open(dump_path,'r')
+        print(f'Loading map from {dump_path}')
+        nodes  = json.load(f,cls=PSObjectDecoder)
+        nodes = [PSObject(n) for n in nodes]
+      except FileNotFoundError:
+        start = time.time()
+        session = self._clone_session()
+        session.entProps = using_props
+        oql = f'SELECT Entity WHERE objectType = ({_4nodetypes})'
+        nodes = session.process_oql(oql,f'Loading {_4nodetypes}')._get_nodes()
+        json.dump(nodes,open(dump_path,'w'),indent=2,cls=PSObjectEncoder)
+        print(f'Map was downloaded in {execution_time(start)}')
+      return self.Graph.make_map(using_props,nodes)
 
 
 def open_api_session(api_config_file='',what2retrieve=1) -> APISession:
