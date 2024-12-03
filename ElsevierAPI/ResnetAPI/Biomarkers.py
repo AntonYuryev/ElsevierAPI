@@ -132,7 +132,7 @@ class BiomarkerReport(SemanticSearch):
             self.Graph = self.Graph.filter_references(self.journal_filter)
             
 
-    def init_semantic_search (self, reset_pandas = False):
+    def init_semantic_search (self):
         not_biomarker_types = DISEASE_TYPES+['GeneticVariant']
         biomarkers = [PSObject(y) for x,y in self.Graph.nodes(data=True) if y['ObjTypeName'][0] not in not_biomarker_types]
         self.RefCountPandas = self.load_df(biomarkers,max_child_count=10)

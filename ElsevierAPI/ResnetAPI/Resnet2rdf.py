@@ -2,7 +2,7 @@ import rdflib as rdf
 from .ResnetGraph import ResnetGraph
 from .NetworkxObjects import PSObject,PSRelation,REFCOUNT
 from ..ETM_API.references import Reference,PS_REFIID_TYPES,RELEVANCE,TITLE,PUBYEAR,JOURNAL,LOINCID,THRESHOLD, hGRAPHID,EDMID
-import json
+import json,os
 from pyld import jsonld
 from urllib.parse import quote
 from itertools import combinations
@@ -16,13 +16,13 @@ REFID2PREFIX = {'PMID':'pubmed', 'DOI':'doi', 'PII':'pii', 'EMBASE':'embase',
                 'NCT ID':'clintrial', 'PUI':'embase'}
 REL_PROPS4RDF = ['BiomarkerType','ChangeType','Mechanism','PubTypes']
 SAMEAS2PREFIX = {LOINCID:'loinc', hGRAPHID:'edm', EDMID:'edm'}
-
+CONFIG_PATH = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI/rdf/ResnetRDFcontext.json')
 
 class ResnetRDF(rdf.Graph):
     pass
     def __init__(self):
         super().__init__()
-        context_dict = dict(json.load(open('ElsevierAPI/ResnetAPI/rdf/ResnetRDFcontext.json')))
+        context_dict = dict(json.load(open(CONFIG_PATH)))
         self.context = {k:rdf.Namespace(v) for k,v in context_dict.items()}
         [self.bind(k,v) for k,v in self.context.items()]
         self.resnet = ResnetGraph()
@@ -133,36 +133,35 @@ class ResnetRDF(rdf.Graph):
 
 
     def __obj_uri(self, obj:PSObject): 
-        try:
-            return self.__edm_uri(obj['EDM ID'][0])#rdf.Literal(self.__edm_uri(obj['EDM ID'][0]))
-        except KeyError:
-            return self.__resnet_uri(obj['URN'][0])
+      if EDMID in obj:
+        return self.__edm_uri(obj[EDMID][0])#rdf.Literal(self.__edm_uri(obj['EDM ID'][0]))
+      else:
+        return self.__resnet_uri(obj['URN'][0])
 
 
-    def __rel_uri(self, rel:PSRelation,resnet:ResnetGraph): 
-        rel_urn = resnet.rel_urn(rel)
+    def __rel_uri(self, rel:PSRelation): 
+        rel_urn = rel.urn()
         rel_uri = self.__resnet_uri(rel_urn)
         return rel_uri
  
 
-    def add_obj_prop(self,from_property:str,for_obj:PSObject,as_rdftype,
-                    using_namespace:rdf.Namespace=''):
-        obj_uri = self.__obj_uri(for_obj)
+    def add_obj_prop(self,from_property:str,for_obj:PSObject,as_rdftype,using_namespace:rdf.Namespace=''):
+      obj_uri = self.__obj_uri(for_obj)
 
-        if isinstance(using_namespace, rdf.Namespace):
-            try:
-                for prop_val in for_obj[from_property]:
-                    annotation = str(prop_val)
-                    self.add((obj_uri, as_rdftype, using_namespace[quote(annotation)]))
-                return
-            except KeyError: return
+      if isinstance(using_namespace, rdf.Namespace):
+        if from_property in for_obj:
+          for prop_val in for_obj[from_property]:
+              annotation = str(prop_val)
+              self.add((obj_uri, as_rdftype, using_namespace[quote(annotation)]))
+          return
+        else: return
 
-        try:
-            for prop_val in for_obj[from_property]:
-                annotation = str(prop_val)
-                self.add((obj_uri, as_rdftype, rdf.Literal(annotation)))
-                return
-        except KeyError: return
+      if from_property in for_obj:
+        for prop_val in for_obj[from_property]:
+          annotation = str(prop_val)
+          self.add((obj_uri, as_rdftype, rdf.Literal(annotation)))
+          return
+      else: return
 
 
     def add_maf(self, gv:PSObject):
@@ -209,7 +208,7 @@ class ResnetRDF(rdf.Graph):
         if isinstance(using_namespace,rdf.Namespace):
             try:
                 rel_prop = for_rel[from_property]
-                obj_uri = self.__rel_uri(for_rel,self.resnet)
+                obj_uri = self.__rel_uri(for_rel)
                 for prop_val in rel_prop:
                     annotation = str(prop_val)
                     self.add((obj_uri, as_rdftype, rdf.Literal(using_namespace[quote(annotation)])))
@@ -218,7 +217,7 @@ class ResnetRDF(rdf.Graph):
         
         try:
             rel_prop = for_rel[from_property]
-            obj_uri = self.__rel_uri(for_rel,self.resnet)
+            obj_uri = self.__rel_uri(for_rel)
             for prop_val in rel_prop:
                 annotation = str(prop_val)
                 self.add((obj_uri, as_rdftype, rdf.Literal(annotation)))
@@ -227,13 +226,13 @@ class ResnetRDF(rdf.Graph):
 
 
     def add_psrel(self,rel:PSRelation):
-        rel_uri = self.__rel_uri(rel,self.resnet)
+        rel_uri = self.__rel_uri(rel)
        # self.add_rel_prop('ObjTypeName',rel,rdf.RDF.type,resnet,self.context['resnet'])
         rel_obj_type = str(rel['ObjTypeName'][0])
         rel_obj_type = rel_obj_type+'Relation' if rel_obj_type[0].isupper() else rel_obj_type+'_relation'
         self.add((rel_uri, rdf.RDF.type, self.__resnet_uri(rel_obj_type)))
 
-        self.resnet.rel_name(rel)
+        rel.name()
         self.add_rel_prop('Name',rel,self.context['schema']['name'])
 
         ref_count = rel[REFCOUNT][0]
@@ -248,7 +247,7 @@ class ResnetRDF(rdf.Graph):
         rel.refs()
         
         rel_uri = self.add_psrel(rel)
-        self.add((rel_uri, rdf.RDF.predicate, self.__resnet_uri(rel['ObjTypeName'][0])))
+        self.add((rel_uri, rdf.RDF.predicate, self.__resnet_uri(rel.objtype())))
         self.add((rel_uri, self.make_uri('schema','description'), rdf.Literal(self.triple_description(regulators,rel,targets))))
 
         if targets:
@@ -271,7 +270,7 @@ class ResnetRDF(rdf.Graph):
 
     
     @staticmethod
-    def triple_description(regulators:list,rel:PSRelation,targets=[]):
+    def triple_description(regulators:list[PSObject],rel:PSRelation,targets:list[PSObject]=[]):
         rel_type = rel['ObjTypeName'][0]
 
         if rel_type == 'Biomarker': 
@@ -337,8 +336,8 @@ class ResnetRDF(rdf.Graph):
 
 
     def load_resnet(self):
-        for regulatorID,targetID,rel in self.resnet.edges.data('relation'):
-            self.add_triple(rel)
+      for regulatorID,targetID,rel in self.resnet.edges.data('relation'):
+        self.add_triple(rel)
 
             
 

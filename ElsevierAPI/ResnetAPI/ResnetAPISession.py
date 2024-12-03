@@ -9,7 +9,7 @@ from collections import defaultdict
 
 from .ZeepToNetworkx import PSNetworx, len
 from .NetworkxObjects import PSObjectEncoder,PSObjectDecoder
-from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,PSRelation
+from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,PSRelation,OBJECT_TYPE
 from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
@@ -1289,7 +1289,7 @@ in {execution_time(process_start)}')
 
 
     def __dump_base_name(self,folder_name:str):
-        return 'content of '+ APISession.filename4(folder_name)+'_'
+        return 'content_of_'+ APISession.filename4(folder_name)+'_'
 
 
     def __dumpfiles(self, in_folder:str,in2parent_folder='', root_folder='', with_extension='rnef'):
@@ -1305,9 +1305,9 @@ in {execution_time(process_start)}')
             with open(dump_file, 'rb') as f:  # Open in binary mode to avoid potential line ending issues
                 f.seek(-2, 2)  # Seek to the second-to-last byte (to handle newline variations)
                 while f.read(1) != b'\n':  # Move backward until a newline is found
-                    if not f.tell():
-                        break
-                    f.seek(-2, 1)
+                  if f.tell() < 2:
+                      break
+                  f.seek(-2, 1) # f.seek(-1, 1) does not work
                 last_line = f.readline().decode('utf-8').strip()  # Read and decode the last line
                 return "</batch>" == last_line  # Check if "</batch>" is present
         except FileNotFoundError:
@@ -1365,56 +1365,56 @@ in {execution_time(process_start)}')
     
 
     def rnefs2dump(self,rnef_xml:str,to_folder='',in2parent_folder='',root_folder='',
-        can_close=True,lock=None):
-        '''
-        # set can_close=False to continue dumping into last dump file
-        Dumps
-        -----
-        "rnef_xml" string into 'to_folder' inside 'in2parent_folder' located in "self.data_dir"
-        if size of dump file exceeds "max_rnef_size", "rnef_xml" is splitted into several RNEF files\n
-        dump RNEF files are named as: 'content of to_folder#', where # - dump file number
-        '''
-        if lock is None: lock = threading.Lock()
+      can_close=True,lock=None):
+      '''
+      # set can_close=False to continue dumping into last dump file
+      Dumps
+      -----
+      "rnef_xml" string into 'to_folder' inside 'in2parent_folder' located in "self.data_dir"
+      if size of dump file exceeds "max_rnef_size", "rnef_xml" is splitted into several RNEF files\n
+      dump RNEF files are named as: 'content of to_folder#', where # - dump file number
+      '''
+      if lock is None: lock = threading.Lock()
 
-        with lock:
-            write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder)
-            if Path(write2).exists():
-                file_size = os.path.getsize(write2)
-                if file_size < self.max_rnef_size:
-                    with open(write2,'a',encoding='utf-8') as f:
-                        f.write(rnef_xml)
-                        f.flush()
-                        if os.path.getsize(write2) > self.max_rnef_size and can_close:
-                            # need to create new dump file ASAP for next thread to write into it
-                            new_write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
-                            with open(new_write2,'w',encoding='utf-8') as new_f:
-                                new_f.write('<batch>\n')
-                                new_f.flush()
-                            f.write('</batch>')
-                        f.flush()
-                else:
-                    # file_size >= self.max_rnef_size
-                    if can_close:
-                        # need to create new dump file ASAP for next thread to write into it
-                        new_write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
-                        with open(new_write2,'w',encoding='utf-8') as new_f:
-                            new_f.write('<batch>\n')
-                            new_f.write(rnef_xml)
-                            new_f.flush()
+      with lock:
+        write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder)
+        if Path(write2).exists():
+          file_size = os.path.getsize(write2)
+          if file_size < self.max_rnef_size:
+            with open(write2,'a',encoding='utf-8') as f:
+              f.write(rnef_xml)
+              f.flush()
+              if os.path.getsize(write2) > self.max_rnef_size and can_close:
+                # need to create new dump file ASAP for next thread to write into it
+                new_write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
+                with open(new_write2,'w',encoding='utf-8') as new_f:
+                  new_f.write('<batch>\n')
+                  new_f.flush()
+                f.write('</batch>')
+              f.flush()
+          else:
+              # file_size >= self.max_rnef_size
+              if can_close:
+                  # need to create new dump file ASAP for next thread to write into it
+                  new_write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
+                  with open(new_write2,'w',encoding='utf-8') as new_f:
+                      new_f.write('<batch>\n')
+                      new_f.write(rnef_xml)
+                      new_f.flush()
 
-                        with open(write2,'a',encoding='utf-8') as f:
-                            f.write('</batch>')
-                            f.flush()
-                    else:
-                        with open(write2,'a',encoding='utf-8') as f:
-                            f.write(rnef_xml)
-                            f.flush()                        
-            else:
-                write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
-                with open(write2,'w',encoding='utf-8') as new_f:
-                    new_f.write('<batch>\n')
-                    new_f.write(rnef_xml)
-                    new_f.flush() 
+                  with open(write2,'a',encoding='utf-8') as f:
+                      f.write('</batch>')
+                      f.flush()
+              else:
+                  with open(write2,'a',encoding='utf-8') as f:
+                      f.write(rnef_xml)
+                      f.flush()                    
+        else:
+            write2 = self.__make_dumpfile_path(to_folder,in2parent_folder,root_folder,new=True)
+            with open(write2,'w',encoding='utf-8') as new_f:
+                new_f.write('<batch>\n')
+                new_f.write(rnef_xml)
+                new_f.flush()
 
 
     def _dump2rnef(self,graph=ResnetGraph(),to_folder='',in_parent_folder='',root_folder='',can_close=True,lock=None):
@@ -1442,7 +1442,7 @@ in {execution_time(process_start)}')
         if my_graph:
           my_graph = my_graph.remove_undirected_duplicates()
           section_rels = set()
-          for r,t,e in my_graph.edges(data='relation'):
+          for r,t,e in my_graph.iterate():
             section_rels.add(e)
             if len(section_rels) == self.resnet_size:
               resnet_section = my_graph.subgraph_by_rels(list(section_rels))
@@ -1649,17 +1649,17 @@ in {execution_time(process_start)}')
         return graph123_effect
 
 
-    def gv2gene(self,gv_dbids:list):
+    def gv2gene(self,GVs:list[PSObject])->dict[int,list[PSObject]]:
         """
-        Input
-        -----
-        list of GV ids
+        input: 
+          list of GVs
 
-        Returns
-        -------
-        {gv_id:[gene_names]}
+        output:
+          {gv_uid:[genes]} - where [genes] - list of PSObject linked to gv_uid by GeneticChange
+          adds GV2gene relations to self.Graph
         """
         prot2gvs_graph = ResnetGraph()
+        gv_dbids = ResnetGraph.dbids(GVs)
         print ('Finding genes for %d genetic variants' % len(gv_dbids))
         number_of_iterations = int(len(gv_dbids)/1000)+1
         for i in range(0, len(gv_dbids),1000):
@@ -1672,14 +1672,27 @@ in {execution_time(process_start)}')
                 prot2gvs_graph.add_graph(gvs)
 
         # making gvid2genes for subsequent annotation
-        gvid2genes = dict()
-        for gv_id, protein_id, rel in prot2gvs_graph.edges.data('relation'):
-            protein_node = prot2gvs_graph._psobj(protein_id)
-            gene_name = protein_node['Name'][0]
-            gvid2genes[gv_id].append(gene_name)
+        gvuid2genes = defaultdict(list)
+        for gv_node,protein_node,_ in prot2gvs_graph.iterate():
+            gvuid2genes[gv_node.uid()].append(protein_node)
 
-        return gvid2genes
+        return dict(gvuid2genes)
     
+
+    def annotate_gv_with_genes(self,graph_with_gvs=ResnetGraph()):
+      '''
+      output:
+        disease2gvs where GeneticVariant nodes are annotated with property "Gene" containg [PSObject]
+      '''
+      my_graph = graph_with_gvs if graph_with_gvs else self.Graph
+      GVs = my_graph._psobjs_with('GeneticVariant',OBJECT_TYPE)
+      gvuid2genes = self.gv2gene(GVs)
+      #gvuid2genes = {uid:{'Gene':genes} for uid,genes in gvuid2genes}
+      my_graph.set_node_attributes(gvuid2genes,name='Gene')
+      #[nx.set_node_attributes(my_graph, {gvuid:{'Gene':genes}}) for gvuid, genes in gvuid2genes.items()]
+      return my_graph
+
+
  
     def _props2psobj(self, propValues: list, search_by_properties=[], get_childs=True,
                              only_obj_types=[], add2self=True):
@@ -1941,7 +1954,7 @@ in {execution_time(process_start)}')
     def get_map(self,_4nodetypes:list,using_props:list,dump2file='mapfile')->dict[str,dict[str,dict[str:PSObject]]]:
       '''
       output:
-        {node_type:{prop:{val:PSObject}}}
+        {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
       '''
       def make_dump_path(dump2file:str):
         dump_path = os.path.join(self.data_dir,dump2file)

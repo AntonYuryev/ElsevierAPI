@@ -15,7 +15,7 @@ from typing import Optional
 from torch_geometric.data import HeteroData
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor,as_completed
-from ..utils import execution_time, execution_time2,str2str
+from ..utils import execution_time, execution_time2,str2str,unpack
 
 RESNET = 'resnet'
 PHYSICAL_INTERACTIONS = ['Binding','DirectRegulation','ProtModification','PromoterBinding','ChemicalReaction']
@@ -53,8 +53,19 @@ class ResnetGraph (nx.MultiDiGraph):
       return "{}".format(str(timedelta(seconds=time.time() - execution_start)))
 
 ###############    ADD ADD ADD    #############################
-  def property2node(self, node_id,prop_name:str,prop_values:list):
-      nx.function.set_node_attributes(self,{node_id:{prop_name:prop_values}})
+  def set_node_attributes(self,values,name):
+    nx.function.set_node_attributes(self,values,name)
+    for ruid,tuid,rel in self.edges.data('relation'):
+      if REGULATORS in rel.Nodes:
+        for i,reg in enumerate(rel.Nodes[REGULATORS]):
+          rel.Nodes[REGULATORS][i] = self._get_node(reg.uid())
+      if TARGETS in rel.Nodes:
+        for i,tar in enumerate(rel.Nodes[TARGETS]):
+          rel.Nodes[REGULATORS][i] = self._get_node(tar.uid())
+
+
+  def property2node(self, node_uid,prop_name:str,prop_values:list):
+      self.set_node_attributes(self,{node_uid:{prop_name:prop_values}})
 
 
   def copy_node_annotation(self, from_property:str, in_other:"ResnetGraph", as_propname=''):
@@ -142,6 +153,9 @@ class ResnetGraph (nx.MultiDiGraph):
       nodes connected by relation must exist in the graph.\n
       non-directional relations are duplicated in all possible directions\n
       """
+      rel_nodes = [x.regulators()+x.targets() for x in rels]
+      rel_nodes = unpack(rel_nodes)
+      self.add_psobjs(rel_nodes)
       if merge:
           existing_rels = set()
           new_rels = set()
@@ -150,7 +164,6 @@ class ResnetGraph (nx.MultiDiGraph):
           rels2add = set(existing_rels)|new_rels
       else:
           rels2add = rels
-
       # __add_rel will raise error if nodes for relation do not exists in graph
       [self.__add_rel(rel) for rel in rels2add]
       
@@ -616,7 +629,7 @@ class ResnetGraph (nx.MultiDiGraph):
       return all_textrefs
   
 
-  def bibliography(self,df_name:str,for_rel_types=list(),with_effect=list()):
+  def bibliography(self,df_name:str,for_rel_types=list(),with_effect=list())->df:
       '''
       Return
       ------
@@ -730,7 +743,7 @@ class ResnetGraph (nx.MultiDiGraph):
           header = ['Concept','Entity']    
   
       header += add_rel_props
-      header += [PS_CITATION_INDEX]+ref_sentence_props+ref_identifiers+ref_biblio_props+['Snippets']
+      header += [PS_CITATION_INDEX]+ref_sentence_props+ref_identifiers+ref_biblio_props #+['Snippets']
       
       annotated_refs = my_graph.citation_index()
       rows = list()
@@ -739,14 +752,14 @@ class ResnetGraph (nx.MultiDiGraph):
           target_name = my_graph.nodes[targetID]['Name'][0]
           assert(isinstance(rel,PSRelation))
           reltype = rel.objtype()
-          relname = my_graph.rel_name(rel)
+          relname = rel.name()
           releffect = rel.effect()
           for ref in rel.refs():
               id_type, identifier = ref.get_doc_id()
               try:
                   annotated_ref = annotated_refs[id_type+':'+identifier]
                   ref_citation_idex = str(annotated_ref[PS_CITATION_INDEX][0])
-                  ref_list = ref.to_list(ref_identifiers,True,ref_biblio_props,ref_sentence_props,True)
+                  ref_list = ref.to_list(ref_identifiers,False,ref_biblio_props,ref_sentence_props,True)
                   row = [regulator_name,my_graph.nodes[regulatorID][OBJECT_TYPE][0],target_name,my_graph.nodes[targetID][OBJECT_TYPE][0]] if add_nodetype else [regulator_name,target_name]
                   if add_rel_props:
                       row += [relname,reltype,releffect]
@@ -757,8 +770,14 @@ class ResnetGraph (nx.MultiDiGraph):
 
       snippet_df = df.from_rows(rows,header)
       snippet_df[PS_CITATION_INDEX] = snippet_df[PS_CITATION_INDEX].astype(int)
-      # PUBYEAR can have multiple values and cannot be int
       snippet_df = snippet_df.sortrows(['Concept','Entity',PS_CITATION_INDEX])
+
+      clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],
+                      ['25741868'],['26582918'],['28492532'],['24033266'],['18414213'],
+                      ['26467025'],['24728327']]
+      clinvar_hyperlinks = list(map(pubmed_hyperlink,clinvar_pmids))
+      snippet_df = snippet_df.remove_rows_by(clinvar_hyperlinks,'PMID')
+
       snippet_df._name_ = df_name
       snippet_df.set_hyperlink_color(ref_identifiers)
       return snippet_df
@@ -909,7 +928,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
       psobjs4norefs_rels = set(self._get_nodes(noduids4norefs_rels))
       norefs_graph = ResnetGraph()
-      norefs_graph.add_psobjs(psobjs4norefs_rels)
+      #norefs_graph.add_psobjs(psobjs4norefs_rels)
       norefs_graph.add_psrels(set(norefs_rels),merge=False)
 
       deleted_refcount = len(self.load_references()) - len(norefs_graph.load_references())
@@ -927,9 +946,9 @@ class ResnetGraph (nx.MultiDiGraph):
 
 ######################   GET GET GET   ######################################
   def iterate(self):
-      for r,t,rel in self.edges.data('relation'):
-          assert(isinstance(rel,PSRelation))
-          yield self._get_node(r), self._get_node(t), rel
+    for r,t,rel in self.edges.data('relation'):
+      assert(isinstance(rel,PSRelation))
+      yield self._get_node(r), self._get_node(t), rel
 
 
   def targets_of(self,n:PSObject):
@@ -1645,11 +1664,8 @@ class ResnetGraph (nx.MultiDiGraph):
       -------
       regulators = [PSObject], targets = [PSObject]
       """
-      regulators_ids = for_relation.regulator_uids()
-      regulators = [PSObject(o) for i,o in self.nodes(data=True) if i in regulators_ids]
-
-      target_ids = for_relation.target_uids()
-      targets = [PSObject(o) for i,o in self.nodes(data=True) if i in target_ids]
+      regulators = for_relation.regulators()
+      targets = for_relation.targets()
 
       if filter_by:
           search_in_properties = in_properties if in_properties else [OBJECT_TYPE]
@@ -2088,10 +2104,6 @@ class ResnetGraph (nx.MultiDiGraph):
                   et.SubElement(xml_control, 'link', {'type':linktype4reg, 'ref':r.urn()},nsmap=None)
               except IndexError or KeyError:
                   continue
-
-
-          
-
           # non-reference properties
           for prop_name, prop_values in rel.items():
               if _2b_printed(prop_name,rel_props):
@@ -2106,40 +2118,40 @@ class ResnetGraph (nx.MultiDiGraph):
           snippet_props = set(REFERENCE_PROPS).intersection(rel_props)
           print_snippets = True if not rel_props else True if snippet_props else False
           if print_snippets:
-              references = list(set(rel.refs()))
-              ref_index = 0
-              for ref in references:
-                  # each snippet has its own index in RNEF
-                  for textref, sentence_props in ref.snippets.items():
-                      et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)},nsmap=None)
-                      for sentprop_name, sentprop_values in sentence_props.items():
-                          if _2b_printed(sentprop_name,list(snippet_props)):
-                              for v in sentprop_values:
-                                  et.SubElement(xml_control, 'attr',{'name':str(sentprop_name), 'value':str(v), 'index':str(ref_index)},nsmap=None)
+            references = list(set(rel.refs()))
+            ref_index = 0
+            for ref in references:
+              # each snippet has its own index in RNEF
+              for textref, snippet in ref._snippets():
+                et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)},nsmap=None)
+                for sentprop_name, sentprop_values in snippet.items():
+                  if _2b_printed(sentprop_name,list(snippet_props)):
+                    v_str = ','.join(sentprop_values)
+                    et.SubElement(xml_control, 'attr',{'name':str(sentprop_name), 'value':str(v_str), 'index':str(ref_index)},nsmap=None)
 
-                      for prop_name, prop_values in ref.items():
-                          if _2b_printed(prop_name,list(snippet_props)):
-                              for prop_value in prop_values:
-                                  et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
-                          
-                      for ref_id_type,ref_id in ref.Identifiers.items():
-                          if _2b_printed(ref_id_type,list(snippet_props)):
-                              et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)},nsmap=None)
-                      ref_index+=1
+                for prop_name, prop_values in ref.items():
+                    if _2b_printed(prop_name,list(snippet_props)):
+                        for prop_value in prop_values:
+                            et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
+                    
+                for ref_id_type,ref_id in ref.Identifiers.items():
+                    if _2b_printed(ref_id_type,list(snippet_props)):
+                        et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)},nsmap=None)
+                ref_index+=1
 
-                  if not ref.snippets:
-                      textref = ref._make_textref()
-                      et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)},nsmap=None)
-                      for prop_name, prop_values in ref.items():
-                          if prop_name in snippet_props:
-                              for prop_value in prop_values:
-                                  et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
-                          
-                      for ref_id_type,ref_id in ref.Identifiers.items():
-                          if ref_id_type in snippet_props:
-                              et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)},nsmap=None)
+              if not ref.snippets:
+                  textref = ref._make_textref()
+                  et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)},nsmap=None)
+                  for prop_name, prop_values in ref.items():
+                      if prop_name in snippet_props:
+                          for prop_value in prop_values:
+                              et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
                       
-                      
+                  for ref_id_type,ref_id in ref.Identifiers.items():
+                      if ref_id_type in snippet_props:
+                          et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)},nsmap=None)
+                  
+                    
   def to_rnefstr(self,ent_props:list,rel_props:list,add_rel_props:dict={},add_pathway_props:dict={},delete_nodes=False):
       resnet_attr = {'refonly':'true'} if delete_nodes else None
       resnet = et.Element('resnet',resnet_attr,nsmap=None)
@@ -2415,7 +2427,7 @@ class ResnetGraph (nx.MultiDiGraph):
           g = ResnetGraph()
           nodes,rels = g.__read_rnef(rnef_file,prop2values,only_relprops,no_mess,only4objs,on_both_ends)
           g.name = f'from {rnef_file}'
-          g.add_psobjs(nodes,merge)
+          #g.add_psobjs(nodes,merge)
           g.add_psrels(rels,merge)
 
           if not no_mess:
@@ -2442,7 +2454,7 @@ class ResnetGraph (nx.MultiDiGraph):
           [futures.append(e.submit(combo_g.__read_rnef,f,prop2values,only_relprops,True)) for f in flist]
           for f in as_completed(futures):
               nodes,rels = f.result()
-              combo_g.add_psobjs(nodes,merge)
+              #combo_g.add_psobjs(nodes,merge)
               combo_g.add_psrels(rels,merge)
           e.shutdown()    
       return combo_g
@@ -2747,7 +2759,7 @@ class ResnetGraph (nx.MultiDiGraph):
               rels2add.add(rel)
 
       unique2self = ResnetGraph()
-      unique2self.add_psobjs(nodes2add)
+      #unique2self.add_psobjs(nodes2add)
       unique2self.add_psrels(rels2add)
       return unique2self
 
@@ -3192,7 +3204,7 @@ class ResnetGraph (nx.MultiDiGraph):
       subgraph = ResnetGraph()
       if node_uids:
           rel_nodes = self._get_nodes(node_uids)
-          subgraph.add_psobjs(set(rel_nodes),merge=False)
+          subgraph.add_psobjs(set(rel_nodes),merge=False) # has to add original objects from self 
           subgraph.add_psrels(set(rels),merge=False)
 
       return subgraph
@@ -3204,20 +3216,17 @@ class ResnetGraph (nx.MultiDiGraph):
       ------
       if "search_values" is empty returns subgraph with all relations annotated by "in_properties"
       '''
-      search_value_set = set(search_values)
+      search_value_dict = {p:search_values for p in in_properties}
       my_rels = set()
       if search_values:
-          for prop_type in in_properties:
-              for n1, n2, rel in self.edges.data('relation'):
-                  assert(isinstance(rel,PSRelation))
-                  if rel.has_value_in(search_value_set):
-                      my_rels.add(rel)
+          for n1, n2, rel in self.iterate():
+            if rel.has_value_in(search_value_dict):
+                my_rels.add(rel)
       else:
-          for prop_name in in_properties:
-              for n1, n2, rel in self.edges.data('relation'):
-                  assert(isinstance(rel,PSRelation))
-                  if rel.has_properties({prop_name}):
-                      my_rels.add(rel)
+        for prop_name in in_properties:
+          for n1, n2, rel in self.iterate():
+            if rel.has_properties({prop_name}):
+                my_rels.add(rel)
 
       print(f'Select subgraph with {len(my_rels)} relations with {in_properties} from graph with {self.number_of_edges()} edges')
       return self.subgraph_by_rels(list(my_rels))
@@ -3620,7 +3629,7 @@ class ResnetGraph (nx.MultiDiGraph):
               unmapped_nodes.add(graph_node)
 
       mapped_graph = ResnetGraph()
-      mapped_graph.add_psobjs(remapped_nodes|unmapped_nodes,merge=False)
+      #mapped_graph.add_psobjs(remapped_nodes|unmapped_nodes,merge=False)
       mapped_graph.add_psrels(set(self.__remap_rels(uid_remap)))
       return mapped_graph, unmapped_nodes
   
@@ -3645,7 +3654,7 @@ class ResnetGraph (nx.MultiDiGraph):
       [uid_remap[p[0].uid()].append(p[1].uid()) for p in psobj_pairs]
 
       replaced_graph = ResnetGraph()
-      replaced_graph.add_psobjs(new_graph_nodes,merge=False)
+      #replaced_graph.add_psobjs(new_graph_nodes,merge=False)
       replaced_graph.add_psrels(set(self.__remap_rels(dict(uid_remap))))
       print(f'Replaced {len(psobj_pairs)} node pairs')
       return replaced_graph, replaced_graph.neighborhood(new_nodes)
@@ -3934,8 +3943,11 @@ class ResnetGraph (nx.MultiDiGraph):
       reldic,_ = rel.todict()
       reldic.pop(REFCOUNT)
       reldic = str2str(reldic)
-      reldic[':START_ID'] = r.urn()
-      reldic[':END_ID'] = t.urn()
+      r_urn = r.urn()
+      t_urn = t.urn()
+      reldic[':START_ID'] = r_urn
+      reldic[':END_ID'] = t_urn
+      reldic['Name'] = relname
       rel_rows.append(reldic)
 
       refset = {'URN':refset_id,
@@ -3946,12 +3958,20 @@ class ResnetGraph (nx.MultiDiGraph):
       
       refsets.append(refset)
       for ref in rel.refs():
-        refrel = {':START_ID':ref.doi_id(),':END_ID':refset_id, OBJECT_TYPE:'BelongsTo'}
+        ref_id = ref.doi_id()
+        refrel_urn = f'urn:els-BelongsTo:in-out:{ref_id}:in:{refset_id}'
+        refrel_name = f'{ref_id}---BelongTo--->{relname}'
+        refrel = {':START_ID':ref_id,':END_ID':refset_id, OBJECT_TYPE:'BelongsTo','URN':refrel_urn,'Name':refrel_name}
         rel_rows.append(refrel)
 
       reltype = rel.objtype()
-      refset_rel1 = {':START_ID':r.urn(), ':END_ID':refset_id, OBJECT_TYPE:reltype}
-      refset_rel2 = {':START_ID':refset_id, ':END_ID':t.urn(), OBJECT_TYPE:reltype}
+      urn1 = f'urn:els-{reltype}:in-out:{r_urn}:in:{relname}'
+      name1 = f'{r_urn}----{reltype}--->{relname}'
+      refset_rel1 = {':START_ID':r.urn(), ':END_ID':refset_id, OBJECT_TYPE:reltype,'URN':urn1,'Name':name1}
+      
+      urn2 = f'urn:els-{reltype}:in-out:{relname}:in:{t_urn}'
+      name2 = f'{relname}----{reltype}--->{t_urn}'
+      refset_rel2 = {':START_ID':refset_id, ':END_ID':t.urn(), OBJECT_TYPE:reltype,'URN':urn2,'Name':name2}
       rel_rows += [refset_rel1,refset_rel2]
 
     refset_df = df(refsets)
@@ -3972,14 +3992,19 @@ class ResnetGraph (nx.MultiDiGraph):
     relations_df.to_csv(save2dir+f'{self.name}Relations.neo4j'+extension,sep=sep,index=False,quoting=csv.QUOTE_MINIMAL)
 
 
-  def make_map(self,using_props:list, from_nodes:list=[]):
+  def make_map(self,using_props:list, from_nodes:list=[])->dict[str,dict[str,dict[str,PSObject]]]:
+    '''
+    output:
+      {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
+    '''
     nodes = from_nodes if from_nodes else self._get_nodes()
     mapdic = defaultdict(dict)
     for n in nodes:
       for prop in using_props:
         try:
-          propvals = n.get_props([prop])
-          val_dic = {v:n for v in propvals}
+          vals = n.get_props([prop])
+          vals = [x.lower() for x in vals]
+          val_dic = {v:n for v in vals}
           try:
             mapdic[n.objtype()][prop].update(val_dic)
           except KeyError:

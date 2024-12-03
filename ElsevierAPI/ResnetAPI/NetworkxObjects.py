@@ -2,7 +2,7 @@ import re,json,itertools,pickle,hashlib,math
 from datetime import datetime
 from collections import defaultdict
 
-from ..ETM_API.references import Reference, len, reflist2dict
+from ..ETM_API.references import Reference, len, reflist2dict,pubmed_hyperlink,make_hyperlink,pmc_hyperlink
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
 from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR,SENTENCE,TITLE
 
@@ -225,6 +225,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
             my_copy['URN'] = other['URN']
             my_copy['Name'] = other['Name']
             my_copy['ObjTypeName'] = other['ObjTypeName']
+        del other
         return my_copy
         
 
@@ -465,7 +466,7 @@ class PSRelation(PSObject):
       return has_props
   
 
-  def has_value_in(self,prop2values:dict,case_sensitive=False):
+  def has_value_in(self,prop2values:dict[str,list],case_sensitive=False):
       has_values = super().has_value_in(prop2values,case_sensitive)
       if not has_values:
           for ref in self.refs():
@@ -532,7 +533,8 @@ class PSRelation(PSObject):
           identifier = ref.Identifiers[id_type]
           id_str = ref.identifiers_str(id_type,identifier)
           try:
-            ref_dict[id_str]._merge(ref)
+            if ref != ref_dict[id_str]:
+              ref_dict[id_str]._merge(ref)
             was_merged = True
           except KeyError:
               continue
@@ -553,32 +555,6 @@ class PSRelation(PSObject):
       newrel._add_refs(newrefs)
       return newrel
       
-  '''
-  def __load_refs(self):
-      
-      Input
-      value of "with_id_type" must be from references.PS_REFIID_TYPES
-      "sort_by" value must be one of keys in Reference. Defaults to PUBYEAR
-
-      Return
-      -------
-      [Reference] sorted by "sort_by" in the order="reverse"
-      if max_refcount > 0 returns only first max_refcount references
-      self.load_refdict()
-      return self.__refDict2refs()
-
-
-  def refs(self,ref_limit=0) -> list[Reference]:
-      Return
-      -------
-      self.references sorted by PUBYEAR in descending order\n
-      loads self.RefDict from self.PropSetToProps and self.references from self.RefDict if necessary
-      if not self.references:
-          self.references = list(self.__load_refs())
-
-      return self.references[:ref_limit] if ref_limit else self.references
-  '''
-
 
   def _1st_ref(self):
       '''
@@ -636,36 +612,37 @@ class PSRelation(PSObject):
   
 
   def merge_rel(self, other:'PSRelation'):
-      '''
-      does not copy other.Nodes
-      '''
-      my_copy = self.copy()
-      my_copy.merge_obj(other)
-      my_copy._add_refs(other.__load_refs())
-      return my_copy
+    '''
+    does not copy other.Nodes
+    '''
+    my_copy = self.copy()
+    my_copy.merge_obj(other)
+    my_copy._add_refs(other.refs())
+    del other
+    return my_copy
 
   
   def number_of_snippets(self):
-      return sum([ref.number_of_snippets() for ref in self.refs()])
+    return sum([ref.number_of_snippets() for ref in self.refs()])
       
 
   def textrefs(self):
-      my_refs = self.refs()
-      return sum([r.textrefs() for r in my_refs],[])
+    my_refs = self.refs()
+    return sum([r.textrefs() for r in my_refs],[])
 
 
   def rel2psobj(self):
-      '''
-      Return
-      ------
-      PSObject with properties added from self\n
-      rel.references are added to self['references'] attribute
-      '''
-      new_psobj = PSObject(self)
-      new_psobj['references'] = self.refs()
-      return new_psobj
+    '''
+    Return
+    ------
+    PSObject with properties added from self\n
+    rel.references are added to self['references'] attribute
+    '''
+    new_psobj = PSObject(self)
+    new_psobj['references'] = self.refs()
+    return new_psobj
 
-      
+
   def copy(self):
       my_copy = PSRelation(self)
       my_copy.PropSetToProps = self.PropSetToProps.copy()
@@ -685,7 +662,8 @@ class PSRelation(PSObject):
       my_copy.references.clear()
       for ref in self.references:
           new_ref = ref.remove_props(prop_names)
-          my_copy.references.append(new_ref)
+          if new_ref:
+            my_copy.references.append(new_ref)
       
       return my_copy
   
@@ -726,20 +704,18 @@ class PSRelation(PSObject):
 
 
   def _prop2str(self, prop_id, cell_sep:str =';'):
-      try:
+      if prop_id in self:
           return cell_sep.join(list(map(str, self[prop_id])))
-      except (IndexError,KeyError):
-          prop_set_values = []
-          for prop in self.PropSetToProps.values():
-              try:
-                  prop_set_values.append(cell_sep.join(list(map(str, prop[prop_id]))))
-              except (IndexError,KeyError):
-                  continue
+      else:
+          prop_set_values = set()
+          for ref in self.refs():
+            prop_set_values.update(ref.get_values(prop_id))
           
           to_return = cell_sep.join(prop_set_values)
           if prop_id in [SENTENCE,TITLE]:
               to_return = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', to_return)
           return to_return
+          
 
 
   def props2dict(self, prop_ids:list,cell_sep:str =';'):
@@ -1018,6 +994,13 @@ class PSRelation(PSObject):
           return self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
 
 
+  def regulators(self):
+    return self.Nodes[REGULATORS] if REGULATORS in self.Nodes.keys() else []
+      
+  def targets(self):
+    return self.Nodes[TARGETS] if TARGETS in self.Nodes.keys() else []
+      
+
   def get_regulators_targets(self)->list[tuple[int,int]]:
       """
       Returns
@@ -1170,3 +1153,30 @@ class PSRelation(PSObject):
     else:
       return dic,[]
     
+
+  def hyperlinked_refcount(self,reflimit:int=10):
+    last_refs = self.refs(ref_limit=reflimit)
+    rel_pmids = list()
+    rel_dois = list()
+    rel_pmcids = list()
+    for ref in last_refs:
+      id_type, identifier = ref.get_doc_id()
+      if id_type == 'PMID':
+        if identifier not in rel_pmids:
+          rel_pmids.append(identifier)
+      elif id_type == 'DOI':
+        if identifier not in rel_dois:
+          rel_dois.append(identifier)
+      elif id_type == 'PMC':
+        if identifier not in rel_pmcids:
+          rel_pmcids.append(identifier)
+  
+    refcount = self.count_refs()
+    if rel_pmids:
+      return pubmed_hyperlink(list(rel_pmids),str(refcount)),refcount
+    elif rel_dois:
+      return make_hyperlink(rel_dois[0],'http://dx.doi.org/',str(refcount)),refcount
+    elif rel_pmcids:
+      return pmc_hyperlink(rel_pmcids,str(refcount)),refcount
+    else:
+      return '',refcount
