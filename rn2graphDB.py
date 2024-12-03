@@ -25,7 +25,7 @@ if __name__ == "__main__":
   
   if args.db == 'neptune':
     csv_kwargs['sep'] = ','
-    csv_kwargs.update({'quotechar':'"','quoting':csv.QUOTE_NONNUMERIC})
+    csv_kwargs.update({'quotechar':'"','quoting':csv.QUOTE_NONNUMERIC,'index':True})
     ext = '.csv'
 
   refset_file = os.path.join(args.outdir,dump_name+f'.RefSets.{args.db}'+ext)
