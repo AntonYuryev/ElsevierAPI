@@ -57,7 +57,7 @@ if __name__ == "__main__":
       G.clear_resnetgraph()
    
   nodes_df = df([str2str(o) for o in all_nodes])
-  nodes_df.to_csv(nodes_file,**csv_kwargs, mode='w',path_or_buf=nodes_file)
+  nodes_df.to_csv(**csv_kwargs, mode='w',path_or_buf=nodes_file)
 
   all_refs = list(set(all_refs.values()))
   refs_df = df([str2str(o) for o in all_refs])
