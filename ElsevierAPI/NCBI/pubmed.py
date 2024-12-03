@@ -10,7 +10,7 @@ PUBMED_URL = 'https://pubmed.ncbi.nlm.nih.gov/?'
 PMC_URL = 'https://www.ncbi.nlm.nih.gov/pmc/?'
 DOI_URL = 'http://dx.doi.org/'
 RETMAX = 10000
-NCBI_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__ncbicache__/')
+NCBI_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__ncbipubmedcache__/')
 #query = ['Aquilegia OR Arabidopsis OR Hordeum OR Brassica OR Theobroma OR Phaseolus OR Gossypium OR "Vitis vinifera" OR Mesembryanthemum OR Lactuca OR "Zea mays" OR Medicago OR "Nicotiana benthamiana" OR Allium OR Capsicum OR "Petunia hybrida" OR Pinus OR Strobus OR Solanum OR Oryza OR Secale OR "Sorghum bicolor" OR Picea OR Saccharum OR Helianthus OR Festuca OR Lycopersicon OR Triphysaria OR Triticum OR Populus OR anthocyanin OR "abscisic acid" OR brassinolide OR brassinosteroid OR brassinosteroids OR cytokinin OR cytokinins OR gibberellin OR gibberellins OR "gibberellic acid" OR "jasmonic acid" OR jasmonate OR jasmonates OR cultivar OR cultivars OR endosperm AND ((2021/08/07[PDat]:3019/12/31[PDat])','ArabidopsisUpdate']
 #query = ['(rice OR oryza OR sativa) AND (2021/08/07[PDat]:3019/12/31[PDat])','RiceUpdate']
 #query= ['(corn OR maize OR zea OR mays) AND (2021/08/07[PDat]:3019/12/31[PDat])','CornUpdate']
@@ -46,126 +46,137 @@ def removeThe(t:str):
     return t[4:] if t.startswith('The ') else t
 
 class NCBIeutils:
-    baseURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
-    cache_path = NCBI_CACHE
+  baseURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
+  
+  def __init__(self,query:str):
+      self.params = {'db':'pubmed','term':query}
+      self.journalCounter = defaultdict(int)
+      self.cache_path = NCBI_CACHE
+      self.query = query
+  
+  def _esearch_url(self,params:dict):
+      return self.baseURL+'esearch.fcgi?'+urllib.parse.urlencode(params)
+  
+  def _efetch_url(self,params:dict):
+      return self.baseURL+'efetch.fcgi?'+urllib.parse.urlencode(params)
+  
+  def mydb(self):
+      return self.params['db']
+  
+  def myquery(self):
+      return self.query[0]
+  
 
-    def __init__(self,query:str):
-        self.params = {'db':'pubmed','term':query}
-        self.journalCounter = defaultdict(int)
-    
-    def __esearch_url(self,params:dict):
-        return self.baseURL+'esearch.fcgi?'+urllib.parse.urlencode(params)
-    
-    def __efetch_url(self,params:dict):
-        return self.baseURL+'efetch.fcgi?'+urllib.parse.urlencode(params)
-    
-    def get_count(self):
-        count_param = dict(self.params)
-        count_param.update({'rettype':'count'})
-        my_url = self.__esearch_url(count_param)
-        req = urllib.request.Request(url=my_url)
-        response = ET.fromstring(urllib.request.urlopen(req).read())
-        return int(str(response.find('./Count').text))
-    
+  def get_count(self):
+    count_param = self.params = {'db':self.mydb(),'term':self.myquery()}
+    count_param.update({'rettype':'count'})
+    my_url = self._esearch_url(count_param)
+    req = urllib.request.Request(url=my_url)
+    response = ET.fromstring(urllib.request.urlopen(req).read())
+    return int(str(response.find('./Count').text))
+  
 
-    def __retmax_uids(self,params:dict):
-        '''
-        Return
-        ------
-        [PMIDs] with size < RETMAX sorted in ascending order
-        '''
-        my_params = dict(params)
-        my_params.update({'retstart':0,'retmax':RETMAX,'sort':'pub_date'})
-        my_url = self.__esearch_url(my_params)
-        req = urllib.request.Request(url=my_url)
-        response = ET.fromstring(urllib.request.urlopen(req).read())
-        ids = response.findall('./IdList/Id')
-        ids2return = [int(x.text) for x in ids]
-        # sort returns PMIDs list in descending order
-        reversed_list = []
-        [reversed_list.append(ids2return[i]) for i in range(len(ids2return) - 1, -1, -1)]
-        return reversed_list
-    
+  def _retmax_uids(self,params:dict={}):
+    '''
+    Return
+    ------
+    [PMIDs] with size < RETMAX sorted in ascending order
+    '''
+    my_params = {'db':self.mydb(),'term':self.myquery(),'retstart':0,'retmax':RETMAX,'sort':'pub_date'}
+    my_url = self._esearch_url(my_params)
+    req = urllib.request.Request(url=my_url)
+    xml_str = urllib.request.urlopen(req).read()
+    response = ET.fromstring(xml_str)
+    ids = response.findall('./IdList/Id')
+    ids2return = [int(x.text) for x in ids]
+    # sort returns PMIDs list in descending order
+    reversed_list = []
+    [reversed_list.append(ids2return[i]) for i in range(len(ids2return) - 1, -1, -1)]
+    return reversed_list
+  
 
-    def get_uids(self,query_name:str):
-        '''
-        Return
-        ------
-        List of PMIDs sorted by PDAT
-        '''
-        json_id_dump = query_name+'.json'
-        json_id_path = self.cache_path+json_id_dump
+  def get_uids(self,query_name:str):
+      '''
+      Return
+      ------
+      List of PMIDs sorted by PDAT
+      '''
+      json_id_dump = query_name+'.json'
+      json_id_path = self.cache_path+json_id_dump
 
-        def remove_duplicates(uids:list):
-            unique_ids = set()
-            to_return = list()
-            for id in uids:
-                if id not in unique_ids:
-                    to_return.append(id)
-                    unique_ids.add(id)
-            return to_return
-        
-        try:
-            all_pmids = json.load(open(json_id_path,'r'))
-            print('Loaded %d PMIDs from pmidlist.json' % len(all_pmids))
-            return all_pmids
-        except FileNotFoundError:
-            count = self.get_count()
-            all_ids = list()
-            if count > RETMAX:
-                current_year = datetime.date.today().year
-                for year in range(1965, current_year,1):
-                    year_params = dict(self.params)
-                    year_params['term'] += f' AND ({year}/01/01[PDat]:{year}/12/31[PDat])'
-                    all_ids += self.__retmax_uids(year_params)
-                    sleep(0.5) # 0.1 - too many requests
-                all_ids = remove_duplicates(all_ids)
-                json.dump(all_ids, open(json_id_path,'w'), indent = 2)
-                return all_ids
-            else:
-                return self.__retmax_uids(self.params)
+      def remove_duplicates(uids:list):
+        '''
+        keeps uids order in uids
+        '''
+        seen = set()
+        return [id for id in uids if id not in seen and not seen.add(id)]
+      
+      try:
+          all_ids = json.load(open(json_id_path,'r'))
+          print(f'Loaded {len(all_ids)} IDs from {json_id_dump}')
+          return all_ids
+      except FileNotFoundError:
+          count = self.get_count()
+          all_ids = list()
+          if count > RETMAX:
+              current_year = datetime.date.today().year
+              for year in range(1965, current_year,1):
+                  year_params = dict(self.params)
+                  year_params['term'] += f' AND ({year}/01/01[PDat]:{year}/12/31[PDat])'
+                  all_ids += self._retmax_uids(year_params)
+                  sleep(0.5) # 0.1 - too many requests
+              all_ids = remove_duplicates(all_ids)
+              json.dump(all_ids, open(json_id_path,'w'), indent = 2)
+              return all_ids
+          else:
+              return self._retmax_uids(self.params)
                     
 
-    def download_pubmed(self,query_name:str):
-        """
-        Output
-        ------
-        query_name.json: has list of pmids found by query\n
-        query_name.xml: pubmed abstracts
-        """
-        all_pmids = self.get_uids(query_name)
+  def fetch(self,query_name:str):
+    ids = self.get_uids(query_name)
+    params = {'db':self.params['db'],'rettype':'XML'}
+    stepSize = 200
+    for i in range(0, len(ids), stepSize):
+      ids = ','.join(str(s) for s in ids[i:i+stepSize])
+      params.update({'id':ids})
+      my_url = self._efetch_url(params)
+      req = urllib.request.Request(url=my_url)
+      xml_str = urllib.request.urlopen(req).read()
+      yield xml_str
 
-        #flushing content of "pumbed_results.xml"
-        fname = query_name+".xml"
-        fpath = self.cache_path+fname
-        open(fname, "w", encoding='utf-8').close()
-        result_counter = 0
-        with open(fpath, "a", encoding='utf-8') as file_result:
-            file_result.write('<PubmedArticleSet>\n')
-            params = {'db':'pubmed','rettype':'XML'}
-            stepSize = 200
-            for i in range(0, len(all_pmids), stepSize):
-                ids = ','.join(str(s) for s in all_pmids[i:i+stepSize])
-                params.update({'id':ids})
-                my_url = self.__efetch_url(params)
-                req = urllib.request.Request(url=my_url)
-                abstractTree = ET.fromstring(urllib.request.urlopen(req).read())
-                articles = abstractTree.findall('PubmedArticle')
-                result_counter += len(articles)
-                for article in articles:
-                    journal = str(article.find('MedlineCitation/Article/Journal/Title').text)
-                    jnames = normalize_journal(journal)
-                    for j in jnames:
-                        self.journalCounter[j] += 1
-                    file_result.write(ET.tostring(article, encoding="unicode"))
-            file_result.write('</PubmedArticleSet>\n')
-            print(f'Downloaded {result_counter} pubmed abstracts')
-            print(f'Downloaded abstracts are in "{fpath}"')
 
-            fstatpath = self.cache_path+fname+'_stats.tsv'
-            with open(fstatpath, "w", encoding='utf-8') as f:
-                [f.write(f'{k}\t{v}\n') for k,v in self.journalCounter.items()]
-            print(f'Statistics is in "{fstatpath}"')
+  def path2cache(self,query_name:str):
+      return self.cache_path+query_name+".xml"
+
+  def download_pubmed(self,query_name:str):
+      """
+      Output
+      ------
+      query_name.json: has list of pmids found by query\n
+      query_name.xml: pubmed abstracts
+      """
+      fpath = self.path2cache(query_name)
+      result_counter = 0
+      with open(fpath, "a", encoding='utf-8') as file_result:
+          file_result.write('<PubmedArticleSet>\n')
+          for xml_str in self.fetch(query_name):
+              abstractTree = ET.fromstring(xml_str)
+              articles = abstractTree.findall('PubmedArticle')
+              result_counter += len(articles)
+              for article in articles:
+                  journal = str(article.find('MedlineCitation/Article/Journal/Title').text)
+                  jnames = normalize_journal(journal)
+                  for j in jnames:
+                      self.journalCounter[j] += 1
+                  file_result.write(ET.tostring(article, encoding="unicode"))
+          file_result.write('</PubmedArticleSet>\n')
+          print(f'Downloaded {result_counter} pubmed abstracts')
+          print(f'Downloaded abstracts are in "{fpath}"')
+
+          fstatpath = os.path.join(self.cache_path,query_name+'_stats.tsv')
+          with open(fstatpath, "w", encoding='utf-8') as f:
+              [f.write(f'{k}\t{v}\n') for k,v in self.journalCounter.items()]
+          print(f'Statistics is in "{fstatpath}"')
 
 
 def pubmed_hyperlink(pmids:list,display_str='',as_excel_formula=True):
@@ -274,6 +285,6 @@ def medlineTA2issn()->tuple[dict[str,str],dict[str,str]]:
 
 
 if __name__ == "__main__":
-    ncbi = NCBIeutils(query[0])
-    ncbi.download_pubmed(query[1])
+  ncbi = NCBIeutils(query[0])
+  ncbi.download_pubmed(query[1])
 
