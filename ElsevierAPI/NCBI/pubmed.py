@@ -284,6 +284,28 @@ def medlineTA2issn()->tuple[dict[str,str],dict[str,str]]:
     return abbrev2journal, dict(journal2issns)
 
 
+def docid2pmid(docids:list[str]):
+  '''
+  input:
+    docids - homogeneous list of PMC or DOI 
+    only DOIs for PMC articles will produce valid response
+  '''
+  docid2pmid = dict()
+  idstr = ','.join(docids)
+  requesturl = 'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids='+idstr+'&format=json'
+  req = urllib.request.Request(url=requesturl)
+  response_dict = json.loads(urllib.request.urlopen(req).read())
+  for record in response_dict["records"]:
+    pmid = record['pmid']
+    pmcid = record['pmcid']
+    doi = record.get('doi','')
+    if doi in docids:
+      docid2pmid[doi] = pmid
+    else:
+      docid2pmid[pmcid] = pmid
+  return docid2pmid
+
+
 if __name__ == "__main__":
   ncbi = NCBIeutils(query[0])
   ncbi.download_pubmed(query[1])

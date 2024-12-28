@@ -2,16 +2,18 @@ import urllib.request, urllib.parse, os, time
 from lxml import etree as ET
 from urllib.error import HTTPError
 from time import sleep
-from ..utils import dir2flist, execution_time,pretty_xml,next_tag,dir2flist, all_tags,normalize,urn_encode
+from ..utils import dir2flist, execution_time,pretty_xml,next_tag,dir2flist,all_tags,urn_encode
 from ..ResnetAPI.NetworkxObjects import PSObject,PSRelation
 from ..ResnetAPI.ResnetGraph import ResnetGraph,Reference,TITLE,SENTENCE,OBJECT_TYPE
-from ..ResnetAPI.ResnetAPISession import APISession
+from ..ResnetAPI.ResnetAPIcache import APIcache
 from collections import defaultdict
 
 
 BASE_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
-CACHE_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__clinvarcache__/')
+CLINVAR_CACHE_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__clinvarcache__/')
 CLINVAR_CACHE_BASE = 'clinvar'
+CLINVAR_CLASSIFICATION = 'ClinVar classification'
+CLINVAR_RNEF_PROPS = ['Name','Alias','Experimental System',CLINVAR_CLASSIFICATION]
 
 class cvSNP(PSObject):
    def __init__(self,name:str,id:str,database='dbSNP'):
@@ -24,8 +26,8 @@ class cvSNP(PSObject):
 
 
 def cache_path(basename=CLINVAR_CACHE_BASE):
-    cache_files = dir2flist(CACHE_DIR,fnames_has=basename,file_ext='.xml')
-    return os.path.join(CACHE_DIR,CLINVAR_CACHE_BASE+str(len(cache_files))+'.xml')
+    cache_files = dir2flist(CLINVAR_CACHE_DIR,fnames_has=basename,file_ext='.xml')
+    return os.path.join(CLINVAR_CACHE_DIR,CLINVAR_CACHE_BASE+str(len(cache_files))+'.xml')
 
 
 def gv2SNP(gv:PSObject,rsid2SNP:dict[str,cvSNP]):
@@ -44,6 +46,7 @@ def rs2rcv(rsids:list):
     rsids_chunk = ','.join(s[2:] for s in rsids[i:i+stepSize])
     elink_params = {'id':rsids_chunk,'dbfrom':'snp','db':'clinvar'}
     req_l = urllib.request.Request(url=BASE_URL+'elink.fcgi?'+urllib.parse.urlencode(elink_params))
+    # https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?&db=clinvar&dbfrom=snp&id=
     response_l = urllib.request.urlopen(req_l).read()
     link2cv = ET.fromstring(response_l.strip())
     cvids = [e.text for e in link2cv.findall('LinkSet/LinkSetDb/Link/Id')]
@@ -52,6 +55,7 @@ def rs2rcv(rsids:list):
     cvids_chunk = ','.join(s for s in cvids[i:i+stepSize])
     efecth_params = {'db':'clinvar','id':cvids_chunk}
     req = urllib.request.Request(url=BASE_URL+'esummary.fcgi?'+urllib.parse.urlencode(efecth_params))
+    # https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?&db=clinvar&id=
     for attempt in range(1,11):
       try:
           response = urllib.request.urlopen(req).read()
@@ -69,50 +73,11 @@ def rs2rcv(rsids:list):
   return rcv_ids
 
 
-def cv_snps(rsids:list)->ResnetGraph:
-    """
-    input:
-        list of rs identifiers
+def parse_measure(measure:ET._Element,only_rsids=set())->tuple[PSObject,PSObject,set]:
+    '''
     output:
-        {snp_id:{allele:(allele_count, pop_size)}}, some {allele:(allele_count, pop_size)} may be empty
-    """
-    start = time.time()
-    
-    to_return,mapdic = __parse_dump(CACHE_DIR,rsids)
-    gvs = to_return._psobjs_with('GeneticVariant',OBJECT_TYPE)
-    rsids2download = list(set(rsids).difference(ResnetGraph.names(gvs)))
-    print(f'{len(rsids)-len(rsids2download)} records were found in clinvar cache')
-    rsids_len = len(rsids2download)
-    if rsids_len:
-      rcv_ids = list(rs2rcv(rsids2download))
-      if rcv_ids:
-        with open(cache_path(),'w',encoding='utf-8') as f:
-          f.write('<batch>')
-          params = {'db':'clinvar','rettype':'clinvarset'}
-          stepSize = 200
-          for i in range(0, len(rcv_ids), stepSize):
-            ids = ','.join(rcv_ids[i:i+stepSize])
-            params.update({'id':ids})
-            req = urllib.request.Request(url=BASE_URL+'efetch.fcgi?'+urllib.parse.urlencode(params))
-            for attempt in range(1,11):
-              try:
-                  response = urllib.request.urlopen(req).read()
-                  break
-              except HTTPError as e:
-                  print(f'Fetch EUtils attempt {attempt} failed with error {e}.  Will try again in 5 seconds')
-                  sleep(5)
-                  continue
-              
-            cvs = ET.fromstring(response.strip())
-            f.write(pretty_xml(ET.tostring(cvs),True))
-            chunk_G = xml2rn(cvs,mapdic,rsids2download)
-            to_return.add_graph(chunk_G)
-          f.write('</batch>')
-    print(f'Download was done in {execution_time(start)}')
-    return to_return
-    
-
-def parse_measure(measure:ET._Element):
+      gv,gene,molecular_consequences
+    '''
     gv = PSObject({OBJECT_TYPE:['GeneticVariant']})
     name_tag = measure.find('./Name')
     if name_tag is not None:
@@ -129,14 +94,17 @@ def parse_measure(measure:ET._Element):
     gv_ids = dict()
     gv_xrefs = measure.findall('./XRef')
     for xref in gv_xrefs:
-        db = xref.get('DB')
-        if db  == 'dbSNP':
-            rs = 'rs'+xref.get('ID')
-        else:
-            identifier = xref.get('ID')
-            gv.update_with_value(db +' ID',identifier)
-            gv_ids[db] = identifier
-      
+      db = xref.get('DB')
+      if db  == 'dbSNP':
+        rs = 'rs'+xref.get('ID')
+      else:
+        identifier = xref.get('ID')
+        gv.update_with_value(db +' ID',identifier)
+        gv_ids[db] = identifier
+    
+    if only_rsids and rs not in only_rsids:
+      return PSObject(),PSObject(),set()
+
     if not gv.name():
       if rs:
         gv.update_with_value('Name',rs)
@@ -170,14 +138,14 @@ def parse_measure(measure:ET._Element):
       gene_name = measured_relationship.find('./Symbol/ElementValue').text
       assert(isinstance(measured_relationship,ET._Element))
       if measured_relationship.get('Type','') == 'within single gene':
-          gene_xrefs = measured_relationship.findall('./XRef')
-          for xref in gene_xrefs:
-              assert(isinstance(xref,ET._Element))
-              db = xref.get('DB','')
-              if db == 'Gene':
-                  geneid = xref.get('ID')
-              else:
-                  gene_ids[db] = xref.get('ID')
+        gene_xrefs = measured_relationship.findall('./XRef')
+        for xref in gene_xrefs:
+          assert(isinstance(xref,ET._Element))
+          db = xref.get('DB','')
+          if db == 'Gene':
+            geneid = xref.get('ID')
+          else:
+            gene_ids[db] = xref.get('ID')
 
     if gene_name:
       gene = PSObject({'Name':[gene_name],OBJECT_TYPE:['Protein']})
@@ -233,134 +201,147 @@ def parse_trait(assertion:ET._Element):
 
         sentences = list()
         for elem in trait.findall('./AttributeSet/Attribute'):
-          if elem.get('Type') == 'public definition':
-            sentences.append(elem.text)
-          if elem.get('Type') == 'disease mechanism':
-            sentences.append(elem.text)
+          elem_type = elem.get('Type')
+          if elem_type in ['public definition','disease mechanism']:
+            s = elem.text
+            if s != 'not provided':
+              sentences.append(s)
 
-        return disease, sentences,list(traid_ids.keys())
+        return disease, sentences # disease has trait IDs
       else:
-       return PSObject(),[],[]
+       return PSObject(),[]
     else:
-      return PSObject(),[],[]
+      return PSObject(),[]
 
 
+def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject]]],only4rsids=set(),include_benign=False):
+  '''
+  input:
+    only4rsids - filter by dbSNP rs identifiers
+    mapdic - {OBJECT_TYPE:{propname:{provalue:PSObject}}}
+  output:
+    rel_fa:PSRelation = GV-FunctionalAssociation-Disease
+    rel_gc:PSRelation = GV-GeneticChange-Gene
+    where GV, Disease, Gene are mapped by mapdic
+  '''
+  gv = PSObject()
+  disease = PSObject()
+  gene = PSObject()
+  rel_fa = PSRelation()
+  rel_gc = PSRelation()
 
-def remap(n:PSObject,mapdic:dict[str,dict[str,dict[str:PSObject]]],map_by:list):
-  for prop in map_by:
-    try:
-      provals = n.get_props([prop])
-      for val in provals:
-        try:
-          v = val.lower()
-          db_obj = mapdic[n.objtype()][prop][v]
-          n['URN'] = [db_obj.urn()]
-          return True
-        except KeyError:
-            v = normalize(val)
-            try:
-              db_obj = mapdic[n.objtype()][prop][v]
-              n['URN'] = [db_obj.urn()]
-              return True
-            except KeyError:
-              continue
-    except KeyError:
-       continue
-  return False
+  title = ClinVarSet.find('./Title').text
+  assertion = ClinVarSet.find('.ReferenceClinVarAssertion')
+  
+  classifications = {x.text for x in assertion.findall('Classifications/GermlineClassification/Description')}
+  #ClinVar contains benign and unknown significancs SNPs that do not have disease associations
+  #Therefore gv2gene relations are added only if phenotypes exist for GV
+  # and gv germline_classification does not contain "benign"
+  if not include_benign:
+    for c in classifications:
+      if c in ['Benign','Likely benign','Uncertain significance']:
+        return rel_fa,rel_gc
 
+  measure_elem = assertion.find('./MeasureSet/Measure')
+  if measure_elem is None:
+    measure_elem = assertion.find('./GenotypeSet/MeasureSet/Measure')
+  gv,gene,molecular_consequences = parse_measure(measure_elem,only4rsids)
+  if not gv:
+    return rel_fa,rel_gc
+  
+  if classifications:
+    gv[CLINVAR_CLASSIFICATION] = list(classifications)
 
-def xml2rn(ClinVarResultSet:ET._Element, mapdic:dict, rsids:list):
-  all_rels = list()
-  for ClinVarSet in ClinVarResultSet.findall('ClinVarSet'):
-    title = ClinVarSet.find('./Title').text
-    assertion = ClinVarSet.find('.ReferenceClinVarAssertion')         
-
-    measure_elem = assertion.find('./MeasureSet/Measure')
-    if measure_elem is None:
-      measure_elem = assertion.find('./GenotypeSet/MeasureSet/Measure')
-    gv,gene,molecular_consequences = parse_measure(measure_elem)
-
-    if rsids and gv.name() not in rsids:continue 
-
-    method_elem = assertion.find('.ObservedIn/Method/MethodType')
-    method = '' if method_elem is None else method_elem.text
-    observed_data = assertion.find('.ObservedIn/ObservedData')
-    sentence = ''
-    if observed_data is None:
+  method_elem = assertion.find('.ObservedIn/Method/MethodType')
+  method = '' if method_elem is None else method_elem.text
+  observed_data = assertion.find('.ObservedIn/ObservedData')
+  sentence = ''
+  if observed_data is None:
+    gvdis_ref = Reference(TITLE,title)
+    gvgene_ref = Reference(TITLE,title)
+  else:
+    citation = observed_data.find('./Citation')
+    if citation is None:
       gvdis_ref = Reference(TITLE,title)
       gvgene_ref = Reference(TITLE,title)
     else:
-      citation = observed_data.find('./Citation')
-      if citation is None:
+      sentence = observed_data.find('./Attribute').text
+      if sentence == 'not provided':
+        sentence = ''
+      
+      pubmed_id = ''
+      ref_ids = dict()
+
+      for citation_id in citation.findall('./ID'):
+        citation_source = citation_id.get('Source')
+        if citation_source == 'PubMed':
+          pubmed_id = citation_id.text
+          break
+        else:
+          ref_ids[citation_source] = citation_id.text
+      if pubmed_id:
+        gvdis_ref = Reference('PMID',citation_id.text)
+        gvdis_ref.Identifiers.update(ref_ids)
+        gvgene_ref = Reference('PMID',citation_id.text)
+        gvdis_ref[TITLE] = [title]
+        gvgene_ref[TITLE] = [title]
+      elif ref_ids:
+        id_type,identifier = next(iter(ref_ids.items()))
+        gvdis_ref = Reference(id_type,identifier)
+        gvgene_ref = Reference(id_type,identifier)
+        gvdis_ref[TITLE] = [title]
+        gvgene_ref[TITLE] = [title]
+      else:
         gvdis_ref = Reference(TITLE,title)
         gvgene_ref = Reference(TITLE,title)
-      else:
-        sentence = observed_data.find('./Attribute').text
-        if sentence == 'not provided':
-          sentence = ''
-        
-        pubmed_id = ''
-        ref_ids = dict()
 
-        for citation_id in citation.findall('./ID'):
-          citation_source = citation_id.get('Source')
-          if citation_source == 'PubMed':
-            pubmed_id = citation_id.text
-            break
-          else:
-            ref_ids[citation_source] = citation_id.text
-        if pubmed_id:
-          gvdis_ref = Reference('PMID',citation_id.text)
-          gvdis_ref.Identifiers.update(ref_ids)
-          gvgene_ref = Reference('PMID',citation_id.text)
-        elif ref_ids:
-          id_type,identifier = next(iter(ref_ids.items()))
-          gvdis_ref = Reference(id_type,identifier)
-          gvgene_ref = Reference(id_type,identifier)
-        else:
-          gvdis_ref = Reference(TITLE,title)
-          gvgene_ref = Reference(TITLE,title)
+  disease,sentences = parse_trait(assertion)
+  if sentence:
+    sentences.append(sentence)
 
-    disease,sentences,db_ids = parse_trait(assertion)
+  if disease:
+    disease.remap(mapdic,['Name','Alias'])
+      
+    text_ref = gvdis_ref._make_textref()
+    gvd_snippet = dict()
     if sentence:
-      sentences.append(sentence)
+      gvd_snippet[SENTENCE] = set(sentences)
+    if method:
+      gvd_snippet['Experimental System'] = {method}
+    if gvd_snippet:
+      gvd_snippet['Source'] = {'ClinVar'}
+      gvdis_ref.add_snippet(text_ref,gvd_snippet)
+    refs = [gvdis_ref]
 
-    if disease:
-      remap(disease,mapdic,['Name','Alias'])
+    dict4rel_fa = defaultdict(list)
+    dict4rel_fa[OBJECT_TYPE].append('FunctionalAssociation')
+    rel_fa = PSRelation.make_rel(gv,disease,dict(dict4rel_fa),refs,is_directional=False)
 
-      gvdis_ref[TITLE] = [title]
-      text_ref = gvdis_ref._make_textref()
-      gvd_snippet = dict()
-      if sentence:
-        gvd_snippet[SENTENCE] = set(sentences)
-      if method:
-        gvd_snippet['Experimental System'] = {method}
-      if gvd_snippet:
-        gvd_snippet['Source'] = {'ClinVar'}
-        gvdis_ref.add_snippet(text_ref,gvd_snippet)
-      refs = [gvdis_ref]
+  if gene:
+    gene.remap(mapdic,['LocusLink ID','Name','Alias'])
+    mol_consequences = '. '.join(molecular_consequences)
+    if mol_consequences:
+      text_ref = gvgene_ref._make_textref()
+      gvg_snippet = dict()
+      gvg_snippet[SENTENCE] = {mol_consequences}
+      if gvg_snippet:
+        gvg_snippet['Source'] = {'ClinVar'}
+        gvgene_ref.add_snippet(text_ref,gvg_snippet)
 
-      dict4rel_fa = defaultdict(list)
-      dict4rel_fa[OBJECT_TYPE].append('FunctionalAssociation')
-      rel_fa = PSRelation.make_rel(gv,disease,dict(dict4rel_fa),refs,is_directional=False)
+    dict4rel_gc = defaultdict(list)
+    dict4rel_gc[OBJECT_TYPE].append('GeneticChange')
+    rel_gc = PSRelation.make_rel(gv,gene,dict(dict4rel_gc),[gvgene_ref],is_directional=True)
+  
+  return rel_fa,rel_gc
+
+   
+def rcv2rn(ClinVarResultSet:ET._Element, mapdic:dict[str,dict[str,dict[str,PSObject]]], only4rsids:list,include_benign=False):
+  all_rels = list()
+  for ClinVarSet in ClinVarResultSet.findall('ClinVarSet'):
+    rel_fa,rel_gc = rcv2psrels(ClinVarSet,mapdic,only4rsids,include_benign)
+    if rel_fa:
       all_rels.append(rel_fa)
-      #ClinVar contains benign and unknown significancs SNPs that do not have disease associations
-      #Therefore gv2gene relations are added only if phenotypes exist for GV
-      if gene:
-        remap(gene,mapdic,['LocusLink ID','Name','Alias'])
-
-        gvgene_ref[TITLE] = [title]
-        mol_consequences = '. '.join(molecular_consequences)
-        if mol_consequences:
-          gvg_snippet = dict()
-          gvg_snippet[SENTENCE] = {mol_consequences}
-          if gvg_snippet:
-            gvg_snippet['Source'] = {'ClinVar'}
-            gvgene_ref.add_snippet(text_ref,gvg_snippet)
-
-        dict4rel_gc = defaultdict(list)
-        dict4rel_gc[OBJECT_TYPE].append('GeneticChange')
-        rel_gc = PSRelation.make_rel(gv,gene,dict(dict4rel_gc),[gvgene_ref],is_directional=True)
+      if rel_gc:
         all_rels.append(rel_gc)
 
   clinvar_graph = ResnetGraph()
@@ -368,20 +349,65 @@ def xml2rn(ClinVarResultSet:ET._Element, mapdic:dict, rsids:list):
   return clinvar_graph
 
 
-def __parse_dump(dump_dir:str, rsids:list):
+def __rcvcache2rn(dump_dir:str,rsids:list,mapdic:dict[str, dict[str, dict[str, PSObject]]],include_benign=False):
+  '''
+    Reads ClinVar cache
+  '''
   listing = dir2flist(dump_dir,file_ext='xml')
   clinvar_graph = ResnetGraph()
-  ps_api = APISession(data_dir=CACHE_DIR,connect2server=False)
-  mapdic = ps_api.get_map(['Disease','Protein','GeneticVariant','CellProcess'],['Name','Alias','LocusLink ID'],'ClinVarmapfiles')
-  
   for dump in listing:
     for record in next_tag(dump,'ClinVarResult-Set'):
-      record_G = xml2rn(record,mapdic,rsids)
+      record_G = rcv2rn(record,mapdic,rsids,include_benign)
       clinvar_graph = clinvar_graph.compose(record_G)
 
   return clinvar_graph,mapdic
 
 
-def cv4genes(genes:list[PSObject]):
-  term = ' OR '.join([g.name()+'[gene]' for g in genes])
-  params = {'db':'clinvar','term':term}
+def downloadCV(_4rsids:list,mapdic:dict[str, dict[str, dict[str, PSObject]]],include_benign=False)->ResnetGraph:
+    """
+    input:
+        list of rs identifiers
+    output:
+        ResnetGraph::gene2gv2dis 
+    """
+    start = time.time()
+    gene2gv2dis,mapdic = __rcvcache2rn(CLINVAR_CACHE_DIR,_4rsids,mapdic,include_benign)
+    assert(isinstance(gene2gv2dis,ResnetGraph))
+
+    gvs = gene2gv2dis._psobjs_with('GeneticVariant',OBJECT_TYPE)
+    rsids2download = list(set(_4rsids).difference(ResnetGraph.names(gvs)))
+    print(f'{len(_4rsids)-len(rsids2download)} records were found in clinvar cache')
+    rsids_len = len(rsids2download)
+    if rsids_len:
+      rcv_ids = list(rs2rcv(rsids2download))
+      if rcv_ids:
+        with open(cache_path(),'w',encoding='utf-8') as f:
+          f.write('<batch>')
+          params = {'db':'clinvar','rettype':'clinvarset'}
+          stepSize = 200
+          for i in range(0, len(rcv_ids), stepSize):
+            ids = ','.join(rcv_ids[i:i+stepSize])
+            params.update({'id':ids})
+            req = urllib.request.Request(url=BASE_URL+'efetch.fcgi?'+urllib.parse.urlencode(params))
+            for attempt in range(1,11):
+              try:
+                response = urllib.request.urlopen(req).read()
+                break
+              except HTTPError as e:
+                print(f'Fetch EUtils attempt {attempt} failed with error {e}.  Will try again in 5 seconds')
+                sleep(5)
+                continue
+              
+            cvs = ET.fromstring(response.strip())
+            f.write(pretty_xml(ET.tostring(cvs),True))
+            chunk_G = rcv2rn(cvs,mapdic,rsids2download,include_benign)
+            gene2gv2dis.add_graph(chunk_G)
+          f.write('</batch>')
+    print(f'Download was done in {execution_time(start)}')
+    return gene2gv2dis
+
+
+def cv_entprops4rnef(gene2gv2dis:ResnetGraph):
+  diseases = gene2gv2dis._psobjs_with('Disease',OBJECT_TYPE)
+  disease_dbis = {p for d in diseases for p in d.keys() if p.endswith(' ID')}
+  return CLINVAR_RNEF_PROPS+list(disease_dbis)

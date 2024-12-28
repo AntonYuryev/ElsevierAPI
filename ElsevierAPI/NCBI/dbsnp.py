@@ -1,22 +1,30 @@
-import urllib.request, urllib.parse, os, time
+import urllib.request,urllib.parse,os,time
 from lxml import etree as ET
 from urllib.error import HTTPError
-from time import sleep
-from ..utils import dir2flist, execution_time,pretty_xml,next_tag,dir2flist
-from ..ResnetAPI.NetworkxObjects import PSObject
+from ..utils import dir2flist,execution_time,pretty_xml,next_tag,dir2flist,PCT
+from ..ETM_API.references import Reference,TITLE,SENTENCE,AUTHORS,PUBYEAR,JOURNAL
+from ..ResnetAPI.NetworkxObjects import PSRelation,OBJECT_TYPE
+from ..ResnetAPI.ResnetAPIcache import APIcache, PSObject, ResnetGraph
 
 BASE_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
 CACHE_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__snpcache__/')
 DBSNP_CACHE_BASE = 'dbsnp'
 
 class SNP(PSObject):
-   def __init__(self,name:str,id:str,database='dbSNP'):
-       super().__init__()
-       self.set_property('Name',name)
-       self.Idendifires = {database:id}
-       urn = 'urn:agi-gv-'+database.lower()+':'+id
-       self.set_property('URN',urn)
-       self.MAFs = dict() # 
+  def __init__(self,name:str,id:str,database='dbSNP'):
+    super().__init__()
+    self.set_property('Name',name)
+    self.Idendifires = {database:id}
+    urn = 'urn:agi-gv-'+database.lower()+':'+id
+    self.set_property('URN',urn)
+    self.MAFs = dict() # {allele:(allele_count, pop_size)}
+
+  def to_psobj(self):
+    psobj = PSObject(self)
+    [psobj.set_property(db+' ID',id) for db,id in self.Idendifires.items()]
+    alleles = str()
+    for allele, allele_count,pop_size in self.MAFs.items():
+      alleles += allele + f'({round(float(allele_count/pop_size),2)}'+PCT+')'
 
 
 def cache_path(basename=DBSNP_CACHE_BASE):
@@ -32,7 +40,7 @@ def gv2SNP(gv:PSObject,rsid2SNP:dict[str,SNP]):
     return SNP()
 
 
-def downloadSNP(rsids:list)->dict[str,SNP]:
+def downloadSNP(rsids:list,mapdic:dict[str, dict[str, dict[str, PSObject]]])->tuple[dict[str,SNP],ResnetGraph]:
     """
     input:
         list of rs identifiers
@@ -42,8 +50,7 @@ def downloadSNP(rsids:list)->dict[str,SNP]:
     stepSize = 200
     params = {'db':'snp'}
     start = time.time()
-    
-    id2snp = xmldir2SNP(CACHE_DIR,rsids)
+    id2snp,gvs2genes = xmldir2SNP(CACHE_DIR,mapdic,rsids)
     rsids2download = list(set(rsids).difference(id2snp.keys()))
     print(f'{len(rsids)-len(rsids2download)} SNPs were found in cache.')
     rsids_len = len(rsids2download)
@@ -62,17 +69,19 @@ def downloadSNP(rsids:list)->dict[str,SNP]:
                         break
                     except HTTPError as e:
                         print(f'Fetch EUtils attempt {attempt} failed with error {e}.  Will try again in 5 seconds')
-                        sleep(5)
+                        time.sleep(5)
                         continue
 
                 snps = ET.fromstring('<documents>'+response.decode().strip()+'</documents>')
                 f.write(pretty_xml(ET.tostring(snps),True))
-                id2snp.update(xml2SNP(snps))
+                id2snps, gvs2genes_rels = xml2SNP(snps,mapdic)
+                id2snp.update(id2snps)
+                gvs2genes += gvs2genes_rels
                 print(f'Downloaded {i+stepSize} SNPs out of {rsids_len}')
-                sleep(1)
+                time.sleep(1)
             f.write('</batch>')
     print(f'Download was done in {execution_time(start)}')
-    return id2snp
+    return id2snp, ResnetGraph.from_rels(gvs2genes)
     
 
 def dbsnp_hyperlink(rs_ids:list, as_count=True):
@@ -90,6 +99,10 @@ def dbsnp_hyperlink(rs_ids:list, as_count=True):
     
 
 def parseMAF(snp_record:ET._Element):
+    '''
+    output:
+      {allele:(allele_count, pop_size)}
+    '''
     alleles = dict() # {allele:(allele_count, pop_size)}
     for maf in snp_record.findall('./GLOBAL_MAFS/MAF'):
         #study = maf.find('STUDY').text
@@ -116,7 +129,11 @@ def parseMAF(snp_record:ET._Element):
     return to_return
 
 
-def parseGene(snp_record:ET._Element):
+def parseGene(snp_record:ET._Element)->list[tuple[str,str]]:
+    '''
+    output:
+      [(gene_name,gene_id)...]
+    '''
     genes = list() #[(gene_name, gene_id)]
     genes_elem = snp_record.find('./GENES')
     for gene in genes_elem.findall('GENE_E'):
@@ -129,63 +146,89 @@ def parseGene(snp_record:ET._Element):
 
 
 def parseFunction(snp_record:ET._Element):
-    fxns = list() #[(gene_name, gene_id)]
+    fxns = list() 
     for fxn in snp_record.findall('./FXN_CLASS'):
-        fxns += str(fxn.text).split(',')
+        fn = str(fxn.text)
+        if fn != 'None':
+          fxns += fn.split(',')
     return fxns
 
 
-def parseSNP(snp_record:ET._Element):
-    snp_id = 'rs'+snp_record.find('./SNP_ID').text
-    snp = SNP(snp_id,snp_id)
-    snp.MAFs = parseMAF(snp_record)
-    fxns = parseFunction(snp_record)
-    if fxns:
-        snp.update_with_list('Functional impact',fxns)
-    genes = parseGene(snp_record)
-    if genes:
-        snp.update_with_list('Genes',genes)
-    return snp
+def parseSNP(snpdocsum:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject]]])->tuple[SNP,list[PSRelation]]:
+  gv2genes = list() #[(gene_name, gene_id)]
+  snp_id = 'rs'+snpdocsum.find('./SNP_ID').text
+  snp = SNP(snp_id,snp_id)
+  snp.MAFs = parseMAF(snpdocsum)
+  fxns = parseFunction(snpdocsum)
+  if fxns:
+    snp.update_with_list('Functional impact',fxns)
+  genes = parseGene(snpdocsum)
+  if genes:
+    gv_psobj = snp.to_psobj()
+    snp.update_with_list('Genes',genes)
+    for gene_name,geneid in genes:
+      gene = PSObject({'URN':'urn:agi-llid:'+geneid,'Name':gene_name})
+      ref = Reference('PMID','11125122')
+      ref[TITLE] = ['dbSNP: the NCBI database of genetic variation']
+      ref[AUTHORS] = ['Sherry,S.T.;Ward,M.H.;Kholodov,M.;Baker,J.;Phan,L.;Smigielski,E.M.;Sirotkin,K']
+      ref[PUBYEAR] = ['2001']
+      ref[JOURNAL] = ['Nucleic Acids Res']
+      sentence = 'Record from dbSNP links this Genetic Variant (SNV) to the indicated gene.'
+      if fxns:
+        sentence = ','.join(fxns)+' '+sentence
+  
+      ref.add_sentence_prop(ref._make_textref,SENTENCE,sentence)
+      gv2gene = PSRelation.make_rel(gv_psobj,gene,{OBJECT_TYPE:'GeneticChange'},[ref])
+      gv2genes.append(gv2gene)
+
+  return snp, gv2genes
 
 
-def xml2SNP(snps:ET._Element,_4rsids:list=[])->dict[dict[str,str]]:
+def xml2SNP(doc_summaries:ET._Element,mapdic: dict[str, dict[str, dict[str, PSObject]]],_4rsids:list=[])->tuple[dict[str,SNP],list[PSRelation]]:
     id2snp = dict()
+    gvs2genes = list()
     if _4rsids:
-        for snp_record in snps.findall('./DocumentSummary'):
-            snp_id = snp_record.find('./SNP_ID')
-            if snp_id is not None:
-                snp_id = 'rs'+snp_record.find('./SNP_ID').text
-                if snp_id in _4rsids:
-                    snp = parseSNP(snp_record)
-                    id2snp[snp_id] = snp
+      for snp_record in doc_summaries.findall('./DocumentSummary'):
+          snp_id = snp_record.find('./SNP_ID')
+          if snp_id is not None:
+            snp_id = 'rs'+snp_record.find('./SNP_ID').text
+            if snp_id in _4rsids:
+              snp, gv2g = parseSNP(snp_record,mapdic)
+              gvs2genes += gv2g
+              id2snp[snp_id] = snp
     else:
-        for snp_record in snps.findall('./DocumentSummary'):
-            snp_id = snp_record.find('./SNP_ID').text
-            if snp_id is not None:
-                snp = parseSNP(snp_record)
-                id2snp[snp_id] = snp
+      for snp_record in doc_summaries.findall('./DocumentSummary'):
+        snp_id = snp_record.find('./SNP_ID').text
+        if snp_id is not None:
+          snp, gv2g = parseSNP(snp_record,mapdic)
+          gvs2genes += gv2g
+          id2snp[snp_id] = snp
                 
-    return id2snp
+    return id2snp,gvs2genes
 
 
-def xmlfile2SNP(fname:str,_4rsids:list=[]):
-    id2snp = dict()
-    print(f'Reading {fname} dbSNP dump file')
-    for snps in next_tag(fname,"documents"):
-        snp_dic = xml2SNP(snps,_4rsids)
-        id2snp.update(snp_dic)
+def xmlfile2SNP(fname:str,mapdic:dict[str, dict[str, dict[str, PSObject]]],_4rsids:list=[])->tuple[dict[dict[str,SNP]],list[PSRelation]]:
+  id2snp = dict()
+  gvs2genes = list()
+  print(f'Reading {fname} dbSNP dump file')
+  for snps in next_tag(fname,"documents"):
+      snp_dic,gv2gs = xml2SNP(snps,mapdic,_4rsids)
+      gvs2genes += gv2gs
+      id2snp.update(snp_dic)
 
-    print(f'Loaded frequencies for {len(id2snp)} SNPs')
-    return id2snp
+  print(f'Loaded frequencies for {len(id2snp)} SNPs')
+  return id2snp,gvs2genes
 
 
-def xmldir2SNP(dirname:str,_4rsids:list=[]):
+def xmldir2SNP(dirname:str,mapdic:dict[str, dict[str, dict[str, PSObject]]],_4rsids:list=[])->tuple[dict[dict[str,SNP]],list[PSRelation]]:
     id2snp = dict()
     listing = dir2flist(dirname,file_ext='xml')
+    gvs2genes = list()
     for fname in listing:
-        snp_dic = xmlfile2SNP(fname,_4rsids)
+        snp_dic,gv2gs = xmlfile2SNP(fname,mapdic,_4rsids)
         id2snp.update(snp_dic)
-    return id2snp
+        gvs2genes += gv2gs
+    return id2snp,gvs2genes
 
 
 def __minor_allele(allele2freq:dict):
