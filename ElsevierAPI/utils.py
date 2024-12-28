@@ -1,10 +1,11 @@
 
-import time,sys,os,json, requests
+import time,sys,os,json, requests,re,traceback
 from datetime import timedelta
 from xml.dom import minidom
 from urllib.parse import quote
 from requests.auth import HTTPBasicAuth
 from lxml import etree as et
+from concurrent.futures import ThreadPoolExecutor
 DEFAULT_CONFIG_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/')
 DEFAULT_APICONFIG = os.path.join(DEFAULT_CONFIG_DIR,'APIconfig.json')
 
@@ -80,6 +81,7 @@ def pretty_xml(xml_string:str, remove_declaration = False):
   xml_string must have xml declration
   '''
   pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
+  pretty_xml = "\n".join([line for line in pretty_xml.splitlines() if line.strip()])
   return pretty_xml[pretty_xml.find('\n')+1:] if remove_declaration else pretty_xml
 
 
@@ -204,6 +206,30 @@ def greek2english(text:str):
     text = text.replace(symbol, spelling)
   return text
 
+
+def normalize(s:str):
+  text = greek2english(s)
+  text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)  # Remove non-alphanumeric characters
+  text = text.replace('  ',' ')
+  return text
+
+
+def tokenize(s:str):
+  text = normalize(s)
+  tokens = text.lower().split()  # Split into words and convert to lowercase
+  return tokens
+
+
+def match_tokens(tokens1:list,tokens2:list):
+  if len(tokens1) == len(tokens2):
+    for i, token1 in enumerate(tokens1):
+      if token1 != tokens2[1]:
+          return False
+    return True
+  else:
+      return False
+
+
 def get_auth_token(**kwargs):
     """
     kwargs:
@@ -242,6 +268,40 @@ def get_auth_token(**kwargs):
     body = json.loads(response.read())
     '''
     return {"Authorization": "Bearer " + token}, time.time()
+
+def print_error_info(x:Exception,thread_name =''):
+  exc_type, exc_value, exc_traceback = sys.exc_info()
+  traceback_list = traceback.extract_tb(exc_traceback)
+  error_message = f'{thread_name} thread has finished with error "{x}":'
+  for tb_info in traceback_list:
+    filename = tb_info.filename
+    module_name = tb_info.name
+    line_number = tb_info.lineno
+    error_message += f"  - File: {filename}, Function: {module_name}, Line: {line_number}\n"
+  print(error_message)
+
+
+def run_tasks(tasks:list):
+  '''
+  Executes a list of tasks concurrently using ThreadPoolExecutor
+  Args:
+    tasks: A list of tuples, where each tuple contains a function and a tuple of its arguments. For example:
+            [(func1, (arg1, arg2)), (func2, (arg1,))]
+    if function argument is a single list convert it to tuple as (my_list,)
+  '''
+  future_dic = {}
+  with ThreadPoolExecutor() as ex:
+    for func, args in tasks:
+      future_dic[func.__name__] = ex.submit(func, *args)
+
+    result_dic = dict()
+    for func_name, future in future_dic.items():
+      try:
+        result_dic[func_name] = future.result()
+      except Exception as e:
+        print_error_info(e,func_name)
+    return result_dic
+
 
 class Tee(object):
     def __init__(self, filename, mode="w"):
