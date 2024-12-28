@@ -5,8 +5,10 @@ from datetime import timedelta
 from ..NCBI.pubmed import pubmed_hyperlink,pmc_hyperlink
 from titlecase import titlecase
 from ..utils import str2str,sortdict
+from collections import defaultdict
 
 AUTHORS = 'Authors'
+AUTHORS_STR = 'String of Authors'
 INSTITUTIONS = 'Institutions'
 JOURNAL = 'Journal'
 MEDLINETA = 'MedlineTA'
@@ -35,8 +37,8 @@ PUBLISHER = 'Publisher'
 GRANT_APPLICATION = 'Grant Application'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
 
-INT_PROPS = {RELEVANCE,PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX,SBS_CITATION_INDEX}
-
+INT_PROPS = {PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX,SBS_CITATION_INDEX}
+FLOAT_PROPS = {RELEVANCE}
 ARTICLE_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE']
 PS_REFIID_TYPES = ARTICLE_ID_TYPES + ['NCT ID','NCTID']
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
@@ -76,36 +78,44 @@ def pii_hyperlink(identifier:str,display_str=''):
         url = 'https://www.sciencedirect.com/science/article/pii/'
         return '=HYPERLINK("'+url+identif+'",\"{}\")'.format(display_str)
 
+def doi_hyperlink(identifier:str,display_str=''):
+        # hyperlink in Excel does not work with long URLs, 
+        display_str = display_str if display_str else identifier
+        url = 'http://doi.org/'
+        return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
+
+
 class Reference(dict):
   '''
   Reference{BIBLIO_PROPS[i]:[values]};\n
   Reference.Identifiers{REF_ID_TYPES[i]:identifier};\n
-  Reference.Sentences{TextRef:{SENTENCE_PROPS[i]:Value}}\n
+  Reference.Sentences{TextRef:{SENTENCE_PROPS[i]:{Value}}}\n
   '''
   pass
 
   def __init__(self, idType:str, ID:str):
-      super().__init__(dict()) # self{BIBLIO_PROPS[i]:[values]};
-      self.Identifiers = {idType:ID} #from REF_ID_TYPES
-      self.snippets = dict() # {TextRef:{PropID:[Values]}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP           
+    super().__init__(dict()) # self{BIBLIO_PROPS[i]:[values]};
+    self.Identifiers = {idType:ID} #from REF_ID_TYPES
+    self.snippets = dict() # {TextRef:{PropID:{Values}}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP           
+    # PropID:{Values} = defaultdict(set)
 
   def copy_ref(self):
       '''
       Return
       ------
-      Reference object copy of self if self has valid identifiers\n
-      otherwise returns dict()
+      Reference object copy if self has valid identifiers\n
+      otherwise returns empty Reference() object
       '''
       for i in REF_ID_TYPES:
-          try:
-              id_value = self.Identifiers[i]
-              my_copy = Reference(i,id_value)
-              my_copy.update(self)
-              my_copy.Identifiers = self.Identifiers.copy()
-              my_copy.snippets = self.snippets.copy()
-              return my_copy
-          except KeyError: continue
-      return dict({})
+        try:
+          id_value = self.Identifiers[i]
+          my_copy = Reference(i,id_value)
+          my_copy.update(self)
+          my_copy.Identifiers = self.Identifiers.copy()
+          my_copy.snippets = self.snippets.copy()
+          return my_copy
+        except KeyError: continue
+      return Reference()
   
 
   @staticmethod
@@ -206,108 +216,133 @@ class Reference(dict):
           self[PropId] = [clean_prop]
 
 
-  def update_with_list(self, prop_id, with_values:list):
-      clean_vals = set(map(lambda x: str(x).strip(' .'),with_values))
-      try:
-          self[prop_id] = list(set(self[prop_id])|clean_vals)
-      except KeyError:
-          self[prop_id] = list(clean_vals)
+  @staticmethod
+  def __clean_vals(prop:str,values:list):
+    if prop == AUTHORS:
+       return set(values)
+    elif prop in INT_PROPS:
+      return set(map(int,values))
+    elif prop in FLOAT_PROPS:
+      return set(map(float,values))
+    else:
+      stripped_vals = {str(v).strip(' .') for v in values if v is not None}
+      return set(filter(None,stripped_vals))
+
+
+  def update_with_list(self, prop:str, with_values:list):
+    clean_vals = self.__clean_vals(prop,with_values)
+    try:
+      self[prop] = list(set(self[prop])|clean_vals)
+    except KeyError:
+      self[prop] = list(clean_vals)
 
 
   def add_sentence_prop(self, text_ref:str, propID:str, prop_value:str):
-      try:
-          exist_sentence = self.snippets[text_ref]
-          try:
-              exist_sentence[propID].append(prop_value)
-          except KeyError:
-              exist_sentence[propID] = [prop_value]
-          self.snippets[text_ref] = exist_sentence
-      except KeyError:
-          self.snippets[text_ref] = {propID:[prop_value]}
+    if propID == SENTENCE:
+      prop_value = prop_value.strip(' .')
+    try:
+      self.snippets[text_ref][propID].add(prop_value)
+    except KeyError:
+      snippet_props = defaultdict(set)
+      snippet_props[propID].add(prop_value)
+      self.snippets[text_ref] = snippet_props
+
+
+  def add_snippet(self,textref:str,snippet:dict[str,set]):
+    '''
+    input:
+      snippet = {prop_name:{values}}
+    '''
+    [self.add_sentence_props(textref,k,list(v)) for k,v in snippet.items()]
+  
+    
+  def get_sentence(self,textref:str):
+    try:
+      snippets = self.snippets[textref]  
+      return next(iter(snippets[SENTENCE])) if SENTENCE in snippets else ''          
+    except KeyError:
+        return ''
 
 
   def add_sentence_props(self, text_ref:str, propID:str, prop_values:list):
+    if propID == SENTENCE:
+      prop_values = [str(x).strip(' .') for x in prop_values if x]
+    if prop_values:
       try:
-          exist_sentence = self.snippets[text_ref]
-          try:
-              vals = set(exist_sentence[propID]+ prop_values)
-              exist_sentence[propID] = list(vals)
-          except KeyError:
-              exist_sentence[propID] = prop_values
-          self.snippets[text_ref] = exist_sentence
+        self.snippets[text_ref][propID].update(prop_values)
       except KeyError:
-          self.snippets[text_ref] = {propID:prop_values}
+        snippet_props = defaultdict(set)
+        snippet_props[propID].update(prop_values)
+        self.snippets[text_ref] = snippet_props
 
 
   def has_property(self, prop_name:str):
-      # prop_names2values = {prop_name:[values]}
-      for prop2values in self.snippets.values():
-          if prop_name in prop2values.keys():
-              return True
-      return prop_name in self.keys()
+    for prop2values in self.snippets.values():
+      if prop_name in prop2values.keys():
+        return True
+    return prop_name in self.keys()
   
 
   def get_values(self,prop_name:str):
+    try:
+      return list(self[prop_name])
+    except KeyError: 
+      prop_vals = set()
       for prop2values in self.snippets.values():
-          try:
-              return list(prop2values[prop_name])
-          except KeyError: continue
-      try:
-          return list(self[prop_name])
-      except KeyError: 
-          return []
+        if prop_name in prop2values:
+          prop_vals.update(prop2values[prop_name])
+      return list(prop_vals)
 
   
   def has_values_in(self, in_prop2values:dict,case_sensitive=False):
-      '''
-      Input
-      -----
-      prop2values = {prop_name:[values]}
-      '''
-      # now seaching among ref properties
-      for prop, values in self.items():
-          try:
-              match_values = set(in_prop2values[prop])
-              if case_sensitive:
-                  search_set = values
-              else:
-                  match_values =set(map(lambda x: x.lower(),match_values))
-                  search_set = set(map(lambda x: x.lower(),values))
+    '''
+    Input
+    -----
+    prop2values = {prop_name:[values]}
+    '''
+    # now seaching among ref properties
+    for prop, values in self.items():
+      try:
+        match_values = set(in_prop2values[prop])
+        if case_sensitive:
+          search_set = values
+        else:
+          match_values =set(map(lambda x: x.lower(),match_values))
+          search_set = set(map(lambda x: x.lower(),values))
 
-              if not match_values.isdisjoint(search_set): 
-                  return True
-              else: continue
-          except KeyError: continue
+        if not match_values.isdisjoint(search_set): 
+          return True
+        else: continue
+      except KeyError: continue
 
-      # if nothing found seach among snippet properties 
-      for my_prop2values in self.snippets.values():
-          for prop, values in my_prop2values.items():
-              try:
-                  match_values = set(in_prop2values[prop])
-                  if case_sensitive:
-                      search_set = values
-                  else:
-                      match_values =set(map(lambda x: x.lower(),match_values))
-                      search_set = set(map(lambda x: x.lower(),values))
+    # if nothing found seach among snippet properties 
+    for my_prop2values in self.snippets.values():
+      for prop, self_snippet_values in my_prop2values.items():
+        try:
+          match_values = set(in_prop2values[prop])
+          if case_sensitive:
+            search_set = values
+          else:
+            match_values =set(map(lambda x: str(x).lower(),match_values))
+            search_set = set(map(lambda x: str(x).lower(),self_snippet_values))
+          if not match_values.isdisjoint(search_set): 
+              return True
+          else: continue
+        except KeyError: continue
 
-                  if not match_values.isdisjoint(search_set): 
-                      return True
-                  else: continue
-              except KeyError: continue
-
-      return False
+    return False
   
 
   def remove_props(self, prop_names:list):
       my_copy = self.copy_ref()
-      if isinstance(my_copy,Reference): #copy_ref
-          for prop2values in my_copy.snippets.values():
-              [prop2values.pop(p,'') for p in prop_names]
-          
-          [my_copy.pop(p,'') for p in prop_names]
-          [my_copy.Identifiers.pop(p,'') for p in prop_names]
-          return my_copy
-      return dict({})
+      if my_copy:
+        for prop2values in my_copy.snippets.values():
+          [prop2values.pop(p,'') for p in prop_names]
+        
+        [my_copy.pop(p,'') for p in prop_names]
+        [my_copy.Identifiers.pop(p,'') for p in prop_names]
+        return my_copy
+      return Reference()
 
   
   def get_doc_id(self):
@@ -352,6 +387,12 @@ class Reference(dict):
           return ''
   
 
+  def biblioprop2str(self,propid:str):
+     if propid in self:
+      map_func = Author.tostr if propid == AUTHORS else str
+      return ';'.join(list(map(map_func,self[propid])))
+
+
   def to_list(self,id_types=list(),print_snippets=False,biblio_props=list(),other_props=list(),with_hyperlinks=False):
       '''
       Return
@@ -370,40 +411,50 @@ class Reference(dict):
               row.append('')
 
       if id_types:
-          for t in id_types:
-              try:
-                  identifier = self.Identifiers[t]
-                  if with_hyperlinks:
-                      if t == 'PMID':
-                          identifier = pubmed_hyperlink([identifier])
-                      elif t == 'DOI':
-                          identifier = make_hyperlink(identifier,'http://dx.doi.org/')
-                      elif t == 'PMC':
-                          identifier = pmc_hyperlink([identifier])
-                      elif t == PATENT_APP_NUM:
-                          identifier = make_hyperlink(identifier,'https://patents.google.com/patent/')
-                  row.append(identifier)
-              except KeyError:
-                  row.append('')
+        for t in id_types:
+          try:
+            identifier = self.Identifiers[t]
+            if with_hyperlinks:
+                if t == 'PMID':
+                    identifier = pubmed_hyperlink([identifier])
+                elif t == 'DOI':
+                    identifier = make_hyperlink(identifier,'http://dx.doi.org/')
+                elif t == 'PMC':
+                    identifier = pmc_hyperlink([identifier])
+                elif t == PATENT_APP_NUM:
+                    identifier = make_hyperlink(identifier,'https://patents.google.com/patent/')
+            row.append(identifier)
+          except KeyError:
+            row.append('')
       else:
           row.append(self._identifiers_str())
               
       for prop_id in biblio_props:
-          try:
-              prop_values_str = ';'.join(list(map(str,self[prop_id])))
-              if prop_id in ['Title', 'Abstract']:
-                  prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE,' ',prop_values_str)
-          except KeyError:
-              prop_values_str = ''
-          row.append(prop_values_str)
+        try:
+            prop_values_str = self.biblioprop2str(prop_id)
+            if prop_id in ['Title', 'Abstract']:
+                prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE,' ',prop_values_str)
+        except KeyError:
+            prop_values_str = ''
+        row.append(prop_values_str)
 
       if print_snippets:
-          sentence_props = json.dumps(self.snippets)
-          sentence_props = re.sub(NOT_ALLOWED_IN_SENTENCE,' ',sentence_props)
-          row.append(sentence_props)
+        list_snippets = {k:{p:list(l)} for k,v in self.snippets.items() for p,l in v.items()}
+        sentence_props = json.dumps(list_snippets)
+        sentence_props = re.sub(NOT_ALLOWED_IN_SENTENCE,' ',sentence_props)
+        row.append(sentence_props)
 
       return row
+  
 
+  def toAuthors(self):
+    if AUTHORS not in self:
+      author_strs = self.author_list()
+      author_strs = list(filter(None,author_strs))
+      if author_strs:
+        self[AUTHORS] = list(map(Author.fromStr,author_strs))
+    return
+    
 
   def to_str(self,id_types=list(),col_sep='\t',print_snippets=False,biblio_props=[],other_props=[],with_hyperlinks=False):
       '''
@@ -478,7 +529,7 @@ class Reference(dict):
       
   def relevance(self):
       try:
-          return float(self[RELEVANCE][0])
+          return max(map(float,self[RELEVANCE]))
       except KeyError:
           return float(0.0)
   
@@ -494,21 +545,21 @@ class Reference(dict):
       '''
       Return
       ------
-      sorted list of authors from self[AUTHORS]
+      sorted list of authors from self[AUTHORS_STR]
       '''
       try:
-          authors2split = self[AUTHORS]
-          individual_authors = set()
-          for au_list in authors2split:
-              authors = au_list.split(';')
-              individual_authors.update(authors)
-          
-          individual_authors = list(individual_authors)
-          individual_authors.sort()
-          self[AUTHORS] = individual_authors
-          return individual_authors
+        authors2split = self[AUTHORS_STR]
+        individual_authors = set()
+        for au_list in authors2split:
+          authors = au_list.split(';')
+          individual_authors.update(authors)
+        
+        individual_authors = list(filter(None,individual_authors))
+        individual_authors.sort()
+        self[AUTHORS_STR] = individual_authors
+        return individual_authors
       except KeyError:
-          return []
+        return []
 
 
   def _biblio_tuple(self):
@@ -527,14 +578,15 @@ class Reference(dict):
       year = 'year unknown' if year == 1812 else str(year)
 
       try:
-          authors_list = self[AUTHORS][:3]
-          authors_str = ','.join(authors_list) if authors_list else 'unknown authors.'
-          if len(self[AUTHORS]) > 3:
-              authors_str = authors_list[0]+' et al.'
-          else:
-              if authors_str[-1] != '.': authors_str += '.'
+        authors_list = self[AUTHORS]
+        authors_list = [x.tostr() for x in authors_list if isinstance(x,Author)]
+        authors_str = ','.join(authors_list[:3]) if authors_list else 'unknown authors.'
+        if len(self[AUTHORS]) > 3:
+          authors_str = authors_list[0]+' et al.'
+        else:
+          if authors_str[-1] != '.': authors_str += '.'
       except KeyError:
-          authors_str = 'unknown authors.'
+        authors_str = 'unknown authors.'
 
       journal = self.journal()
 
@@ -548,29 +600,18 @@ class Reference(dict):
   def get_biblio_str(self, sep='\t'):
       biblio, id_type,identifier = self._biblio_tuple()
       return biblio+sep+id_type+':'+identifier
-
+  
 
   def _merge(self, other:"Reference"):
     for prop, values in other.items():
-        if prop in INT_PROPS:
-            clean_vals = set(map(int,values))
-        else:
-            clean_vals = {str(v).strip(' .') for v in values if v is not None}
-
-        self.update_with_list(prop,list(clean_vals))
+      self.update_with_list(prop,values)
 
     self.Identifiers.update(other.Identifiers)
 
-    for textref, prop2val in other.snippets.items():
-        try:
-            exist_textref_props = self.snippets[textref]
-            if exist_textref_props == prop2val:
-                continue
-            else:
-                new_text_ref = textref+':'+str(len(self.snippets))
-                [self.add_sentence_props(new_text_ref,p,v) for p,v in prop2val.items()]
-        except KeyError:
-            [self.add_sentence_props(textref,p,v) for p,v in prop2val.items()]
+    for textref, other_snippet_p2v in other.snippets.items():
+      clean_snippet = {k:{str(p).strip(' .') for p in v} for k,v in other_snippet_p2v.items()}
+      [self.add_sentence_props(textref,p,v) for p,v in clean_snippet.items()]
+    del other
     return
 
 
@@ -667,7 +708,7 @@ class Reference(dict):
       try:
           return self[weight_name][0]
       except KeyError:
-          return 0.0 # allows to exclude cerain references from counting
+          return 0.0 # allows to exclude certain references from counting if they are not annotated by weight_name
 
 
   def _sort_key(self, by_property, is_numerical=True):
@@ -677,6 +718,18 @@ class Reference(dict):
               return float(self[by_property][0]) if is_numerical else str(self[by_property][0])
           except KeyError:
               return 0.0 if is_numerical else '0'
+
+
+  def _snippets(self):
+    for textref, snippet in self.snippets.items():
+      sentences = snippet.get(SENTENCE,{}) 
+      if len(sentences) > 1:
+        for i,sentence in enumerate(sentences):
+          new_snippet = snippet.copy()
+          new_snippet[SENTENCE] = {sentence}
+          yield f'{textref}:{i}',new_snippet
+      else:
+        yield textref,snippet
 
 
   def get_snippet_prop(self,prop_name:str):
@@ -697,23 +750,23 @@ class Reference(dict):
   
 
   def get_props(self,prop_name:str)->list[str]:
-      '''
-      input:
-          prop_name can be either in self.snippet or self.Identifiers or self
-      '''
+    '''
+    input:
+        prop_name can be either in self.snippet or self.Identifiers or self
+    '''
+    try:
+      return list(self[prop_name])
+    except KeyError:
       try:
-          return list(self[prop_name])
+        return [self.Identifiers[prop_name]]
       except KeyError:
-          try:
-              return [self.Identifiers[prop_name]]
-          except KeyError:
-              snippet_prop_dic = self.get_snippet_prop(prop_name)
-              props = set()
-              for text_ref, prop_vals in snippet_prop_dic.items():
-                  props.update(prop_vals)
-              props = list(props)
-              props.sort()
-              return props
+        snippet_prop_dic = self.get_snippet_prop(prop_name)
+        props = set()
+        for text_ref, prop_vals in snippet_prop_dic.items():
+          props.update(prop_vals)
+        props = list(props)
+        props.sort()
+        return props
 
 
   def get_prop(self,prop_name:str,value_index=0,if_missing_return='')->str|int|bool:
@@ -755,46 +808,38 @@ class Reference(dict):
     return self.doi_id(), str2str(dic) if as_str2str else self.doi_id(), dic
 
 
-class SerializableRef:
-  '''
-  Enables Reference serialization into json dump because
-  classes derived from dict and list cannot have custom JSONEncoder
-  '''
-
-  def __init__(self,ref:Reference):
-      self.reference = ref
-
-
 class ReferenceEncoder(json.JSONEncoder):
-  def default(self, sref):
-      if isinstance(sref, SerializableRef):
+  def default(self, obj):
+      if isinstance(obj, Reference):
           # Convert CustomObject to a dictionary
-          ref = sref.reference
-          dump_dict = dict(ref)
-          dump_dict.update({'Identifiers':ref.Identifiers})
-          if ref.snippets:
-              dump_dict.update({'snippets':ref.snippets})
-          return {'reference':dump_dict}
+          dump_dict = dict(obj)
+          dump_dict.update({'Identifiers':obj.Identifiers})
+          if obj.snippets:
+              dump_dict.update({'snippets':obj.snippets})
+          dump_dict['hook'] = 'reference'
+          return {dump_dict} # creat hook for ReferenceDecoder
       else:
-          return json.JSONEncoder.default(self, sref)
+          super().default(obj)
 
 
 class ReferenceDecoder(json.JSONDecoder):
   def __init__(self, *args, **kwargs):
       json.JSONDecoder.__init__(self, object_hook=self.object_hook, *args, **kwargs)
 
-  def object_hook(self, dct):
-      my_dict = dct['reference']
-      Identifiers = my_dict.pop('Identifiers')
-      snippets = my_dict.pop('snippets',dict())
-      addresses = my_dict.pop('addresses',dict())
+  def object_hook(self, obj):
+      hook = obj.pop('hook','')
+      if hook == 'reference':
+        Identifiers = obj.pop('Identifiers')
+        snippets = obj.pop('snippets',dict())
+        addresses = obj.pop('addresses',dict())
 
-      id_type,id = next(iter(my_dict.items()))
-      ref = Reference(id_type,id)
-      ref.update(my_dict)
-      ref.Identifiers.update(Identifiers)
-      ref.snippets.update(snippets)
-      return ref
+        id_type,id = next(iter(obj.items()))
+        ref = Reference(id_type,id)
+        ref.update(obj)
+        ref.Identifiers.update(Identifiers)
+        ref.snippets.update(snippets)
+        return ref
+      return obj
 
 #########################################DocMine#############################################DocMine##################
 
@@ -809,25 +854,53 @@ def removeThe(t:str):
 
 
 class Author:
-  LastName=str()
-  _1stName=str()
-  organization = list()
-  address = str()
-  email = str()
+  def __init__(self,LastName:str,_1stName='',middle_name=''):
+    self.LastName = LastName
+    self.MiddleName = middle_name
+    self._1stName = _1stName
+    self.affiliations = dict() # {organization:address}
+    self.email = ''
 
-  def __init__(self,LastName,_1stName='',organization=[],address=str(),email=''):
-      self.LastName = LastName
-      self._1stName = _1stName
-      self.organization = organization
-      self.address = address
-      self.email = email
+  def institutions(self):
+    return list(self.affiliations.keys())
+  
+  def _key(self):
+    return tuple([self._1stName,self.MiddleName,self.LastName] + self.institutions())
 
-  def institution(self):
-      return self.organization[-1] if self.organization else []
+  def __hash__(self):#__hash__ needs __eq__ to work properly
+    return hash(self._key())
+  
+  def __eq__(self, other:"Author"):#__hash__ needs __eq__ to work properly
+    return self._key() == other._key()
+
+
+  def name(self):
+    return self._1stName[0].upper() +self.LastName.capitalize()
+  
+
+  def tostr(self):
+    if self._1stName:
+       return self._1stName[0]+' '+self.LastName
+    else:
+      return self._1stName
     
-
-
-
+  
+  @classmethod
+  def fromStr(cls,author:str):
+    '''
+    assumes "author" has format "FirstName LastName"
+    '''
+    author_str = author.strip(' .,')
+    whitepos = author_str.find(' ')
+    if whitepos > 0:
+      return Author(author[whitepos+1:],author[:whitepos])
+    else:
+      last_comma_pos = author_str.rfind(',')
+      if last_comma_pos > 0:
+        return Author(author_str[:last_comma_pos], author_str[last_comma_pos+1:])
+    
+    return Author(author_str)
+    
 
 class DocMine (Reference):
     '''
@@ -889,11 +962,9 @@ class DocMine (Reference):
                     if range2dict:
                         text_ref = base_text_ref+'#'+textref_suf+':'+str(sentence_idx)
                         self.add_sentence_prop(text_ref,SENTENCE,sentence_markup)
-                        #self.snippets[text_ref] = {SENTENCE: [sentence_markup]}
                         for msid_range, concept_dict in range2dict.items():
                             prop_name = medscan.get_concept_type(msid_range)
                             self.add_sentence_props(text_ref,prop_name,list(concept_dict.values()))
-                            #self.snippets[text_ref]= {prop_name: list(concept_dict.values())}
 
                     sentence_idx +=1
 
