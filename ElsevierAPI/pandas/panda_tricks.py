@@ -24,11 +24,12 @@ class df(pd.DataFrame):
                   #'fg_color': '#D7E4BC',
                   #'border': 1,
                   }
-  column2format = dict() # need to declare format dict explicitly to avoid pd.DataFrame warning
+  # need to declare format dicts explicitly to avoid pd.DataFrame warnings in stdr
+  column2format = dict() 
   conditional_frmt = dict()
   tab_format = dict()
+  col2rank = dict()
   _name_ = ''
-
 
   def __init__(self, *args, **kwargs):
       '''
@@ -41,6 +42,7 @@ class df(pd.DataFrame):
       self.column2format = dict() # {column_index:{'font_color':'blue'}}
       self.conditional_frmt = dict() # {area:{conditional_format}}
       self.tab_format = dict()
+      self.col2rank = dict() # {colname:rank(int)}, used for column ranking and sorting by SemanticSearch
 
 
   @classmethod 
@@ -55,12 +57,16 @@ class df(pd.DataFrame):
       self.column2format = from_df.column2format.copy()
       self.conditional_frmt = from_df.conditional_frmt.copy()
       self.tab_format = from_df.tab_format.copy()
+      self.col2rank = from_df.col2rank.copy()
 
 
   def __copy_attrs(self,from_df:'df'):
       self._name_ = from_df._name_
       self.copy_format(from_df)
 
+
+  def max_colrank(self):
+    return max(self.col2rank.values()) if self.col2rank else 0
 
   def dfcopy(self,only_columns:list=[], rename2:dict=dict(),deep=True) ->'df':
       '''
@@ -92,6 +98,7 @@ class df(pd.DataFrame):
       self.column2format.update(from_df.column2format)
       self.conditional_frmt.update(from_df.conditional_frmt)
       self.tab_format.update(from_df.tab_format)
+      self.col2rank.update(from_df.col2rank)
 
 
   def set_col_format(self,fmt:dict):
@@ -137,12 +144,11 @@ class df(pd.DataFrame):
       Input
       -----
       args[0] - input filname for reading Excel file add sheet_name=my_worksheet_name to kwargs
-      kwargs = {sheet_name:str, read_formula:bool}
+      kwargs = {sheet_name:str, read_formula:bool,names=[]}
       '''
       df_name = kwargs.pop('name','')
       fname = str(args[0])
       extension = os.path.splitext(fname)[1][1:] # remove period
-      #extension = fname[fname.rfind('.')+1:]
       if extension == 'xlsx':
           read_formula = kwargs.pop('read_formula',False)
           if read_formula:
@@ -168,7 +174,7 @@ class df(pd.DataFrame):
           except FileNotFoundError: 
               raise(FileNotFoundError)
               #return df()
-      elif extension in ('tsv','txt'):
+      elif extension in ('tsv','txt','tab'):
           kwargs.pop('sheet_name','')
           kwargs.pop('read_formula',False)
           my_kwargs = dict(kwargs)
@@ -478,11 +484,11 @@ class df(pd.DataFrame):
           self.__df2excel(writer,sheet_name,**kwargs)
 
 
-  def _2excel(self, fpath:str,ws_name=''):
+  def _2excel(self, fpath:str,ws_name='',mode='w'):
       if not ws_name:
           ws_name = self._name_ if self._name_ else 'Sheet1'
 
-      f = ExcelWriter(fpath, engine='xlsxwriter')
+      f = ExcelWriter(fpath, engine='xlsxwriter',mode=mode)
       self.df2excel(f,ws_name)
       f.close()
 
