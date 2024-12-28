@@ -2,9 +2,10 @@ import re,json,itertools,pickle,hashlib,math
 from datetime import datetime
 from collections import defaultdict
 
+from ..utils import normalize
 from ..ETM_API.references import Reference, len, reflist2dict,pubmed_hyperlink,make_hyperlink,pmc_hyperlink
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
-from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR,SENTENCE,TITLE
+from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR,SENTENCE,TITLE,AUTHORS,AUTHORS_STR
 
 OBJECT_TYPE = 'ObjTypeName'
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
@@ -37,303 +38,348 @@ INDIRECT = 0
 
 
 class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
-    pass
-    def __init__(self, dic:dict=dict()):
-        super().__init__(list)
-        if isinstance(dic,dict): # closseness passes <class:type> for some reason
-            self.update(dic)
+  pass
+  def __init__(self, dic:dict=dict()):
+      super().__init__(list)
+      if isinstance(dic,dict): # closseness passes <class:type> for some reason
+          self.update(dic)
 
-    @classmethod
-    def from_zeep(cls, ZeepObjectRef):
-        return_dict = dict()
-        zeep_iter = iter(ZeepObjectRef)
-        while True:
-            try:
-                item = next(zeep_iter)
-            except StopIteration:
-                break  # Iterator exhausted: stop the loop
-            else:
-                return_dict[item] = [ZeepObjectRef[item]]
-        return cls(return_dict)
-    
-    
-    def get_prop(self,prop_name:str,value_index=0,if_missing_return:str|int|float='')->str|int|float:
-        '''
-        Return
-        ------
-        returns self[prop_name][value_index]
-        '''
-        return self[prop_name][value_index] if prop_name in self else if_missing_return
-
-
-    def urn(self):
-        '''
-        returns empty string if URN property does not exist
-        '''
-        return self.get_prop('URN')
-        
-    
-    def active_urn(self):
-        return self.urn()+'a'
-    
-
-    def repressed_urn(self):
-        return self.urn()+'i'
-    
-
-    def make_active(self):
-        activated_self = PSObject(self.copy())
-        activated_self['URN'] = [activated_self.active_urn()]
-        return activated_self
-    
-
-    def make_repressed(self):
-        repressed_self = PSObject(self.copy())
-        repressed_self['URN'] = [repressed_self.repressed_urn()]
-        return repressed_self
+  @classmethod
+  def from_zeep(cls, ZeepObjectRef):
+      return_dict = dict()
+      zeep_iter = iter(ZeepObjectRef)
+      while True:
+          try:
+              item = next(zeep_iter)
+          except StopIteration:
+              break  # Iterator exhausted: stop the loop
+          else:
+              return_dict[item] = [ZeepObjectRef[item]]
+      return cls(return_dict)
+  
+  
+  def get_prop(self,prop_name:str,value_index=0,if_missing_return:str|int|float='')->str|int|float:
+      '''
+      Return
+      ------
+      returns self[prop_name][value_index]
+      '''
+      return self[prop_name][value_index] if prop_name in self else if_missing_return
 
 
-    @staticmethod
-    def urn2uid(urn:str):
-        #return hash(urn)
-        my_hash = hashlib.md5(str(urn).encode())
-        return int(my_hash.hexdigest(),32)
+  def urn(self):
+      '''
+      returns empty string if URN property does not exist
+      '''
+      return self.get_prop('URN')
+      
+  
+  def active_urn(self):
+      return self.urn()+'a'
+  
+
+  def repressed_urn(self):
+      return self.urn()+'i'
+  
+
+  def make_active(self):
+      activated_self = PSObject(self.copy())
+      activated_self['URN'] = [activated_self.active_urn()]
+      return activated_self
+  
+
+  def make_repressed(self):
+      repressed_self = PSObject(self.copy())
+      repressed_self['URN'] = [repressed_self.repressed_urn()]
+      return repressed_self
 
 
-    def __hash__(self):
-        #__hash__ needs __eq__ to work properly
-        return self.urn2uid(self.urn())
+  @staticmethod
+  def urn2uid(urn:str):
+      #return hash(urn)
+      my_hash = hashlib.md5(str(urn).encode())
+      return int(my_hash.hexdigest(),32)
 
 
-    def __eq__(self, other:"PSRelation"):
-        #__hash__ needs __eq__ to work properly
-        return self.urn() == other.urn()
+  def __hash__(self):
+      #__hash__ needs __eq__ to work properly
+      return self.urn2uid(self.urn())
 
 
-    def uid(self)->int:
-        return self.__hash__()
-    
-
-    def propvalues(self,prop_name:str):
-        '''
-        Return
-        ------
-        returns set of all values of prop_names
-        '''
-        return list(self[prop_name])  if prop_name in self.keys() else []
-    
-
-    def get_props(self,prop_names:list):
-        '''
-        Return
-        ------
-        returns set of all values of prop_names
-        '''
-        my_props = set()
-        for prop_name in prop_names:
-            if prop_name in self.keys():
-                my_props.update(self[prop_name])
-
-        return my_props
-    
-
-    def dbid(self)->int:
-        '''
-        output:
-            0 if missing
-        '''
-        return self.get_prop(DBID,if_missing_return=0)
+  def __eq__(self, other:"PSRelation"):
+      #__hash__ needs __eq__ to work properly
+      return self.urn() == other.urn()
 
 
-    def set_property(self, PropId, PropValue: str):
-        self[PropId] = [PropValue]
+  def uid(self)->int:
+      return self.__hash__()
+  
 
-    
-    def childs(self)->list['PSObject']:
-        if CHILDS in self.keys():
-            return self[CHILDS]
-        return []
+  def propvalues(self,prop_name:str):
+      '''
+      Return
+      ------
+      returns set of all values of prop_names
+      '''
+      return list(self[prop_name])  if prop_name in self.keys() else []
+  
 
+  def get_props(self,prop_names:list):
+      '''
+      Return
+      ------
+      returns set of all values of prop_names
+      '''
+      my_props = set()
+      for prop_name in prop_names:
+          if prop_name in self.keys():
+              my_props.update(self[prop_name])
 
-    def child_dbids(self):
-        children = self.childs()
-        return [c.dbid() for c in children if c.dbid()]
+      return my_props
+  
 
-
-    def child_uids(self):
-        children = self.childs()
-        return [c.uid() for c in children]
-
-
-    def update_with_value(self, prop_id:str, new_value):
-        if new_value not in self[prop_id]:
-            self[prop_id].append(new_value)
-
-
-    def update_with_list(self, prop_id:str, new_values):
-        [self[prop_id].append(x) for x in new_values if x not in self[prop_id]]
-
-
-    def name(self):
-        return self.get_prop('Name')
-
-
-    def objtype(self):
-        return self.get_prop(OBJECT_TYPE)
+  def dbid(self)->int:
+      '''
+      output:
+          0 if missing
+      '''
+      return self.get_prop(DBID,if_missing_return=0)
 
 
-    def organism(self):
-        return str(self.get_prop('Organism'))
+  def set_property(self, PropId, PropValue: str):
+      self[PropId] = [PropValue]
+
+  
+  def childs(self)->list['PSObject']:
+      if CHILDS in self.keys():
+          return self[CHILDS]
+      return []
 
 
-    def descr(self):
-        return str(self.get_prop('Description'))
-        
-
-    def notes(self):
-        return str(self.get_prop('Notes'))
-
-    
-    def set_state(self, state:int):
-        assert (state in [ACTIVATED,REPRESSED,UNKNOWN_STATE])
-        if STATE in self:
-            self[STATE][0] += state
-        else:
-            self[STATE] = [state]
+  def child_dbids(self):
+      children = self.childs()
+      return [c.dbid() for c in children if c.dbid()]
 
 
-    def state(self):
-        return str(self.get_prop(STATE,if_missing_return=UNKNOWN_STATE))
-    
-
-    def is_from_rnef(self):
-        return not self.dbid()
-    
-
-    def copy(self):
-        return PSObject(self)
+  def child_uids(self):
+      children = self.childs()
+      return [c.uid() for c in children]
 
 
-    def merge_obj(self,other:'PSObject',replace_identity=False):
-        '''
-        properties from "other" take precedent,
-        if replace_identity URN, Name, ObjTypeName are also replaced
-        '''
-        my_copy = PSObject(self)
-        [my_copy.update_with_list(prop_name,values) for prop_name,values in other.items()]
-        if replace_identity:
-            my_copy['URN'] = other['URN']
-            my_copy['Name'] = other['Name']
-            my_copy['ObjTypeName'] = other['ObjTypeName']
-        del other
-        return my_copy
-        
-
-    def _prop2str(self, prop_id:str,cell_sep:str =';'):
-        prop_values = self.propvalues(prop_id)
-        return cell_sep.join(map(str,prop_values))
+  def update_with_value(self, prop_id:str, new_value):
+      if new_value not in self[prop_id]:
+          self[prop_id].append(new_value)
 
 
-    def props2dict(self,prop_ids:list):
-        return {k:self._prop2str(k) for k in self.keys() if k in prop_ids}
+  def update_with_list(self, prop_id:str, new_values):
+      [self[prop_id].append(x) for x in new_values if x not in self[prop_id]]
 
 
-    def data2str(self, columnPropNames: list, col_sep='\t', cell_sep=';', endOfline='\n'):
-        table_row = str()
-        for propName in columnPropNames:
-            values = self.propvalues(propName)
-            prop_val = cell_sep.join(values)
-            table_row = table_row + prop_val + col_sep
-        return table_row[0:len(table_row) - 1] + endOfline
+  def name(self):
+      return self.get_prop('Name')
 
 
-    def has_properties(self,prop_names:set):
-        return not prop_names.isdisjoint(set(self.keys()))
+  def objtype(self):
+      return self.get_prop(OBJECT_TYPE)
 
 
-    def is_annotated(self,with_prop:str,having_values:list=[],case_sensitive=False):
-        '''
-        Input
-        -----
-        if "having_values" is empty will return True if self has any value in "with_prop"
-        '''
-        search_in = self.get_props([with_prop])
-        if search_in:
-            if having_values:
-                if case_sensitive or with_prop in {DBID,REFCOUNT}:
-                    search_set = set(having_values)   
-                else:
-                    search_in  = set(map(lambda x: x.lower(),search_in))
-                    search_set = set(map(lambda x: x.lower(),having_values))      
-                return not search_set.isdisjoint(search_in)
-            else:
+  def organism(self):
+      return str(self.get_prop('Organism'))
+
+
+  def descr(self):
+      return str(self.get_prop('Description'))
+      
+
+  def notes(self):
+      return str(self.get_prop('Notes'))
+
+  
+  def set_state(self, state:int):
+      assert (state in [ACTIVATED,REPRESSED,UNKNOWN_STATE])
+      if STATE in self:
+          self[STATE][0] += state
+      else:
+          self[STATE] = [state]
+
+
+  def state(self):
+      return str(self.get_prop(STATE,if_missing_return=UNKNOWN_STATE))
+  
+
+  def is_from_rnef(self):
+      return not self.dbid()
+  
+
+  def copy(self):
+      return PSObject(self)
+
+
+  def merge_obj(self,other:'PSObject',replace_identity=False):
+      '''
+      properties from "other" take precedent,
+      if replace_identity URN, Name, ObjTypeName are also replaced
+      '''
+      my_copy = PSObject(self)
+      [my_copy.update_with_list(prop_name,values) for prop_name,values in other.items()]
+      if replace_identity:
+          my_copy['URN'] = other['URN']
+          my_copy['Name'] = other['Name']
+          my_copy['ObjTypeName'] = other['ObjTypeName']
+      del other
+      return my_copy
+      
+
+  def _prop2str(self, prop_id:str,cell_sep:str =';'):
+      prop_values = self.propvalues(prop_id)
+      return cell_sep.join(map(str,prop_values))
+
+
+  def props2dict(self,prop_ids:list):
+      return {k:self._prop2str(k) for k in self.keys() if k in prop_ids}
+
+
+  def data2str(self, columnPropNames: list, col_sep='\t', cell_sep=';', endOfline='\n'):
+      table_row = str()
+      for propName in columnPropNames:
+          values = self.propvalues(propName)
+          prop_val = cell_sep.join(values)
+          table_row = table_row + prop_val + col_sep
+      return table_row[0:len(table_row) - 1] + endOfline
+
+
+  def has_properties(self,prop_names:set):
+      return not prop_names.isdisjoint(set(self.keys()))
+
+
+  def is_annotated(self,with_prop:str,having_values:list=[],case_sensitive=False):
+      '''
+      Input
+      -----
+      if "having_values" is empty will return True if self has any value in "with_prop"
+      '''
+      search_in = self.get_props([with_prop])
+      if search_in:
+          if having_values:
+              if case_sensitive or with_prop in {DBID,REFCOUNT}:
+                  search_set = set(having_values)   
+              else:
+                  search_in  = set(map(lambda x: x.lower(),search_in))
+                  search_set = set(map(lambda x: x.lower(),having_values))      
+              return not search_set.isdisjoint(search_in)
+          else:
+              return True
+      else: 
+          return False
+
+
+  def has_value_in(self,prop2values:dict,case_sensitive=False):
+      """
+      Input
+      -----
+      prop2values = {propName:[values]}
+      """
+      for prop_name, prop_values in prop2values.items():
+          if self.is_annotated(prop_name,prop_values,case_sensitive): 
+              return True
+      return False
+
+
+  def prop_values2str(self, prop_name:str, sep=','):
+      prop_values = self.propvalues(prop_name)
+      return sep.join(list(map(str,prop_values)))
+
+
+  def dump(self,to_file:str):
+      with open(to_file+'.pickle', "wb") as outfile:
+          # "wb" argument opens the file in binary mode
+          pickle.dump(dict(self), outfile)
+
+
+  @classmethod
+  def load(cls,from_file:str):
+      dump_name = from_file+'.pickle'
+      try:
+          f = open(dump_name, "rb") 
+          o = cls(pickle.load(f))
+          f.close()
+          return o
+      except FileNotFoundError:
+          raise FileNotFoundError
+
+
+  def transform(self, remap:dict, remove_props_not_in_remap=False):
+      '''
+      renames
+      -------
+      properties according to "remap"
+      '''
+      transformed_copy = PSObject(self)
+      for old_prop, new_prop in remap.items():
+          transformed_copy[new_prop] = transformed_copy.pop(old_prop)
+          references = transformed_copy['references']
+
+          ref_values = set()
+          [ref_values.update(r.get_props(old_prop)) for r in references]
+          if ref_values:
+              transformed_copy[new_prop] = list(ref_values)
+              
+      if remove_props_not_in_remap:
+          transformed_copy = {k:v for k,v in transformed_copy.items() if k in remap.values()}
+
+      return transformed_copy
+
+
+  def remove_props(self,prop_names:list):
+      my_copy = self.copy()
+      [my_copy.pop(p,'') for p in prop_names]
+      return my_copy
+
+
+  def remap(self,mapdic:dict[str,dict[str,dict[str,"PSObject"]]],map_by:list,normalize_propvalues=True):
+    '''
+    input:
+      use normalized mapdic as input for best mapping
+      map_by - defines list of properties for mapping and their order 
+    output:
+      if URN is remapped self['URN'] = [newURN,oldURN] and self is flagged by 'was_mapped' property
+    '''
+    for prop in map_by:
+      try:
+        provals = self.get_props([prop])
+        for val in provals:
+          v = val.lower()
+          try:
+            db_obj = mapdic[self.objtype()][prop][v]
+            new_urn = db_obj.urn()
+            old_urn = self.urn()
+            if new_urn != old_urn:
+              self['URN'] = [new_urn,old_urn]
+            self['was_mapped'] = [True]
+            return True
+          except KeyError:
+            if normalize_propvalues:
+              v = normalize(val)
+              try:
+                db_obj = mapdic[self.objtype()][prop][v]
+                new_urn = db_obj.urn()
+                old_urn = self.urn()
+                if new_urn != old_urn:
+                  self['URN'] = [new_urn,old_urn]
+                self['was_mapped'] = [True]
                 return True
-        else: 
-            return False
+              except KeyError:
+                continue
+            else:
+              continue
+      except KeyError:
+        continue
+    return False
 
 
-    def has_value_in(self,prop2values:dict,case_sensitive=False):
-        """
-        Input
-        -----
-        prop2values = {propName:[values]}
-        """
-        for prop_name, prop_values in prop2values.items():
-            if self.is_annotated(prop_name,prop_values,case_sensitive): 
-                return True
-        return False
+  def is_mapped(self):
+    return 'was_mapped' in self
 
-
-    def prop_values2str(self, prop_name:str, sep=','):
-        prop_values = self.propvalues(prop_name)
-        return sep.join(list(map(str,prop_values)))
-
-
-    def dump(self,to_file:str):
-        with open(to_file+'.pickle', "wb") as outfile:
-            # "wb" argument opens the file in binary mode
-            pickle.dump(dict(self), outfile)
-
-
-    @classmethod
-    def load(cls,from_file:str):
-        dump_name = from_file+'.pickle'
-        try:
-            f = open(dump_name, "rb") 
-            o = cls(pickle.load(f))
-            f.close()
-            return o
-        except FileNotFoundError:
-            raise FileNotFoundError
-
-
-    def transform(self, remap:dict, remove_props_not_in_remap=False):
-        '''
-        renames
-        -------
-        properties according to "remap"
-        '''
-        transformed_copy = PSObject(self)
-        for old_prop, new_prop in remap.items():
-            transformed_copy[new_prop] = transformed_copy.pop(old_prop)
-            references = transformed_copy['references']
-
-            ref_values = set()
-            [ref_values.update(r.get_props(old_prop)) for r in references]
-            if ref_values:
-                transformed_copy[new_prop] = list(ref_values)
-                
-        if remove_props_not_in_remap:
-            transformed_copy = {k:v for k,v in transformed_copy.items() if k in remap.values()}
-
-        return transformed_copy
-
-
-    def remove_props(self,prop_names:list):
-        my_copy = self.copy()
-        [my_copy.pop(p,'') for p in prop_names]
-        return my_copy
-    
 
 class PSObjectEncoder(json.JSONEncoder):
   def default(self, obj):
@@ -365,7 +411,7 @@ class PSRelation(PSObject):
 
   def __init__(self, dic=dict()):
       '''
-      self.Nodes - {"Regulators':[(entityID, Dir, effect),], "Targets':[(entityID, Dir, effect),]}
+      self.Nodes - {"Regulators':[PSObject], "Targets':[PSObject]}
       '''
       super().__init__(dic)
       self.PropSetToProps = defaultdict(dict)  # {PropSetID:{PropID:[values]}}
@@ -442,17 +488,18 @@ class PSRelation(PSObject):
     Creates URN for rel if it does not exist
     '''
     if refresh:
-        regulators, targets = self.Nodes[REGULATORS],self.Nodes[TARGETS]
-        return self.__make_urn(regulators, targets)
+      regulators = self.regulators()
+      targets = self.targets()
+      return self.__make_urn(regulators, targets)
     else:
-        urn = super().urn()
-        if urn:
-            return urn
-        else:
-            regulators, targets = self.Nodes[REGULATORS],self.Nodes[TARGETS]
-            return self.__make_urn(regulators, targets)
+      urn = super().urn()
+      if urn:
+          return urn
+      else:
+          regulators = self.regulators()
+          targets = self.targets()
+          return self.__make_urn(regulators, targets)
           
-  
 
   def has_properties(self,prop_names:set):
       has_props = super().has_properties(prop_names)
@@ -644,46 +691,44 @@ class PSRelation(PSObject):
 
 
   def copy(self):
-      my_copy = PSRelation(self)
-      my_copy.PropSetToProps = self.PropSetToProps.copy()
-      my_copy.Nodes = self.Nodes.copy()
-      #my_copy.RefDict = self.RefDict.copy()
-      my_copy.references = self.references.copy()
-      return my_copy
+    my_copy = PSRelation(self)
+    my_copy.PropSetToProps = self.PropSetToProps.copy()
+    my_copy.Nodes = self.Nodes.copy()
+    my_copy.references = self.references.copy()
+    return my_copy
   
 
   def remove_props(self,prop_names:list):
-      my_copy = PSRelation(super().remove_props(prop_names))
-      my_copy.Nodes= dict(self.Nodes)
-      my_copy.PropSetToProps= dict(self.PropSetToProps)
-      for _,props in my_copy.PropSetToProps.items():
-          [props.pop(p,'') for p in prop_names]
+    my_copy = PSRelation(super().remove_props(prop_names))
+    my_copy.Nodes= dict(self.Nodes)
+    my_copy.PropSetToProps= dict(self.PropSetToProps)
+    for _,props in my_copy.PropSetToProps.items():
+        [props.pop(p,'') for p in prop_names]
 
-      my_copy.references.clear()
-      for ref in self.references:
-          new_ref = ref.remove_props(prop_names)
-          if new_ref:
-            my_copy.references.append(new_ref)
-      
-      return my_copy
+    my_copy.references.clear()
+    for ref in self.references:
+        new_ref = ref.remove_props(prop_names)
+        if new_ref:
+          my_copy.references.append(new_ref)
+    
+    return my_copy
   
 
   @classmethod
   def make_rel(cls,regulator:PSObject,target:PSObject,props:dict[str,list],refs:list[Reference],is_directional=True):
-      # props = {prop_name:[prop_values]}
-      new_rel = cls(props)
-      if is_directional:
-          new_rel.Nodes[REGULATORS] = [regulator]
-          new_rel.Nodes[TARGETS] = [target]
-      else:
-          new_rel.Nodes[REGULATORS] = [regulator,target]
+    new_rel = cls(props)
+    if is_directional:
+      new_rel.Nodes[REGULATORS] = [regulator]
+      new_rel.Nodes[TARGETS] = [target]
+    else:
+      new_rel.Nodes[REGULATORS] = [regulator,target]
 
-      new_rel._add_refs(refs)
-      if REFCOUNT not in new_rel.keys():
-          new_rel[REFCOUNT] = [len(refs)]
-      
-      new_rel.__make_urn([regulator],[target])
-      return new_rel
+    new_rel._add_refs(refs)
+    if REFCOUNT not in new_rel.keys():
+      new_rel[REFCOUNT] = [len(refs)]
+    
+    new_rel.__make_urn([regulator],[target])
+    return new_rel
           
 
   def is_directional(self):
@@ -787,32 +832,32 @@ class PSRelation(PSObject):
               except KeyError: continue
 
         # adding all other valid properties to ref
-        textref = None 
-        sentence_props = dict()
+        try:
+          textref = propSet['TextRef'][0]
+          if textref[4:10] == 'hash::': # references from older Resnet versions can start with 'urn:hash::'
+            textref = ref._make_textref()
+          elif textref in ['Admin imported','Customer imported','']: 
+            print('Reference has no TextRef property and will be ignored!!!')
+            continue # ignore and move to the next PropSet
+        except KeyError:
+          textref = ref._make_textref()
+          
         for propId, propValues in propSet.items():  
-          if propId in BIBLIO_PROPS:
+          if propId in BIBLIO_PROPS or propId in CLINTRIAL_PROPS:
             ref.update_with_list(propId, propValues)
           elif propId in SENTENCE_PROPS:
-            sentence_props[propId] = propValues
+            ref.add_sentence_props(textref,propId, propValues)
           elif propId == 'msrc':
-            sentence_props[SENTENCE] = propValues
-          elif propId in CLINTRIAL_PROPS:
-            ref.update_with_list(propId, propValues)
-          elif propId == 'TextRef': 
-              textref = propValues[0]
+            ref.add_sentence_props(SENTENCE, propValues)
 
         try:
             ref[JOURNAL] = ref.pop(MEDLINETA)
         except KeyError: pass
-
-        if textref is None or textref[4:10] == 'hash::': # references from older Resnet versions can start with 'urn:hash::'
-          textref = ref._make_textref()
-        elif textref in ['Admin imported','Customer imported','']: 
-          print('Reference has no TextRef property and will be ignored!!!')
-          continue # ignore and move to the next PropSet
-        
-        ref.snippets[textref] = sentence_props if sentence_props else {'Sentence':[]} #load empty dict for data consistency
+        try:
+            ref[AUTHORS_STR] = ref.pop(AUTHORS)
+        except KeyError: pass
     
+    [x.toAuthors() for x in self.references]
     self.references.sort(key=lambda r: r._sort_key(by_property=PUBYEAR), reverse=True)
     return self.references[:ref_limit] if ref_limit else self.references
 
@@ -994,10 +1039,10 @@ class PSRelation(PSObject):
           return self.to_table_str(columnPropNames,col_sep,cell_sep,RefNumPrintLimit,add_entities)
 
 
-  def regulators(self):
+  def regulators(self)->list[PSObject]:
     return self.Nodes[REGULATORS] if REGULATORS in self.Nodes.keys() else []
       
-  def targets(self):
+  def targets(self)->list[PSObject]:
     return self.Nodes[TARGETS] if TARGETS in self.Nodes.keys() else []
       
 

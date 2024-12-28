@@ -14,7 +14,7 @@ from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
-from ..utils import unpack,execution_time,execution_time2,load_api_config
+from ..utils import unpack,execution_time,execution_time2,load_api_config,normalize
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
@@ -256,7 +256,7 @@ to retreive {my_sent_props} properties')
             return self.__nextpage__(self.ResultPos)
         else:
             if request_name and not max_result:  # to suppress messages from load_children4
-                print(f'query "{request_name}" found {self.ResultSize} results',flush=True)
+              print(f'query "{request_name}" found {self.ResultSize} results',flush=True)
 
         if not isinstance(zeep_data, type(None)):
             if self.getLinks:
@@ -1949,35 +1949,7 @@ in {execution_time(process_start)}')
                     e.shutdown()
         print(f'Retrieved protein-protein interaction network with {ppi_keeper.number_of_nodes()} nodes and {ppi_keeper.number_of_edges()} edges')
         return ppi_keeper
-    
-
-    def get_map(self,_4nodetypes:list,using_props:list,dump2file='mapfile')->dict[str,dict[str,dict[str:PSObject]]]:
-      '''
-      output:
-        {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
-      '''
-      def make_dump_path(dump2file:str):
-        dump_path = os.path.join(self.data_dir,dump2file)
-        if dump_path[-5:] != '.json':
-          dump_path += '.json'
-        return dump_path
-      
-      dump_path = make_dump_path(dump2file)
-      try:
-        f = open(dump_path,'r')
-        print(f'Loading map from {dump_path}')
-        nodes  = json.load(f,cls=PSObjectDecoder)
-        nodes = [PSObject(n) for n in nodes]
-      except FileNotFoundError:
-        start = time.time()
-        session = self._clone_session()
-        session.entProps = using_props
-        oql = f'SELECT Entity WHERE objectType = ({_4nodetypes})'
-        nodes = session.process_oql(oql,f'Loading {_4nodetypes}')._get_nodes()
-        json.dump(nodes,open(dump_path,'w'),indent=2,cls=PSObjectEncoder)
-        print(f'Map was downloaded in {execution_time(start)}')
-      return self.Graph.make_map(using_props,nodes)
-
+  
 
 def open_api_session(api_config_file='',what2retrieve=1) -> APISession:
   APIconfig = load_api_config(api_config_file)

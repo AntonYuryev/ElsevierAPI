@@ -15,7 +15,7 @@ from typing import Optional
 from torch_geometric.data import HeteroData
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor,as_completed
-from ..utils import execution_time, execution_time2,str2str,unpack
+from ..utils import execution_time, execution_time2,str2str,unpack,normalize
 
 RESNET = 'resnet'
 PHYSICAL_INTERACTIONS = ['Binding','DirectRegulation','ProtModification','PromoterBinding','ChemicalReaction']
@@ -166,8 +166,16 @@ class ResnetGraph (nx.MultiDiGraph):
           rels2add = rels
       # __add_rel will raise error if nodes for relation do not exists in graph
       [self.__add_rel(rel) for rel in rels2add]
-      
-      
+  
+
+  @classmethod
+  def from_rels(cls,rels:set[PSRelation]|list[PSRelation]):
+      newG = ResnetGraph()
+      my_rels = list(rels) if isinstance(rels,set) else list(set(rels))
+      newG.add_psrels(list(my_rels))
+      return newG
+
+
   def __copy_rel(self,rel:PSRelation):
       '''
       copies rel and its nodes specified in rel if they do not exist in self. 
@@ -230,39 +238,33 @@ class ResnetGraph (nx.MultiDiGraph):
       return composed_graph
   
 
-  def duplicate_node(self,n:PSObject,replace_with:PSObject,flip_effect=0,set_reltype=''):
-      '''
-      Input
-      -----
-      flip_effect - ACTIVATED, REPRESSED, UNKNOWN_STATE (1,-1,0)
-      '''
-      replace_uid = n.uid()
-      replacement_uid = replace_with.uid()
-      if replacement_uid not in self.nodes():
-          self.add_psobj(replace_with)
+  def clone_node(self,n:PSObject,replace_with:PSObject,flip_effect=0,set_reltype=''):
+    '''
+    Input
+    -----
+    flip_effect - ACTIVATED, REPRESSED, UNKNOWN_STATE (1,-1,0)
+    if flip_effect == 0 assigns "unknown" Effect to cloned relation
+    '''
+    new_rels = list()
+    for rel in self.get_neighbors_rels({n}):
+      new_rel = rel.copy()
+      if flip_effect < 0:
+        new_rel.flip_effect()
+      elif not flip_effect:
+        new_rel[EFFECT] = ['unknown']
 
-      for rel in self.get_neighbors_rels({n}):
-          new_rel = rel.copy()
-          if flip_effect < 0:
-              new_rel.flip_effect()
-          elif not flip_effect:
-              new_rel[EFFECT][0] = 0
+      if set_reltype:
+        new_rel[OBJECT_TYPE] = [set_reltype]
 
-          if set_reltype:
-              new_rel[OBJECT_TYPE] = [set_reltype]
+      for nodes in new_rel.Nodes.values():
+        if n in nodes:
+          index = nodes.index(n) 
+          nodes[index] = replace_with
 
-          for nt, tuples in new_rel.Nodes.items():
-              new_tuples = list()
-              for t in tuples:
-                  if t[0] == replace_uid:
-                      new_tuple = (replacement_uid,t[1],t[2])
-                  else:
-                      new_tuple = t
-                  new_tuples.append(new_tuple)
-              new_rel.Nodes[nt] = new_tuples
-
-          new_rel.pop('URN','')
-          self.add_rel(new_rel,merge=False)
+      new_rel.urn(refresh=True)
+      new_rels.append(new_rel)
+    self.add_psrels(new_rels,merge=False)
+    return new_rels
 
 
 ################## SET SET SET ##########################################
@@ -515,26 +517,23 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
 ################## SET-GET SET-GET SET-GET ###############################
-  def load_references(self,weight_by_property='',using_value2weight=dict[str,float],weight_name='relweight')->set[Reference]:
-      """
-      input:
-          weight_by_property -  relation property which values are used to weight references
-          using_value2weight = {prop_value:weight}
-      output:
-          all PSRelation in self have reference
-          references areannotated with 'weight_by_property' weight specificafied in 'using_value2weight'
-      """
-      graph_references = set()
-      if weight_by_property:
-          for r,t,rel in self.edges.data('relation'):
-              assert(isinstance(rel, PSRelation))
-              rel.refs()
-              rel.set_weight2ref(weight_by_property,using_value2weight,weight_name)
-              graph_references.update(rel.refs())
-      else:
-          [graph_references.update(rel.refs()) for r,t,rel in self.edges.data('relation')]
+  def load_references(self,relpval2weight:dict[str,dict[str,float]]=dict(),weight_name='relweight')->set[Reference]:
+    """
+    input:
+      relpval2weight = {property_name:{prop_value:weight}}, 
+      where property_name - PSRelation property used to assign weight to references (usually property_name = OBJECT_TYPE)
+    output:
+        graph references annotated with 'weight_name' property with values specified in 'relpval2weight'
+    """
+    my_rels = self._psrels()
+    if relpval2weight:
+      assert(len(relpval2weight) == 1)
+      weight_by_property,using_value2weight = next(iter(relpval2weight.items()))
+      [rel.set_weight2ref(weight_by_property,using_value2weight,weight_name) for rel in my_rels]
 
-      return graph_references
+    graph_references = set()
+    [graph_references.update(rel.refs()) for rel in my_rels]
+    return graph_references
 
 
   def add_node_weight2ref(self,regurn2weight:dict,tarurn2weight:dict,weight_name='nodeweight'):
@@ -718,7 +717,7 @@ class ResnetGraph (nx.MultiDiGraph):
       {References}
       '''
       sub_graph = self.get_subgraph(nodes, and_nodes)
-      return sub_graph.load_references(weight_by_property,using_value2weight)
+      return sub_graph.load_references({weight_by_property:using_value2weight})
 
 
   def snippets2df(self, df_name='Snippets',add_nodetype=False, 
@@ -770,7 +769,9 @@ class ResnetGraph (nx.MultiDiGraph):
 
       snippet_df = df.from_rows(rows,header)
       snippet_df[PS_CITATION_INDEX] = snippet_df[PS_CITATION_INDEX].astype(int)
-      snippet_df = snippet_df.sortrows(['Concept','Entity',PS_CITATION_INDEX])
+      if PUBYEAR in snippet_df.columns:
+          snippet_df[PUBYEAR] = snippet_df[PUBYEAR].astype(int)
+      snippet_df = snippet_df.sortrows([PS_CITATION_INDEX,'Concept','Entity'],ascending=[False,True,True])
 
       clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],
                       ['25741868'],['26582918'],['28492532'],['24033266'],['18414213'],
@@ -2461,12 +2462,13 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   @classmethod
-  def readRNEFflist_in_batches(cls,flist:list[str],batch_size):
-      for i in range(0, len(flist), batch_size):
-          batch_end = min(i + batch_size, len(flist))
-          batch = flist[i:batch_end]
-          # Process the batch of files and yield data
-          yield cls.fromRNEFflist(batch)
+  def readRNEFflist_in_batches(cls,flist:list[str],batch_size=0):
+    batch_size = batch_size if batch_size else min(32,len(flist),(os.cpu_count() or 1) + 4)
+    for i in range(0, len(flist), batch_size):
+      batch_end = min(i + batch_size, len(flist))
+      batch = flist[i:batch_end]
+      # Process the batch of files and yield data
+      yield cls.fromRNEFflist(batch)
 
 
   @classmethod
@@ -3992,14 +3994,15 @@ class ResnetGraph (nx.MultiDiGraph):
     relations_df.to_csv(save2dir+f'{self.name}Relations.neo4j'+extension,sep=sep,index=False,quoting=csv.QUOTE_MINIMAL)
 
 
-  def make_map(self,using_props:list, from_nodes:list=[])->dict[str,dict[str,dict[str,PSObject]]]:
+  @staticmethod
+  def _make_map(using_props:list, from_nodes:list=[],norm=True)->dict[str,dict[str,dict[str,list[PSObject]]]]:
     '''
     output:
       {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
     '''
-    nodes = from_nodes if from_nodes else self._get_nodes()
     mapdic = defaultdict(dict)
-    for n in nodes:
+    for n in from_nodes:
+      if 'protein:prophash' in n.urn(): continue
       for prop in using_props:
         try:
           vals = n.get_props([prop])
@@ -4009,6 +4012,47 @@ class ResnetGraph (nx.MultiDiGraph):
             mapdic[n.objtype()][prop].update(val_dic)
           except KeyError:
             mapdic[n.objtype()].update({prop:val_dic})
+        except KeyError:
+            continue
+
+    if norm:
+      dcopy = mapdic.copy()
+      for t,pvo in dcopy.items():
+        for p,vo in pvo.items():
+          mapdic[t][p].update({normalize(v):o for v,o in vo.items()})
+
+    return dict(mapdic)
+
+  def make_map(self,using_props:list, from_nodes:list=[])->dict[str,dict[str,dict[str,list[PSObject]]]]:
+    '''
+    output:
+      {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
+    '''
+    nodes = from_nodes if from_nodes else self._get_nodes()
+    return self._make_map(using_props,nodes)
+  
+    '''
+    output:
+      {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
+    '''
+    nodes = from_nodes if from_nodes else self._get_nodes()
+    mapdic = dict()
+    for n in nodes:
+      for prop in using_props:
+        try:
+          vals = n.get_props([prop])
+          vals = [x.lower() for x in vals]
+          n_type = n.objtype()
+          try:
+            [mapdic[n_type][prop][v].append(n) for v in vals]
+          except KeyError:
+            try:
+              for v in vals: 
+                mapdic[n_type][prop][v] =[n]
+            except KeyError:
+                mapdic[n_type] = {prop:{vals[0]:[n]}}
+              #  for i in range(1,len(vals)):
+              #    mapdic[n_type][prop].update({vals[i]:[n.urn()]})
         except KeyError:
             continue
         

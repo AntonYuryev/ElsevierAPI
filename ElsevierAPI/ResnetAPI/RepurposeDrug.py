@@ -354,14 +354,13 @@ class RepurposeDrug(Indications4targets):
             df with scores
         '''
         my_df = in_df.dfcopy()
-        max_rank = 0
         if my_df._name_ == INDICATION_COUNT:
             concept = self.params['input_compound'] + ' clinical trials'
             kwargs = {'connect_by_rels':['ClinicalTrial']}
             how2connect = self.set_how2connect (**kwargs)
             linked_entities_count, _, my_df = self.link2concept(concept, self.drugs,my_df,how2connect)
             if linked_entities_count:
-              self._set_rank(concept)
+              self._set_rank(my_df,concept)
             print('%s has clinical trials for %d indications' % (self.params['input_compound'], linked_entities_count))
 
             concept = 'Inhibited by ' + self.params['input_compound']
@@ -382,7 +381,7 @@ class RepurposeDrug(Indications4targets):
 
         linked_entities_count, _, my_df = self.link2concept(concept, self.drugs,my_df,how2connect)
         if linked_entities_count:
-          self._set_rank(concept)
+          self._set_rank(my_df,concept)
         print('%d indications %s by %s' % (linked_entities_count, regulated, self.params['input_compound']))
         self.drugcolname = self._col_name_prefix+concept
         
@@ -393,7 +392,7 @@ class RepurposeDrug(Indications4targets):
                 how2connect = self.set_how2connect (**kwargs)
                 linked_entities_count, _, my_df = self.link2concept(concept, self.SimilarDrugs,my_df,how2connect)
                 if linked_entities_count:
-                  self._set_rank(concept)
+                  self._set_rank(my_df,concept)
                 print('%s has clinical trials for %s indications' % (','.join(self.params['similars']), linked_entities_count))
 
                 concept = 'Inhibited by similar drugs'
@@ -411,7 +410,7 @@ class RepurposeDrug(Indications4targets):
                 how2connect = self.set_how2connect (**kwargs)
             linked_entities_count, _, my_df = self.link2concept(concept,self.SimilarDrugs,my_df,how2connect)
             if linked_entities_count:
-                self._set_rank(concept)
+                self._set_rank(my_df,concept)
             print('%d indications %s by %s' % (linked_entities_count, regulated, ','.join(self.params['similars'])))
 
         return my_df
@@ -952,8 +951,8 @@ class RepurposeDrug(Indications4targets):
         other_effects_future.result()
         if self.params['add_bibliography']:
             tm_refs_df = tm_biblio_future.result()
-            tm_ref_colname = self.refcount_column('Name',self.drug_names_str())
-            doi_ref_colname = self.doi_column('Name',self.drug_names_str())
+            tm_ref_colname = self.tm_refcount_colname('Name',self.drug_names_str())
+            doi_ref_colname = self.tm_doi_colname('Name',self.drug_names_str())
             for ws in ranked_df_names:
                 self.report_pandas[ws] = self.report_pandas[ws].merge_df(tm_refs_df,on='Name',columns=[tm_ref_colname,doi_ref_colname])
                 #self.report_pandas[ws] = self.report_pandas[ws].move_cols({tm_ref_colname:3})

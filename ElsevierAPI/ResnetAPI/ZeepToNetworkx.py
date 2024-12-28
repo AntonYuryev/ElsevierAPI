@@ -35,23 +35,22 @@ class PSNetworx(DataModel):
         '''
         dbid2entity = dict()
         if type(zeep_objects) != type(None):
-            for o in zeep_objects.Objects.ObjectRef:
-                ps_obj = PSObject.from_zeep(o)
-                dbid2entity[ps_obj.dbid()] = ps_obj
+          for o in zeep_objects.Objects.ObjectRef:
+            ps_obj = PSObject.from_zeep(o)
+            dbid2entity[ps_obj.dbid()] = ps_obj
 
-            for prop in zeep_objects.Properties.ObjectProperty:
-                dbid = prop.ObjId
-                #prop_id = prop.PropId
-                prop_name = prop.PropName
-                if type(prop.PropValues) != type(None):
-                    values = prop.PropValues.string
-                    #id2entity[db_id][str(prop_id] = values
-                    dbid2entity[dbid][prop_name] = values
-                    try:
-                        prop_display_name = prop.PropDisplayName
-                        dbid2entity[dbid][prop_display_name] = values
-                    except AttributeError:
-                        continue
+          for prop in zeep_objects.Properties.ObjectProperty:
+            dbid = prop.ObjId
+            #prop_id = prop.PropId
+            prop_name = str(prop.PropName)
+            if type(prop.PropValues) != type(None):
+              values = prop.PropValues.string
+              dbid2entity[dbid][prop_name] = values
+              try:
+                prop_display_name = prop.PropDisplayName
+                dbid2entity[dbid][prop_display_name] = values
+              except AttributeError:
+                continue
 
         return dbid2entity
 
@@ -84,45 +83,45 @@ class PSNetworx(DataModel):
 
             # loading relations and their properties
             for prop in zeep_relations.Properties.ObjectProperty:
-                rel_id = prop['ObjId']
-                prop_id = prop['PropId']
-                prop_set_id = prop['PropSet']
-                prop_name = prop['PropName']
-                prop_display_name = prop['PropDisplayName']
-                values = prop['PropValues']['string']
+              rel_id = prop['ObjId']
+              prop_id = prop['PropId']
+              prop_set_id = prop['PropSet']
+              prop_name = str(prop['PropName'])
+              prop_display_name = prop['PropDisplayName']
+              values = prop['PropValues']['string']
 
-                if not self.IdToPropType[prop_id]['IsMultiple']:
-                    new_relations[rel_id][prop_id] = values
-                    new_relations[rel_id][prop_name] = values
-                    new_relations[rel_id][prop_display_name] = values
-                elif prop_set_id in new_relations[rel_id].PropSetToProps.keys():
-                    new_relations[rel_id].PropSetToProps[prop_set_id][prop_id] = values
-                    new_relations[rel_id].PropSetToProps[prop_set_id][prop_name] = values
-                    new_relations[rel_id].PropSetToProps[prop_set_id][prop_display_name] = values
-                else:
-                    new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_id: values}
-                    new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_name: values}
-                    new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_display_name: values}
+              if not self.IdToPropType[prop_id]['IsMultiple']:
+                #new_relations[rel_id][prop_id] = values
+                new_relations[rel_id][prop_name] = values
+                new_relations[rel_id][prop_display_name] = values
+              elif prop_set_id in new_relations[rel_id].PropSetToProps.keys():
+                #new_relations[rel_id].PropSetToProps[prop_set_id][prop_id] = values
+                new_relations[rel_id].PropSetToProps[prop_set_id][prop_name] = values
+                new_relations[rel_id].PropSetToProps[prop_set_id][prop_display_name] = values
+              else:
+                #new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_id: values}
+                new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_name: values}
+                new_relations[rel_id].PropSetToProps[prop_set_id] = {prop_display_name: values}
 
             # loading connected entities from Links
             for l in zeep_relations.Links.Link:
-                rel_id = l['RelationId']
-                direction = l['Dir'] # 0:no arrow, 1:arrow to entity from relation, -1:arrow from entity to relation
-                graph_node = id2psobj[l['EntityId']]
-                # link = (l['EntityId'], direction, l[EFFECT])
-                link = (graph_node.uid(), direction, l[EFFECT])
+              rel_id = l['RelationId']
+              direction = l['Dir'] # 0:no arrow, 1:arrow to entity from relation, -1:arrow from entity to relation
+              graph_node = id2psobj[l['EntityId']]
+              # link = (l['EntityId'], direction, l[EFFECT])
+              link = (graph_node.uid(), direction, l[EFFECT])
 
-                if direction == 1:
-                    new_relations[rel_id].Nodes[TARGETS].append(graph_node)
-                else:
-                    new_relations[rel_id].Nodes[REGULATORS].append(graph_node) 
-                    # non-directional relations will have only REGULATORS
+              if direction == 1:
+                new_relations[rel_id].Nodes[TARGETS].append(graph_node)
+              else:
+                new_relations[rel_id].Nodes[REGULATORS].append(graph_node) 
+                  # non-directional relations will have only REGULATORS
 
             # at this point all rels have rel.Nodes[REGULATORS] and some rel.Nodes[TARGETS]
             for rel_id, rel in new_relations.items():
-                rel.Nodes[REGULATORS].sort(key=lambda x:x.name())
-                if TARGETS in rel.Nodes:
-                    rel.Nodes[TARGETS].sort(key=lambda x:x.name())
+              rel.Nodes[REGULATORS].sort(key=lambda x:x.name())
+              if TARGETS in rel.Nodes:
+                rel.Nodes[TARGETS].sort(key=lambda x:x.name())
                     
             [rel.refs() for rel in new_relations.values()]
             [new_graph.add_rel(rel,merge=False) for rel in new_relations.values()]

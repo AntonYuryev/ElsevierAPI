@@ -79,7 +79,7 @@ class Indications4targets(SemanticSearch):
         self.__DirectAntagonists = set()
 
         self.targets_have_weights = False
-        self.col2rank = dict()
+        #self.col2rank = dict()
 
 ############################## UTILITIES ############################ UTILITIES #############################
     def input_target_names_str(self):
@@ -295,14 +295,7 @@ class Indications4targets(SemanticSearch):
     def _partner_class_str(self):
         clases = {ResnetGraph.classes(self.__partners)}
         return ','.join(clases)
-    
-
-    def _set_rank(self,concept:str,my_rank=0):
-        if not my_rank:
-          my_rank = max(self.col2rank.values()) if self.col2rank else 0
-          my_rank += 1
-        self.col2rank[self._weighted_refcount_colname(concept)] = my_rank
-        
+   
 
     def report_path(self, extension='.xlsx'):
         indics = ','.join(self.params['indication_types'])
@@ -956,7 +949,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
                         df2score.at[i,refcount_column] = refcount
                         df2score.at[i,linked_count_column] = rowGVs_count
             
-            self._set_rank(concept_name)
+            self._set_rank(df2score,concept_name)
             print('Found %d indications linked to %d GVs' % (gvlinkcounter, len(self.targetGVs)))
 
 
@@ -1058,7 +1051,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             kwargs.update({'nodeweight_prop': 'regulator weight'})
         how2connect = self.set_how2connect(**kwargs)
         linked_row_count,_,my_df = self.link2concept(concept,targets,my_df,how2connect)
-        self._set_rank(concept)
+        self._set_rank(my_df,concept)
         print('%d indications are %sly regulated by %s' % 
             (linked_row_count,with_effect_on_indication,t_n))
         self.nodeweight_prop = ''
@@ -1075,7 +1068,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
                 kwargs.update({'nodeweight_prop': 'regulator weight'})
             how2connect = self.set_how2connect(**kwargs)
             linked_row_count,_,my_df = self.link2concept(concept,drug_connect_concepts,my_df,how2connect)
-            self._set_rank(concept)
+            self._set_rank(my_df,concept)
             print(f'Linked {linked_row_count} clinical trial indictions for {t_n} {drug_class}')
 
             concept = target_in_header+' '+drug_class
@@ -1085,7 +1078,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
                   }
             how2connect = self.set_how2connect(**kwargs)
             linked_row_count,_,my_df = self.link2concept(concept,drug_connect_concepts,my_df,how2connect)
-            self._set_rank(concept)
+            self._set_rank(my_df,concept)
             print(f'Linked {linked_row_count} indications for {t_n} {drug_class}')
 
         #references reporting target agonists exacerbating indication or causing indication as adverse events
@@ -1101,7 +1094,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             max_rank = max(self.col2rank.values()) 
             if not drug_connect_concepts:
               max_rank += 1 # advancing max_rank only if drug_connect_concepts were empty, otherwise they have the same max_rank
-            self._set_rank(concept,max_rank)
+            self._set_rank(my_df,concept,max_rank)
 
             print(f'Linked {linked_row_count} indications as toxicities for {t_n} {drug_class}')
 
@@ -1122,25 +1115,25 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             kwargs.update({'nodeweight_prop': 'target weight'})
         how2connect = self.set_how2connect(**kwargs)
         linked_row_count,_,my_df= self.link2concept(concept,targets,my_df,how2connect)
-        self._set_rank(concept)
+        self._set_rank(my_df,concept)
         print(f'{linked_row_count} indications {with_effect_on_indication}ly regulate {t_n}')
         self.nodeweight_prop = ''
 
         #references suggesting target partners as targets for indication
         if with_partners:
-            concept = f'{target_in_header} partners'
-            kwargs = {'connect_by_rels':['Regulation'],
-                  'with_effects' : [with_effect_on_indication],
-                  'boost_by_reltypes' : ['Regulation','FunctionalAssociation']
-                  }
-            if self.targets_have_weights:
-                 kwargs.update({'nodeweight_prop': 'regulator weight'})
-            how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(concept,with_partners,my_df,how2connect)           
-            self._set_rank(concept)
-            print('Linked %d indications for %d %s partners' % 
-                (linked_row_count,len(with_partners),t_n))
-            self.nodeweight_prop = ''
+          concept = f'{target_in_header} partners'
+          kwargs = {'connect_by_rels':['Regulation'],
+                'with_effects' : [with_effect_on_indication],
+                'boost_by_reltypes' : ['Regulation','FunctionalAssociation']
+                }
+          if self.targets_have_weights:
+            kwargs.update({'nodeweight_prop': 'regulator weight'})
+          how2connect = self.set_how2connect(**kwargs)
+          linked_row_count,_,my_df = self.link2concept(concept,with_partners,my_df,how2connect)           
+          self._set_rank(my_df,concept)
+          print('Linked %d indications for %d %s partners' % 
+              (linked_row_count,len(with_partners),t_n))
+          self.nodeweight_prop = ''
 
         # references reporting that cells producing the target linked to indication  
         # only used if taregts are secretred ligands
@@ -1154,7 +1147,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
                 kwargs.update({'nodeweight_prop': 'regulator weight'})
             how2connect = self.set_how2connect(**kwargs)
             linked_row_count,_,my_df = self.link2concept(concept,self.__TargetSecretingCells,my_df,how2connect)           
-            self._set_rank(concept)
+            self._set_rank(my_df,concept)
             print(f'Liked {linked_row_count} indications linked {len(self.__TargetSecretingCells)} cells producing {t_n}')
 
         link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=False,
@@ -1169,7 +1162,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             how2connect = new_session.set_how2connect(**kwargs)
             linked_row_count,_,my_df = new_session.link2concept(concept,drug_connect_concepts,my_df,how2connect)           
-            self._set_rank(concept)
+            self._set_rank(my_df,concept)
             print(f'Linked {linked_row_count} clinical trial indications for {t_n} {drug_class}')
             new_session.close_connection()
 
@@ -1184,7 +1177,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             how2connect = new_session.set_how2connect(**kwargs)
             linked_row_count,_,my_df = new_session.link2concept(concept,drug_connect_concepts,my_df,how2connect)          
-            self._set_rank(concept)
+            self._set_rank(my_df,concept)
             print('Linked %d indications for %s %s' % (linked_row_count,t_n,drug_class))
             new_session.close_connection()
 
@@ -1206,7 +1199,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             max_colrank = max(self.col2rank.values())
             if not drug_connect_concepts:
               max_colrank += 1 # advancing max_rank only if drug_connect_concepts were empty, otherwise they have the same max_rank
-            self._set_rank(concept,max_colrank)
+            self._set_rank(my_df,concept,max_colrank)
             print('Linked %d indications as toxicities for %s %s' % (linked_row_count,t_n,drug_class))
             new_session.close_connection()
         
@@ -1224,7 +1217,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             how2connect = new_session.set_how2connect(**kwargs)
             linked_row_count,_,my_df = new_session.link2concept(concept,list(self.PathwayComponents),my_df,how2connect)
             
-            self._set_rank(concept)
+            self._set_rank(my_df,concept)
             print('Linked %d indications to %s pathway components' % (linked_row_count,t_n))
             new_session.close_connection()
  
@@ -1381,8 +1374,8 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
             
             if self.params['add_bibliography']:
                 indication_etmrefs = etm_future.result()
-                etm_ref_colname = self.refcount_column('Name',self.target_names())
-                doi_ref_colname = self.doi_column('Name',self.target_names())
+                etm_ref_colname = self.tm_refcount_colname('Name',self.target_names())
+                doi_ref_colname = self.tm_doi_colname('Name',self.target_names())
                 for ws in self.__dfnames_map().values():
                     if ws in self.report_pandas.keys():
                         self.report_pandas[ws] = self.report_pandas[ws].merge_df(indication_etmrefs,how='left',on='Name',columns=[etm_ref_colname,doi_ref_colname])
