@@ -8,7 +8,7 @@ from ..utils import str2str,sortdict
 from collections import defaultdict
 
 AUTHORS = 'Authors'
-AUTHORS_STR = 'String of Authors'
+AUTHORS_STR = 'Authors names'
 INSTITUTIONS = 'Institutions'
 JOURNAL = 'Journal'
 MEDLINETA = 'MedlineTA'
@@ -248,6 +248,13 @@ class Reference(dict):
       self.snippets[text_ref] = snippet_props
 
 
+  def number_of_sentences(self):
+    count = 0
+    for snippet in self.snippets.values():
+      count += len(snippet.get(SENTENCE,{})) #
+    return count
+
+
   def add_snippet(self,textref:str,snippet:dict[str,set]):
     '''
     input:
@@ -264,9 +271,23 @@ class Reference(dict):
         return ''
 
 
+  def __is_new(self,sentence:str):
+    clean_sent = sentence.strip(' .')
+    sent_no_white = clean_sent.replace(" ", "")
+    for prop2vals in self.snippets.values():
+      try:
+        my_sentences = prop2vals[SENTENCE]
+        for sentence in my_sentences:
+          if sent_no_white == sentence.replace(" ", ""): ## sometime whitespaces are screwedup
+            return ''
+      except KeyError: continue
+    return clean_sent
+
+
   def add_sentence_props(self, text_ref:str, propID:str, prop_values:list):
     if propID == SENTENCE:
-      prop_values = [str(x).strip(' .') for x in prop_values if x]
+      prop_values = list(filter(None,[self.__is_new(x) for x in prop_values if x]))
+               
     if prop_values:
       try:
         self.snippets[text_ref][propID].update(prop_values)
@@ -527,11 +548,11 @@ class Reference(dict):
           return str('No journal name')
                 
       
-  def relevance(self):
-      try:
-          return max(map(float,self[RELEVANCE]))
-      except KeyError:
-          return float(0.0)
+  def relevance(self,score_name:str=RELEVANCE):
+    try:
+      return max(map(float,self[score_name]))
+    except KeyError:
+      return 0.0
   
 
   def is_clinical_trial(self):
@@ -884,7 +905,7 @@ class Author:
     else:
       return self._1stName
     
-  
+
   @classmethod
   def fromStr(cls,author:str):
     '''
@@ -910,7 +931,7 @@ class DocMine (Reference):
     def __init__(self, doc_id_type:str, doc_id:str):
         super().__init__(doc_id_type, doc_id)
         self.sections = dict() #{{abstract:[text]}, {claims:[claims]}. Texts to be markerd up by NLP.
-        self.authors = list() # [Author]
+        #self.authors = list() # [Author]
         self.addresses = list() # {orgname:adress}
 
 

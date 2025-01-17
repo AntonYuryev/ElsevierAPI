@@ -1,22 +1,21 @@
-import json,time, os, math, zipfile
+from ..pandas.panda_tricks import df,pd,np
+from ..utils import execution_time,sortdict,load_api_config
+from ..NCBI.pubmed import medlineTA2issn,docid2pmid
+from ..SBS_API.sbs import SBSapi
+from .etm import ETMsearch
+from ..ScopusAPI.scopus import Scopus,AuthorSearch
+from .references import Reference,DocMine,pubmed_hyperlink,make_hyperlink,pmc_hyperlink,pii_hyperlink,doi_hyperlink
+from ..ScopusAPI.scopus import SCOPUS_AUTHORIDS,SCOPUS_CITESCORE,SCOPUS_SJR,SCOPUS_SNIP
+from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,RELEVANCE,ETM_CITATION_INDEX,IN_OPENACCESS,PUBLISHER,GRANT_APPLICATION
+import math,time,json,os,zipfile
 from datetime import datetime,date
 from concurrent.futures import ThreadPoolExecutor
 from urllib.error import HTTPError
 from collections import defaultdict
-from .references import make_hyperlink,pii_hyperlink,doi_hyperlink
-from ..NCBI.pubmed import docid2pmid,pubmed_hyperlink,pmc_hyperlink
-from ..NCBI.pubmed import medlineTA2issn
-from ..pandas.panda_tricks import pd, df
-from ..utils import  load_api_config, execution_time,sortdict
-from ..SBS_API.sbs import SBSapi
-from ..ScopusAPI.scopus import Scopus,AuthorSearch,DocMine,Reference
-from ..ScopusAPI.scopus import SCOPUS_AUTHORIDS,SCOPUS_CITESCORE,SCOPUS_SJR,SCOPUS_SNIP
-from .references import AUTHORS,INSTITUTIONS,JOURNAL,PUBYEAR,RELEVANCE,ETM_CITATION_INDEX,IN_OPENACCESS,PUBLISHER,GRANT_APPLICATION
-from .etm import ETMsearch
 
-REFCOUNT_COLUMN = 'Number of references. Link opens most relevant articles in PubMed'
+REFCOUNT_COLUMN = '#sentences with co-occurence. Link opens most relevant articles in PubMed'
 IDENTIFIER_COLUMN = 'Document identifier: PMID or DOI'
-MAX_ETM_SESSIONS = 5 #ETM performance deteriorates if number of concurrent sessions is too big
+MAX_TM_SESSIONS = 10 #ETM performance deteriorates if number of concurrent sessions is > 5
 
 class RefStats:
   """
@@ -45,10 +44,11 @@ class RefStats:
       
 
   def clone(self):
-    kwargs = {'load_medlineTA':False}
+    kwargs = {'load_medlineTA':False,'limit':self.ref_limit}
     refstat = RefStats(self.APIconfig,**kwargs)
     refstat.abbrev2journal = self.abbrev2journal.copy()
     refstat.journal2issn = self.journal2issn.copy()
+    refstat.NormalizedAffs = self.NormalizedAffs.copy()
     return refstat
   
 
@@ -90,12 +90,25 @@ class RefStats:
       first_col = RELEVANCE if use_relevance else ETM_CITATION_INDEX
       header = [first_col,PUBYEAR,'Identifier type',IDENTIFIER_COLUMN,'Citation']
 
+      # normalization constant for relevance score between 0 and 100
+      log_scores = []
+      for ref, refcount in self.ref_counter.values():
+        boosted_relevance = ref.relevance() * int(refcount)
+        ref[RELEVANCE] = [boosted_relevance]
+        log_scores.append(math.log(boosted_relevance,10))
+      
+      #normalization_constant = statistics.median(relevance_vec)
+      min_log = min(log_scores)
+      max_log = max(log_scores)
+      maxmin = max_log - min_log
+
       table_rows = set()
-      for identifier, ref_count in self.ref_counter.items():
-          ref = ref_count[0]
+      for identifier, (ref,refcount) in self.ref_counter.items():
           assert(isinstance(ref,Reference))
-          refcount = int(ref_count[1])
-          score = math.ceil(float(ref[RELEVANCE][0]) * refcount) if use_relevance else refcount
+          if use_relevance:
+            score = 100 * (math.log(ref[RELEVANCE][0],10)-min_log)/maxmin
+          else:
+            score = refcount
           biblio_str, id_type, identifier = ref._biblio_tuple()
           if id_type == 'PMID':
               identifier = pubmed_hyperlink([identifier],identifier)
@@ -103,6 +116,8 @@ class RefStats:
               identifier = make_hyperlink(identifier,'http://dx.doi.org/')
           elif id_type == 'PMC':
               identifier = pmc_hyperlink([identifier],identifier)
+          elif id_type == 'PII':
+              identifier =  pii_hyperlink(identifier,identifier)
           table_rows.add(tuple([score,ref.pubyear(),id_type,identifier,biblio_str]))
 
       return_df = df.from_rows(list(table_rows),header)
@@ -237,16 +252,13 @@ class RefStats:
         tm_soft - type of TM serach. Options: ETMbasicSearch, ETMadvancedSearch, ETMrel, SBSsearch
     '''
     assert(isinstance(and_concepts,list|set))
-    if tm_soft == 'SBSsearch':
-      total_hits,_,references = self.SBSsearch.multiple_search(for_entity,and_concepts,add2query,self._limit())
-    else:
-      references = set()
-      total_hits = 0
-      for concept in and_concepts:
-        if for_entity != concept:
-          hit_count,_,refs = self.dispatch2TMsoft(tm_soft,for_entity,concept,add2query)
-          total_hits += hit_count
-          references.update(refs)
+    references = set()
+    total_hits = 0
+    for concept in and_concepts:
+      if for_entity != concept:
+        hit_count,_,refs = self.dispatch2TMsoft(tm_soft,for_entity,concept,add2query)
+        total_hits += hit_count
+        references.update(refs)
 
     [self._add2counter(ref) for ref in references]
     if getScopusInfo:
@@ -258,7 +270,10 @@ class RefStats:
   def __get_refs(self, entity_name:str, concepts2link:list,use_query,add2query=[]):
       references = set()
       references, total_hits = self.__multiple_search(entity_name,concepts2link,use_query,add2query)
+      return self.__2hyperlink(references,total_hits),''
 
+
+  def __2hyperlink(self,references:list[Reference],total_hits:int):
       references.sort(key=lambda x:float(x[RELEVANCE][0]),reverse=True)
       #best_refs = references[0:self._limit()]
       my_limit = self._limit()
@@ -289,18 +304,17 @@ class RefStats:
       if pmcs:
         pmids += docid2pmid(pmcs).values()
       #elif dois: docid2pmid works only with PMCs or DOIs from PMC
-      #  pmids += docid2pmid(dois)
 
       if pmids:
-        return [pubmed_hyperlink(pmids,total_hits), '']
+        return pubmed_hyperlink(pmids,total_hits)
       elif piis:
-        return [pii_hyperlink(piis[0],total_hits), '']
+        return pii_hyperlink(piis[0],total_hits)
       elif dois:
-        return [doi_hyperlink(dois[0],total_hits),'']
+        return doi_hyperlink(dois[0],total_hits)
       elif total_hits:
-        return [str(total_hits),'']
+        return str(total_hits)
       else:
-        return ['','']
+        return ''
 
 
   @staticmethod
@@ -330,7 +344,8 @@ class RefStats:
       return my_df,self.ref_counter # need to return self.ref_counter to concatenate ref_counters after cloning
 
 
-  def add_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query:str,add2query=[],max_row=0):
+  def add_refs_etm(self,to_df:df,between_names_in_col:str,and_concepts:list,
+               use_query:str,add2query=[],max_row=0):
       """
       input:
           use_query - function to generate query from "between_names_in_col" and each concept in "and_concepts"
@@ -343,7 +358,7 @@ class RefStats:
           self.doi_columns - []\n
       """
       if to_df.empty: return to_df
-      start_time = time.time()
+      
       if max_row:
           df2annotate = df.from_pd(to_df.iloc[:max_row])
           unannoated_rows = df.from_pd(to_df.iloc[max_row:])
@@ -353,9 +368,9 @@ class RefStats:
       row_count = len(to_df)
       
       if row_count > 9:
-          thread_name = f'{use_query} refs 4 {len(df2annotate)} rows in {MAX_ETM_SESSIONS} thrds'
+          thread_name = f'{use_query} refs 4 {len(df2annotate)} rows in {MAX_TM_SESSIONS} thrds'
           partition_size = 100
-          with ThreadPoolExecutor(max_workers=MAX_ETM_SESSIONS, thread_name_prefix=thread_name) as e:
+          with ThreadPoolExecutor(max_workers=MAX_TM_SESSIONS, thread_name_prefix=thread_name) as e:
               futures = list()
               for i in range(0,len(df2annotate),partition_size):
                   df_part = df.from_pd(df2annotate.iloc[i:i+partition_size])
@@ -372,7 +387,33 @@ class RefStats:
               annotated_df = df.concat_df(dfs2concat,to_df._name_)
       else:
           annotated_df = self. __add_refs1(to_df,between_names_in_col,and_concepts,use_query,add2query)[0]
-      
+
+      return annotated_df
+
+
+  def add_refs_sbs(self,to_df:df,between_names_in_col:str,and_concepts:list,add2query=[],multithread=False):
+    names = to_df[between_names_in_col].to_list()
+    e2refs = self.SBSsearch.cooc4list(names,and_concepts,add2query,multithread)
+    my_df = to_df.dfcopy()
+
+    refcountcol = self.refcount_column(between_names_in_col,and_concepts)
+    for i in my_df.index:
+      row_name = my_df.at[i,between_names_in_col]
+      refcount,row_refs = e2refs[row_name]
+      my_df.loc[i,refcountcol] = self.__2hyperlink(row_refs,refcount)
+      [self._add2counter(ref) for ref in row_refs]
+
+    return my_df
+
+
+  def add_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query:str,
+               add2query=[],max_row=0,multithread=True):
+      start_time = time.time()
+      if use_query == 'SBSsearch':
+        annotated_df = self.add_refs_sbs(to_df,between_names_in_col,and_concepts,add2query,multithread)
+      else:
+        annotated_df = self.add_refs_etm(to_df,between_names_in_col,and_concepts,use_query,add2query,max_row)
+  
       annotated_df.copy_format(to_df)
       refcols = self.refcount_column(between_names_in_col,and_concepts)
       self.refcols.add(refcols)
@@ -384,7 +425,7 @@ class RefStats:
       annotated_df.set_hyperlink_color([refcols,doi_column])
       
       rows_annotated = max_row if max_row else len(to_df)
-      print('Annotated with TM references %d rows from %s in %s' % 
+      print('Annotated with TM references %d rows from worksheet "%s" in %s' % 
               (rows_annotated,to_df._name_,execution_time(start_time)))
       return annotated_df
 
@@ -415,7 +456,7 @@ class RefStats:
       partition_size = 100
       thread_name = f'Retrieve {partition_size} ETM references'
       dfs2concat = list()
-      with ThreadPoolExecutor(max_workers=MAX_ETM_SESSIONS, thread_name_prefix=thread_name) as e:    
+      with ThreadPoolExecutor(max_workers=MAX_TM_SESSIONS, thread_name_prefix=thread_name) as e:    
           futures = list()
           for i in range(0,len(df2annotate),partition_size):
               df_part = df(df2annotate.iloc[i:i+partition_size])
