@@ -799,7 +799,7 @@ class df(pd.DataFrame):
     return p_values
   
 
-  def sortrows(self,by:str|list[str],ascending=False):
+  def sortrows(self,by:str|list[str],ascending:bool|list[bool]=False):
     # re-writing parent pd.DataFrame function is a BAD idea. Use other names
     newpd = pd.DataFrame(self.sort_values(by,ascending=ascending,inplace=False))
     newdf = df.from_pd(newpd,self._name_)
