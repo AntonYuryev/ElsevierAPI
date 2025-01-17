@@ -1440,29 +1440,31 @@ in {execution_time(process_start)}')
         my_graph = graph.copy() if graph else self.Graph.copy()
         
         if my_graph:
-          my_graph = my_graph.remove_undirected_duplicates()
-          section_rels = set()
-          for r,t,e in my_graph.iterate():
-            section_rels.add(e)
-            if len(section_rels) == self.resnet_size:
-              resnet_section = my_graph.subgraph_by_rels(list(section_rels))
-              rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-              rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
-              # dumps section
-              self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
-              resnet_section.clear_resnetgraph()
-              section_rels.clear()
-      
-          # dumps leftover resnet_section with size < self.resnet_size
-          resnet_section = my_graph.subgraph_by_rels(list(section_rels))
-          rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-          rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
-          self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
-
           if my_graph.number_of_edges() == 0:
-              rnef_str = my_graph.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-              rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
-              self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
+            rnef_str = my_graph.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
+            rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+            self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
+            self.close_rnef_dump(to_folder,in_parent_folder,root_folder,True)
+          else:
+            my_graph = my_graph.remove_undirected_duplicates()
+            section_rels = set()
+            for r,t,e in my_graph.iterate():
+              section_rels.add(e)
+              if len(section_rels) == self.resnet_size:
+                resnet_section = my_graph.subgraph_by_rels(list(section_rels))
+                rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
+                rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+                # dumps section
+                self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
+                resnet_section.clear_resnetgraph()
+                section_rels.clear()
+        
+            # dumps leftover resnet_section with size < self.resnet_size
+            resnet_section = my_graph.subgraph_by_rels(list(section_rels))
+            rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
+            rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+            self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
+            self.close_rnef_dump(to_folder,in_parent_folder,root_folder,True)
 
           if not self.no_mess:
               print('RNEF dump of "%s" graph into %s folder was done in %s' % 
@@ -1611,7 +1613,7 @@ in {execution_time(process_start)}')
         find_neighbors_oql += ' AND Connected by ('+sel_rels23+') to (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
 
         r_n = f'Find entities common between {len(of_dbids1)} and {len(and_dbids3)} entities' 
-        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',set(of_dbids1),set(and_dbids3),request_name=r_n)
+        neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',set(of_dbids1),set(and_dbids3),request_name=r_n,step=250)
         
         neighbors = neighbors_entity_graph._get_nodes()
         if not neighbors: return ResnetGraph()
@@ -1638,8 +1640,8 @@ in {execution_time(process_start)}')
             sel_23_graph_oql = sel_rels23 + ' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
         rn23 = f'Find 2-3 relations between {len(and_dbids3)} entities in position 3 and {len(neighbors_ids)} common neighbors'
 
-        graph12 = self.iterate_oql2(sel_12_graph_oql,set(of_dbids1),set(neighbors_ids),True,rn12)
-        graph23 = self.iterate_oql2(sel_23_graph_oql,set(and_dbids3),set(neighbors_ids),True,rn23)
+        graph12 = self.iterate_oql2(sel_12_graph_oql,set(of_dbids1),set(neighbors_ids),True,rn12,step=250)
+        graph23 = self.iterate_oql2(sel_23_graph_oql,set(and_dbids3),set(neighbors_ids),True,rn23,step=250)
         graph123 = graph12.compose(graph23)
         # to remove relations with no Effect annotation:
         rels_with_effect = list(graph123.psrels_with(['positive','negative'],['Effect']))

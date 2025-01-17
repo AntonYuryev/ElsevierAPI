@@ -372,6 +372,16 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
 ############################   LABELING LABELS LABELING   ######################################
+  def connectivity(self,node:PSObject,with_children=False):
+    try:
+      connectivity = self.degree(node.uid())
+      if with_children:
+        for child in node.childs():
+          connectivity += self.degree(child.uid())
+      return connectivity
+    except KeyError:
+      return 0
+      
 
   def closeness(self)->dict[int,float]:
       """
@@ -2382,7 +2392,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
               ps_rel[OBJECT_TYPE] = ps_rel.pop('ControlType')
               ps_rel.refs()
-              ps_rel.urn()
+              ps_rel.urn(refresh=True) # URN algorithm may change
               valid_rels.append(ps_rel)
       #ps_rel does not have 'Id' property.This is used by PSRelation.is_from_rnef()
       return valid_nodes, set(valid_rels)

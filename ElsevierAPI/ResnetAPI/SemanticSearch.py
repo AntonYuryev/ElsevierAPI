@@ -130,7 +130,7 @@ class SemanticSearch (APISession):
 
   def _set_rank(self,in_df:df,_4concept:str,my_rank=0,colname=''):
     '''
-      assigns self._max_rank()+1 to new concept if my_rank == 0
+      assigns self._max_rank()+1 to new concept if my_rank == 0\n
       uses self._weighted_refcount_colname(concept) as column name if not colname
     '''
     if not my_rank:
@@ -757,6 +757,10 @@ class SemanticSearch (APISession):
 
 
   def add2report(self,table:df):
+      '''
+      input:
+        uses table._name_ attribute to call worksheet in the report
+      '''
       table_name = table._name_
       if not table_name:
           table_name = 'Sheet' + str(len(self.report_pandas))
@@ -1065,12 +1069,13 @@ class SemanticSearch (APISession):
           copy of "to_df" with added columns: REFS_COLUMN,DOIs
       '''
       print(f'Finding {self.RefStats._limit()} most relevant articles using {self.TMsearch} for {len(to_df)} rows \
-in "{to_df._name_} worksheet and {input_names}', flush=True)
-      
-      return self.RefStats.add_refs(to_df,entity_name_col,input_names,self.TMsearch,add2query,max_row)
+in "{to_df._name_}" worksheet and {input_names}', flush=True)
+      multithread = not self.params.get('debug',False)
+      return self.RefStats.add_refs(to_df,entity_name_col,input_names,self.TMsearch,add2query,max_row,multithread)
 
 
-  def refs2report(self,to_df_named:str,input_names:list,entity_name_col:str='Name',add2query=[],add2report=True,skip1strow=True):
+  def refs2report(self,to_df_named:str,input_names:list,entity_name_col:str='Name',
+                  add2query=[],add2report=True,skip1strow=True):
       """
       input:
           df with "to_df_named" must be in self.report_pandas and have column RANK
@@ -1081,24 +1086,23 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
               etm._doi_column()
       """
       if skip1strow:
-          my_df = self.report_df(to_df_named).dfcopy()
-          df_name = my_df._name_ # may not be the same as to_df_named
-          weights = my_df.iloc[[0]].copy()
-          df_no_weights = df.from_pd(my_df.drop(0, axis=0,inplace=False), df_name)
-          df_no_weights.copy_format(self.report_pandas[to_df_named])
-          if not my_df.empty:       
-              df_with_links = self.bibliography(df_no_weights,input_names,entity_name_col,add2query,max_row=len(df_no_weights))
-              pd_withlinks = pd.concat([weights, df_with_links]).reset_index(drop=True)
-              my_df = df.from_pd(pd_withlinks,df_name)     
-              my_df.copy_format(df_with_links)
-          else:
-              return my_df
+        my_df = self.report_df(to_df_named).dfcopy()
+        df_name = my_df._name_ # may not be the same as to_df_named
+        weights = my_df.iloc[[0]].copy()
+        df_no_weights = df.from_pd(my_df.drop(0, axis=0,inplace=False), df_name)
+        df_no_weights.copy_format(self.report_pandas[to_df_named])
+        if df_no_weights.empty: return my_df  
+
+        df_with_links = self.bibliography(df_no_weights,input_names,entity_name_col,add2query,max_row=len(df_no_weights))
+        pd_withlinks = pd.concat([weights, df_with_links]).reset_index(drop=True)
+        my_df = df.from_pd(pd_withlinks,df_name)     
+        my_df.copy_format(df_with_links)
       else:
-          my_df = self.report_pandas[to_df_named]
-          my_df = self.bibliography(my_df,input_names,entity_name_col,add2query,max_row=len(my_df))
-          
+        my_df = self.report_pandas[to_df_named]
+        my_df = self.bibliography(my_df,input_names,entity_name_col,add2query,max_row=len(my_df))
+        
       if add2report:
-          self.add2report(my_df)
+        self.add2report(my_df)
 
       return my_df
 
@@ -1109,12 +1113,13 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
       ----
       df with ETM_BIBLIOGRAPHY name to self.report_pandas from self.RefStats.counter2df()
       """
-      biblio_df = self.RefStats.counter2df()
-      biblio_df._name_ = TM_BIBLIOGRAPHY
-      if suffix: biblio_df._name_ += '-'+suffix
-      biblio_df._name_ = biblio_df._name_[:31]
-      self.add2report(biblio_df)
-      return biblio_df._name_
+      if self.params.get('add_bibliography',True):
+        biblio_df = self.RefStats.counter2df()
+        biblio_df._name_ = TM_BIBLIOGRAPHY
+        if suffix: biblio_df._name_ += '-'+suffix
+        biblio_df._name_ = biblio_df._name_[:31]
+        self.add2report(biblio_df)
+        return biblio_df._name_
 
 
   def add_graph_bibliography(self,suffix='',from_graph=ResnetGraph(),add2report=True):
@@ -1288,23 +1293,24 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
       return 0,set(),df2score
     
   
-  def score_concept(self,*args,**kwargs)->tuple[int,set[PSObject],df]:
+  def score_concept(self,*args,**kwargs)->tuple[int,set[PSObject],df,list[PSObject]]:
     '''
     input:
       args[0] - key name in self.params that holds the list of concept names\n
       args[1] - df to score.  Wil use self.RefCountPandas if len(args) < 2\n
       kwargs:
-          'column_name' - string is used to create column name 'Refcount to column_name'
-          'connect_by_rels' - desired relation types for connection. Defaults to []
-          'with_effects' - desired relation effect for connection [positive,negative]. Deafults to [] (any)
-          'in_dir' allowed values: 
-              '>' - from entities in row to concept in column
-              '<' - from concept in column to entities in row
-              '' - any direction (default)
-          'boost_with_reltypes' - if not empty adds to refcount references from other relation types listed in [boost_with_reltypes] regardless Effect sign and direction.  Equivalent to merging relations for refcount if at least one relation specified by other parameters exist between entities and concept
-          'step' = step for iterate_oql() function. Defaults to 500
-          'nodeweight_prop' - indicates the name of the property holding node weight. Deafaults to '' (no weight property
-          'clone2retrieve' - defaults to DO_NOT_CLONE
+        'column_name' - string is used to create column name 'Refcount to column_name'
+        'connect_by_rels' - desired relation types for connection. Defaults to []
+        'with_effects' - desired relation effect for connection [positive,negative]. Deafults to [] (any)
+        'in_dir' allowed values: 
+            '>' - from entities in row to concept in column
+            '<' - from concept in column to entities in row
+            '' - any direction (default)
+        'boost_with_reltypes' - if not empty adds to refcount references from other relation types listed in [boost_with_reltypes] regardless Effect sign and direction.  Equivalent to merging relations for refcount if at least one relation specified by other parameters exist between entities and concept
+        'step' = step for iterate_oql() function. Defaults to 500
+        'nodeweight_prop' - indicates the name of the property holding node weight. Deafaults to '' (no weight property
+        'clone2retrieve' - defaults to DO_NOT_CLONE
+        'column_rank' - column rank to calculate combined score
     '''
     df2score = args[1] if len(args) > 1 else self.RefCountPandas
     try:
@@ -1324,25 +1330,64 @@ in "{to_df._name_} worksheet and {input_names}', flush=True)
       if concepts:
         children,parents = self.load_children4(concepts)
         print(f'Found {len(concepts)} {concept_name} in ontology for {len(concept_params)} {concept_name}s in parameters')
-        concepts_with_children = set()
+        concepts_and_children = set()
         if isinstance(concept_params,dict):
           concept_params = {k.lower():v for k,v in concept_params.items()}
           for parent in parents:
             node_weight = concept_params[parent.name().lower()]
-            parent['target weight'] = [node_weight]
-            parent['regulator weight'] = [node_weight]
-            concepts_with_children.add(parent)
-            for child in parent[CHILDS]:
-              child['target weight'] = [node_weight]
-              child['regulator weight'] = [node_weight]
-              concepts_with_children.add(child)
+            parent.set_property('target weight',node_weight)
+            parent.set_property('regulator weight',node_weight)
+            concepts_and_children.add(parent)
+            for child in parent.childs():
+              child.set_property('target weight',node_weight)
+              child.set_property('regulator weight',node_weight)
+              concepts_and_children.add(child)
             self.nodeweight_prop = 'nodeweight_prop'
-        linked_rows,linked_entities,scored_df = self.score_concepts(concepts_with_children,df2score,**kwargs)
+        linked_rows,linked_entities,scored_df = self.score_concepts(concepts_and_children,df2score,**kwargs)
+        self.nodeweight_prop = ''
+        if linked_rows:
+          scored_column_rank = scored_df.max_colrank()
+          for parent in parents:
+            connectivity = self.Graph.connectivity(parent,with_children=True)
+            parent.set_property('Local connectivity',connectivity)
+            parent.set_property('rank',scored_column_rank)
+          return linked_rows,linked_entities,scored_df,parents
+        else:
+          print(f'No drugs were linked to {concept_names}')
+          return 0,set(),df2score,[]
       else:
           print(f'No concepts found for {concept_names}. Check your spelling !!!')
+          self.nodeweight_prop = ''
+          return 0,set(),df2score,[]
     else:
-        return 0,set(),df2score
+      print('No concept name was provided!!!!')
+      self.nodeweight_prop = ''
+      return 0,set(),df2score,[]
 
-    self.nodeweight_prop = ''
-    return linked_rows,linked_entities,scored_df
-   
+
+  def params2df(self):
+    internal_params  = {"skip","debug",
+                        "consistency_correction4target_rank",
+                        "add_bibliography",
+                        "strict_mode",
+                        "target_types",
+                        "max_ontology_parent",
+                        "init_refstat",
+                        "max_childs",
+                        "add_closeness",
+                        'propagate_target_state_in_model',
+                        'DTfromDB'}
+    input_dict = {k:v for k,v in self.params.items() if k not in internal_params}
+    rows = list()
+    for type, name2weights in input_dict.items():
+      if isinstance(name2weights,list):
+        name2weights = {n:'' for n in name2weights}
+      elif not isinstance(name2weights,dict):
+          name2weights = {f'{name2weights}':''}
+
+      for name,weight in name2weights.items():
+        rows.append([type,name,weight])
+
+    param_df = df.from_rows(rows,['Parameter','Name','Weight'])
+    param_df._name_ = 'Input'
+    self.add2report(param_df)

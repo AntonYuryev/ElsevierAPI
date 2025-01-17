@@ -1,6 +1,6 @@
 from .ResnetAPIcache import APIcache
 from .PathwayStudioGOQL import OQL
-from .ResnetGraph import ResnetGraph,EFFECT,REFCOUNT,PROTEIN_TYPES,PSObject,CONSISTENCY,PSRelation
+from .ResnetGraph import ResnetGraph,EFFECT,REFCOUNT,PROTEIN_TYPES,PSObject,CONSISTENCY,execution_time2,time
 from math import log, sqrt
 from collections import defaultdict
 
@@ -72,27 +72,28 @@ class DrugTargetConsistency(APIcache):
             return self.iterate_oql(oql_query,target_names,request_name=rn)
 
 
-    def load_drug_graph(self,for_targets:set[PSObject],limit2drugs:set[PSObject]={},directly_from_db=False):
+    def load_drug_graph(self,for_targets:set[PSObject],limit2drugs:set[PSObject]={},load_from_db=False):
         '''
         output:
             self.drugs2targets - subgraph of self.network limited to "for_targets" and "limit2drugs"
         '''
         if not self.network:
-            if directly_from_db:
-                self.drugs2targets = self.d2t_from_db(for_targets,limit2drugs)
-            else:
-                self.network = self._load_cache(cache_name=self.cache_name)
-        
+          self.network = self._load_cache(cache_name=self.cache_name)
+          
         assert(self.network)
         if limit2drugs:
-            self.drugs2targets = self.network.get_subgraph(limit2drugs,list(for_targets))
+          self.drugs2targets = self.network.get_subgraph(limit2drugs,list(for_targets))
         else:
-            self.drugs2targets = self.network.neighborhood(for_targets)
-            
-        all_targets = {PSObject(y) for x,y in self.drugs2targets.nodes(data=True) if self.drugs2targets.in_degree(x)}
-        missing_targets = for_targets.difference(all_targets)
-        add2network = self.d2t_from_db(missing_targets,limit2drugs)
-        add2network = add2network.subtract(self.drugs2targets)
+          self.drugs2targets = self.network.neighborhood(for_targets)
+          
+        if load_from_db:
+          add2network = self.d2t_from_db(for_targets,limit2drugs)
+        else:
+          cache_targets = {PSObject(y) for x,y in self.drugs2targets.nodes(data=True) if self.drugs2targets.in_degree(x)}
+          missing_targets = for_targets.difference(cache_targets)
+          print(f'{len(missing_targets)} are not found in drug2target cache')
+          add2network = self.d2t_from_db(missing_targets,limit2drugs)
+        
         if add2network:
             self.add2cache(add2network)
             self.drugs2targets = self.drugs2targets.compose(add2network)
@@ -127,24 +128,24 @@ class DrugTargetConsistency(APIcache):
                     id_type='Name')
         
         if d2t2dG:# re-annotating self.drug2target_network for caching CONSISTENCY after algorithm run
-            d2t_need = self.drugs2targets.get_subgraph(list(drugs_need_consistency),list(targets4drugs_need_consistency))
-            d2t2dG = d2t2dG.compose(d2t_need)
-            update4consistency = defaultdict(float) # {(drug_uid,target_uid,effect):consistency_coefficient}
-            for drug in drugs_need_consistency:
-                for (drug_uid, target_uid, effect), consistency_coefficient in self.__consistency4(drug, d2t2dG).items():
-                    update4consistency[(drug_uid, target_uid, effect)] = consistency_coefficient
-                   
-            if update4consistency:
-                # update4consistency can be empty if drug-target pair have no common diseases linked with known Effect 
-                print(f'Additional consistency coefficients for {len(update4consistency)} drug-target pairs were calculated using data from database')
-                self.drug_target_confidence.update(update4consistency)
+          d2t_need = self.drugs2targets.get_subgraph(list(drugs_need_consistency),list(targets4drugs_need_consistency))
+          d2t2dG = d2t2dG.compose(d2t_need)
+          update4consistency = defaultdict(float) # {(drug_uid,target_uid,effect):consistency_coefficient}
+          for drug in drugs_need_consistency:
+            for (drug_uid, target_uid, effect), consistency_coefficient in self.__consistency4(drug, d2t2dG).items():
+              update4consistency[(drug_uid, target_uid, effect)] = consistency_coefficient
+                
+          if update4consistency:
+            # update4consistency can be empty if drug-target pair have no common diseases linked with known Effect 
+            print(f'Additional consistency coefficients for {len(update4consistency)} drug-target pairs were calculated using data from database')
+            self.drug_target_confidence.update(update4consistency)
 
-                for (drug_uid,target_uid,effect),consistency_coefficient in update4consistency.items():
-                    drug2target_rels = self.network.find_relations([drug_uid],[target_uid],with_effects=[effect])
-                    for rel in drug2target_rels:
-                        if replace_consistencies or CONSISTENCY not in rel:
-                            self.cache_was_modified = True
-                            self.network.set_edge_annotation(drug_uid,target_uid,rel.urn(),CONSISTENCY,[consistency_coefficient])
+            for (drug_uid,target_uid,effect),consistency_coefficient in update4consistency.items():
+              drug2target_rels = self.network.find_relations([drug_uid],[target_uid],with_effects=[effect])
+              for rel in drug2target_rels:
+                if replace_consistencies or CONSISTENCY not in rel:
+                  self.cache_was_modified = True
+                  self.network.set_edge_annotation(drug_uid,target_uid,rel.urn(),CONSISTENCY,[consistency_coefficient])
 
         return
                 
@@ -171,43 +172,48 @@ class DrugTargetConsistency(APIcache):
                 target = self.drugs2targets._psobj(t)
                 dt_need_consistency.append((drug,target))
         else:
-            dt_with_consistency = 0
-            drugs_have_consistency = set()
-            targets_have_consistency = set()
-            for drug,target,rel in self.drugs2targets.iterate():
-                if rel.objtype() != 'Binding': # Binding cannot have consistency
-                    if CONSISTENCY in rel:
-                        consistensy = float(rel[CONSISTENCY][-1])
-                        self.drug_target_confidence[(drug.uid(),target.uid(),rel.effect())] = consistensy
-                        dt_with_consistency += 1
-                        drugs_have_consistency.add(drug)
-                        targets_have_consistency.add(target)
-                    else:
-                        dt_need_consistency.append((drug,target))
-    
-            print(f'Found consistency coefficients for {dt_with_consistency} drug-target pairs ({len(drugs_have_consistency)} drugs, {len(targets_have_consistency)} targets) in "{self.cache_name}.rnef" file')
-        
+          drugs_have_consistency = set()
+          targets_have_consistency = set()
+          for drug,target,rel in self.drugs2targets.iterate():
+            if rel.objtype() != 'Binding': # Binding cannot have consistency
+              if CONSISTENCY in rel:
+                consistensy = float(rel[CONSISTENCY][-1])
+                self.drug_target_confidence[(drug.uid(),target.uid(),rel.effect())] = consistensy
+                drugs_have_consistency.add(drug)
+                targets_have_consistency.add(target)
+              else:
+                dt_need_consistency.append((drug,target))
+            
+          print(f'Found consistency coefficients for {len(self.drug_target_confidence)} drug-target pairs ({len(drugs_have_consistency)} drugs, {len(targets_have_consistency)} targets) in "{self.cache_name}.rnef" file')
+      
         if dt_need_consistency:
             print(f'\n\n{len(dt_need_consistency)} drug-target pairs need consistency calculation')
-            dt_need_consistency.sort(key=lambda x:self.drugs2targets.in_degree(x[1].uid()),reverse=True)
-        
-           # step = 2000
-            def next1000(start:int,dt_need_consistency:list):
-                drug_counter = set()
-                for i in range(start, len(dt_need_consistency)):
-                    drug_counter.add(dt_need_consistency[i])
-                    if len(drug_counter) == 1000: # when number of unique drugs is 1000 stop and caclulate
-                        return i
-                return len(dt_need_consistency)
 
-            i = 0
-            while i < len(dt_need_consistency):
-                start = i
-                i = next1000(start, dt_need_consistency)
-                dt = dt_need_consistency[start:i]
-                self.annotate_network(dt,load_fromdb)
-                print(f'Calculated consistency coefficients for {i} out of {len(dt_need_consistency)} drug-target pairs\n')
-            return
+            def sortkey(x:tuple[PSObject,PSObject]):
+              uid = x[1].uid()
+              return (self.drugs2targets.in_degree(uid),uid)
+            dt_need_consistency.sort(key=lambda x: sortkey(x),reverse=True)
+
+            chunk_starts = []
+            chunk_start = 0
+            drug_counter = set()
+            for i, (drug,_) in enumerate(dt_need_consistency):
+              drug_counter.add(drug)
+              if len(drug_counter) == 1000:
+                chunk_starts.append(chunk_start)
+                drug_counter = set()
+                chunk_start = i + 1
+            chunk_starts.append(len(dt_need_consistency))
+
+            annotation_start = time.time()
+            number_of_iterations = len(chunk_starts)-1
+            for i, chunk_start in enumerate(chunk_starts[:-1]):
+              chunk_end = chunk_starts[i+1]
+              self.annotate_network(dt_need_consistency[chunk_start:chunk_end],load_fromdb)
+              time_passed,remaining_time = execution_time2(annotation_start,i+1,number_of_iterations)
+              print(f'\nCalculated consistency coefficients for {chunk_end} out of {len(dt_need_consistency)} drug-target pairs in {time_passed}')
+              remaining_drugs = (number_of_iterations-i-1) * 1000
+              print(f'Estimated remaining time: {remaining_time} to process {remaining_drugs} drugs')
         else:
             print(f'No drug-target pairs need consistency calculation.  All coefficients were found in {self.cache_name}')
             return
@@ -218,13 +224,7 @@ class DrugTargetConsistency(APIcache):
             return self.drug_target_confidence[(for_drug.uid(),acting_on_target.uid(),with_effect)]
         except KeyError:
             return 1
-    
-    '''
-    @staticmethod
-    def __consist_coeffOLD(consistent_count:int,inconsistent_count:int):
-       total_count = consistent_count+inconsistent_count
-       return 1.0 + float(consistent_count-inconsistent_count)/(total_count) if total_count else 1.0
-    '''
+
 
     @staticmethod
     def __consist_coeff(consistent_count:int,inconsistent_count:int):
@@ -283,4 +283,4 @@ class DrugTargetConsistency(APIcache):
 
                 consistency_coeff = DrugTargetConsistency.__consist_coeff(consistency_counter,inconsistency_counter)
                 d2t_consistencies[(drug.uid(),target.uid(),effect_str)] = round(consistency_coeff,3)
-        return d2t_consistencies
+        return dict(d2t_consistencies)

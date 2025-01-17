@@ -471,7 +471,6 @@ class RepurposeDrug(Indications4targets):
             self.flush_dump_files()
             start_time = time.time()
 
-            self.set_drugs()
             self.DrugIndications = self.find_drug_indications()
             self.DrugToxicities = self.find_drug_toxicities()
             #return #uncomment for fast downstream testing
@@ -857,40 +856,40 @@ class RepurposeDrug(Indications4targets):
 
 
     def target_effects4(self,df_name:str)->set[PSObject]:
-        '''
-        input:
-            self.activated_targets, self.inhibited_targets
-            df_name in [INDICATION_COUNT,TOXICITY_COUNT]
-        '''
-        assert(df_name in [INDICATION_COUNT,TOXICITY_COUNT])
-        start_time = time.time()
-        all_effects = set()
+      '''
+      input:
+          self.activated_targets, self.inhibited_targets
+          df_name in [INDICATION_COUNT,TOXICITY_COUNT]
+      '''
+      assert(df_name in [INDICATION_COUNT,TOXICITY_COUNT])
+      start_time = time.time()
+      all_effects = set()
 
-        target_effect_on_indication = 'negative' if df_name == INDICATION_COUNT else 'positive'
-        effects = self._indications4(self.activated_targets,target_effect_on_indication)
+      target_effect_on_indication = 'negative' if df_name == INDICATION_COUNT else 'positive'
+      effects = self._indications4(self.activated_targets,target_effect_on_indication)
+      all_effects.update(effects)
+      target_effect_on_indication = 'positive' if df_name == INDICATION_COUNT else  'negative'
+      effects = self._indications4(self.inhibited_targets,target_effect_on_indication)
+      all_effects.update(effects)
+
+      if not self.params['debug']: # avoids long calculations
+        effect_on_indication = 'negative' if df_name == INDICATION_COUNT else 'positive'
+        effects = self._indications4partners(self.activated_targets,self.activated_partners,effect_on_indication)
         all_effects.update(effects)
-        target_effect_on_indication = 'positive' if df_name == INDICATION_COUNT else  'negative'
-        effects = self._indications4(self.inhibited_targets,target_effect_on_indication)
+        effect_on_indication = 'positive' if df_name == INDICATION_COUNT else 'negative'
+        effects = self._indications4partners(self.inhibited_targets,self.inhibited_partners,effect_on_indication)
         all_effects.update(effects)
 
-        if not self.params['debug']: # avoids long calculations
-            effect_on_indication = 'negative' if df_name == INDICATION_COUNT else 'positive'
-            effects = self._indications4partners(self.activated_targets,self.activated_partners,effect_on_indication)
-            all_effects.update(effects)
-            effect_on_indication = 'positive' if df_name == INDICATION_COUNT else 'negative'
-            effects = self._indications4partners(self.inhibited_targets,self.inhibited_partners,effect_on_indication)
-            all_effects.update(effects)
+        effect_on_indication = 'negative' if df_name == INDICATION_COUNT else 'positive'
+        effects = self._indications4cells(self.CellSecretingActivatedTargets,self.activated_targets,effect_on_indication)
+        all_effects.update(effects)
+        effect_on_indication = 'positive' if df_name == INDICATION_COUNT else 'negative'
+        effects = self._indications4cells(self.CellSecretingInhibitedTargets,self.inhibited_targets,effect_on_indication)
+        all_effects.update(effects)
 
-            effect_on_indication = 'negative' if df_name == INDICATION_COUNT else 'positive'
-            effects = self._indications4cells(self.CellSecretingActivatedTargets,self.activated_targets,effect_on_indication)
-            all_effects.update(effects)
-            effect_on_indication = 'positive' if df_name == INDICATION_COUNT else 'negative'
-            effects = self._indications4cells(self.CellSecretingInhibitedTargets,self.inhibited_targets,effect_on_indication)
-            all_effects.update(effects)
-
-        eff = 'indications' if df_name == INDICATION_COUNT else 'toxicities'
-        print(f"{len(all_effects)} {eff} for {df_name} were found in {execution_time(start_time)}")
-        return all_effects
+      eff = 'indications' if df_name == INDICATION_COUNT else 'toxicities'
+      print(f"{len(all_effects)} {eff} for {df_name} were found in {execution_time(start_time)}")
+      return all_effects
     
 
     def make_report(self):
@@ -899,6 +898,7 @@ class RepurposeDrug(Indications4targets):
             self.params['mode_of_action']
             self.params['target_names']
         '''
+        self.set_drugs()
         self.indications4drugs()
         print('Loading INDICATIONS')
         self.DrugIndications = self.target_effects4(INDICATION_COUNT)

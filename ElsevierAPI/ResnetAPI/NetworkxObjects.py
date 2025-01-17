@@ -533,8 +533,8 @@ class PSRelation(PSObject):
       tar_urns = sorted([r.urn() for r in targets])
       rel_urn = 'urn:agi-'+self.objtype()+':'
       if tar_urns:
-          rel_urn += 'out:'+'out:'.join(tar_urns) # out:urn:out:
-          rel_urn += ':in-out:'+'in-out:'.join(reg_urns)
+          rel_urn += 'in-out:'+'in-out:'.join(reg_urns)
+          rel_urn += ':out:'+'out:'.join(tar_urns) # out:urn:out:
           effect = self.effect()
           if effect in ['positive','negative']:
               rel_urn += ':'+ effect
@@ -1139,6 +1139,10 @@ class PSRelation(PSObject):
 
 
   def isprimarytarget(self):
+      '''
+      ouput:
+        True, if pX > 6.0 or reltype in DIRECT_RELTYPES if refcount >=5
+      '''
       my_affinity = self._affinity()
       if my_affinity >= MINAFFINITY4DIRECT:
           return DIRECT

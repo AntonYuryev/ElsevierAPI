@@ -189,7 +189,7 @@ class DiseaseTargets(SemanticSearch):
             gv2dis_refs = self.gv2diseases.load_references()
             print('Found %d targets with %d GeneticVariants for %s supported by %d references' % 
                 (len(target_withGVs), len(self.GVs), disease_names, len(gv2dis_refs)))
-
+            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
             return target_withGVs
         else:
             return ResnetGraph()
@@ -259,7 +259,7 @@ class DiseaseTargets(SemanticSearch):
             targets2expand_dbids = ResnetGraph.dbids(targets2expand)
             reltypes = [reltype] if reltype else []
             oql_query = OQL.expand_entity(targets2expand_dbids,['Id'],reltypes,PROTEIN_TYPES,'upstream')               
-            expanded_targets_g = self.process_oql(oql_query,f'Find regulators 4 {target_names}')
+            expanded_targets_g = self.process_oql(oql_query,f'Find {reltype} regulators 4 {target_names}')
             if isinstance(expanded_targets_g,ResnetGraph):
               self.__targets__.update(expanded_targets_g._get_nodes())
               for t in targets2expand:
@@ -327,125 +327,129 @@ class DiseaseTargets(SemanticSearch):
 
      
     def load_target_partners(self):
-        receptor_dbids = self.Graph.dbids4nodes(['Receptor'],['Class'])
-        ref_cutoff = 5
-        if receptor_dbids:
-            find_receptors = OQL.get_objects(receptor_dbids)
-            ligands_oql = f'SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive AND RelationNumberOfReferences > {ref_cutoff} AND \
-                NeighborOf downstream (SELECT Entity WHERE Class = Ligand) AND NeighborOf upstream ({find_receptors})'
-            #opening new APIsession to avoid adding result graph to self.Graph
-            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
-            request_name = f'Find ligands for {str(len(receptor_dbids))} receptors'
-            p2t = new_session.process_oql(ligands_oql,request_name)
-            if isinstance(p2t,ResnetGraph):
-                self.partner2targets = p2t
-            new_ligands = self.partner2targets._psobjs_with('Ligand','Class')
-            print('Found %d additional ligands for %d receptors' % (len(new_ligands),len(receptor_dbids)))
-        else:
-            find_receptors = ''
-            print('No Receptor Class entities were found among %s targets' % self.target_types())
+      receptor_dbids = self.Graph.dbids4nodes(['Receptor'],['Class'])
+      ref_cutoff = 5
+      if receptor_dbids:
+        find_receptors = OQL.get_objects(receptor_dbids)
+        ligands_oql = f'SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive AND RelationNumberOfReferences > {ref_cutoff} AND \
+            NeighborOf downstream (SELECT Entity WHERE Class = Ligand) AND NeighborOf upstream ({find_receptors})'
+        #opening new APIsession to avoid adding result graph to self.Graph
+        new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
+        request_name = f'Find ligands for {str(len(receptor_dbids))} receptors'
+        p2t = new_session.process_oql(ligands_oql,request_name)
+        if isinstance(p2t,ResnetGraph):
+            self.partner2targets = p2t
+        new_ligands = self.partner2targets._psobjs_with('Ligand','Class')
+        print('Found %d additional ligands for %d receptors' % (len(new_ligands),len(receptor_dbids)))
+        new_session.close_connection()
+      else:
+        find_receptors = ''
+        print('No Receptor Class entities were found among %s targets' % self.target_types())
+        
+      ligand_dbids = self.Graph.dbids4nodes(['Ligand'],['Class'])
+      partners_dbids = ResnetGraph.dbids(self.partner2targets._get_nodes())
+      orphan_ligands_dbids = set(ligand_dbids).difference(partners_dbids)
+      if orphan_ligands_dbids:
+        find_orphan_ligands = OQL.get_objects(list(orphan_ligands_dbids))
+        receptor_oql = f'SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive AND RelationNumberOfReferences > {ref_cutoff} \
+            AND NeighborOf upstream (SELECT Entity WHERE Class = Receptor) AND NeighborOf downstream ({find_orphan_ligands})'
+        request_name = f'Find receptors for {str(len(orphan_ligands_dbids))} orphan ligands'
+        #opening new APIsession to avoid adding result graph to self.Graph
+        new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
+        orphan_ligand_partners = new_session.process_oql(receptor_oql,request_name)
+        if isinstance(orphan_ligand_partners,ResnetGraph):
+            self.partner2targets.add_graph(orphan_ligand_partners)
+            new_receptors = orphan_ligand_partners._psobjs_with('Receptor','Class')
+            print('Found %d receptors for %d orphan ligands' % (len(new_receptors),len(orphan_ligands_dbids)))
+        new_session.close_connection()
 
-        ligand_dbids = self.Graph.dbids4nodes(['Ligand'],['Class'])
-        partners_dbids = ResnetGraph.dbids(self.partner2targets._get_nodes())
-        orphan_ligands_dbids = set(ligand_dbids).difference(partners_dbids)
-        if orphan_ligands_dbids:
-            find_orphan_ligands = OQL.get_objects(list(orphan_ligands_dbids))
-            receptor_oql = f'SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive AND RelationNumberOfReferences > {ref_cutoff} \
-                AND NeighborOf upstream (SELECT Entity WHERE Class = Receptor) AND NeighborOf downstream ({find_orphan_ligands})'
-            request_name = f'Find receptors for {str(len(orphan_ligands_dbids))} orphan ligands'
-            #opening new APIsession to avoid adding result graph to self.Graph
-            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
-            orphan_ligand_partners = new_session.process_oql(receptor_oql,request_name)
-            if isinstance(orphan_ligand_partners,ResnetGraph):
-                self.partner2targets.add_graph(orphan_ligand_partners)
-                new_receptors = orphan_ligand_partners._psobjs_with('Receptor','Class')
-                print('Found %d receptors for %d orphan ligands' % (len(new_receptors),len(orphan_ligands_dbids)))
-        
-        if find_receptors:
-            find_metabolites = OQL.get_childs(['mammal endogenous compounds and their derivatives'],['Name'])
-            metabolite_ligands_oql = f'SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive \
-                AND NeighborOf downstream ({find_metabolites}) AND NeighborOf upstream ({find_receptors}) AND RelationNumberOfReferences > 25'
-            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
-            metabolite2receptors_graph = new_session.process_oql(metabolite_ligands_oql,'Find metabolite ligands')
-            if isinstance(metabolite2receptors_graph, ResnetGraph):
-                self.partner2targets.add_graph(metabolite2receptors_graph)
-                metabolite_ligands = metabolite2receptors_graph._psobjs_with('SmallMol','ObjTypeName')
-                print('Found %d metabolite ligands for %d receptors' % (len(metabolite_ligands),len(receptor_dbids)))
-        
-        find_metabolite_products = 'SELECT Relation WHERE objectType = (MolTransport, MolSynthesis,ChemicalReaction) \
+      if find_receptors:
+        find_metabolites = OQL.get_childs(['mammal endogenous compounds and their derivatives'],['Name'])
+        metabolite_ligands_oql = f'SELECT Relation WHERE objectType = DirectRegulation AND Effect = positive \
+            AND NeighborOf downstream ({find_metabolites}) AND NeighborOf upstream ({find_receptors}) AND RelationNumberOfReferences > 25'
+        new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
+        metabolite2receptors_graph = new_session.process_oql(metabolite_ligands_oql,'Find metabolite ligands')
+        if isinstance(metabolite2receptors_graph, ResnetGraph):
+          self.partner2targets.add_graph(metabolite2receptors_graph)
+          metabolite_ligands = metabolite2receptors_graph._psobjs_with('SmallMol','ObjTypeName')
+          print('Found %d metabolite ligands for %d receptors' % (len(metabolite_ligands),len(receptor_dbids)))
+        new_session.close_connection()
+
+      find_metabolite_products = 'SELECT Relation WHERE objectType = (MolTransport, MolSynthesis,ChemicalReaction) \
 AND Effect = positive AND NeighborOf downstream (SELECT Entity WHERE id =({ids})) AND \
 NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumberOfReferences > 50'
-        req_name = f'Finding downstream metabolite products of targets for {self._disease2str()}'
-        new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
+      req_name = f'Finding downstream metabolite products of targets for {self._disease2str()}'
+      new_session = self._clone(to_retrieve=NO_REL_PROPERTIES)
+      metbolite_products_graph = new_session.iterate_oql(find_metabolite_products,set(self._targets_dbids()),request_name=req_name)
+      self.partner2targets.add_graph(metbolite_products_graph)
+      metabolite_products = metbolite_products_graph._psobjs_with('SmallMol','ObjTypeName')
+      print('Found %d metabolites produced by %d targets of %s' % (len(metabolite_products),len(self.__targets__),self._disease2str()))
+      new_session.close_connection()
 
-        metbolite_products_graph = new_session.iterate_oql(find_metabolite_products,set(self._targets_dbids()),request_name=req_name)
-        self.partner2targets.add_graph(metbolite_products_graph)
-        metabolite_products = metbolite_products_graph._psobjs_with('SmallMol','ObjTypeName')
-        print('Found %d metabolites produced by %d targets of %s' % (len(metabolite_products),len(self.__targets__),self._disease2str()))
-
-        # removing promiscous partners
-        self.partner2targets.remove_nodes_by_targets(max_target=10,having_values=['SmallMol'])
-        self.partner2targets.remove_nodes_by_targets(max_target=10,only_with_prop=['Class'], having_values=['Ligand'])
-        self.partner2targets.remove_nodes_by_regulators(max_regulator=10,having_values=['SmallMol'])
+      # removing promiscous partners:
+      self.partner2targets.remove_nodes_by_targets(max_target=10,having_values=['SmallMol'])
+      self.partner2targets.remove_nodes_by_targets(max_target=10,only_with_prop=['Class'], having_values=['Ligand'])
+      self.partner2targets.remove_nodes_by_regulators(max_regulator=10,having_values=['SmallMol'])
+      return
 
 
     def load_pathways(self)->dict[str,PSPathway]:
-        """
-        Loads
-        -----
-        self.disease_pathways = {CellType:PSPathway}
-        PSPathway objects from folders listed in self.params['pathway_folders']
-        keeps only pathways listed self.params['pathways'] if latter is not empty 
+      """
+      Loads
+      -----
+      self.disease_pathways = {CellType:PSPathway}
+      PSPathway objects from folders listed in self.params['pathway_folders']
+      keeps only pathways listed self.params['pathways'] if latter is not empty 
 
-        Merges
-        ------
-        pathways with the same CellType
+      Merges
+      ------
+      pathways with the same CellType
 
-        Returns
-        -------
-        {CellType:PSPathway}
-        where nodes in PSPathway are annotated with 'Closeness' attribute
-        """ 
-        fc = FolderContent(self.APIconfig,what2retrieve=ONLY_REL_PROPERTIES)
-        fc.entProps = ['Name','CellType','Tissue','Organ','Organ System']
+      Returns
+      -------
+      {CellType:PSPathway}
+      where nodes in PSPathway are annotated with 'Closeness' attribute
+      """ 
+      fc = FolderContent(self.APIconfig,what2retrieve=ONLY_REL_PROPERTIES)
+      fc.entProps = ['Name','CellType','Tissue','Organ','Organ System']
 
-        disease_pathways = list()
-        for folder_name in self.params['pathway_folders']:
-            ps_pathways = fc.folder2pspathways(folder_name,with_layout=False)
-            disease_pathways += ps_pathways
+      disease_pathways = list()
+      for folder_name in self.params['pathway_folders']:
+        ps_pathways = fc.folder2pspathways(folder_name,with_layout=False)
+        disease_pathways += ps_pathways
 
-        if self.params.get('pathways',''):
-            filtered_pathway_list = list()
-            for ps_pathway in disease_pathways:
-                assert(isinstance(ps_pathway, PSPathway))
-                if ps_pathway.name() in self.params['pathways']:
-                    filtered_pathway_list.append(ps_pathway)
-            disease_pathways = filtered_pathway_list
+      if self.params.get('pathways',''):
+          filtered_pathway_list = list()
+          for ps_pathway in disease_pathways:
+              assert(isinstance(ps_pathway, PSPathway))
+              if ps_pathway.name() in self.params['pathways']:
+                  filtered_pathway_list.append(ps_pathway)
+          disease_pathways = filtered_pathway_list
 
-        print('Found %d curated pathways for %s:' %(len(disease_pathways), self._disease2str()))
-        [print(p.name()+'\n') for p in disease_pathways]
+      print('Found %d curated pathways for %s:' %(len(disease_pathways), self._disease2str()))
+      [print(p.name()+'\n') for p in disease_pathways]
 
-        # merging pathways from the same celltype to build cell type specific models
-        for pathway in disease_pathways:
-            try:
-                cell_types = pathway['CellType']
-            except KeyError:
-                cell_types = ['disease']
+      # merging pathways from the same celltype to build cell type specific models
+      for pathway in disease_pathways:
+          try:
+              cell_types = pathway['CellType']
+          except KeyError:
+              cell_types = ['disease']
 
-            for cell_type in cell_types:
-                try:
-                    exist_pathway = self.disease_pathways[cell_type]
-                    assert(isinstance(exist_pathway,PSPathway))
-                    exist_pathway.merge_pathway(pathway)
-                    self.disease_pathways[cell_type] = exist_pathway
-                except KeyError:
-                    self.disease_pathways[cell_type] = pathway
-            
-        for pathway in self.disease_pathways.values():
-            assert(isinstance(pathway,PSPathway))
-            pathway.graph.remove_nodes_by_prop(['CellProcess', 'Disease','Treatment'])
+          for cell_type in cell_types:
+              try:
+                  exist_pathway = self.disease_pathways[cell_type]
+                  assert(isinstance(exist_pathway,PSPathway))
+                  exist_pathway.merge_pathway(pathway)
+                  self.disease_pathways[cell_type] = exist_pathway
+              except KeyError:
+                  self.disease_pathways[cell_type] = pathway
+          
+      for pathway in self.disease_pathways.values():
+          assert(isinstance(pathway,PSPathway))
+          pathway.graph.remove_nodes_by_prop(['CellProcess', 'Disease','Treatment'])
 
-        return self.disease_pathways
+      return self.disease_pathways
 
         
     def init_semantic_search(self):

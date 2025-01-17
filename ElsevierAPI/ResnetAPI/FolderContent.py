@@ -767,21 +767,22 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
         
         thread_name = f'Loading {len(self.dbid2fobj)} pathways'
         pspathways2return = list()
-        with ThreadPoolExecutor(max_workers=MAX_FOLDER_SESSIONS, thread_name_prefix=thread_name) as e: 
-            futures = list()
-            for dbid, fobj in self.dbid2fobj.items():
-                if fobj.objtype() == 'Pathway':
-                    futures.append(e.submit(self.__download_fobj,fobj,dict(),dict(),False))
-                
-            for f in as_completed(futures):
-                pathway_obj, pathway_graph,pathway_xml = f.result()
-                ps_pathway = PSPathway(dict(pathway_obj),pathway_graph)
-                ps_pathway[RESNET] = pathway_xml
-                ps_pathway.update_with_value('Folders',folder_name)
-                pspathways2return.append(ps_pathway)
+        futures = list()
+        with ThreadPoolExecutor(max_workers=MAX_FOLDER_SESSIONS, thread_name_prefix=thread_name) as e:   
+          for fobj in self.dbid2fobj.values():
+            if fobj.objtype() == 'Pathway':
+              futures.append(e.submit(self.__download_fobj,fobj,dict(),dict(),False))
+            
+        for f in as_completed(futures):
+          pathway_obj, pathway_graph,pathway_xml = f.result()
+          ps_pathway = PSPathway(dict(pathway_obj),pathway_graph)
+          ps_pathway[RESNET] = pathway_xml
+          ps_pathway.update_with_value('Folders',folder_name)
+          pspathways2return.append(ps_pathway)
+        e.shutdown(wait=True)
  
         return pspathways2return
-    
+  
     
     @staticmethod
     def _put2folder(named:str, fobj:PSObject,resnet:et.Element):

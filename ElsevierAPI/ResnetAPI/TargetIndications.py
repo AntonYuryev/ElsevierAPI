@@ -147,6 +147,10 @@ class Indications4targets(SemanticSearch):
     
 
     def oql4indications(self):
+        '''
+        output:
+          GOQL query, indication_types_str
+        '''
         indication_types_str = ','.join(self.params['indication_types'])
         return f'SELECT Entity WHERE objectType = ({indication_types_str})', indication_types_str
   
@@ -505,42 +509,40 @@ class Indications4targets(SemanticSearch):
 
 ########################### FIND INDICATIONS ########################## FIND INDICATIONS ###################
     def _indications4(self,targets:list[PSObject],with_effect_on_indications:str)->list[PSObject]:
-        '''
-        input:
-            moa = [AGONIST, ANTAGONIST]
-            targets - list[PSObject]
-        output:
-            indications, indications_strict
-        '''
-        assert(with_effect_on_indications in ['positive','negative'])
-        if not targets: return []
-        t_n = ResnetGraph.names(targets)
+      '''
+      input:
+          moa = [AGONIST, ANTAGONIST]
+          targets - list[PSObject]
+      output:
+          indications, indications_strict
+      '''
+      assert(with_effect_on_indications in ['positive','negative'])
+      if not targets: 
+        print('No targets are known for the drug')
+        return []
+      
+      indications = set()
+      t_n = ResnetGraph.names(targets)
+      f_t = OQL.get_objects(ResnetGraph.dbids(targets))
+      f_i,_ = self.oql4indications()
+      REQUEST_NAME = f'Find indications {with_effect_on_indications}ly regulating {t_n}'
+      OQLquery = f'SELECT Relation WHERE objectType = Regulation AND Effect = {with_effect_on_indications} AND \
+        NeighborOf({f_t}) AND NeighborOf ({f_i})' 
+      ModulatedByTargetNetwork = self.process_oql(OQLquery,REQUEST_NAME)
+      if isinstance(ModulatedByTargetNetwork,ResnetGraph):
+        indications = set(ModulatedByTargetNetwork.psobjs_with(only_with_values=self.params['indication_types']))
+        print(f'Found {len(indications)} diseases {with_effect_on_indications}ly regulated by {t_n}')
 
-        REQUEST_NAME = 'Find indications {effect}ly regulating {target}'.format(effect=with_effect_on_indications, target=t_n)
-        OQLquery = 'SELECT Relation WHERE objectType = Regulation AND Effect = {effect} AND \
-            NeighborOf({target}) AND NeighborOf ({indications})' 
-            
-        f_t = OQL.get_objects(ResnetGraph.dbids(targets))
-        f_i,_ = self.oql4indications()
-        indications = set()
-
-        OQLquery =  OQLquery.format(target=f_t,effect = with_effect_on_indications,indications=f_i)  
-        ModulatedByTargetNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-        if isinstance(ModulatedByTargetNetwork,ResnetGraph):
-            indications = set(ModulatedByTargetNetwork.psobjs_with(only_with_values=self.params['indication_types']))
-            print('Found %d diseases %sly regulated by %s' % (len(indications),with_effect_on_indications,t_n))
-
-        if not self._is_strict():
-            REQUEST_NAME = f'Find indications {with_effect_on_indications}ly modulated by {t_n}'
-            OQLquery = 'SELECT Relation WHERE objectType = QuantitativeChange AND Effect = {effect} AND \
-                NeighborOf ({target}) AND NeighborOf ({indications})'
-            OQLquery = OQLquery.format(target=f_t,effect = with_effect_on_indications,indications=f_i)
-            ActivatedInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
-            if isinstance(ActivatedInDiseaseNetwork,ResnetGraph):
-                add2indications = ActivatedInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
-                indications.update(add2indications)
-                print('Found %d diseases where %s is %sly regulated' % (len(add2indications),t_n,with_effect_on_indications))
-        return indications
+      if not self._is_strict():
+        REQUEST_NAME = f'Find indications {with_effect_on_indications}ly modulated by {t_n}'
+        OQLquery = f'SELECT Relation WHERE objectType = QuantitativeChange AND Effect = {with_effect_on_indications} AND \
+          NeighborOf ({f_t}) AND NeighborOf ({f_i})'
+        ActivatedInDiseaseNetwork = self.process_oql(OQLquery,REQUEST_NAME)
+        if isinstance(ActivatedInDiseaseNetwork,ResnetGraph):
+          add2indications = ActivatedInDiseaseNetwork.psobjs_with(only_with_values=self.params['indication_types'])
+          indications.update(add2indications)
+          print(f'Found {len(add2indications)} diseases where {t_n} is {with_effect_on_indications}ly regulated')
+      return indications
 
 
     def __indications4targets(self):
@@ -703,7 +705,7 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
         input:
           "secreting" - list of cells secreting "targets"
         ouput:
-          indications, 
+          indications,
           if "secreting" is empty adds cells to "secreting"
         '''
         if targets:
