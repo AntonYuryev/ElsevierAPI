@@ -40,9 +40,9 @@ class df(pd.DataFrame):
       pd.DataFrame.__init__(self,*args, **kwargs)
       self._name_ = dfname
       self.column2format = dict() # {column_index:{'font_color':'blue'}}
-      self.conditional_frmt = dict() # {area:{conditional_format}}
-      self.tab_format = dict()
       self.col2rank = dict() # {colname:rank(int)}, used for column ranking and sorting by SemanticSearch
+      self.conditional_frmt = dict() # {area:{conditional_format}}
+      self.tab_format = dict() # font and color of the Excel tab with worksheet
 
 
   @classmethod 
@@ -68,21 +68,35 @@ class df(pd.DataFrame):
   def max_colrank(self):
     return max(self.col2rank.values()) if self.col2rank else 0
 
+
   def dfcopy(self,only_columns:list=[], rename2:dict=dict(),deep=True) ->'df':
       '''
       input:
-        rename2 - map of column names to rename
+        rename2 - map of column names to rename {old_name:new_name}
       '''
       # re-writing parent pd.DataFrame function is a BAD idea. Use other names
       newpd = super().copy(deep)
+      missing_columns = list()
+      my_columns = list()
       if only_columns:
-          newpd = newpd[only_columns]
+        [(missing_columns,my_columns)[c in self.columns].append(c) for c in only_columns]
+        if len(my_columns) < len(only_columns):
+          print(f'Worksheet {self._name_} is missing {missing_columns} columns')
+        newpd = newpd[my_columns]
+
       if rename2:
-          newpd = newpd.rename(columns=rename2)
+        newpd = newpd.rename(columns=rename2)
       newpd = newpd.reindex()
 
       newdf = df.from_pd(newpd,self._name_)
       newdf.copy_format(self)
+      column2format = newdf.column2format
+      col2rank = newdf.col2rank
+      for old_name, new_name in rename2.items():
+        if old_name in newdf.column2format:
+          column2format[new_name] = column2format.get(old_name)
+        if old_name in newdf.col2rank:
+          col2rank[new_name] = column2format.get(old_name)
       return newdf
 
 
@@ -94,11 +108,14 @@ class df(pd.DataFrame):
   
 
   def add_format(self, from_df:'df'):
-      self.header_format.update(from_df.header_format)
-      self.column2format.update(from_df.column2format)
-      self.conditional_frmt.update(from_df.conditional_frmt)
-      self.tab_format.update(from_df.tab_format)
-      self.col2rank.update(from_df.col2rank)
+    '''
+    updates formats with from_df format
+    '''
+    self.header_format.update(from_df.header_format)
+    self.column2format.update(from_df.column2format)
+    self.conditional_frmt.update(from_df.conditional_frmt)
+    self.tab_format.update(from_df.tab_format)
+    self.col2rank.update({col:max(rank,self.col2rank.get(col,rank)) for col,rank in from_df.col2rank.items()})
 
 
   def set_col_format(self,fmt:dict):
@@ -251,24 +268,30 @@ class df(pd.DataFrame):
       return new_df
   
 
-  def merge_dict(self, dict2add:dict, new_col:str, map2column:str, add_all=False, case_sensitive_match=False):
+  def merge_dict(self, dict2add:dict[str,str|int|float|tuple], new_col:str, map2column:str, 
+                 add_all=False, case_sensitive_match=False,default_val = ''):
       '''
-      Input
-      -----
-      "dict2add" must have keys equal to values in "map2column"
-
-      Return
-      ------
-      new df with values from dict2add.values() in "new_col" 
+      input:
+        "dict2add" must have keys equal to values in "map2column"
+      output:
+        new df with values from dict2add.values() in "new_col" 
       '''
-      pd2merge = df.from_dict2(dict2add,map2column,new_col)
       in2df = self.dfcopy()
-      if not case_sensitive_match:
-          pd2merge[map2column].apply(lambda x: str(x).lower())
-          in2df[map2column].apply(lambda x: str(x).lower())
-
+      mapping_column = map2column
+      if case_sensitive_match:
+        my_dict = dict2add
+      else:
+        my_dict = {k.lower():v for k,v in dict2add}
+        mapping_column = map2column+'lower'
+        in2df[mapping_column] = in2df[map2column].str.lower()
+    
+      pd2merge = df.from_dict2(my_dict,mapping_column,new_col)
       how = 'outer' if add_all else 'left'
-      merged_df = in2df.merge_df(pd2merge,how=how, on=map2column)
+      merged_df = in2df.merge_df(pd2merge,how=how, on=mapping_column)
+      merged_df[new_col] = merged_df[new_col].fillna(default_val)
+      if not case_sensitive_match:
+        my_cols = self.columns.to_list() + [new_col]
+        merged_df = merged_df.dfcopy(my_cols)
       return merged_df
 
 
@@ -280,6 +303,8 @@ class df(pd.DataFrame):
     merged_pd = pd.concat([self,other],ignore_index=True)
     merged_pd = merged_pd.reindex()
     merged_df = df.from_pd(merged_pd,dfname=self._name_)
+    merged_df.copy_format(other)
+    merged_df.add_format(from_df=self)
     return merged_df
   
 
@@ -424,56 +449,56 @@ class df(pd.DataFrame):
 
 
   def __df2excel(self,writer:ExcelWriter,sheet_name:str,**kwargs):
-      '''
-      Column format specifications must be in self.column2format\n
-      Header format specification must be in self.header_format\n
-      Tab format specification must be in tab_format
+    '''
+    Column format specifications must be in self.column2format\n
+    Header format specification must be in self.header_format\n
+    Tab format specification must be in tab_format
 
-      Parameters
-      ----------
-      height,width,wrap_text,inch_width\n
-      other format parameters are at https://xlsxwriter.readthedocs.io/format.html
-      '''
-      my_kwargs = {'startrow':1,'header':False,'index':False,'float_format':'%g'}
-      my_kwargs.update(kwargs)
+    Parameters
+    ----------
+    height,width,wrap_text,inch_width\n
+    other format parameters are at https://xlsxwriter.readthedocs.io/format.html
+    '''
+    my_kwargs = {'startrow':1,'header':False,'index':False,'float_format':'%g'}
+    my_kwargs.update(kwargs)
 
-      self.to_excel(writer, sheet_name=sheet_name, **my_kwargs)
-      assert isinstance(writer.book,xlsxwriter.workbook.Workbook)
+    self.to_excel(writer, sheet_name=sheet_name, **my_kwargs)
+    assert isinstance(writer.book,xlsxwriter.workbook.Workbook)
 
-      my_worksheet = writer.sheets[sheet_name]
-      assert isinstance(my_worksheet,xlsxwriter.workbook.Worksheet)
-      # writing header
-      header_height = self.header_format.pop('height',15)
-      
-      format = writer.book.add_format(self.header_format)
-      my_worksheet.set_row(0,header_height,format)
-      for col_num, value in enumerate(self.columns.values):
-          writer.sheets[sheet_name].write(0, col_num, value,format)
+    my_worksheet = writer.sheets[sheet_name]
+    assert isinstance(my_worksheet,xlsxwriter.workbook.Worksheet)
+    # writing header
+    header_height = self.header_format.pop('height',15)
+    
+    format = writer.book.add_format(self.header_format)
+    my_worksheet.set_row(0,header_height,format)
+    for col_num, value in enumerate(self.columns.values):
+      writer.sheets[sheet_name].write(0, col_num, value,format)
 
-      # formating columns
-      for idx, column_name in enumerate(self.columns.to_list()):
-          try:
-              col_fmt_dic = dict(self.column2format[column_name])
-              width = col_fmt_dic.pop('width', 20)
-              wrap = col_fmt_dic.pop('wrap_text', False)
-              col_fmt_dic.pop('inch_width', 1)
-              column_format = writer.book.add_format(col_fmt_dic)
-              if wrap:
-                  column_format.set_text_wrap()
-              my_worksheet.set_column(idx, idx, width, column_format)
-          except KeyError:
-              continue
-
-      for area, fmt in self.conditional_frmt.items():
-          #_1row,_1col,last_row,last_col = list(area)
-          #my_worksheet.conditional_format(_1row,_1col,last_row,last_col,fmt)
-          my_worksheet.conditional_format(area, fmt) # only area in format A1:Z100 works here
-
+    # formating columns
+    for idx, column_name in enumerate(self.columns.to_list()):
       try:
-          tab_color = self.tab_format['tab_color']
-          my_worksheet.set_tab_color(tab_color)
+        col_fmt_dic = dict(self.column2format[column_name])
+        # have to pop format settings unfamiliar to column_format
+        width = col_fmt_dic.pop('width', 20)
+        wrap = col_fmt_dic.pop('wrap_text', False)
+        col_fmt_dic.pop('inch_width', 1)
+        column_format = writer.book.add_format(col_fmt_dic)
+        if wrap: column_format.set_text_wrap()
+        my_worksheet.set_column(idx,idx,width,column_format)
       except KeyError:
-          pass
+        continue
+
+    for area, fmt in self.conditional_frmt.items():
+      #_1row,_1col,last_row,last_col = list(area)
+      #my_worksheet.conditional_format(_1row,_1col,last_row,last_col,fmt)
+      my_worksheet.conditional_format(area, fmt) # only area in format A1:Z100 works here
+
+    try:
+      tab_color = self.tab_format['tab_color']
+      my_worksheet.set_tab_color(tab_color)
+    except KeyError:
+      pass
 
 
   def df2excel(self,writer:ExcelWriter,sheet_name:str,**kwargs):
@@ -754,14 +779,32 @@ class df(pd.DataFrame):
       my_cols = columns if columns else self.columns
       copy_df = self.dfcopy()
       for col in my_cols:
-          if is_numeric_dtype(copy_df[col]):
-              vec = copy_df[[col]].to_numpy(float)
-              veclen =  np.sqrt(np.sum(vec**2))
-              new_col = my_cols[col] if isinstance(my_cols,dict) else col
-              copy_df[new_col] = vec / veclen
+        if is_numeric_dtype(copy_df[col]):
+          vec = copy_df[[col]].to_numpy(float)
+          veclen =  np.sqrt(np.sum(vec**2))
+          new_col = my_cols[col] if isinstance(my_cols,dict) else col 
+          copy_df[new_col] = vec / veclen if veclen > 0.0 else 0.0
       
       return copy_df
   
+
+  def minmax_norm(self,columns:list):
+      '''
+      Input
+      -----
+      columns = {column2normalize:column_with_normalization}
+      ''' 
+      my_cols = columns if columns else self.columns
+      copy_df = self.dfcopy()
+      for col in my_cols:
+        if is_numeric_dtype(copy_df[col]):
+          vec = copy_df[[col]].to_numpy(float)
+          vec_clean = vec[~np.isnan(vec)]
+          vec_min = vec_clean.min()
+          vec_max = vec_clean.max()
+          copy_df[col] = (vec - vec_min) / (vec_max - vec_min)
+      return copy_df
+
 
   def split(self,num_parts:int):
       split_dataframes = np.array_split(self, num_parts)
@@ -785,7 +828,17 @@ class df(pd.DataFrame):
   
 
   @staticmethod
-  def calculate_pvalues(scores:pd.Series):
+  def calculate_pvalues(scores:pd.Series,skip1strow=False):
+    if skip1strow:
+      """Calculates exponential p-values, skipping the first row."""
+      if scores.empty or len(scores) <= 1: #handle empty, or single row series.
+          return pd.Series([])
+      scores_to_fit = np.array(scores.iloc[1:])
+      p_values = [(scores_to_fit >= score).mean() for score in scores_to_fit]
+      full_p_values = pd.Series(index = scores.index)
+      full_p_values.iloc[1:] = p_values
+      return full_p_values
+    else:
       """Calculates empirical p-values for a list of scores."""
       scores = np.array(scores)
       p_values = [(scores >= score).mean() for score in scores]
@@ -793,18 +846,48 @@ class df(pd.DataFrame):
   
 
   @staticmethod
-  def calculate_expo_pvalues(scores:pd.Series):
-    lambda_hat = expon.fit(scores, floc=0)[1] # Fit an exponential distribution
-    p_values = expon.sf(scores, scale=lambda_hat) # Calculate p-values
-    return p_values
+  def calculate_expo_pvalues(scores:pd.Series,skip1strow=False):
+    if skip1strow:
+      """Calculates exponential p-values, skipping the first row."""
+      if scores.empty or len(scores) <= 1: #handle empty, or single row series.
+          return pd.Series([])
+
+      scores_to_fit = scores.iloc[1:]  # Skip the first row
+      scores_filled = scores_to_fit.fillna(0)
+      lambda_hat = expon.fit(scores_filled, floc=0)[1]
+      if lambda_hat <= 0:
+        print(f"Warning: lambda_hat is {lambda_hat}. Returning array of ones.")
+        p_values = pd.Series(np.ones_like(scores_filled), index=scores_filled.index)
+      else:
+        p_values = expon.sf(scores_filled, scale=lambda_hat)
+        p_values = pd.Series(p_values, index=scores_filled.index)
+
+      full_p_values = pd.Series(index = scores.index)
+      full_p_values.iloc[1:] = p_values
+      return full_p_values
+    else:
+      scores_filled = scores.fillna(0)
+      lambda_hat = expon.fit(scores_filled, floc=0)[1] # Fit an exponential distribution
+      p_values = expon.sf(scores_filled, scale=lambda_hat) # Calculate p-values
+      return p_values
   
 
-  def sortrows(self,by:str|list[str],ascending:bool|list[bool]=False):
+  def sortrows(self,by:str|list[str],ascending:bool|list[bool]=False,skip_rows=0):
     # re-writing parent pd.DataFrame function is a BAD idea. Use other names
-    newpd = pd.DataFrame(self.sort_values(by,ascending=ascending,inplace=False))
-    newdf = df.from_pd(newpd,self._name_)
-    newdf.copy_format(self)
-    return newdf
+    if skip_rows:
+      if len(self) > skip_rows:
+        top_rows = self.iloc[:skip_rows]
+        remaining_rows = self.iloc[skip_rows:].sort_values(by=by, ascending=ascending,inplace=False)
+        sorted_df = df.from_pd(pd.concat([top_rows, remaining_rows], ignore_index=True),dfname=self._name_)
+        sorted_df.copy_format(self)
+        return sorted_df
+      else:
+        return self
+    else:
+      sorted_df = pd.DataFrame(self.sort_values(by,ascending=ascending,inplace=False))
+      sorted_df = df.from_pd(sorted_df,self._name_)
+      sorted_df.copy_format(self)
+    return sorted_df
     
     
 
