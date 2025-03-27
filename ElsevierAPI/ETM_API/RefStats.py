@@ -35,7 +35,7 @@ class RefStats:
       self.AuthorSearch = AuthorSearch(self.APIconfig)
       self.Scopus = Scopus(self.APIconfig)
       self.ETMsearch = ETMsearch(self.APIconfig,**my_kwargs)
-      self.SBSsearch = SBSapi(self.APIconfig,**my_kwargs)
+      self.SBSsearch = SBSapi(self.APIconfig)
       self.ref_limit = my_kwargs.get('limit',5)
       self.NormalizedAffs = dict()
 
@@ -274,47 +274,46 @@ class RefStats:
 
 
   def __2hyperlink(self,references:list[Reference],total_hits:int):
-      references.sort(key=lambda x:float(x[RELEVANCE][0]),reverse=True)
-      #best_refs = references[0:self._limit()]
-      my_limit = self._limit()
+    references.sort(key=lambda x:float(x[RELEVANCE][0]),reverse=True)
+    my_limit = self._limit()
 
-      pmids=list()
-      dois = list()
-      pmcs = list()
-      piis = list()
-      linkable_id_counter = 0
-      for ref in references:
-        id_type,identifier = ref.get_doc_id()
-        if id_type == 'PMID':
-            pmids.append(identifier)
-            linkable_id_counter += 1
-        elif id_type == 'DOI':
-            dois.append(identifier)
-            #linkable_id_counter += 1
-        elif id_type == 'PII':
-            piis.append(identifier)
-        elif id_type == 'PMC':
-            pmcs.append(identifier)
-            linkable_id_counter += 1
-        else:
-            continue
-        if linkable_id_counter == my_limit:
-            break
-
-      if pmcs:
-        pmids += docid2pmid(pmcs).values()
-      #elif dois: docid2pmid works only with PMCs or DOIs from PMC
-
-      if pmids:
-        return pubmed_hyperlink(pmids,total_hits)
-      elif piis:
-        return pii_hyperlink(piis[0],total_hits)
-      elif dois:
-        return doi_hyperlink(dois[0],total_hits)
-      elif total_hits:
-        return str(total_hits)
+    pmids = list()
+    dois = list()
+    pmcs = list()
+    piis = list()
+    linkable_id_counter = 0
+    for ref in references:
+      id_type,identifier = ref.get_doc_id()
+      if id_type == 'PMID':
+        pmids.append(identifier)
+        linkable_id_counter += 1
+      elif id_type == 'DOI':
+        dois.append(identifier)
+      elif id_type == 'PII':
+        piis.append(identifier)
+      elif id_type == 'PMC':
+        pmcs.append(identifier)
+        linkable_id_counter += 1
       else:
-        return ''
+          continue
+      
+      if linkable_id_counter == my_limit:
+          break
+
+    # remap PMC ID to PMIDs using NCBI web service:
+    if pmcs:
+      pmids += docid2pmid(pmcs).values() # docid2pmid works only with PMCs or DOIs from PMC!!
+
+    if pmids:
+      return pubmed_hyperlink(pmids,total_hits)
+    elif piis:
+      return pii_hyperlink(piis[0],total_hits)
+    elif dois:
+      return doi_hyperlink(dois[0],total_hits)
+    elif total_hits:
+      return str(total_hits)
+    else:
+      return ''
 
 
   @staticmethod
@@ -389,11 +388,24 @@ class RefStats:
           annotated_df = self. __add_refs1(to_df,between_names_in_col,and_concepts,use_query,add2query)[0]
 
       return annotated_df
+  
 
-
-  def add_refs_sbs(self,to_df:df,between_names_in_col:str,and_concepts:list,add2query=[],multithread=False):
+  def sbs_reflinks(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
+          add2query=[],multithread=False):
+    '''
+    input:
+      skip_names - use it to skip 'WEIGHTS:' row that corrupts SBS query
+    '''
     names = to_df[between_names_in_col].to_list()
-    e2refs = self.SBSsearch.cooc4list(names,and_concepts,add2query,multithread)
+    names = [x for x in names if ':' not in x] # ':' is invalid character in URL parameter
+    e2refs = self.SBSsearch.sentcooc4list(names,and_concepts,add2query,multithread)
+    return {k:self.__2hyperlink(refs,count) for k,(count,refs) in e2refs.items()}
+
+
+  def add_refs_sbs(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
+                   add2query=[],multithread=False):
+    names = to_df[between_names_in_col].to_list()
+    e2refs = self.SBSsearch.sentcooc4list(names,and_concepts,add2query,multithread)
     my_df = to_df.dfcopy()
 
     refcountcol = self.refcount_column(between_names_in_col,and_concepts)
@@ -404,6 +416,67 @@ class RefStats:
       [self._add2counter(ref) for ref in row_refs]
 
     return my_df
+  
+
+  def abs_cooc(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
+                   multithread=False)->tuple[dict[str,int],dict[str,float]]:
+    '''
+    output:
+      name2abscooc, name2relevance
+    '''
+    names = to_df[between_names_in_col].to_list()
+    names = [n for n in names if ':' not in n]
+    name2abs_cooc = self.SBSsearch.abscooc4list(names,and_concepts,multithread)
+    name2relevance = dict()
+    name2abscooc = dict()
+    for name, (cooc, relevance) in name2abs_cooc.items():
+      name2abscooc[name] = cooc
+      name2relevance[name] = relevance
+    return name2abscooc, name2relevance
+
+
+
+  def add_abs_cooc(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
+                   multithread=False,skip1strow=False):
+    '''
+    output:
+      adds column 'AbsCooccur' to_df
+    '''
+    print(f'obtaining abstract coocurence from SBS for {to_df._name_} worksheet with {len(to_df)} rows')
+    name2relevance = dict()
+    name2abscooc = dict()
+    if skip1strow:
+      my_df = to_df.dfcopy()
+      df_name = my_df._name_ # may not be the same as to_df_named
+      weights = my_df.iloc[[0]].copy()
+      df_no_weights = df.from_pd(my_df.drop(0, axis=0,inplace=False), df_name)
+      df_no_weights.copy_format(to_df)
+      if df_no_weights.empty: return my_df  
+
+      names = df_no_weights[between_names_in_col].to_list()
+      name2abs_cooc = self.SBSsearch.abscooc4list(names,and_concepts,multithread)
+      if name2abs_cooc:
+        for name, (cooc, relevance) in name2abs_cooc.items():
+          name2abscooc[name] = cooc
+          name2relevance[name] = relevance
+        df_no_weights['AbsCooccur'] = df_no_weights[between_names_in_col].map(name2relevance)
+        df_no_weights['AbsCooccur'] = df_no_weights['AbsCooccur'].fillna(0)
+        print(f'Added column "AbsCooccur" with {len(name2relevance)} non-empty rows to worksheet with {len(df_no_weights)} entities')
+        pd_withcooc = pd.concat([weights, df_no_weights]).reset_index(drop=True)
+        my_df = df.from_pd(pd_withcooc,df_name)     
+        my_df.copy_format(df_no_weights)
+        return my_df,name2abscooc
+      else:
+        return  to_df, dict()
+    else:
+      names = to_df[between_names_in_col].to_list()
+      name2abs_cooc = self.SBSsearch.abscooc4list(names,and_concepts,multithread)
+      for name, (cooc, relevance) in name2abs_cooc.items():
+        name2abscooc[name] = cooc
+        name2relevance[name] = relevance
+      to_df['AbsCooccur'] = to_df['Name'].map(name2relevance)
+      to_df['AbsCooccur'] = to_df['AbsCooccur'].fillna(0)
+      return to_df,name2abscooc
 
 
   def add_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query:str,

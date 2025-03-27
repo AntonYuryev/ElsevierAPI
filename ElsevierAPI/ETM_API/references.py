@@ -21,7 +21,6 @@ ABSTRACT = 'Abstract'
 CLAIMS = 'Claims'
 PATENT_APP_NUM = 'Patent Application Number'
 PATENT_GRANT_NUM = 'Patent Grant Number'
-EFFECT = 'Effect'
 RELEVANCE = 'Relevance'
 MEASUREMENT = 'Measurement'
 ETM_CITATION_INDEX = 'ETM Citation index'
@@ -57,10 +56,8 @@ PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tiss
 SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence','msrc','mref','Similarity']
 # SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.Sentences
-RELATION_PROPS = {EFFECT,'Mechanism','ChangeType','BiomarkerType','QuantitativeType'}
 
 PS_REFERENCE_PROPS = list(CLINTRIAL_PROPS)+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS+['TextRef']
-ALL_PSREL_PROPS = list(RELATION_PROPS)+PS_REFERENCE_PROPS
 
 REFERENCE_PROPS = list(BIBLIO_PROPS)+list(CLINTRIAL_PROPS)+REF_ID_TYPES+SENTENCE_PROPS
 
@@ -409,9 +406,11 @@ class Reference(dict):
   
 
   def biblioprop2str(self,propid:str):
-     if propid in self:
+    if propid in self:
       map_func = Author.tostr if propid == AUTHORS else str
       return ';'.join(list(map(map_func,self[propid])))
+    else:
+      return ''
 
 
   def to_list(self,id_types=list(),print_snippets=False,biblio_props=list(),other_props=list(),with_hyperlinks=False):
@@ -452,9 +451,9 @@ class Reference(dict):
               
       for prop_id in biblio_props:
         try:
-            prop_values_str = self.biblioprop2str(prop_id)
-            if prop_id in ['Title', 'Abstract']:
-                prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE,' ',prop_values_str)
+          prop_values_str = self.biblioprop2str(prop_id)
+          if prop_id in ['Title', 'Abstract']:
+            prop_values_str = re.sub(NOT_ALLOWED_IN_SENTENCE,' ',prop_values_str)
         except KeyError:
             prop_values_str = ''
         row.append(prop_values_str)
@@ -646,27 +645,22 @@ class Reference(dict):
 
 
   def _make_standard_textref(self):
+    identifier_prefixes = {
+        'PMID': 'info:pmid/',
+        'DOI': 'info:doi/',
+        'PII': 'info:pii/',
+        'PUI': 'info:pui/',
+        'EMBASE': 'info:embase/',
+        'ELSEVIER': 'info:pii/',  # Note: ELSEVIER also uses 'info:pii/'
+        'PMC': 'info:pmc/',
+        'Clinvar': 'info:clinvar/'
+    }
+    for identifier, prefix in identifier_prefixes.items():
       try:
-          return 'info:pmid/'+ self.Identifiers['PMID']
+        return prefix + self.Identifiers[identifier]
       except KeyError:
-          try:
-              return 'info:doi/'+ self.Identifiers['DOI']
-          except KeyError:
-              try:
-                  return 'info:pii/'+ self.Identifiers['PII']
-              except KeyError:
-                  try:
-                      return 'info:pui/'+ self.Identifiers['PUI']
-                  except KeyError:
-                      try:
-                          return 'info:embase/'+ self.Identifiers['EMBASE']
-                      except KeyError:
-                          try:
-                              return 'info:pii/'+ self.Identifiers['ELSEVIER']
-                          except KeyError:
-                              try:
-                                  return 'info:pmc/'+ self.Identifiers['PMC']
-                              except KeyError: return ''
+        pass  # Continue to the next identifier
+    return ''
 
 
   def _make_non_standard_textref(self):
@@ -900,12 +894,9 @@ class Author:
   
 
   def tostr(self):
-    if self._1stName:
-       return self._1stName[0]+' '+self.LastName
-    else:
-      return self._1stName
-    
-
+    return self._1stName[0]+' '+self.LastName if self._1stName else self.LastName
+     
+     
   @classmethod
   def fromStr(cls,author:str):
     '''
