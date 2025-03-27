@@ -4,15 +4,14 @@ from zeep import exceptions
 from xml.dom import minidom
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
 from collections import defaultdict
 
 from .ZeepToNetworkx import PSNetworx, len
-from .NetworkxObjects import PSObjectEncoder,PSObjectDecoder
-from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,PSRelation,OBJECT_TYPE
+from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,OBJECT_TYPE
+from .NetworkxObjects import RELATION_PROPS,ALL_PSREL_PROPS
 from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
-from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES,RELATION_PROPS,ALL_PSREL_PROPS
+from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
 from ..utils import unpack,execution_time,execution_time2,load_api_config,normalize
 
@@ -954,130 +953,134 @@ to retreive {my_sent_props} properties')
         return propval2objs, uid2propval
 
 ################################# ONTOLOGY  ONTOLOGY ############################################
-    def __load_children(self,parent:PSObject,min_connectivity=0,depth=0,max_childs=ALL_CHILDS)->tuple[PSObject,list[PSObject]]:
-        '''
-        Input
-        -----
+    def ___load_children(self,parent:PSObject,min_connectivity=0,depth=0,max_childs=ALL_CHILDS)->tuple[PSObject,list[PSObject]]:
+      '''
+      input:
         if max_childs=0 finds all children for parent in database
-
-        Return
-        ------
+      output:
         Tuple: parent:PSObject, children:list[PSObject]
-        '''
-        parent_dbid = parent.dbid()
-        if parent_dbid:
-            query_ontology = OQL.get_childs([parent_dbid],['id'],depth=depth)
-            if min_connectivity:
-                query_ontology += f' AND Connectivity >= {min_connectivity}'
+      '''
+      parent_dbid = parent.dbid()
+      if parent_dbid:
+          query_ontology = OQL.get_childs([parent_dbid],['id'],depth=depth)
+          if min_connectivity:
+              query_ontology += f' AND Connectivity >= {min_connectivity}'
 
-            my_session = self._clone_session(what2retrieve=NO_REL_PROPERTIES)
-            #request_name = f'Retrieve ontology children for {parent.name()}'
-            request_name = ''
-            children_graph = my_session.process_oql(query_ontology,request_name,max_result=max_childs)
-        #      if parent.name() == 'physical illness':
-        #          print('')
-            my_session.close_connection()
-            if isinstance(children_graph,int):
-                # fake list of empty children for consistency to enable downstream remove_high_level_entities()
-                return parent, [PSObject()]*children_graph 
-            else:
-                return parent, children_graph._get_nodes()
-        else:
-            print(f'Parent {parent.name()} has no database identifier. Its children cannot be loaded')
-            return parent,[]
-        
+          my_session = self._clone_session(what2retrieve=NO_REL_PROPERTIES)
+          children_graph = my_session.process_oql(query_ontology,'',max_result=max_childs)
+          my_session.close_connection()
+          if isinstance(children_graph,int):
+              # fake list of empty children for consistency to enable downstream remove_high_level_entities()
+            return parent, [PSObject()]*children_graph 
+          else:
+            return parent, children_graph._get_nodes()
+      else:
+          print(f'Parent {parent.name()} has no database identifier. Its children cannot be loaded')
+          return parent,[]
+      
 
-    def _load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
-                       max_childs=ALL_CHILDS,max_threads=50)->tuple[set[PSObject],list[PSObject]]:
-        '''
-        Input:
-            if "parents" is empty will use all nodes from self.Graph
-            depth - ontology depth to get children from. If depth=0, all children from all depths are returned
-            max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
-            min_connectivity - avoid from using.  min_connectivity > 0 slows down children retrival significantly
+    def __load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
+                      max_childs=ALL_CHILDS,max_threads=50)->tuple[set[PSObject],list[PSObject]]:
+      '''
+      Input:
+        if "parents" is empty will use all nodes from self.Graph
+        depth - ontology depth to get children from. If depth=0, all children from all depths are returned
+        max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
+        min_connectivity - avoid from using.  min_connectivity > 0 slows down children retrival significantly
 
-        Output:
-            {PSObject},[PSObject] - set of all found children, list of all parents with children\n
-            if max_childs > 0, parents with number of children exeeding max_childs are excluded
-        
-        Updates:
-            parents in self.Graph with CHILDS properties as [PSObject] children
-        '''
-        process_start = time.time()
-        print(f'Loading ontology children for {len(parents)} entities')
-        # by default sessions_max=200 in Oracle
-        thread_name_prefix = f'Childs 4 {len(parents)} prnts in {max_threads} thrds-'
-        max_threaded_time = 0
-        need_children = list()
-        child_counter = set()
-        iteration_counter = 0
-        for p, parent in enumerate(parents):
-            if CHILDS in self.Graph.nodes[parent.uid()]:
-                child_counter.update(self.Graph.nodes[parent.uid()][CHILDS])
-            else:
-                need_children.append(parent)
-                if len(need_children) >= max_threads or p == len(parents)-1:
-                    max_workers = min(len(need_children),max_threads)
-                    thread_start = time.time()
-                    iteration_counter += 1
-                    thread_name = thread_name_prefix+str(iteration_counter) + 'iter'
-                    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name) as e:
-                        futures = list()
-                        [futures.append(e.submit(self.__load_children,nc,min_connectivity,depth,max_childs)) for nc in need_children]
+      output:
+        {PSObject},[PSObject] - set of all found children, list of all parents with children\n
+        if max_childs > 0, parents with number of children exeeding max_childs have empty PSOject in CHILDS attribute
+        parents in self.Graph are annoatted with CHILDS properties as [PSObject] children
+      '''
+      process_start = time.time()
+      print(f'Loading ontology children for {len(parents)} entities')
+      # by default sessions_max=200 in Oracle
+      thread_name_prefix = f'Childs 4 {len(parents)} prnts in {max_threads} thrds-'
+      need_children = list()
+      child_counter = set()
+      iteration_counter = 0
+      for p, parent in enumerate(parents):
+        parent_uid = parent.uid()
+        assert(CHILDS not in self.Graph.nodes[parent_uid])
+        need_children.append(parent)
+        if len(need_children) >= max_threads or p == len(parents)-1:
+          max_workers = min(len(need_children),max_threads)
+          iteration_counter += 1
+          thread_name = thread_name_prefix+str(iteration_counter) + 'iter'
+          with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name) as e:
+            futures = list()
+            [futures.append(e.submit(self.___load_children,nc,min_connectivity,depth,max_childs)) for nc in need_children]
 
-                        for future in as_completed(futures):
-                            f_parent, children = future.result()
-                            # children has empty PSObjects if len(children) <= max_childs
-                            nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
-                            if max_childs == ALL_CHILDS or len(children) <= max_childs:
-                                # case when children has real PSObjects
-                                self.Graph.add_psobjs(children) # set_node_attributes() does not update nodes that do not exist in Graph
-                                child_counter.update(children)
-                    e.shutdown()
-
-                    threaded_time = time.time() - thread_start
-                    if threaded_time > max_threaded_time:
-                        max_threaded_time = threaded_time
-                        if max_threaded_time > 240:
-                            print(f'Longest {max_threads}-threaded time {"{}".format(str(timedelta(seconds=max_threaded_time)))} \
-is close to Apache default 5 minutes transaction timeout !!!')
-                    if not self.no_mess:
-                        print (f'{p+1} {len(parents)} parents were processed in {execution_time(process_start)}')
-                    need_children.clear()
-        
-        print(f'{len(child_counter)} children for {len(parents)} parent entities were found in database \
-in {execution_time(process_start)}')
-        print(f'Longest {max_threads}-threaded time: {"{}".format(str(timedelta(seconds=max_threaded_time)))}')
-
-        parent_with_children = self.Graph.psobjs_with([CHILDS])
-        parent_with_children = [p for p in parent_with_children if p.childs() and p in parents]
-        child_counter = {x for x in child_counter if x} #sometimes they are empty?
-        return child_counter, parent_with_children
+            for future in as_completed(futures):
+              f_parent, children = future.result()
+              # !!!!children has empty PSObjects if len(children) <= max_childs !!!
+              nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
+              if max_childs == ALL_CHILDS or len(children) <= max_childs:
+                # case when children are real PSObjects
+                self.Graph.add_psobjs(children) # set_node_attributes() does not update nodes that do not exist in Graph
+                child_counter.update(children)
+          e.shutdown()
+          need_children.clear()
+      
+      #to remove empty children from parents with number of children bigger than max_childs
+      child_counter = {x for x in child_counter if x}
+      print(f'{len(child_counter)} children for {len(parents)} parent entities were found in database in {execution_time(process_start)}')
+      parent_with_children = self.Graph.psobjs_with([CHILDS])
+      parent_with_children = [p for p in parent_with_children if p.childs() and p in parents]
+      return child_counter, parent_with_children
 
 
     def load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
-                       max_childs=ALL_CHILDS,max_threads=50)->tuple[set[PSObject],list[PSObject]]:
-        '''
-            Input:
-                if "parents" is empty will use all nodes from self.Graph
-                depth - ontology depth to get children from. If depth=0, all children from all depths are returned
-                max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
-                min_connectivity - avoid from using.  min_connectivity > 0 slows down children retrival significantly
-
-            Output:
-                {PSObject},[PSObject] - set of all found children, list of all parents with children\n
-                if max_childs > 0, parents with number of children exeeding max_childs are excluded
-            
-            Updates:
-                parents in self.Graph with CHILDS properties as [PSObject] children
-        '''
-        if parents:
-            my_parents = list(set(parents))
-            self.Graph.add_psobjs(set(parents))
-        else:
-            my_parents = self.Graph._get_nodes()
-    
-        return self._load_children4(my_parents,min_connectivity,depth,max_childs,max_threads)
+                       max_childs=ALL_CHILDS,max_threads=50)->tuple[set[PSObject],set[PSObject]]:
+      '''
+        Input:
+          if "parents" is empty will use all nodes from self.Graph
+          depth - ontology depth to get children from. If depth=0, all children from all depths are returned
+          max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
+        Output:
+          {PSObject},{PSObject} - set of all found children, list of parents annotated with children\n
+          if parent has no children its [CHILDS] attribute = []
+          if parent has more children than max_childs it is annoated with CHILDS attribute with empty PSObjects
+        Updates:
+          parents in self.Graph with CHILDS properties as [PSObject] children
+      '''
+      graph_nodes = self.Graph._get_nodes()
+      exist_parents = []
+      new_parents = []
+      if parents:
+        childless_parents = []
+        for n in parents:
+          if n in graph_nodes:
+            parent_from_graph = self.Graph._get_node(n.uid())
+            (childless_parents,exist_parents)[CHILDS in parent_from_graph].append(parent_from_graph)
+          else:
+            new_parents.append(n)
+        # otherwise parents with empty PSObject in CHILDS will collapse into one child
+        self.Graph.add_psobjs(new_parents)
+        parents_need_childs = new_parents + childless_parents
+      else:
+        parents_need_childs = graph_nodes
+ 
+      children2return = set(unpack([o.childs() for o in exist_parents]))
+      children2return = set(unpack([o.childs() for o in exist_parents]))
+      children2return = {x for x in children2return if x} # to remove empty children that may come from exist_parents
+      parents2return = set(exist_parents)
+      if parents_need_childs:
+        new_children,parents_with_children = self.__load_children4(parents_need_childs,min_connectivity,depth,max_childs,max_threads)
+        parents2return.update(parents_with_children)
+        children2return.update(new_children)
+        # since only parents with children are returned by __load_children4
+        # we need to add new parents with no children to complete parents2return 
+        for n in new_parents:
+          if n not in parents_with_children:
+            n.setdefault(CHILDS, [])
+            parents2return.add(n)
+      else:
+        assert(len(exist_parents) == len(parents))
+        print(f'All {len(parents)} parents already have children')
+      
+      return children2return,parents2return
     
 
     def child_graph(self, propValues:list, search_by_properties=[],include_parents=True):
@@ -1090,30 +1093,7 @@ in {execution_time(process_start)}')
             print('Found %d ontology children' % len(ontology_graph))
         return ontology_graph
 
-
-    def ontology_graph(self,members:list,add2parent:PSObject):
-        """
-        Input
-        -----
-        members - [PSObjects]
-        """
-        ontology_graph = ResnetGraph()
-        parent_id = add2parent.uid()
-        ontology_graph.add_psobj(add2parent)
-        ontology_graph.add_psobjs(set(members))
-        for m in members:
-            child_id = m.uid()
-            rel = PSRelation({'ObjTypeName':['MemberOf'],'Relationship':['is-a'],'Ontology':['Pathway Studio Ontology']})
-            rel.Nodes['Regulators'] = [(child_id,0,0)]
-            rel.Nodes['Targets'] = [(parent_id,1,0)]
-            rel[DBID].append(child_id)
-            rel['URN'].append(child_id.urn()) #fake URN
-            ontology_graph.add_edge(child_id,parent_id,relation=rel)
-
-        self.add_rel_props(['Relationship','Ontology'])
-        return ontology_graph
-
-
+   
     def __ontology_graph(self,for_childs=[],depth=1):
         """
         Adds
@@ -1141,6 +1121,32 @@ in {execution_time(process_start)}')
         return my_session.Graph.ontology_graph()
 
 
+    def ontology_branch(self,_4parent:PSObject,with_connectivity=False):
+      children,parent = self.load_children4([_4parent],depth=1)
+      ontology_nodes = [parent]
+      while children:
+        ontology_nodes += list(children)
+        children,_ = self.load_children4(children,depth=1)
+
+      ontology_graph = ResnetGraph()
+      ontology_graph.add_psobjs(ontology_nodes)
+      ontology_graph = ontology_graph.ontology_graph()
+
+      if with_connectivity:
+        new_session = APISession()
+        new_session.add_ent_props('Connectivity')
+        dbids = ResnetGraph.dbids(ontology_nodes)
+        oql = 'SELECT Entity WHERE id = ({ids})'
+        req = 'Retreive nodes connectivity'
+        nodes_with_connectivity = new_session.iterate_oql(oql,dbids,request_name=req)._get_nodes()
+        urn2connectivity = {n.urn():list(n.get_props('Connectivity',if_missing_return=0)) for n in nodes_with_connectivity}
+        ontology_graph.set_node_annotation(urn2connectivity,'Connectivity')
+
+      return ontology_graph
+      
+
+
+    '''
     def load_ontology(self, parent_ontology_groups:list)->defaultdict[str,list[str]]:
         """
         Input
@@ -1160,7 +1166,7 @@ in {execution_time(process_start)}')
                 self.child2parent[child_name].append(group_name)
 
         return self.child2parent
- 
+      '''
 
 
     def ontopaths2(self,parent2childs:dict[str,list[PSObject]], ontology_depth:int)->dict[str,str]:
@@ -1466,8 +1472,7 @@ in {execution_time(process_start)}')
             self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
             self.close_rnef_dump(to_folder,in_parent_folder,root_folder,True)
 
-          if not self.no_mess:
-              print('RNEF dump of "%s" graph into %s folder was done in %s' % 
+            print('RNEF dump of "%s" graph into %s folder was done in %s' % 
                   (my_graph.name,to_folder,execution_time(dump_start)),flush=True)
                 
         return time.time()-dump_start
@@ -1477,16 +1482,14 @@ in {execution_time(process_start)}')
         # Use for oql_query producing large results
         # 50 threads crashed connection
         '''
-        Input
-        -----
-        threads - number of threads to use in one download iteration\n
-        Inreasing "threads" accelerates download but slows down writing cache file to disk\n
-        if cache file writing time exceeds 5 min (Apache default timeout) download will crash
-        
-        Dumps
-        -----
-        results of oql_query to self.dump_folder in self.data_dir.\n
-        Splits dump into small files smaller than self.max_rnef_size\n
+        input:
+          self.dump_folder must be specified
+          threads - number of threads to use in one download iteration\n
+          Inreasing "threads" accelerates download but slows down writing cache file to disk\n
+          if cache file writing time exceeds 5 min (Apache default timeout) download will crash   
+        Dumps:
+          results of oql_query to self.dump_folder in self.data_dir.\n
+          Splits dump into small files smaller than self.max_rnef_size\n
         use 
         '''
         self.__replace_goql(oql_query)
@@ -1505,7 +1508,7 @@ in {execution_time(process_start)}')
                     # max_workers = 1 otherwise _dump2rnef gets locked
                     for i in range(0,number_of_iterations,threads):
                         iterations_graph = iterations_graph.compose(self.__thread__(threads))
-                        e.submit(self._dump2rnef, iterations_graph.copy(), self.dump_folder,'',True,lock)
+                        e.submit(self._dump2rnef, iterations_graph.copy(), self.dump_folder,'','',True,lock)
                         page_ref_count = iterations_graph.weight()
                         reference_counter += page_ref_count
                         remaining_iterations = number_of_iterations-i-threads

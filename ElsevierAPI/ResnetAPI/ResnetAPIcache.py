@@ -125,10 +125,12 @@ class APIcache(APISession):
       return simple_graph
   
 
-  def save_network(self, example_node_name=''):
+  def save_network(self, **kwargs):
+      example_node_name = kwargs.get('example_node_name','')
       if example_node_name:
           self.example_node = self.network._psobjs_with(example_node_name)[0]
       if self.cache_was_modified:
+          self.network = self.simplify_graph(self.network,**kwargs)
           self.replace_cache(self.network.name,self.network,self.entProps,self.relprops2rnef)
           self.save_description()
       return
@@ -329,13 +331,13 @@ class APIcache(APISession):
       add2raw = kwargs.pop('add2raw',False)
       self.add2raw(graph)
       if not add2raw:
-          cache_name = self.network.name
-          combined_network = graph.compose(self.network)
-          print(f'New cache has {combined_network.number_of_nodes()} nodes, {combined_network.number_of_edges()} edges')
-          self.network = self.simplify_graph(combined_network,**kwargs)
-          self.network.name = cache_name
-          self.cache_was_modified = True
-          self.save_network() #with_section_size=1000
+        cache_name = self.network.name
+        self.network = graph.compose(self.network)
+        print(f'New cache has {self.network.number_of_nodes()} nodes, {self.network.number_of_edges()} edges')
+        self.network.name = cache_name
+        self.cache_was_modified = True
+        self.save_network(**kwargs) #with_section_size=1000
+
 
   @staticmethod
   def list_cache(data_dir:str):

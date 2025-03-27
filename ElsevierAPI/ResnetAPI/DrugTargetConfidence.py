@@ -95,13 +95,13 @@ class DrugTargetConsistency(APIcache):
           add2network = self.d2t_from_db(missing_targets,limit2drugs)
         
         if add2network:
-            self.add2cache(add2network)
-            self.drugs2targets = self.drugs2targets.compose(add2network)
+          self.add2cache(add2network)
+          self.drugs2targets = self.drugs2targets.compose(add2network)
 
         return self.drugs2targets
 
     
-    def annotate_network(self,drug_target_tup:list,replace_consistencies=False):
+    def annotate_network(self,drug_target_tup:list[tuple[PSObject,PSObject]],replace_consistencies=False):
         '''
         Input
         -----
@@ -127,7 +127,7 @@ class DrugTargetConsistency(APIcache):
                     dir23='',
                     id_type='Name')
         
-        if d2t2dG:# re-annotating self.drug2target_network for caching CONSISTENCY after algorithm run
+        if d2t2dG:# re-annotating self.drug2target for caching CONSISTENCY after algorithm run
           d2t_need = self.drugs2targets.get_subgraph(list(drugs_need_consistency),list(targets4drugs_need_consistency))
           d2t2dG = d2t2dG.compose(d2t_need)
           update4consistency = defaultdict(float) # {(drug_uid,target_uid,effect):consistency_coefficient}
@@ -146,7 +146,6 @@ class DrugTargetConsistency(APIcache):
                 if replace_consistencies or CONSISTENCY not in rel:
                   self.cache_was_modified = True
                   self.network.set_edge_annotation(drug_uid,target_uid,rel.urn(),CONSISTENCY,[consistency_coefficient])
-
         return
                 
     
@@ -165,12 +164,9 @@ class DrugTargetConsistency(APIcache):
             self.load_drug_graph(for_targets,limit2drugs,load_fromdb)
 
         # first loading consistency coefficients from cache
-        dt_need_consistency = list() #[(PSObject,PSObject)]
+        dt_need_consistency = set() #[(PSObject,PSObject)]
         if load_fromdb:
-            for d,t,rel in self.drugs2targets.edges.data():
-                drug = self.drugs2targets._psobj(d)
-                target = self.drugs2targets._psobj(t)
-                dt_need_consistency.append((drug,target))
+          [dt_need_consistency.add((d,t))for d,t,_ in self.drugs2targets.iterate()]
         else:
           drugs_have_consistency = set()
           targets_have_consistency = set()
@@ -182,12 +178,13 @@ class DrugTargetConsistency(APIcache):
                 drugs_have_consistency.add(drug)
                 targets_have_consistency.add(target)
               else:
-                dt_need_consistency.append((drug,target))
-            
+                dt_need_consistency.add((drug,target))
           print(f'Found consistency coefficients for {len(self.drug_target_confidence)} drug-target pairs ({len(drugs_have_consistency)} drugs, {len(targets_have_consistency)} targets) in "{self.cache_name}.rnef" file')
       
         if dt_need_consistency:
-            print(f'\n\n{len(dt_need_consistency)} drug-target pairs need consistency calculation')
+            dt_need_consistency = list(dt_need_consistency)
+            need_consistency_count = len(dt_need_consistency)
+            print(f'\n\n{need_consistency_count} drug-target pairs need consistency calculation')
 
             def sortkey(x:tuple[PSObject,PSObject]):
               uid = x[1].uid()
@@ -208,12 +205,13 @@ class DrugTargetConsistency(APIcache):
             annotation_start = time.time()
             number_of_iterations = len(chunk_starts)-1
             for i, chunk_start in enumerate(chunk_starts[:-1]):
-              chunk_end = chunk_starts[i+1]
+              iter = i+1
+              chunk_end = chunk_starts[iter]
               self.annotate_network(dt_need_consistency[chunk_start:chunk_end],load_fromdb)
-              time_passed,remaining_time = execution_time2(annotation_start,i+1,number_of_iterations)
-              print(f'\nCalculated consistency coefficients for {chunk_end} out of {len(dt_need_consistency)} drug-target pairs in {time_passed}')
-              remaining_drugs = (number_of_iterations-i-1) * 1000
-              print(f'Estimated remaining time: {remaining_time} to process {remaining_drugs} drugs')
+              time_passed,remaining_time = execution_time2(annotation_start,iter,number_of_iterations)
+              print(f'\nCalculated consistency coefficients for {chunk_end} out of {need_consistency_count} drug-target pairs in {time_passed}')
+              remaining_dts = need_consistency_count - chunk_end
+              print(f'Estimated remaining time: {remaining_time} to process {remaining_dts} drug-target pairs')
         else:
             print(f'No drug-target pairs need consistency calculation.  All coefficients were found in {self.cache_name}')
             return

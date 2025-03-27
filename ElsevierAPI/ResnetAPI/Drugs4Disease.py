@@ -1,11 +1,11 @@
 from .DiseaseTargets import DiseaseTargets,execution_time
 from .DiseaseTargets import ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,REFERENCE_IDENTIFIERS,UNKNOWN_TARGETS_WS
-from .ResnetGraph import ResnetGraph,PSObject,OBJECT_TYPE,defaultdict
-from .SemanticSearch import RANK
-from .ResnetAPISession import APISession,OQL,NO_REL_PROPERTIES,BIBLIO_PROPERTIES,ALL_CHILDS
+from .ResnetGraph import ResnetGraph,PSObject,OBJECT_TYPE,REFCOUNT
+from .SemanticSearch import RANK,time
+from .ResnetAPISession import APISession,OQL,NO_REL_PROPERTIES,BIBLIO_PROPERTIES,ALL_CHILDS,ThreadPoolExecutor
 from ..pandas.panda_tricks import df,np
+from ..FDA.fda_api import FDA
 from numpy import nan_to_num
-import time
 import networkx as nx
 from .DrugTargetConfidence import DrugTargetConsistency
 from ..utils import run_tasks
@@ -30,20 +30,21 @@ class Drugs4Targets(DiseaseTargets):
               'strict_mode':True,
               'data_dir':'',
               'add_bibliography' : False,
-              'strict_mode' : False,
               'target_types' : ['Protein'],
               'pathway_folders':[],
               'pathways': [],
               'consistency_correction4target_rank':False,
-              'DTfromDB' : False,
+              'DTfromDB' : False, # set to True to load drug-targets relations from database 
+              # instead of using drug2targets cache. Use it if drug-target relations were edited in Pathway Studio
+              'add_inhibitors4':[], # list of tuples (reltype, [target_names])
               "max_childs" : 11,
-              'drug_groups':[]
+              'drug_groups':[],
+              'use_in_children':False,
+              'BBBP':False, # add Blood-Brain Barrier Permeability estimation to drugs
               }
       
       my_kwargs.update(kwargs)
       super().__init__(*args,**my_kwargs)
-      self.clone_all_sessions = my_kwargs.pop('clone',True) # must be different from clone that is used by SemanticSearch
-
       self.target_uid2rank = dict() # {target_dbid:rank}
       self.direct_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
       self.indirect_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
@@ -51,8 +52,8 @@ class Drugs4Targets(DiseaseTargets):
 
 
     def load_dt(self,**kwargs):
-        self.dt_consist = DrugTargetConsistency(self.APIconfig,**kwargs)
-        return self.dt_consist
+      self.dt_consist = DrugTargetConsistency(self.APIconfig,**kwargs)
+      return self.dt_consist
 
     @classmethod
     def from_files(cls,**kwargs):
@@ -60,8 +61,6 @@ class Drugs4Targets(DiseaseTargets):
         my_kwargs = dict(kwargs)
         my_kwargs['connect2server'] = False
         dt = cls(fake_config,**my_kwargs)
-        dt.clone_all_sessions = False # must be different from clone that is used by SemanticSearch
-
         dt_consist_kwargs = dict(my_kwargs)
         dt_consist_kwargs['what2retrieve'] = NO_REL_PROPERTIES
         dt.dt_consist = DrugTargetConsistency(fake_config,**dt_consist_kwargs)
@@ -147,7 +146,7 @@ Adds columns DRUG2TARGET_REGULATOR_SCORE to drug_df.  Used for SNEA
             drug_name = df_copy.at[idx,'Name']
             try:
                 rank2subtract = drug2rank[drug_name]
-                my_rank = df_copy.at[idx,DRUG2TARGET_REGULATOR_SCORE]
+                my_rank = nan_to_num(df_copy.at[idx,DRUG2TARGET_REGULATOR_SCORE])
                 new_rank = my_rank-rank2subtract
                 df_copy.at[idx,DRUG2TARGET_REGULATOR_SCORE] = new_rank
             except KeyError:
@@ -294,13 +293,10 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
 
     def init_drug_df(self, drugs:list[PSObject]):
         '''
-        Input
-        -----
-        drugs = [PSObject], used to load drugs from SNEA samples
-        
-        Returns
-        -------
-        new self.RefCountPandas
+        input:
+          drugs = [PSObject], used to load drugs from SNEA samples
+        output:
+          self.RefCountPandas
         '''
         forbidden_drugs =['DMSO', 'glucose','nicotine']
         print('Loading drug ranking worksheet')
@@ -346,10 +342,11 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
           clean_drugs = [d for d in clean_drugs if d not in bad_drugs]
           print(f'Excluded {before_count-len(clean_drugs)} drugs that activate {all_targets2inhibit} by {rt}')
            
-        drug_df = self.load_df(clean_drugs,max_childs=ALL_CHILDS,max_threads=50) 
-        # drug children for semantic refcount are loaded by "link2disease_concepts" function
+        drug_df = self.load_df(clean_drugs,max_childs=ALL_CHILDS,max_threads=50)
         self.RefCountPandas = drug_df.merge_dict(drug2pharmapendium_id,new_col=PHARMAPENDIUM_ID,map2column='Name')
         print('Initialized "Drugs" worksheet with %d drugs from database for ranking' % len(self.RefCountPandas))
+        # self.RefCountPandas does not have self.__temp_id_col__ column at this point 
+        # because ALL_CHILDS = 0. It will be added in link2disease_concepts()
         return
 
 
@@ -393,6 +390,9 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
         
 
     def link2disease_concepts(self,in_drugdf:df):
+      '''
+      adds self.__temp_id_col__ column to in_drugdf and scores concepts for drugs
+      '''
       if not self.input_diseases: return in_drugdf # for SNEA.make_drugs_df()
       if len(in_drugdf) < 2:
         print('Drugs worksheet is empty !!!!')
@@ -400,16 +400,22 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
 
       if self.__temp_id_col__ not in in_drugdf.columns:
       # case when drug_df was loaded from cache RNEF file:
-          drug_df = self.add_temp_id(in_drugdf,max_childs=ALL_CHILDS,max_threads=50)
-          before_mapping = len(drug_df)
-          print(f'{before_mapping - len(drug_df)} rows were deleted because database identifier cannot be found for drug names')
-          # max_childs_count must be zero (=ALL_CHILDS) to avoid removal of drugs with children 
-          # and to merge with results of SemanticSearch.bibliography() future
+      # max_childs_count must be zero (=ALL_CHILDS) to avoid removal of drugs with children 
+      # and to merge with results of SemanticSearch.bibliography() future
+        drug_df = self.add_temp_id(in_drugdf,max_childs=ALL_CHILDS,max_threads=50)
+        before_mapping = len(drug_df)
+        print(f'{before_mapping - len(drug_df)} rows were deleted because database identifier cannot be found for drug names')
+        
       else:
-          drug_df = in_drugdf.dfcopy()
+        drug_df = in_drugdf.dfcopy()
 
+      # add functions here for speed debuging.  drug_df has self.__temp_id_col__ column here:
+     
       phenotypedf_rows = list()
       def concepts2rows(concepts:list[PSObject],concept_name:str):
+        '''
+        function creates info worksheet for concepts called "Phenotype"
+        '''
         concepts_rows = []
         for concept in concepts:
           rank = concept.get_prop('rank')
@@ -423,7 +429,8 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
                 'boost_with_reltypes':['FunctionalAssociation','Regulation'],
                 'clone2retrieve' : REFERENCE_IDENTIFIERS,
                 'init_refstat' : False,
-                'column_name': 'Cell processess to activate in '+ self._disease2str()}
+                'column_name': 'Cell processess to activate in '+ self._disease2str(),
+                'add_relevance_concept_column':True}
       drug_df,concepts = self.score_concept('processes2activate',drug_df,**kwargs)[2:4]
       if concepts:
         phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
@@ -436,6 +443,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
         phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
       kwargs.pop('column_rank')
       
+      # self.params['processes'] are formed by score_target_semantics()
       kwargs['with_effects'] = ['unknown']
       kwargs['column_name'] = 'Cell processess affected by '+ self._disease2str()
       drug_df,concepts = self.score_concept('processes',drug_df,**kwargs)[2:4]
@@ -454,100 +462,132 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       if concepts:
         phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
 
+      kwargs['column_name'] = 'inhibit symptoms for '+ self._disease2str()
+      kwargs['with_effects'] = ['negative']
+      drug_df,concepts = self.score_concept('symptoms',drug_df,**kwargs)[2:4]
+      if concepts:
+        phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
+
+      kwargs['with_effects'] = ['unknown']
       kwargs['column_name'] = 'symptoms for '+ self._disease2str()
       drug_df,concepts = self.score_concept('symptoms',drug_df,**kwargs)[2:4]
       if concepts:
         phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
 
+      kwargs.pop('with_effects')
       kwargs['column_name'] = 'regulation of diseases similar to '+ self._disease2str()
       drug_df,concepts = self.score_concept('similar_diseases',drug_df,**kwargs)[2:4]
       if concepts:
         phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
 
+      kwargs['add_relevance_concept_column'] = False
       kwargs['column_name'] = 'regulation of '+ self._disease2str()
       drug_df = self.score_concepts(self.input_diseases,drug_df,**kwargs)[2]
 
       kwargs['column_name'] = self._disease2str()+' clinical trials'
       drug_df = self.score_concepts(self.input_diseases,drug_df,**kwargs)[2]
 
-
       rank_col = 'Concept rank'
       children_col = '# children'
       concepts_df = df.from_rows(phenotypedf_rows,['Type',rank_col,'Name',children_col,'weight','# linked drugs (includes links to concept ontology children)'])
       concepts_df = concepts_df.sortrows([rank_col,'Type','weight',children_col],[True,True,False,False])
       concepts_df._name_ = 'Phenotype'
+
+      if self.params.get('BBBP',False):
+        drug_df = self.__addBBBP(drug_df)
+
       self.add2report(concepts_df)
       return drug_df
 
 
-    def score_drugs(self,normalize=True):
-        '''
-        Returns
-        -------
-        df with ranked drugs. df._name_ ='Drugs' if normalize, else 'rawDrugs'\n
-        SNEA "normalize" settings is False 
-        '''
-        start_time = time.time()
-        self.load_target_ranks(self.report_pandas[AGONIST_TARGETS_WS],for_antagonists=False)
-        self.load_target_ranks(self.report_pandas[ANTAGONIST_TARGETS_WS],for_antagonists=True) 
-        ranked_df = self.regulatory_rank()
-
-        if 'disease' in self.params.keys(): # case of drug repositioning using input disease network and targets from knowledge graph
-          if self.params['debug']:
-            full_drug_df = self.link2disease_concepts(ranked_df)
-            if self.params['add_bibliography']:
-              drugs_df_with_tmrefs = self.bibliography(ranked_df,self.names4tmsearch(),'Name',[],len(ranked_df))
-              etm_ref_colname = self.tm_refcount_colname('Name',self.names4tmsearch())
-              full_drug_df = full_drug_df.merge_df(drugs_df_with_tmrefs,how='left',on='Name',columns=[etm_ref_colname])
-          elif self.params['add_bibliography']:
-            tasks = [(self.bibliography,(ranked_df,self.names4tmsearch(),'Name',[],len(ranked_df)))]
-            tasks.append((self.link2disease_concepts,(ranked_df,)))
-            results = run_tasks(tasks)
-            full_drug_df = results['link2disease_concepts']
-            drugs_df_with_tmrefs = results['bibliography']
+    def make_raw_drug_df(self):
+      self.load_target_ranks(self.report_pandas[AGONIST_TARGETS_WS],for_antagonists=False)
+      self.load_target_ranks(self.report_pandas[ANTAGONIST_TARGETS_WS],for_antagonists=True) 
+      ranked_df = self.regulatory_rank()
+      # add here functions for speed debuging.  ranked_df does not have self.__temp_id_col__ column here
+      if 'disease' in self.params.keys(): # case of drug repositioning using input disease network and targets from knowledge graph
+        if self.params['debug']:
+          if self.params.get("use_in_children",False):
+            d2cd = self.drug2childdose(ranked_df,multithread=False)
+            ranked_df = ranked_df.merge_dict(d2cd,'Children dose',PHARMAPENDIUM_ID)
+          full_drug_df = self.link2disease_concepts(ranked_df)
+          if self.params['add_bibliography']:
+            drugs_df_with_tmrefs = self.bibliography(ranked_df,self.names4tmsearch(),'Name',[],len(ranked_df))
             etm_ref_colname = self.tm_refcount_colname('Name',self.names4tmsearch())
             full_drug_df = full_drug_df.merge_df(drugs_df_with_tmrefs,how='left',on='Name',columns=[etm_ref_colname])
-          else:
-            full_drug_df = self.link2disease_concepts(ranked_df)
+        elif self.params['add_bibliography']:
+          tasks = [(self.bibliography,(ranked_df,self.names4tmsearch(),'Name',[],len(ranked_df)))]
+          tasks.append((self.link2disease_concepts,(ranked_df,)))
+          if self.params.get("use_in_children",False):
+            tasks.append((self.drug2childdose,(ranked_df,)))
+          results = run_tasks(tasks)
+
+          full_drug_df = results['link2disease_concepts']
+          drugs_df_with_tmrefs = results['bibliography']
+          etm_ref_colname = self.tm_refcount_colname('Name',self.names4tmsearch())
+          full_drug_df = full_drug_df.merge_df(drugs_df_with_tmrefs,how='left',on='Name',columns=[etm_ref_colname])
+
+          if self.params.get("use_in_children",False):
+            d2cd = results['drug2childdose']
+            full_drug_df = full_drug_df.merge_dict(d2cd,'Children dose',PHARMAPENDIUM_ID)
         else:
-            full_drug_df = ranked_df # case of finding drugs from SNEA results
+          tasks = [(self.link2disease_concepts,(ranked_df,))]
+          if self.params.get("use_in_children",False):
+            tasks.append((self.drug2childdose,(ranked_df,)))
+          results = run_tasks(tasks)
 
-        raw_drug_df = self.make_count_df(full_drug_df,'rawDrugs')
-        self.add2raw(raw_drug_df)
+          full_drug_df = results['link2disease_concepts']
+          if self.params.get("use_in_children",False):
+            d2cd = results['drug2childdose']
+            full_drug_df = full_drug_df.merge_dict(d2cd,'Children dose',PHARMAPENDIUM_ID)
+      else:
+          full_drug_df = ranked_df # case of finding drugs from SNEA results
 
-        if normalize:
-          ranked_drugs_df,_ = self.normalize('rawDrugs','Drugs','Name')
+      raw_drug_df = self.make_count_df(full_drug_df,'rawDrugs')
+      self.add2raw(raw_drug_df)
+      return raw_drug_df
 
-          #reordering drug df columns:
-          drugdf_columns = list(ranked_drugs_df.columns)
-          drugdf_columns.remove(PHARMAPENDIUM_ID)
-          drugdf_columns = [PHARMAPENDIUM_ID]+drugdf_columns
-          ranked_drugs_df = ranked_drugs_df.dfcopy(drugdf_columns)
-          
-          ranked_drugs_df.tab_format['tab_color'] = 'green'
-          ranked_drugs_df._name_ = 'Drugs'
-          self.add2report(ranked_drugs_df)
-          
-          print("Drug ranking was done in %s" % execution_time(start_time), flush=True)
-          print('Normalized worksheet named "Drugs" was added to report')
-        else:
-          print('Ranked drugs are in worksheet "rawDrugs" in raw data')
-            
+
+    def score_drugs(self,normalize=True):
+      '''
+      output:
+        raw_drug_df,ranked_drugs_df
+        adds  raw_drug_df to self.raw_data, adds ranked_drugs_df to self.report_pandas
+        set SNEA "normalize" to False 
+      '''
+      start_time = time.time()
+      raw_drug_df = self.make_raw_drug_df()
+      # add here functions for debuging. raw_drug_df does not have self.__temp_id_col__ column here:
+
+      if normalize:
+        ranked_drugs_df,_ = self.normalize('rawDrugs','Drugs','Name')
+
+        #reordering drug df columns:
+        drugdf_columns = list(ranked_drugs_df.columns)
+        drugdf_columns.remove(PHARMAPENDIUM_ID)
+        drugdf_columns = [PHARMAPENDIUM_ID]+drugdf_columns
+        ranked_drugs_df = ranked_drugs_df.dfcopy(drugdf_columns)
+        
+        ranked_drugs_df.tab_format['tab_color'] = 'green'
+        ranked_drugs_df._name_ = 'Drugs'
+        self.add2report(ranked_drugs_df)
+        
+        print("Drug ranking was done in %s" % execution_time(start_time), flush=True)
+        print('Normalized worksheet named "Drugs" was added to report')
         return raw_drug_df,ranked_drugs_df
-
+      else:
+        print('Ranked drugs are in worksheet "rawDrugs" in raw data')
+        return raw_drug_df,df()
+  
 
     def load_drugs(self,limit2drugs=set())->list[PSObject]:
         '''
-        Input
-        -----
-        self.__targets__ - [PSObject] that has to be filled prior to using this function
-        limit2drugs - {PSObject}, used by SNEA make_drugs_df
-
-        Output
-        ------
-        [PSObject] - list of drugs used by self.dt_consist.load_confidence_dict() and self.init_drug_df()
+        input:
+          self.__targets__ - [PSObject] that has to be filled prior to using this function
+          limit2drugs - {PSObject}, used by SNEA make_drugs_df
+        output:
+          [PSObject] - list of drugs used by self.dt_consist.load_confidence_dict() and self.init_drug_df()
         '''
-        #self.dt_consist = self.load_dt() now runs in parallel
         self.drugs2targets = self.dt_consist.load_drug_graph(self._targets(),limit2drugs,self.params['DTfromDB'])
         drugs_linked2targets = set(self.drugs2targets._psobjs_with('SmallMol','ObjTypeName'))
         drugs_linked2targets = drugs_linked2targets.difference(self._targets()) # to remove metabolite targets
@@ -572,7 +612,18 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
                   (len(drugs_withno_targets),self._disease2str()))
         
         return list(drugs_linked2targets) + drugs_withno_targets
-        
+    
+
+    def drug2childdose(self,rankedf:df,multithread = True):
+      print('Adding use in children from FDA drug labels')
+      approved_drugs = rankedf[rankedf[PHARMAPENDIUM_ID].notna()][PHARMAPENDIUM_ID]
+      if not approved_drugs.empty:
+        approved_drugs = approved_drugs.tolist()
+      else:
+        approved_drugs = []
+      fda_api = FDA()
+      return fda_api.child_doses_mt(approved_drugs) if multithread else fda_api.child_doses(approved_drugs)
+
 
     def init_load_score(self):
       my_drugs = self.load_drugs()
@@ -591,22 +642,53 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
         run_tasks(tasks)
         run_tasks([(self.score_drugs,()),(self.dt_consist.save_network,())])
         self.dt_consist.clear()
-        return
       else:
         self.init_drug_df(my_drugs)
         self.score_drugs()
-        return
+      return
 
 
     def find_rank_targets(self):
-        super().make_report()
-        print('Found %d targets for antagonists, %d targets for agonists, %d targets with unknown disease state'%
-        (len(self.report_pandas[ANTAGONIST_TARGETS_WS])-1, len(self.report_pandas[AGONIST_TARGETS_WS])-1,len(self.report_pandas[UNKNOWN_TARGETS_WS])-1))
-        print('%d targets in total were ranked' % len(self._targets()))
-        return self._targets()
+      super().make_report()
+      print('Found %d targets for antagonists, %d targets for agonists, %d targets with unknown disease state'%
+      (len(self.report_pandas[ANTAGONIST_TARGETS_WS])-1, len(self.report_pandas[AGONIST_TARGETS_WS])-1,len(self.report_pandas[UNKNOWN_TARGETS_WS])-1))
+      print('%d targets in total were ranked' % len(self._targets()))
+      return self._targets()
+
+
+    def __addBBBP(self,_2df:df):
+      print('Adding Blood-Brain Barrier Penetration (BBBP) probability to report')
+      ConceptName = 'Neurological disorders (BBBP)'
+      #self.add_ent_props(['Connectivity'])
+      concepts = self._props2psobj(["neurological disorder"],['Name'])
+      kwargs = { 
+                'clone2retrieve' : REFERENCE_IDENTIFIERS,
+                'column_name':ConceptName,
+                'column_rank': -1 # to avoid ranking and normalization
+                }
+      drug_df = self.score_concepts(concepts,_2df,**kwargs)[2]
+      my_columns = list(drug_df.columns)
+      #smallmols = self.Graph._psobjs_with('SmallMol',OBJECT_TYPE)
+      #drug_names = drug_df['Name'].to_list()
+      #connectivity_dict = {c.name():int(c.get_prop('Connectivity',if_missing_return=1)) for c in smallmols if c.name() in drug_names}
+      #drug_df = drug_df.merge_dict(connectivity_dict,'Connectivity','Name')
+      bbbp_col = self._refcount_colname(ConceptName)
+      col2remove = [self._weighted_refcount_colname(ConceptName),
+                    self._linkedconcepts_colname(ConceptName),
+                    self._concept_size_colname(ConceptName)]
+      #drug_df['BBBP probability'] = drug_df[bbbp_col]/drug_df['Connectivity']
+      #drug_df = drug_df.minmax_norm(['BBBP probability'])
+      #drug_df['BBBP probability'] = drug_df['BBBP probability'].round(decimals=2)
+      #self.entProps.remove('Connectivity')
+      #my_columns.append('BBBP probability')
+      my_columns = [c for c in my_columns if c not in col2remove]
+      return drug_df.dfcopy(my_columns)
 
 
     def annotate_report(self):
+      '''
+      self.report_pandas['Drugs'] does not have self.__temp_id_col__ column at this point
+      '''
       self.report_pandas[ANTAGONIST_TARGETS_WS] = self.report_pandas[ANTAGONIST_TARGETS_WS].merge_psobject(self.direct_target2drugs,'Directly Inhibited by','Name',values21cell=True)
       self.report_pandas[ANTAGONIST_TARGETS_WS] = self.report_pandas[ANTAGONIST_TARGETS_WS].merge_psobject(self.indirect_target2drugs,'Indirectly Inhibited by','Name',values21cell=True)
       
@@ -616,6 +698,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       drug_groups = self.params.get('drug_groups',[])
       if drug_groups:
           self.add_groups(self.report_pandas['Drugs'],drug_groups)
+      return
 
 
     def refs2targets(self):
@@ -647,5 +730,5 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
           self.init_load_score()
       
       self.annotate_report()
-      self.params2df()
+      self.add_params2df()
       print('Drug repurposing for %s was done in %s' % (self._disease2str(), execution_time(start_time)))

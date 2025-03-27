@@ -1,20 +1,21 @@
 import networkx as nx
 from networkx.exception import NetworkXError
-from ..pandas.panda_tricks import df,np
+from ..pandas.panda_tricks import df,np,pd
 from datetime import timedelta
 import os, math, time, torch,glob,csv
+from typing import Generator
 from xml.dom import minidom
 from lxml import etree as et
-from .NetworkxObjects import PSObject,PSRelation,len, DIRECT, INDIRECT, DBID
-from .NetworkxObjects import REGULATORS,TARGETS,CHILDS,REFCOUNT,STATE,DIRECT_RELTYPES,OBJECT_TYPE
-from ..ETM_API.references import Reference, pubmed_hyperlink, make_hyperlink
-from ..ETM_API.references import PUBYEAR,EFFECT,TITLE,REFERENCE_PROPS,INT_PROPS,PS_CITATION_INDEX,SENTENCE_PROPS,SENTENCE
-from ..ETM_API.RefStats import RefStats,IDENTIFIER_COLUMN
 from itertools import product
 from typing import Optional
 from torch_geometric.data import HeteroData
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor,as_completed
+from .NetworkxObjects import PSObject,PSRelation,len, DIRECT, INDIRECT, DBID,EFFECT
+from .NetworkxObjects import REGULATORS,TARGETS,CHILDS,REFCOUNT,STATE,DIRECT_RELTYPES,OBJECT_TYPE
+from ..ETM_API.references import Reference, pubmed_hyperlink, make_hyperlink
+from ..ETM_API.references import PUBYEAR,TITLE,REFERENCE_PROPS,INT_PROPS,PS_CITATION_INDEX,SENTENCE_PROPS,SENTENCE
+from ..ETM_API.RefStats import RefStats,IDENTIFIER_COLUMN
 from ..utils import execution_time, execution_time2,str2str,unpack,normalize
 
 RESNET = 'resnet'
@@ -80,8 +81,6 @@ class ResnetGraph (nx.MultiDiGraph):
       non-directional relations are duplicated in all possible directions
       """
       rel_urn = rel.urn(refresh_urn)
-    #   if rel_urn == 'urn:agi-Binding:in-out:urn:agi-cas:165689-82-7:in-out:urn:agi-llid:834489':
-    #       print('')
       uid_pairs = rel.get_regulators_targets()
       if uid_pairs:
           [self.add_edge(pair[0], pair[1], relation=rel,
@@ -93,11 +92,11 @@ class ResnetGraph (nx.MultiDiGraph):
 
   def add_psobj(self,node:PSObject):
       node_uid = node.uid()
-      try:
-          exist_node = PSObject(self.nodes[node_uid])
+      if node_uid in self.nodes():
+          exist_node = self._psobj(node_uid)
           merged_node = node.merge_obj(exist_node)
           self.add_node(node_uid,**merged_node)
-      except KeyError:
+      else:
           self.add_node(node_uid,**node)
           
 
@@ -110,22 +109,15 @@ class ResnetGraph (nx.MultiDiGraph):
       if not nodes: return
       nodes2add = nodes
       if merge:
-          existing_nodes = list()
-          new_nodes = list()
-          my_uids = set(self.nodes())
-          if my_uids:
-              [(new_nodes,existing_nodes)[n.uid() in my_uids].append(n) for n in nodes]
-              existing_nodes = [n.merge_obj(self._psobj(n.uid())) for n in existing_nodes]
-              nodes2add = existing_nodes+new_nodes
+        existing_nodes = list()
+        new_nodes = list()
+        my_uids = set(self.nodes())
+        if my_uids:
+          [(new_nodes,existing_nodes)[n.uid() in my_uids].append(n) for n in nodes]
+          existing_nodes = [n.merge_obj(self._psobj(n.uid())) for n in existing_nodes]
+          nodes2add = existing_nodes+new_nodes
 
       self.add_nodes_from([(n.uid(),n.items()) for n in nodes2add])
-
-
-  def relations(self):
-      for r,t,urn in self.edges(keys=True):
-          source, target = PSObject(r), PSObject(t)
-          rel = self[source][target][urn]['relation']
-          yield source, target, rel
 
 
   def add_rel(self,rel:PSRelation,merge=True):
@@ -145,17 +137,20 @@ class ResnetGraph (nx.MultiDiGraph):
           self.__add_rel(rel)
 
 
-  def add_psrels(self,rels:set[PSRelation],merge=True):
+  def __add_psrels(self,rels:set[PSRelation],add_nodes=True,merge=True):
       """
-      Input
-      -----
-      rels - {PSRelation}
-      nodes connected by relation must exist in the graph.\n
-      non-directional relations are duplicated in all possible directions\n
+      input:
+        rels - {PSRelation}
+        nodes connected by relation must exist in the graph.\n
+        non-directional relations are duplicated in all possible directions\n
+        set add_nodes to False for speed up if nodes are already in the graph
+        use ResnetGraph.from_rels() to create new graph from relations
       """
-      rel_nodes = [x.regulators()+x.targets() for x in rels]
-      rel_nodes = unpack(rel_nodes)
-      self.add_psobjs(rel_nodes)
+      if add_nodes:
+        rel_nodes = [r.regulators()+r.targets() for r in rels]
+        rel_nodes = unpack(rel_nodes)
+        self.add_psobjs(rel_nodes,merge=merge)
+
       if merge:
           existing_rels = set()
           new_rels = set()
@@ -171,8 +166,11 @@ class ResnetGraph (nx.MultiDiGraph):
   @classmethod
   def from_rels(cls,rels:set[PSRelation]|list[PSRelation]):
       newG = ResnetGraph()
+      rel_nodes = set()
+      [rel_nodes.update(r.regulators()+r.targets()) for r in rels]
+      newG.add_psobjs(rel_nodes,merge=False)
       my_rels = list(rels) if isinstance(rels,set) else list(set(rels))
-      newG.add_psrels(list(my_rels))
+      newG.__add_psrels(list(my_rels),add_nodes=False,merge=False)
       return newG
 
 
@@ -222,7 +220,7 @@ class ResnetGraph (nx.MultiDiGraph):
       To merge graphs from database use ResnetGraph.compose()
       '''
       self.add_psobjs(set(other._get_nodes()),merge)
-      self.add_psrels(other._psrels(),merge)
+      self.__add_psrels(other._psrels(),add_nodes=False,merge=merge)
 
       
   def compose(self,other:"ResnetGraph")->"ResnetGraph":
@@ -263,7 +261,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
       new_rel.urn(refresh=True)
       new_rels.append(new_rel)
-    self.add_psrels(new_rels,merge=False)
+    self.__add_psrels(new_rels,add_nodes=True, merge=False)
     return new_rels
 
 
@@ -731,90 +729,96 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def snippets2df(self, df_name='Snippets',add_nodetype=False, 
-                  add_rel_props:list=['Name','RelType',EFFECT],
+                  add_rel_props:list=['Name','RelType',EFFECT,REFCOUNT],
                   ref_identifiers:list = ['PMID','DOI'],
                   ref_biblio_props:list = [PUBYEAR,TITLE],
-                  ref_sentence_props:list=[]):
-      '''
-      input:
-          add_rel_props - can be either empty or ['Name','RelType',EFFECT]
-          ref_sentence_props - additional reference properties 
-      Returns
-      -------
-      df with columns: "Concept","Entity",{}'Concept','Concept Type','Entity','Entity Type'},add_rel_props,add_ref_props,PS_CITATION_INDEX,"PMID","DOI",PUBYEAR,TITLE,"Snippets",\n
-      where "Concept" contains graph regulators, "Entity" contains graph targets
-      '''
-      my_graph = self.remove_undirected_duplicates()
-      my_graph.load_references()
-      if add_nodetype:
-          header = ['Concept','Concept Type','Entity','Entity Type']
-      else:
-          header = ['Concept','Entity']    
-  
-      header += add_rel_props
-      header += [PS_CITATION_INDEX]+ref_sentence_props+ref_identifiers+ref_biblio_props #+['Snippets']
-      
-      annotated_refs = my_graph.citation_index()
-      rows = list()
-      for regulatorID, targetID, rel in my_graph.edges.data('relation'):
-          regulator_name = my_graph.nodes[regulatorID]['Name'][0]
-          target_name = my_graph.nodes[targetID]['Name'][0]
-          assert(isinstance(rel,PSRelation))
-          reltype = rel.objtype()
-          relname = rel.name()
-          releffect = rel.effect()
-          for ref in rel.refs():
-              id_type, identifier = ref.get_doc_id()
-              try:
-                  annotated_ref = annotated_refs[id_type+':'+identifier]
-                  ref_citation_idex = str(annotated_ref[PS_CITATION_INDEX][0])
-                  ref_list = ref.to_list(ref_identifiers,False,ref_biblio_props,ref_sentence_props,True)
-                  row = [regulator_name,my_graph.nodes[regulatorID][OBJECT_TYPE][0],target_name,my_graph.nodes[targetID][OBJECT_TYPE][0]] if add_nodetype else [regulator_name,target_name]
-                  if add_rel_props:
-                      row += [relname,reltype,releffect]
-                  row += [ref_citation_idex]+ref_list
-                  rows.append(row)
-              except KeyError:
-                  continue
+                  ref_sentence_props:list=[SENTENCE]):
+    '''
+    input:
+        add_rel_props - can be either empty or ['Name','RelType',EFFECT,REFCOUNT]
+        ref_sentence_props - additional reference properties 
+    Returns
+    -------
+    df with columns: "Concept","Entity",{}'Concept','Concept Type','Entity','Entity Type'},add_rel_props,add_ref_props,PS_CITATION_INDEX,"PMID","DOI",PUBYEAR,TITLE,"Snippets",\n
+    where "Concept" contains graph regulators, "Entity" contains graph targets
+    '''
+    my_graph = self.remove_undirected_duplicates()
+    my_graph.load_references()
+    
+    header = ['Concept','Concept Type','Entity','Entity Type'] if add_nodetype else ['Concept','Entity']
+    header += add_rel_props
+    header += [PS_CITATION_INDEX]+ref_sentence_props+ref_identifiers+ref_biblio_props #+['Snippets']
+    
+    annotated_refs = my_graph.citation_index()
+    rows = list()
+    for regulatorID, targetID, rel in my_graph.edges.data('relation'):
+      regulator_name = my_graph.nodes[regulatorID]['Name'][0]
+      target_name = my_graph.nodes[targetID]['Name'][0]
+      assert(isinstance(rel,PSRelation))
+      reltype = rel.objtype()
+      relname = rel.name()
+      releffect = rel.effect()
+      refcount = rel.count_refs()
+      for ref in rel.refs():
+        id_type, identifier = ref.get_doc_id()
+        try:
+          annotated_ref = annotated_refs[id_type+':'+identifier]
+          ref_citation_idex = str(annotated_ref[PS_CITATION_INDEX][0])
+          ref_list = ref.to_list(ref_identifiers,False,ref_biblio_props,ref_sentence_props,True)
+          row = [regulator_name,my_graph.nodes[regulatorID][OBJECT_TYPE][0],target_name,my_graph.nodes[targetID][OBJECT_TYPE][0]] if add_nodetype else [regulator_name,target_name]
+          if add_rel_props:
+            row += [relname,reltype,releffect,refcount]
+          row += [ref_citation_idex]+ref_list
+          rows.append(row)
+        except KeyError:
+          continue
 
-      snippet_df = df.from_rows(rows,header)
-      snippet_df[PS_CITATION_INDEX] = snippet_df[PS_CITATION_INDEX].astype(int)
-      if PUBYEAR in snippet_df.columns:
-          snippet_df[PUBYEAR] = snippet_df[PUBYEAR].astype(int)
-      snippet_df = snippet_df.sortrows([PS_CITATION_INDEX,'Concept','Entity'],ascending=[False,True,True])
+    snippet_df = df.from_rows(rows,header)
+    snippet_df[PS_CITATION_INDEX] = snippet_df[PS_CITATION_INDEX].astype(int)
+    if PUBYEAR in snippet_df.columns:
+      snippet_df[PUBYEAR] = pd.to_numeric(snippet_df[PUBYEAR], errors='coerce')
+      snippet_df[PUBYEAR] = snippet_df[PUBYEAR].fillna(0).astype(int)
+    snippet_df = snippet_df.sortrows([PS_CITATION_INDEX,'Concept','Entity'],ascending=[False,True,True])
 
-      clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],
-                      ['25741868'],['26582918'],['28492532'],['24033266'],['18414213'],
-                      ['26467025'],['24728327']]
-      clinvar_hyperlinks = list(map(pubmed_hyperlink,clinvar_pmids))
-      snippet_df = snippet_df.remove_rows_by(clinvar_hyperlinks,'PMID')
+    clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],
+                    ['25741868'],['26582918'],['28492532'],['24033266'],['18414213'],
+                    ['26467025'],['24728327']]
+    clinvar_hyperlinks = list(map(pubmed_hyperlink,clinvar_pmids))
+    snippet_df = snippet_df.remove_rows_by(clinvar_hyperlinks,'PMID')
 
-      snippet_df._name_ = df_name
-      snippet_df.set_hyperlink_color(ref_identifiers)
-      return snippet_df
+    snippet_df._name_ = df_name
+    snippet_df.set_hyperlink_color(ref_identifiers)
+    if REFCOUNT in snippet_df.columns:
+      snippet_df = snippet_df.sortrows(by=[REFCOUNT,'Concept','Entity'],ascending=[False,True,True])
+    snippet_df.add_column_format(SENTENCE,'width',75)
+    snippet_df.add_column_format(SENTENCE,'wrap_text',True)
+    snippet_df.add_column_format(SENTENCE,'font_size',9)
+    snippet_df.add_column_format(TITLE,'width',50)
+    snippet_df.add_column_format(TITLE,'wrap_text',True)
+    snippet_df.add_column_format(TITLE,'font_size',10)
+    return snippet_df
 
 ##################### DEL DEL DEL ######################################
   def remove_nodes_by_prop(self, property_values:list[str], prop_names:list[str]=[OBJECT_TYPE]):
-      node_ids = self.uids4nodes(property_values,prop_names)
-      self.remove_nodes_from(node_ids)
-      print("%d nodes with %s were removed" % (len(node_ids), ','.join(property_values)))
+    node_ids = self.uids4nodes(property_values,prop_names)
+    self.remove_nodes_from(node_ids)
+    print("%d nodes with %s were removed" % (len(node_ids), ','.join(property_values)))
 
 
   def remove_nodes_by_degree(self,min_degree=0,max_degree=1000000,only_with_prop:list=[OBJECT_TYPE],having_values:list=[]):
-      if having_values:
-          only_ids = set(self.uids4nodes(having_values,only_with_prop))
-          ids2remove = {x for x in self.nodes() if self.degree(x) > max_degree and x in only_ids}
-          ids2remove.update({x for x in self.nodes() if self.degree(x) < min_degree and x in only_ids})
-      else:
-          ids2remove = {x for x in self.nodes() if self.degree(x) > max_degree}
-          ids2remove.update({x for x in self.nodes() if self.degree(x) < min_degree})
+    if having_values:
+      only_ids = set(self.uids4nodes(having_values,only_with_prop))
+      ids2remove = {x for x in self.nodes() if self.degree(x) > max_degree and x in only_ids}
+      ids2remove.update({x for x in self.nodes() if self.degree(x) < min_degree and x in only_ids})
+    else:
+      ids2remove = {x for x in self.nodes() if self.degree(x) > max_degree}
+      ids2remove.update({x for x in self.nodes() if self.degree(x) < min_degree})
 
-      self.remove_nodes_from(ids2remove)
-      if min_degree:
-          print('%d nodes with degree less than %d and more than %d were removed' 
-                % (len(ids2remove),min_degree,max_degree))
-      else:
-          print(f'{len(ids2remove)} nodes with degree > {max_degree} were removed')
+    self.remove_nodes_from(ids2remove)
+    if min_degree:
+      print(f'{len(ids2remove)} nodes with degree less than {min_degree} and more than {max_degree} were removed')
+    else:
+      print(f'{len(ids2remove)} nodes with degree > {max_degree} were removed')
 
 
   def remove_nodes_by_outdegree(self,min_degree=0,max_degree=1000000,only_with_prop:list=[OBJECT_TYPE],having_values:list=[]):
@@ -939,8 +943,8 @@ class ResnetGraph (nx.MultiDiGraph):
 
       psobjs4norefs_rels = set(self._get_nodes(noduids4norefs_rels))
       norefs_graph = ResnetGraph()
-      #norefs_graph.add_psobjs(psobjs4norefs_rels)
-      norefs_graph.add_psrels(set(norefs_rels),merge=False)
+      norefs_graph.add_psobjs(psobjs4norefs_rels)
+      norefs_graph.__add_psrels(set(norefs_rels),add_nodes=False,merge=False)
 
       deleted_refcount = len(self.load_references()) - len(norefs_graph.load_references())
       print(f'{deleted_refcount} references were deleted in {affected_relcount} relations')
@@ -956,16 +960,15 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
 ######################   GET GET GET   ######################################
-  def iterate(self):
+  def iterate(self)->Generator[PSObject,PSObject,PSRelation]:
     for r,t,rel in self.edges.data('relation'):
-      assert(isinstance(rel,PSRelation))
       yield self._get_node(r), self._get_node(t), rel
 
 
   def targets_of(self,n:PSObject):
-      for r,t,rel in self.edges(n.uid(),data='relation'):
-          assert(isinstance(rel,PSRelation))
-          yield self._get_node(r), self._get_node(t), rel
+    for r,t,rel in self.edges(n.uid(),data='relation'):
+      assert(isinstance(rel,PSRelation))
+      yield self._get_node(r), self._get_node(t), rel
 
 
   def get_node_attributes(self,prop_name):
@@ -1744,10 +1747,7 @@ class ResnetGraph (nx.MultiDiGraph):
       '''
       raises KeyError if node_uid does not exist in self
       '''
-      try:
-          return PSObject({k:v for k,v in self.nodes[node_uid].items()})
-      except KeyError:
-          raise KeyError
+      return PSObject({k:v for k,v in self.nodes[node_uid].items()}) if node_uid in self.nodes else PSObject()
 
 
   def __psobjs(self,with_uids=None):
@@ -1758,9 +1758,9 @@ class ResnetGraph (nx.MultiDiGraph):
       if "with_uids" is None returns all nodes in self
       '''
       if isinstance(with_uids,(set,list)):
-          return {PSObject(n) for u,n in self.nodes(data=True) if u in with_uids}
+        return {PSObject(n) for u,n in self.nodes(data=True) if u in with_uids}
       else:
-          return {PSObject(n) for u,n in self.nodes(data=True)}
+        return {PSObject(n) for u,n in self.nodes(data=True)}
 
 
   @staticmethod
@@ -1831,20 +1831,17 @@ class ResnetGraph (nx.MultiDiGraph):
 
   def dbid2uid(self,dbids:list[int]=[])->dict[int,int]:
       '''
-      Input
-      -----
-      nodes = [PSObject]
-
-      Returns
-      -------
-      {node.dbid():node.uid()}
+      input:
+        nodes = [PSObject]
+      output:
+        {node.dbid():node.uid()}
       '''
       if dbids:
-          nodes_with_dbids = self.psobj_with_dbids(set(dbids))
-          return {n.dbid():n.uid() for n in nodes_with_dbids}
+        nodes_with_dbids = self.psobj_with_dbids(set(dbids))
+        return {n.dbid():n.uid() for n in nodes_with_dbids}
       else:
-          all_nodes = self._get_nodes()
-          return {n.dbid():n.uid() for n in all_nodes}
+        all_nodes = self._get_nodes()
+        return {n.dbid():n.uid() for n in all_nodes}
   
 
   def uid2dbid(self,for_uids:list[int]=[])->dict[int,int]:
@@ -2219,7 +2216,7 @@ class ResnetGraph (nx.MultiDiGraph):
               return
 
 
-  def remove_undirected_duplicates(self):
+  def remove_undirected_duplicates(self)->"ResnetGraph":
       relset = set()
       to_return = self.copy()
       for r,t,rel in self.edges.data('relation'):
@@ -2438,8 +2435,8 @@ class ResnetGraph (nx.MultiDiGraph):
           g = ResnetGraph()
           nodes,rels = g.__read_rnef(rnef_file,prop2values,only_relprops,no_mess,only4objs,on_both_ends)
           g.name = f'from {rnef_file}'
-          #g.add_psobjs(nodes,merge)
-          g.add_psrels(rels,merge)
+          g.add_psobjs(nodes,merge)
+          g.__add_psrels(rels,add_nodes=False,merge=merge)
 
           if not no_mess:
               print('File %s with %d edges and %d nodes was loaded in %s' 
@@ -2453,21 +2450,20 @@ class ResnetGraph (nx.MultiDiGraph):
   def fromRNEFflist(cls,flist:list[str],prop2values:dict=dict(),
                   only_relprops:set=set(),merge=True):
       '''
-      Input
-      -----
-      set merge=True if graph loaded form multiple RNEF files with multiple <resnet> sections
-      prop2values={prop_name:[values]} - filter to load relations only for nodes with desired properties
+      input:
+        set merge=True if graph loaded form multiple RNEF files with multiple <resnet> sections
+        prop2values={prop_name:[values]} - filter to load relations only for nodes with desired properties
       '''
       max_workers = min(32,len(flist),(os.cpu_count() or 1) + 4)
       combo_g = ResnetGraph()
       with ThreadPoolExecutor(max_workers=max_workers,thread_name_prefix='readRNEFdir') as e:
-          futures = list()
-          [futures.append(e.submit(combo_g.__read_rnef,f,prop2values,only_relprops,True)) for f in flist]
-          for f in as_completed(futures):
-              nodes,rels = f.result()
-              #combo_g.add_psobjs(nodes,merge)
-              combo_g.add_psrels(rels,merge)
-          e.shutdown()    
+        futures = list()
+        [futures.append(e.submit(combo_g.__read_rnef,f,prop2values,only_relprops,True)) for f in flist]
+        for f in as_completed(futures):
+          nodes,rels = f.result()
+          combo_g.add_psobjs(nodes,merge)
+          combo_g.__add_psrels(rels,add_nodes=False,merge=merge)
+        e.shutdown()    
       return combo_g
 
 
@@ -2564,10 +2560,10 @@ class ResnetGraph (nx.MultiDiGraph):
           print(f'Overall processing time: {time_passed}\nEstimated remaining time for {len(flist)-batch_end} out of {len(flist)} files: {time_remained}\n')
 
 
-  def tree4(self,root:PSObject,reverse=False):
+  def tree4(self,root:PSObject,reverse=False,depth_limit=None):
       tree_rn = ResnetGraph()
       try:
-          tree = nx.algorithms.traversal.breadth_first_search.bfs_tree(self,root.uid(),reverse)
+          tree = nx.algorithms.traversal.breadth_first_search.bfs_tree(self,root.uid(),reverse,depth_limit)
           assert(isinstance(tree,nx.DiGraph))
           tree_nodes = self._get_nodes(list(tree.nodes()))
           tree_rn.add_psobjs(set(tree_nodes))
@@ -2600,9 +2596,8 @@ class ResnetGraph (nx.MultiDiGraph):
 
   def get_simple_paths2(self,end_tree_ids:list, with_only_objtypes=[]):
       """
-      Returns
-      -------
-      {end_tree_id:{len(path):[all_simple_paths]}}
+      output:
+        {end_tree_id:{len(path):[all_simple_paths]}}
       """
       def _is_valid(path_objs:list):
           for obj in path_objs:
@@ -2766,13 +2761,13 @@ class ResnetGraph (nx.MultiDiGraph):
       nodes2add  = set()
       rels2add = set()
       for n1,n2,rel in self.iterate():
-          if rel not in edges_from_other:
-              nodes2add.update([n1,n2])
-              rels2add.add(rel)
+        if rel not in edges_from_other:
+          nodes2add.update([n1,n2])
+          rels2add.add(rel)
 
       unique2self = ResnetGraph()
-      #unique2self.add_psobjs(nodes2add)
-      unique2self.add_psrels(rels2add)
+      unique2self.add_psobjs(nodes2add)
+      unique2self.__add_psrels(rels2add,add_nodes=False)
       return unique2self
 
 
@@ -2870,54 +2865,53 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   @staticmethod
-  def __bestrel(rels:list,ranks:list[list[str]]=[]) -> PSRelation:
+  def __bestrel(rels:list[PSRelation],ranks:list[list[str]]=[]) -> PSRelation:
       '''
-      Input
-      -----
+      input:
       rels - [PSRelation]
       ranks - [[str,..]], where str - PSRelation obtypes sorted by rank. Order of ranking lists may be important.\n
-      Examples of ranks:\n
-      [['DirectRegulation','Binding','ProtModification','Regulation'],
-      ['PromoterBinding','Expression','Regulation'],
-      ['Biomarker','StateChange'],
-      ['Biomarker','QuantitativeChange','FunctionalAssosiation'],
-      ['MolSynthesis','Regulation'],
-      ['MolTransport','Regulation'],
-      ['MolTransport','CellExpression'],
-      ['Regulation','FunctionalAssosiation']]
       '''
+      #Examples of ranks:\n
+      #[['DirectRegulation','Binding','ProtModification','Regulation'],
+      #['PromoterBinding','Expression','Regulation'],
+      #['Biomarker','StateChange'],
+      #['Biomarker','QuantitativeChange','FunctionalAssosiation'],
+      #['MolSynthesis','Regulation'],
+      #['MolTransport','Regulation'],
+      #['MolTransport','CellExpression'],
+      #['Regulation','FunctionalAssosiation']]
+      def _1st_known_effect(sorted_rels:list[PSRelation]):
+        for rel in sorted_rels:
+          rel_effect = rel.effect()
+          if rel_effect != 'unknown':
+            return rel_effect
+        return 'unknown'
+      
       for rank_list in ranks:
-          my_rels = [r for r in rels if r.objtype() in rank_list]
-          if len(my_rels) > 1:
-              my_rels.sort(key=lambda x: int(x[REFCOUNT][0]), reverse=True)
-              my_effect = my_rels[0].effect()
-              if my_effect == 'unknown':
-                  for rel in my_rels[1:]:
-                      if rel.effect() != 'unknown':
-                          my_effect = rel.effect()
-                          break
-
-              for reltype in rank_list:
-                  for rel in my_rels:
-                      if rel.objtype() == reltype:
-                          rel[EFFECT] = [my_effect]
-                          return rel
-                      
-          elif len(my_rels) == 1:
-              return my_rels[0]
+        my_rels = [r for r in rels if r.objtype() in rank_list]
+        if len(my_rels) == 1:
+          return my_rels[0]
+        else:
+          my_rels.sort(key=lambda x: x.count_refs(), reverse=True)
+          my_effect = _1st_known_effect(my_rels)
+          for reltype in rank_list:
+            for rel in my_rels:
+              if rel.objtype() == reltype:
+                rel[EFFECT] = [my_effect]
+                return rel
 
       # we are here because rels cannot be ranked by any ranks
       # case when relations are annotated with pX from Reaxys
       rels.sort(key=lambda x: x.pX(), reverse=True)
       if rels[0].pX() > 0.0:
-          best_rel = rels[0]
+        best_rel = rels[0]
       else:
-          rels.sort(key=lambda x: x.count_refs(), reverse=True)
-          best_rel = rels[0] 
-          for rel in rels:
-              if rel.is_directional():
-                  best_rel = rel
-                  break
+        rels.sort(key=lambda x: x.count_refs(), reverse=True)
+        best_rel = rels[0] 
+        for rel in rels:
+          if rel.is_directional():
+            best_rel = rel
+            break
               
       if best_rel.effect() == 'unknown':
           rels.sort(key=lambda x: x.count_refs(), reverse=True)
@@ -2931,10 +2925,9 @@ class ResnetGraph (nx.MultiDiGraph):
 
   def __set_bestrel(self, from_rels:list[PSRelation],ranks:list[list[str]]=[]):
       '''
-      Input
-      -----
-      from_rels = [PSRelation]\n
-      ranks - [[str,..]], where str - PSRelation obtypes sorted by rank.
+      input:
+        from_rels = [PSRelation]\n
+        ranks - [[str,..]], where str - PSRelation obtypes sorted by rank.
       '''
       best_rel = ResnetGraph.__bestrel(from_rels,ranks)
       refs2add = [ref for rel in from_rels for ref in rel.refs()]
@@ -2946,46 +2939,43 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def make_simple(self, rel_type_rank:list[str]=[]):
-      """
-      Input
-      -----
-      specify rel_type_rank if graph contains relations with different types connecting the same pair of nodes\n
-      Examples:\n
-      ['DirectRegulation','Binding','ProtModification','Regulation']\n
-      ['PromoterBinding','Expression','Regulation']\n
-      ['Biomarker','StateChange']\n
-      ['Biomarker','QuantitativeChange']\n
-      [MolSynthesis','Regulation']\n
-      [MolTransport','Regulation']\n
-      [MolTransport','CellExpression']\n
-      ['Regulation','FunctionalAssosiation']\n
-      
-      Returns
-      -------
+    """
+    input:
+      rel_type_rank specifies relaton type priority during relation merge\n
+    output:
       graph with only one edge between nodes.\n
-      keeps relation with the biggest reference count.\n
-      all other relations are merged into the most referenced one
-      if rel_type_rank is specified the new relation type is assigned accordingly 
-      """
-      print(f'Simplifying {self.name} graph')
-      ranks = [rel_type_rank] if rel_type_rank else []
-      simple_g = self.copy()
-      for ruid, tuid in self.edges():
-          reg2target_rels = simple_g._psrels4(ruid,tuid)
-          if len(reg2target_rels) > 1: # need simplification
-              simple_g.__set_bestrel(reg2target_rels,ranks)
-          
-      print('%d redundant edges in graph "%s" were removed by simplification' % 
-            (self.number_of_edges()-simple_g.number_of_edges(),self.name))
+      if rel_type_rank is empty grounds all relations to the one with the biggest reference count.\n
+      otherwise relation type is assigned according to rel_type_rank specification
+    """
+    # Examples:\n
+    # ['DirectRegulation','Binding','ProtModification','Regulation']\n
+    # ['PromoterBinding','Expression','Regulation']\n
+    # ['Biomarker','StateChange']\n
+    # ['Biomarker','QuantitativeChange']\n
+    # [MolSynthesis','Regulation']\n
+    # [MolTransport','Regulation']\n
+    # [MolTransport','CellExpression']\n
+    # ['Regulation','FunctionalAssosiation']\n
 
-      # now removing non-directional relations created by direction duplication in __add_rel
-      duplicate_rels = [r for u,v,urn,r in simple_g.edges(keys=True,data='relation') if urn not in simple_g.urn2rel.keys()]
-      size_before = simple_g.number_of_edges()
-      [simple_g.remove_relation(r) for r in duplicate_rels]
+    print(f'Simplifying {self.name} graph')
+    ranks = [rel_type_rank] if rel_type_rank else []
+    simple_g = self.copy()
+    for ruid, tuid in self.edges():
+      reg2target_rels = simple_g._psrels4(ruid,tuid)
+      if len(reg2target_rels) > 1: # need simplification
+        simple_g.__set_bestrel(reg2target_rels,ranks)
+        
+    print('%d redundant edges in graph "%s" were removed by simplification' % 
+          (self.number_of_edges()-simple_g.number_of_edges(),self.name))
 
-      print('%d additional non-directional edges in graph "%s" were removed as duplicates of removed relation' % 
-            (size_before-simple_g.number_of_edges(),self.name))
-      return simple_g
+    # now removing non-directional relations created by direction duplication in __add_rel
+    duplicate_rels = [r for u,v,urn,r in simple_g.edges(keys=True,data='relation') if urn not in simple_g.urn2rel.keys()]
+    size_before = simple_g.number_of_edges()
+    [simple_g.remove_relation(r) for r in duplicate_rels]
+
+    print('%d additional non-directional edges in graph "%s" were removed as duplicates of removed relation' % 
+          (size_before-simple_g.number_of_edges(),self.name))
+    return simple_g
   
 
   def curate(self, ranks:list[list[str]]=[]):
@@ -3205,21 +3195,8 @@ class ResnetGraph (nx.MultiDiGraph):
       return subgraph
 
 
-  def subgraph_by_rels(self, rels:list)->'ResnetGraph':
-      """
-      Input
-      -----
-      rels = [PSRelation]
-      """
-      node_uids = set()
-      [node_uids.update(rel.entities_uids()) for rel in rels]
-      subgraph = ResnetGraph()
-      if node_uids:
-          rel_nodes = self._get_nodes(node_uids)
-          subgraph.add_psobjs(set(rel_nodes),merge=False) # has to add original objects from self 
-          subgraph.add_psrels(set(rels),merge=False)
-
-      return subgraph
+  def subgraph_by_rels(self, rels:list[PSRelation])->'ResnetGraph':
+      return ResnetGraph.from_rels(rels)
 
 
   def subgraph_by_relprops(self, search_values:list, in_properties:list=[OBJECT_TYPE]):
@@ -3261,6 +3238,31 @@ class ResnetGraph (nx.MultiDiGraph):
       return self.neighborhood(set(my_nodes))
 
 
+  def get_rels_between(self,reg_uids:list[int],tar_uids:list[int],by_relation_types:list[str]=[],
+                       with_effect:list[str]=[],in_direction='')->set[PSRelation]:
+    
+    my_rels = set()
+    if not in_direction or in_direction == '>':
+      for reg in reg_uids:
+        for targ in tar_uids:
+          if self.has_edge(reg, targ):
+            my_rels.update([r['relation'] for r in self[reg][targ].values()])
+
+    if not in_direction or in_direction == '<':
+      for targ in tar_uids:
+        for reg in reg_uids:
+          if self.has_edge(targ, reg):
+            my_rels.update([r['relation'] for r in self[targ][reg].values()])
+
+    if by_relation_types:
+        my_rels = {r for r in my_rels if r.objtype() in by_relation_types}
+
+    if with_effect:
+        my_rels = {r for r in my_rels if r.effect() in with_effect}
+
+    return my_rels
+
+
   def get_subgraph(self,between_nodes:list[PSObject],and_nodes:list[PSObject],
           by_relation_types:list[str]=[],with_effect:list[str]=[],in_direction='')->"ResnetGraph":
       '''
@@ -3271,25 +3273,7 @@ class ResnetGraph (nx.MultiDiGraph):
       '''
       reg_uids = self.uids(between_nodes)
       tar_uids = self.uids(and_nodes)
-
-      edges = set(self.edges())
-      my_rels = set()
-      if not in_direction or in_direction == '>':
-          edges4subgraph = set(product(reg_uids,tar_uids)).intersection(edges)
-          rels4subgraph = {self[reg][targ][urn]['relation'] for (reg,targ) in edges4subgraph for urn in self[reg][targ]}
-          my_rels.update(rels4subgraph)
-      
-      if not in_direction or in_direction == '<':
-          edges4subgraph = set(product(tar_uids,reg_uids)).intersection(edges)
-          rels4subgraph = {self[reg][targ][urn]['relation'] for (reg,targ) in edges4subgraph for urn in self[reg][targ]}
-          my_rels.update(rels4subgraph)
-
-      if by_relation_types:
-          my_rels = {r for r in my_rels if r.objtype() in by_relation_types}
-
-      if with_effect:
-          my_rels = {r for r in my_rels if r.effect() in with_effect}
-
+      my_rels = self.get_rels_between(reg_uids,tar_uids,by_relation_types,with_effect,in_direction)
       subgraph = self.subgraph_by_rels(list(my_rels))
       return subgraph
 
@@ -3315,13 +3299,11 @@ class ResnetGraph (nx.MultiDiGraph):
 
   def ontology_graph(self):
       '''
-      Input
-      -----
-      nodes in self must be annotated with [CHILDS] property
+      input:
+        nodes in self must be annotated with [CHILDS] property
 
-      Return
-      ------
-      ResnetGraph with edges (child,parent,relation=[MemberOf, is_a, Pathway Studio Ontology]
+      ouput:
+        ResnetGraph with edges (child,parent,relation=[MemberOf, is_a, Pathway Studio Ontology]
       '''
       ontology_graph = ResnetGraph()
       parents = self.psobjs_with([CHILDS])
@@ -3641,8 +3623,8 @@ class ResnetGraph (nx.MultiDiGraph):
               unmapped_nodes.add(graph_node)
 
       mapped_graph = ResnetGraph()
-      #mapped_graph.add_psobjs(remapped_nodes|unmapped_nodes,merge=False)
-      mapped_graph.add_psrels(set(self.__remap_rels(uid_remap)))
+      mapped_graph.add_psobjs(remapped_nodes|unmapped_nodes,merge=False)
+      mapped_graph.__add_psrels(set(self.__remap_rels(uid_remap)),add_nodes=False)
       return mapped_graph, unmapped_nodes
   
 
@@ -3666,8 +3648,8 @@ class ResnetGraph (nx.MultiDiGraph):
       [uid_remap[p[0].uid()].append(p[1].uid()) for p in psobj_pairs]
 
       replaced_graph = ResnetGraph()
-      #replaced_graph.add_psobjs(new_graph_nodes,merge=False)
-      replaced_graph.add_psrels(set(self.__remap_rels(dict(uid_remap))))
+      replaced_graph.add_psobjs(new_graph_nodes,merge=False)
+      replaced_graph.__add_psrels(set(self.__remap_rels(dict(uid_remap))),add_nodes=False)
       print(f'Replaced {len(psobj_pairs)} node pairs')
       return replaced_graph, replaced_graph.neighborhood(new_nodes)
 

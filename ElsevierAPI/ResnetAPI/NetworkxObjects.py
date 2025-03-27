@@ -5,7 +5,7 @@ from collections import defaultdict
 from ..utils import normalize
 from ..ETM_API.references import Reference, len, reflist2dict,pubmed_hyperlink,make_hyperlink,pmc_hyperlink
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
-from ..ETM_API.references import MEDLINETA,EFFECT,PUBYEAR,SENTENCE,TITLE,AUTHORS,AUTHORS_STR
+from ..ETM_API.references import MEDLINETA,PUBYEAR,SENTENCE,TITLE,AUTHORS,AUTHORS_STR,PS_REFERENCE_PROPS
 
 OBJECT_TYPE = 'ObjTypeName'
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
@@ -13,6 +13,10 @@ REGULATORS = 'Regulators'
 TARGETS = 'Targets'
 REFCOUNT = 'RelationNumberOfReferences'
 CHILDS = 'Childs'
+EFFECT = 'Effect'
+MECHANISM = 'Mechanism'
+RELATION_PROPS = {EFFECT,MECHANISM,'ChangeType','BiomarkerType','QuantitativeType'}
+ALL_PSREL_PROPS = list(RELATION_PROPS)+PS_REFERENCE_PROPS
 #enums for objectypes to avoid misspeling
 GENETICVARIANT = 'GeneticVariant'
 FUNC_ASSOC = 'FunctionalAssociation'
@@ -431,12 +435,12 @@ class PSRelation(PSObject):
       return self['URN'][0] == other['URN'][0]
 
 
-  def effect(self)->str:
+  def effect(self,unknown='unknown')->str:
       '''
       output:
-          'positive','negative','unknown'
+          'positive','negative',unknown
       '''
-      return str(self.get_prop(EFFECT,if_missing_return='unknown'))
+      return str(self.get_prop(EFFECT,if_missing_return=unknown))
   
 
   def flip_effect(self):
@@ -450,11 +454,11 @@ class PSRelation(PSObject):
 
 
   def mechanisms(self):
-      return self.propvalues('Mechanism')
+      return self.propvalues(MECHANISM)
     
 
   def mechanism(self):
-      return str(self.get_prop('Mechanism'))
+      return str(self.get_prop(MECHANISM))
   
 
   def name(self):
@@ -476,8 +480,8 @@ class PSRelation(PSObject):
           targ_names =  ','.join([r['Name'][0] for r in regulators[1:]])
           arrow = '----'
       name = reg_names+'----'+self.objtype()+arrow+targ_names
-      if 'Mechanism' in self.keys():
-          name += ':'+self['Mechanism'][0]
+      if MECHANISM in self.keys():
+          name += ':'+self[MECHANISM][0]
 
       self['Name'] = [name]
       return name
@@ -538,8 +542,8 @@ class PSRelation(PSObject):
           effect = self.effect()
           if effect in ['positive','negative']:
               rel_urn += ':'+ effect
-          if 'Mechanism' in self:
-              rel_urn += ':'+self['Mechanism'][0]
+          if MECHANISM in self:
+              rel_urn += ':'+self[MECHANISM][0]
       else:
           rel_urn += 'in-out:'+':in-out:'.join([u for u in reg_urns])
 

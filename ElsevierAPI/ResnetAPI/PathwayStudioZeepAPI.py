@@ -47,7 +47,7 @@ class DataModel:
             from zeep.cache import SqliteCache
             from zeep.transports import Transport
             session = Session()
-            #session.verify = False # not recommended
+            #session.verify = False # not recommended. Uncomment if PS certificate has expired
             session.auth = HTTPBasicAuth(username, password)
             transport = Transport(cache=SqliteCache(), session=session)
             from zeep import Client, Settings
@@ -55,7 +55,7 @@ class DataModel:
             #settings = zeep.Settings(extra_http_headers={'Authorization': 'Bearer ' + token})
             self.logger = configure_logging(logging.getLogger(__name__))
             if my_kwargs['connect2server']:
-                for attempt in range(0,10):
+                for attempt in range(1,11):
                     try:
                         self.SOAPclient = Client(wsdl=url, transport=transport, settings=settings)
                         if my_kwargs['load_model']:
