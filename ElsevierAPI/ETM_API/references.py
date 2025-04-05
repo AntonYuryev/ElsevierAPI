@@ -8,7 +8,7 @@ from ..utils import str2str,sortdict
 from collections import defaultdict
 
 AUTHORS = 'Authors'
-AUTHORS_STR = 'Authors names'
+_AUTHORS_ = 'AuthorsObject'
 INSTITUTIONS = 'Institutions'
 JOURNAL = 'Journal'
 MEDLINETA = 'MedlineTA'
@@ -407,7 +407,7 @@ class Reference(dict):
 
   def biblioprop2str(self,propid:str):
     if propid in self:
-      map_func = Author.tostr if propid == AUTHORS else str
+      map_func = Author.tostr if propid == _AUTHORS_ else str
       return ';'.join(list(map(map_func,self[propid])))
     else:
       return ''
@@ -468,11 +468,10 @@ class Reference(dict):
   
 
   def toAuthors(self):
-    if AUTHORS not in self:
-      author_strs = self.author_list()
-      author_strs = list(filter(None,author_strs))
+    if _AUTHORS_ not in self:
+      author_strs = list(filter(None,self.author_list()))
       if author_strs:
-        self[AUTHORS] = list(map(Author.fromStr,author_strs))
+        self[_AUTHORS_] = list(map(Author.fromStr,author_strs))
     return
     
 
@@ -562,24 +561,19 @@ class Reference(dict):
       
 
   def author_list(self)->list[str]:
-      '''
-      Return
-      ------
-      sorted list of authors from self[AUTHORS_STR]
-      '''
-      try:
-        authors2split = self[AUTHORS_STR]
-        individual_authors = set()
-        for au_list in authors2split:
-          authors = au_list.split(';')
-          individual_authors.update(authors)
-        
-        individual_authors = list(filter(None,individual_authors))
-        individual_authors.sort()
-        self[AUTHORS_STR] = individual_authors
-        return individual_authors
-      except KeyError:
-        return []
+    '''
+    output:
+      sorted list of authors from self[AUTHORS]
+    '''
+    if AUTHORS in self:
+      individual_authors = set()
+      [individual_authors.update(str(au_list).split(';')) for au_list in self[AUTHORS]]
+      individual_authors = list(filter(None,individual_authors))
+      individual_authors.sort()
+      self[AUTHORS] = individual_authors
+      return individual_authors
+    else:
+      return []
 
 
   def _biblio_tuple(self):
@@ -598,10 +592,10 @@ class Reference(dict):
       year = 'year unknown' if year == 1812 else str(year)
 
       try:
-        authors_list = self[AUTHORS]
+        authors_list = self[_AUTHORS_]
         authors_list = [x.tostr() for x in authors_list if isinstance(x,Author)]
         authors_str = ','.join(authors_list[:3]) if authors_list else 'unknown authors.'
-        if len(self[AUTHORS]) > 3:
+        if len(authors_list) > 3:
           authors_str = authors_list[0]+' et al.'
         else:
           if authors_str[-1] != '.': authors_str += '.'

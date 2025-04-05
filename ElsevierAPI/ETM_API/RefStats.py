@@ -1,4 +1,4 @@
-from ..pandas.panda_tricks import df,pd,np
+from ..pandas.panda_tricks import df,pd
 from ..utils import execution_time,sortdict,load_api_config
 from ..NCBI.pubmed import medlineTA2issn,docid2pmid
 from ..SBS_API.sbs import SBSapi
@@ -393,8 +393,8 @@ class RefStats:
   def sbs_reflinks(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
           add2query=[],multithread=False):
     '''
-    input:
-      skip_names - use it to skip 'WEIGHTS:' row that corrupts SBS query
+    output:
+      {name in to_df[between_names_in_col]:sentence_coocurence hyperlinked to top 10 references in pubmed}
     '''
     names = to_df[between_names_in_col].to_list()
     names = [x for x in names if ':' not in x] # ':' is invalid character in URL parameter
