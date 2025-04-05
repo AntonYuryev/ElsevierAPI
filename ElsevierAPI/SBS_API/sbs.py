@@ -1,6 +1,6 @@
 from ..utils import load_api_config, greek2english
 from ..ETM_API.references import Reference,DocMine, Author
-from ..ETM_API.references import AUTHORS, GRANT_APPLICATION,JOURNAL,SENTENCE,RELEVANCE,AUTHORS_STR
+from ..ETM_API.references import AUTHORS,_AUTHORS_,GRANT_APPLICATION,JOURNAL,SENTENCE,RELEVANCE
 from scibite_toolkit.scibite_search import SBSRequestBuilder as s
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re,threading
@@ -120,8 +120,8 @@ class SBSRef(DocMine):
     authors = doc.get('authors',[])
     if authors:
       author_objs,author_names = SBSRef.parse_authors(authors)
-      sbsj[AUTHORS] = author_objs
-      sbsj[AUTHORS_STR] = [';'.join(author_names)]
+      sbsj[_AUTHORS_] = author_objs
+      sbsj[AUTHORS] = [';'.join(author_names)]
 
 
     journal = doc.get('journal_title',GRANT_APPLICATION)
@@ -177,14 +177,14 @@ class SBSRef(DocMine):
 
   def is_valid(self):
     try:
-      authors = self[AUTHORS]
+      authors = self[_AUTHORS_]
       return len(authors) > 0
     except KeyError:
       return any(w in self.Identifiers for w in ['NCT ID', 'EudraCT Number'])
 
 
   def has_bibliography(self):
-    return not {'categories',AUTHORS,JOURNAL}.isdisjoint(self)
+    return not {'categories',_AUTHORS_,JOURNAL}.isdisjoint(self)
   
 
   @staticmethod
@@ -451,7 +451,7 @@ class SBSapi():
       query = self.join2query(entity,and_concepts,add2query)
       if not message_printed:
         print(f'Will find sentence coocurence for {len(entities)} entities')
-        print(f'Sample query for sentence co-ocurence: {query}')
+        print(f'\nSample query for sentence co-ocurence: {query}')
         message_printed = True
       sentence_count,refs = self.search_sents(query)
       results[entity] = (sentence_count,refs)
@@ -595,6 +595,9 @@ class SBSapi():
               json_response = self.SBSsearch.get_docs2(query,**kwargs)
               if json_response and 'data' in json_response :
                 abstract_relevance += sum([a['_score'] for a in json_response['data']])
+        else:
+          print('SBS server response for abstract co-occurence is empty')
+          continue
 
       entity2abscount[entity]=(abstract_count,abstract_relevance)
     return entity2abscount
