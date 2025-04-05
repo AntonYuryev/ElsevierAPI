@@ -293,7 +293,8 @@ class APIcache(APISession):
           with zipfile.ZipFile(backup_cache,'w',zipfile.ZIP_DEFLATED) as z:
               z.write(path2cache,arcname=os.path.basename(path2cache))
       
-      with_network.dump2rnef(path2cache,ent_props,rel_props)
+      with_network.dump2rnef(path2cache,ent_props,rel_props,with_section_size=1000)
+      # keep with_section_size low to save on memory
       print(f'{cache_name} cache file was replaced')
 
       if self.example_node:
@@ -362,7 +363,7 @@ class APIcache(APISession):
       print(f'Loading map from {dump_path}')
       nodes  = json.load(f,cls=PSObjectDecoder)
       nodes = [PSObject(n) for n in nodes]
-      return ResnetGraph._make_map(using_props,nodes)
+      return ResnetGraph._make_map(using_props,nodes,norm)
     except FileNotFoundError as e:
         raise e
         

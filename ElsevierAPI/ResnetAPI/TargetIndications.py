@@ -966,7 +966,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
       if not self.__GVs__: 
           return
       t_n = self.target_names_str()
-      concept_name = 'Genetic variants'
+      concept_name = ' genetic variants'
       self.__colname4GV__ = t_n+concept_name
       refcount_column = self._refcount_colname(concept_name)
       weighted_refcount_column = self._weighted_refcount_colname(concept_name) 
@@ -1093,7 +1093,6 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         adds Refcount score columns "in_worksheet" from self.raw_data
         """
         my_df = in_df.dfcopy()
-        score4antagonists = True if with_effect_on_indication == 'positive' else False
         booster_reltypes = ['Regulation','Biomarker','GeneticChange','QuantitativeChange','StateChange','FunctionalAssociation']
         
         t_n = self.target_names_str()
@@ -1105,9 +1104,9 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         else:
             concept = 'Inhibited by '+target_in_header
         
-        kwargs = {'connect_by_rels':['Regulation'],
+        kwargs = {'connect_by_rels' : ['Regulation'],
                   'with_effects' : [with_effect_on_indication],
-                  'boost_by_reltypes' :booster_reltypes
+                  'boost_by_reltypes' : booster_reltypes
                   }
         if self.targets_have_weights:
             kwargs.update({'nodeweight_prop': 'regulator weight'})
@@ -1120,6 +1119,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
 
         self.score_GVs(my_df)
 
+        score4antagonists = True if with_effect_on_indication == 'positive' else False
         link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=True,score_antagonists=score4antagonists)
         if drug_connect_concepts:
             # references suggesting that known drugs for the target as treatments for indication
@@ -1169,6 +1169,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         else:
             concept = target_in_header+' is downregulated'
 
+        # indications that could not be connected in "Regulated by" are considered here
         kwargs = {'connect_by_rels':['QuantitativeChange'],
                   'with_effects' : [with_effect_on_indication],
                   'boost_by_reltypes' : ['Biomarker','StateChange','FunctionalAssociation'],
@@ -1212,10 +1213,11 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             self._set_rank(my_df,concept)
             print(f'Liked {linked_row_count} indications linked {len(self.__targets__secretingCells)} cells producing {t_n}')
 
+
+        # references suggesting that known drugs for the target as treatments for indication
         link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=False,
                                                                       score_antagonists=score4antagonists)
         if drug_connect_concepts:
-            # references suggesting that known drugs for the target as treatments for indication
             concept = target_in_header+' '+drug_class+' clin. trials'
             kwargs = {'connect_by_rels':['ClinicalTrial']}
             if self.targets_have_weights:
@@ -1265,16 +1267,15 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
             print('Linked %d indications as toxicities for %s %s' % (linked_row_count,t_n,drug_class))
             new_session.close_connection()
         
-
+        #references linking target pathways to indication
         if hasattr(self, 'PathwayComponents'):
-            #references linking target pathways to indication
             concept = target_in_header + ' pathway components'
             kwargs = {'connect_by_rels':['Regulation'],
                   'with_effects' : [with_effect_on_indication],
                   'boost_by_reltypes' : ['Regulation'],  # boosting with unknown effect Regulation
                   'step' : 50
                   }
-            # cloning session to avoid adding relations to self.Graph
+            # cloning session to avoid adding relations to self.Graph:
             new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
             how2connect = new_session.set_how2connect(**kwargs)
             linked_row_count,_,my_df = new_session.link2concept(concept,list(self.PathwayComponents),my_df,how2connect)
@@ -1444,8 +1445,8 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
       antagonistsG = self.Graph.get_subgraph(target_concepts,self.__indications4antagonists__)
       agonistsG = self.Graph.get_subgraph(target_concepts,self.__indications4agonists__)
       ws_ind, ws_tox = self.ws_names()
-      ind_refs = f'EKBGrefs4{ws_ind[:22]}'
-      tox_refs = f'EKBGrefs4{ws_tox[:22]}'
+      ind_refs = f'EBKGrefs4{ws_ind[:22]}'
+      tox_refs = f'EBKGrefs4{ws_tox[:22]}'
 
       if self.__moa() == ANTAGONIST:
         refs4antagonist_df = antagonistsG.bibliography(ind_refs+suffix)

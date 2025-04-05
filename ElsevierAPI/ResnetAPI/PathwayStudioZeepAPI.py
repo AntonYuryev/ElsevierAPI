@@ -6,6 +6,7 @@ from zeep import exceptions as zeep_exceptions
 import requests.exceptions as req_exceptions
 from zeep import helpers # converts zeep objects to dict
 from ..utils import execution_time, load_api_config
+from math import pow
 
 
 CONNECTION_TIMEOUT = 20
@@ -67,8 +68,8 @@ class DataModel:
                         err_str = f"Pathway Studio server connection failed: {error}"
                         self.logger.error(err_str)
                         print(err_str)
-                        attempt_timeout = CONNECTION_TIMEOUT*attempt
-                        print(f'Pausing for {attempt_timeout} seconds')
+                        attempt_timeout = CONNECTION_TIMEOUT*pow(attempt,2)
+                        print(f'Pausing for {attempt_timeout} seconds on attmpt {attempt} due to "{error}"')
                         sleep(attempt_timeout)
                         continue
                 raise req_exceptions.ConnectionError(f"Server connection failed. Wrong or inaccessible url: {url}") from None
@@ -191,7 +192,7 @@ class DataModel:
                     self.propId2dict[dict_folder['Name']] = id_values_to_str
                     return self.propId2dict[idProperty]
                 except Exception as error:
-                    attempt_timeout = CONNECTION_TIMEOUT*attempt
+                    attempt_timeout = CONNECTION_TIMEOUT*pow(attempt,2)
                     print(f'Pausing for {attempt_timeout} seconds due to "{error}" on {attempt} attempt')
                     sleep(attempt_timeout)
                     continue

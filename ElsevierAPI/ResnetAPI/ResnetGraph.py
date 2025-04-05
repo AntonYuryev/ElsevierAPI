@@ -238,10 +238,9 @@ class ResnetGraph (nx.MultiDiGraph):
 
   def clone_node(self,n:PSObject,replace_with:PSObject,flip_effect=0,set_reltype=''):
     '''
-    Input
-    -----
-    flip_effect - ACTIVATED, REPRESSED, UNKNOWN_STATE (1,-1,0)
-    if flip_effect == 0 assigns "unknown" Effect to cloned relation
+    input:
+      if flip_effect < 0: flips effect of cloned relation
+      if flip_effect == 0 assigns "unknown" Effect to cloned relation  
     '''
     new_rels = list()
     for rel in self.get_neighbors_rels({n}):
@@ -260,6 +259,7 @@ class ResnetGraph (nx.MultiDiGraph):
           nodes[index] = replace_with
 
       new_rel.urn(refresh=True)
+      new_rel['Id'] = [] # remove old dbid that may interfere with graph updates from the database
       new_rels.append(new_rel)
     self.__add_psrels(new_rels,add_nodes=True, merge=False)
     return new_rels
@@ -1966,9 +1966,9 @@ class ResnetGraph (nx.MultiDiGraph):
 
   def regulators(self, only_objtype=[], min_targets=1):
       if only_objtype:
-          return {PSObject(y) for x,y in self.nodes(data=True) if ((self.out_degree(x) >= min_targets) & (y[OBJECT_TYPE][0] in only_objtype))}
+        return {PSObject(y) for x,y in self.nodes(data=True) if ((self.out_degree(x) >= min_targets) & (y[OBJECT_TYPE][0] in only_objtype))}
       else:
-          return {PSObject(y) for x,y in self.nodes(data=True) if self.out_degree(x) >= min_targets}
+        return {PSObject(y) for x,y in self.nodes(data=True) if self.out_degree(x) >= min_targets}
 
 
   def unconnected_node_ids(self):
@@ -3271,37 +3271,26 @@ class ResnetGraph (nx.MultiDiGraph):
       between_nodes,and_nodes - [PSObject]
       in_direction in ['>','<',None], defaults to None
       '''
-      reg_uids = self.uids(between_nodes)
-      tar_uids = self.uids(and_nodes)
-      my_rels = self.get_rels_between(reg_uids,tar_uids,by_relation_types,with_effect,in_direction)
-      subgraph = self.subgraph_by_rels(list(my_rels))
-      return subgraph
+      my_rels = self.get_rels_between(self.uids(between_nodes),self.uids(and_nodes),
+                                      by_relation_types,with_effect,in_direction)
+      return self.subgraph_by_rels(list(my_rels))
 
 
-  def __ontology_resnet(self,children:list,add2parent:PSObject):
-      """
-      Input
-      -----
-      children - [PSObjects]
-      """
-      resnet = ResnetGraph()
-      resnet.add_psobj(add2parent)
-      resnet.add_psobjs(set(children))
+  @staticmethod
+  def _ontologyG_(children:list[PSObject],add2parent:PSObject):
+      resnet_rels = []
       for child in children:
-          #child_id = m.uid()
           rel = PSRelation({OBJECT_TYPE:['MemberOf'],'Relationship':['is-a'],'Ontology':['Pathway Studio Ontology']})
           rel.Nodes[REGULATORS] = [child]
           rel.Nodes[TARGETS] = [add2parent]
-          resnet.add_rel(rel)
-
-      return resnet
+          resnet_rels.append(rel)
+      return ResnetGraph.from_rels(resnet_rels)
 
 
   def ontology_graph(self):
       '''
       input:
         nodes in self must be annotated with [CHILDS] property
-
       ouput:
         ResnetGraph with edges (child,parent,relation=[MemberOf, is_a, Pathway Studio Ontology]
       '''
@@ -3987,7 +3976,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   @staticmethod
-  def _make_map(using_props:list, from_nodes:list=[],norm=True)->dict[str,dict[str,dict[str,list[PSObject]]]]:
+  def _make_map(using_props:list[str], from_nodes:list[PSObject]=[],norm=True)->dict[str,dict[str,dict[str,list[PSObject]]]]:
     '''
     output:
       {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
@@ -4008,12 +3997,13 @@ class ResnetGraph (nx.MultiDiGraph):
             continue
 
     if norm:
-      dcopy = mapdic.copy()
+      dcopy = dict(mapdic)
       for t,pvo in dcopy.items():
         for p,vo in pvo.items():
           mapdic[t][p].update({normalize(v):o for v,o in vo.items()})
 
     return dict(mapdic)
+
 
   def make_map(self,using_props:list, from_nodes:list=[])->dict[str,dict[str,dict[str,list[PSObject]]]]:
     '''

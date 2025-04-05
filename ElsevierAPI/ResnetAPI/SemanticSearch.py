@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import Reference
-from .ResnetGraph import ResnetGraph,PSObject,EFFECT,df
+from ..pandas.panda_tricks import df,MAX_TAB_LENGTH
+from .ResnetGraph import ResnetGraph,PSObject,EFFECT
 from .ResnetAPISession import APISession,len,CHILDS
 from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
 from ..ETM_API.RefStats import RefStats
@@ -21,6 +22,9 @@ MAX_CHILDS = 11 # (10 children + 1 top-level concept)
 TOTAL_REFCOUNT = 'Total Semantic refcount'
 RELEVANT_CONCEPTS = 'Relevant concepts'
 HYPERLINKED_COLUMN = 'Sentence co-occurrence. Link opens most relevant articles in PubMed'
+INFO_WORKSHEET = 'info'
+INPUT_WOKSHEET = 'Input'
+PHENOTYPE_WORKSHEET = 'Phenotype'
 
 class SemanticSearch (APISession):
   __refCache__='reference_cache.tsv'
@@ -648,13 +652,13 @@ class SemanticSearch (APISession):
         entities_dbids = set(my_df.at[idx,self.__temp_id_col__])
         idx_entities = connection_graph.psobj_with_dbids(entities_dbids)
         if self.__rel_dir__ =='>':
-            row_has_connection = connection_graph.relation_exist(idx_entities,concepts,
+          row_has_connection = connection_graph.relation_exist(idx_entities,concepts,
                                         self.__connect_by_rels__,self.__rel_effect__,[],False)
         elif self.__rel_dir__ =='<':
-            row_has_connection = connection_graph.relation_exist(concepts,idx_entities,
+          row_has_connection = connection_graph.relation_exist(concepts,idx_entities,
                                         self.__connect_by_rels__,self.__rel_effect__,[],False)
         else:
-            row_has_connection = connection_graph.relation_exist(concepts,idx_entities,
+          row_has_connection = connection_graph.relation_exist(concepts,idx_entities,
                                         self.__connect_by_rels__,self.__rel_effect__,[],True)
 
         if not row_has_connection:
@@ -779,62 +783,82 @@ class SemanticSearch (APISession):
           return dict()
 
 
+  def cleand_df(self,report_df:df):
+    df2print = report_df.dfcopy()
+    report_df_columns = df2print.columns.to_list()
+    my_drop = [c for c in self.columns2drop if c in report_df_columns]
+    clean_pd = df2print.drop(columns=my_drop)
+    clean_df = df.from_pd(clean_pd.loc[(clean_pd!=0).any(axis=1)]) # removes rows with all zeros
+
+    # moves RANK columns to front after 'Name' column:
+    clean_df_columns = clean_df.columns.to_list()
+    rank_pos = 1
+    if 'Name' in clean_df_columns:
+      rank_pos = clean_df_columns.index('Name') +1
+      
+    hyperlinked_cols = [c for c in clean_df_columns if c.startswith(HYPERLINKED_COLUMN)]
+    _1st_columns = hyperlinked_cols+[CHILDREN_COUNT]
+    for c in _1st_columns:
+      if c in clean_df.columns:
+        clean_df = clean_df.move_cols({c:rank_pos})
+        clean_df.add_column_format(c,'align','center')
+        rank_pos += 1
+
+    move2 = dict()
+    for c in clean_df_columns:
+      if 'rank' in c.lower() or RANK in c:
+        move2[c] = rank_pos
+        rank_pos += 1
+
+    # moves etm_ref_col next to rank columns:
+    if self.params['init_refstat']:
+      for c in self.RefStats.refcols:
+        if c in clean_df_columns:
+          move2[c] = rank_pos
+          rank_pos += 1
+    clean_df = clean_df.move_cols(move2)
+    clean_df = df.from_pd(clean_df.fillna('')) # critical for printing WEIGHTS header
+    clean_df.copy_format(report_df)
+    clean_df.set_hyperlink_color(list(self.RefStats.refcols)+hyperlinked_cols)
+
+    if any(k in report_df._name_ for k in ('bibliography','snippets','refs',INPUT_WOKSHEET,PHENOTYPE_WORKSHEET)):
+      clean_df.make_header_horizontal()
+    else:
+      clean_df.make_header_vertical()
+    return clean_df
+
+
   def add2writer(self,writer:pd.ExcelWriter,ws_prefix='',df_names:list[str]=[]):
-      '''
-      input:
-          self.columns2drop
-      '''
-      if df_names:
-          my_pandas = {k:self.report_pandas[k] for k in df_names if k in self.report_pandas}
-      else:
-          my_pandas = self.report_pandas
+    '''
+    input:
+      self.columns2drop
+    '''
+    
+    if df_names:
+      my_pandas = {k:self.report_pandas[k] for k in df_names if k in self.report_pandas}
+    else:
+      my_pandas = self.report_pandas
 
-      for ws_name, report_df in my_pandas.items():
-          assert(isinstance(report_df,df))
-          df2print = report_df.dfcopy()
-          report_df_columns = df2print.columns.to_list()
-          my_drop = [c for c in self.columns2drop if c in report_df_columns]
-          clean_pd = df2print.drop(columns=my_drop)
-          clean_df = df.from_pd(clean_pd.loc[(clean_pd!=0).any(axis=1)]) # removes rows with all zeros
+    def truncate_ws(ws_name:str):
+      return ws_prefix+'_'+ws_name[:MAX_TAB_LENGTH-len(ws_prefix)-1] if ws_prefix else ws_name[:MAX_TAB_LENGTH]
+  
+    # gathering worksheet statistics into Info worksheet:
+    info_rows = [['Worksheets in this file:','=INFO("numfile")']]
+    [info_rows.append([f'=HYPERLINK("#\'{truncate_ws(ws)}\'!A1", "{truncate_ws(ws)}")',1]) for ws in my_pandas.keys()]
+    infodf = df.from_rows(info_rows,['Info','Counts'],dfname=INFO_WORKSHEET)
+    infodf.set_hyperlink_color([INFO_WORKSHEET])
+    self.add2report(infodf)
 
-          # moves RANK columns to front after 'Name' column:
-          clean_df_columns = clean_df.columns.to_list()
-          if 'Name' in clean_df_columns:
-            rank_pos = clean_df_columns.index('Name') +1
-          else:
-            rank_pos = 1
+    default_ws_order = [INFO_WORKSHEET,INPUT_WOKSHEET,PHENOTYPE_WORKSHEET,'Drugs']
+    my_worksheets = list(my_pandas.keys())
+    my_ws_order = [item for item in default_ws_order if item in my_worksheets]
+    [my_ws_order.append(item) for item in my_worksheets if item not in my_ws_order]
 
-          hyperlinked_cols = [c for c in clean_df_columns if c.startswith(HYPERLINKED_COLUMN)]
-          _1st_columns = hyperlinked_cols+[CHILDREN_COUNT]
-          for c in _1st_columns:
-            if c in clean_df.columns:
-              clean_df = clean_df.move_cols({c:rank_pos})
-              clean_df.add_column_format(c,'align','center')
-              rank_pos += 1
-
-          move2 = dict()
-          for c in clean_df_columns:
-            if 'rank' in c.lower() or RANK in c:
-              move2[c] = rank_pos
-              rank_pos += 1
-
-          # moves etm_ref_col next to rank columns:
-          if self.params['init_refstat']:
-            for c in self.RefStats.refcols:
-              if c in clean_df_columns:
-                move2[c] = rank_pos
-                rank_pos += 1
-          clean_df = clean_df.move_cols(move2)
-          clean_df = df.from_pd(clean_df.fillna('')) # critical for printing WEIGHTS header
-          clean_df.copy_format(report_df)
-          clean_df.set_hyperlink_color(list(self.RefStats.refcols)+hyperlinked_cols)
-
-          if any(k in ws_name.lower() for k in ('bibliography','snippets','refs','input','phenotype')):
-            clean_df.make_header_horizontal()
-          else:
-            clean_df.make_header_vertical()
-          sh_name = ws_prefix+'_'+ws_name if ws_prefix else ws_name
-          clean_df.df2excel(writer, sheet_name=sh_name[:30],float_format='%.3f')
+    # writing all worksheets:
+    for ws_name in my_ws_order:
+      if ws_name in self.report_pandas:
+        clean_df = self.cleand_df(self.report_pandas[ws_name])
+        clean_df.df2excel(writer,sheet_name=truncate_ws(ws_name),float_format='%.3f')
 
 
   def addraw2writer(self, writer:pd.ExcelWriter, ws_prefix=''):
@@ -1464,5 +1488,10 @@ in "{to_df._name_}" worksheet and {input_names}', flush=True)
         rows.append([type,name,weight])
 
     param_df = df.from_rows(rows,['Parameter','Name','Value'])
-    param_df._name_ = 'Input'
+    param_df._name_ = INPUT_WOKSHEET
+    param_df.tab_format['tab_color'] = 'yellow'
     self.add2report(param_df)
+
+
+  def add_infodf(self):
+     self.add2report(df.info_df())

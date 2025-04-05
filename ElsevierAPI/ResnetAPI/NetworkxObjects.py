@@ -1,11 +1,11 @@
-import re,json,itertools,pickle,hashlib,math
+import re,json,itertools,pickle,hashlib,math,copy
 from datetime import datetime
 from collections import defaultdict
 
 from ..utils import normalize
 from ..ETM_API.references import Reference, len, reflist2dict,pubmed_hyperlink,make_hyperlink,pmc_hyperlink
 from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
-from ..ETM_API.references import MEDLINETA,PUBYEAR,SENTENCE,TITLE,AUTHORS,AUTHORS_STR,PS_REFERENCE_PROPS
+from ..ETM_API.references import MEDLINETA,PUBYEAR,SENTENCE,TITLE,AUTHORS,_AUTHORS_,PS_REFERENCE_PROPS
 
 OBJECT_TYPE = 'ObjTypeName'
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
@@ -696,8 +696,8 @@ class PSRelation(PSObject):
 
   def copy(self):
     my_copy = PSRelation(self)
-    my_copy.PropSetToProps = self.PropSetToProps.copy()
-    my_copy.Nodes = self.Nodes.copy()
+    my_copy.PropSetToProps = copy.deepcopy(self.PropSetToProps)
+    my_copy.Nodes = copy.deepcopy(self.Nodes)
     my_copy.references = self.references.copy()
     return my_copy
   
@@ -854,12 +854,11 @@ class PSRelation(PSObject):
           elif propId == 'msrc':
             ref.add_sentence_props(SENTENCE, propValues)
 
-        try:
-            ref[JOURNAL] = ref.pop(MEDLINETA)
-        except KeyError: pass
-        try:
-            ref[AUTHORS_STR] = ref.pop(AUTHORS)
-        except KeyError: pass
+        if MEDLINETA in ref:
+          ref[JOURNAL] = ref.pop(MEDLINETA)
+
+        if AUTHORS not in ref and _AUTHORS_ in ref:
+          ref[AUTHORS] = [x.tostr() for x in ref[_AUTHORS_]]
     
     [x.toAuthors() for x in self.references]
     self.references.sort(key=lambda r: r._sort_key(by_property=PUBYEAR), reverse=True)

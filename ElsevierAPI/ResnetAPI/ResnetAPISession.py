@@ -9,11 +9,11 @@ from collections import defaultdict
 from .ZeepToNetworkx import PSNetworx, len
 from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,OBJECT_TYPE
 from .NetworkxObjects import RELATION_PROPS,ALL_PSREL_PROPS
-from .PathwayStudioGOQL import OQL
+from .PathwayStudioGOQL import OQL,PERCNT
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
-from ..utils import unpack,execution_time,execution_time2,load_api_config,normalize
+from ..utils import unpack,execution_time,execution_time2,load_api_config
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
@@ -33,7 +33,7 @@ NO_RNEF_REL_PROPS={'RelationNumberOfReferences','Name','URN'}
 
 APISESSION_KWARGS = {'what2retrieve','connect2server','no_mess','data_dir',TO_RETRIEVE,
                   'use_cache','load_model','ent_props','rel_props'}
-MAX_SESSIONS = 50 # by default sessions_max=200 in Oracle 
+MAX_SESSIONS = 25 # by default sessions_max=200 in Oracle 
 MAX_PAGE_THREADS = 80
 MAX_OQLSTR_LEN = 65000 # string properties can form long oql queries exceeding 65000 chars limit
 ONTOLOGY_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI','__pscache__','ontology_cache.json')
@@ -363,58 +363,51 @@ to retreive {my_sent_props} properties')
 
     def __annotate_dbid_graph__(self,id_only_graph:ResnetGraph,use_cache=True,request_name='',step=1000):
         '''
-        loads
-        -----
-        new relations to self.Graph by ids in id_only_graph
+        loads:
+          new relations to self.Graph by ids in id_only_graph
         '''
-        print(f'Retrieving annotations for graph with {len(id_only_graph)} nodes and {id_only_graph.number_of_edges()} relations')
-        req_name = f'Annotations 4 "{request_name}"'
-        need_reldbids = id_only_graph._relations_dbids()
-        need_nodedbids = id_only_graph.dbids4nodes()
-        
-        return_subgraph = ResnetGraph()
-        relations_dbids2retreive = set(need_reldbids)
-        nodes_dbids2retreive = set(need_nodedbids)
-        
-        if self.Graph.number_of_nodes() > 0: # check because downstream functions do not like empty self.Graph
-            rels4subgraph = [rel for dbid,rel in self.dbid2relation.items() if dbid in need_reldbids]
-            return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph) 
-            nodes_in_cache = self.Graph.psobj_with_dbids(set(need_nodedbids))
-            if nodes_in_cache:
-                return_subgraph.add_psobjs(set(nodes_in_cache))
-            
-            if use_cache:
-                relations_dbids2retreive = need_reldbids.difference(self.dbid2relation.keys())
-                nodes_dbids2retreive = set(need_nodedbids).difference(set(self.Graph.dbids4nodes()))
-
         if id_only_graph.number_of_nodes() > 0:
-            exist_nodes = len(need_nodedbids)-len(nodes_dbids2retreive)
-            exist_rels = len(need_reldbids)-len(relations_dbids2retreive)
-            print(f'{exist_nodes} nodes and {exist_rels} relations were downloaded from database previously')
-            print('%d nodes and %d relations will be loaded from database' % 
-                        (len(nodes_dbids2retreive),len(relations_dbids2retreive)))
-        
-        add2return = ResnetGraph()
-        if relations_dbids2retreive:
+          print(f'Retrieving annotations for graph with {len(id_only_graph)} nodes and {id_only_graph.number_of_edges()} relations')
+          req_name = f'Annotations 4 "{request_name}"'
+          need_reldbids = id_only_graph._relations_dbids()
+          need_nodedbids = id_only_graph.dbids4nodes()
+          
+          if use_cache and self.Graph:
+            rels4subgraph = [rel for dbid,rel in self.dbid2relation.items() if dbid in need_reldbids]
+            return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
+            return_subgraph.add_psobjs(set(self.Graph.psobj_with_dbids(set(need_nodedbids))))
+            relations_dbids2retreive = need_reldbids.difference(self.dbid2relation.keys())
+            nodes_dbids2retreive = set(need_nodedbids).difference(set(self.Graph.dbids4nodes()))
+          else:
+            return_subgraph = ResnetGraph()
+            relations_dbids2retreive = set(need_reldbids)
+            nodes_dbids2retreive = set(need_nodedbids)
+
+          exist_nodes_count = len(need_nodedbids)-len(nodes_dbids2retreive)
+          exist_rels_count = len(need_reldbids)-len(relations_dbids2retreive)
+          print(f'{exist_nodes_count} nodes, {exist_rels_count} relations were downloaded from database previously')
+          print(f'{len(nodes_dbids2retreive)} nodes, {len(relations_dbids2retreive)} relations will be loaded from database')
+          
+          add2return = ResnetGraph()
+          if relations_dbids2retreive:
             rel_query = 'SELECT Relation WHERE id = ({ids})'
-            rels_add2return = self.__iterate__(rel_query,relations_dbids2retreive,req_name,step=step)
-            add2return = rels_add2return
-            nodes_dbids2retreive = nodes_dbids2retreive.difference(add2return.dbids4nodes())
-            
-        if nodes_dbids2retreive:
+            add2return = self.__iterate__(rel_query,relations_dbids2retreive,req_name,step=step)
+            nodes_dbids2retreive.difference_update(add2return.dbids4nodes())
+
+          if nodes_dbids2retreive:
             entity_query = 'SELECT Entity WHERE id = ({ids})'
             nodes_add2return = self.__iterate__(entity_query,nodes_dbids2retreive,req_name,step=step)
             add2return = add2return.compose(nodes_add2return)
+          
+          return_subgraph = return_subgraph.compose(add2return)
+          assert(return_subgraph.number_of_nodes() == len(need_nodedbids))
+        # assert(return_subgraph.number_of_edges() >= len(relation_dbids2return))
+        # privately owned relations are not returned by API. 
+        # therefore, return_subgraph.number_of_edges() may have less relations than "relation_dbids2return"
         
-        return_subgraph = return_subgraph.compose(add2return)
-        assert(return_subgraph.number_of_nodes() == len(need_nodedbids))
-       # assert(return_subgraph.number_of_edges() >= len(relation_dbids2return))
-       # privately owned relations are not returned by API. 
-       # therefore, return_subgraph.number_of_edges() may have less relations than "relation_dbids2return"
-       
-       # return_subgraph may also contain more relations than "relation_dbids2return" 
-       # due to duplication of non-directional relations into both directions
-        return return_subgraph
+        # return_subgraph may also contain more relations than "relation_dbids2return" 
+        # due to duplication of non-directional relations into both directions
+          return return_subgraph
 
 
     def choose_process(self,oql:str,request_name:str,download=False,lock=None):
@@ -980,7 +973,7 @@ to retreive {my_sent_props} properties')
       
 
     def __load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
-                      max_childs=ALL_CHILDS,max_threads=50)->tuple[set[PSObject],list[PSObject]]:
+                      max_childs=ALL_CHILDS,max_threads=MAX_SESSIONS)->tuple[set[PSObject],list[PSObject]]:
       '''
       Input:
         if "parents" is empty will use all nodes from self.Graph
@@ -1005,7 +998,7 @@ to retreive {my_sent_props} properties')
         assert(CHILDS not in self.Graph.nodes[parent_uid])
         need_children.append(parent)
         if len(need_children) >= max_threads or p == len(parents)-1:
-          max_workers = min(len(need_children),max_threads)
+          max_workers = min(len(need_children),max_threads,MAX_SESSIONS)
           iteration_counter += 1
           thread_name = thread_name_prefix+str(iteration_counter) + 'iter'
           with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name) as e:
@@ -1032,7 +1025,7 @@ to retreive {my_sent_props} properties')
 
 
     def load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
-                       max_childs=ALL_CHILDS,max_threads=50)->tuple[set[PSObject],set[PSObject]]:
+                       max_childs=ALL_CHILDS,max_threads=MAX_SESSIONS)->tuple[set[PSObject],set[PSObject]]:
       '''
         Input:
           if "parents" is empty will use all nodes from self.Graph
@@ -1544,7 +1537,7 @@ to retreive {my_sent_props} properties')
 
             Returns
             -------
-            ResnetGraph with 1-->2-->3 relations, where nodes in position 1 are from "of_dbids1" and nodes in position 3 are from "and_dbids3"\n
+            ResnetGraph with 1<-->2<-->3 relations, where nodes in position 1 are from "of_dbids1" and nodes in position 3 are from "and_dbids3"\n
             if nodes in positon 1 and positon 3 are neighbors returns graph to complete 3-vertex cliques
         """
         sel_rels = 'SELECT Relation WHERE objectType = ({})'
@@ -1588,8 +1581,8 @@ to retreive {my_sent_props} properties')
             graph23 = future23.result()
             executor.shutdown()
 
-        graph12 = graph12.compose(graph23)
-        return graph12
+        graph123 = graph12.compose(graph23)
+        return graph123
 
 
     def common_neighbors_with_effect(self,with_entity_types:list,of_dbids1:list,reltypes12:list,dir12:str,
@@ -1603,8 +1596,8 @@ to retreive {my_sent_props} properties')
 
             Returns
             -------
-            ResnetGraph with 1-->2-->3 relations, where nodes in position 1 are from "of_dbids1" and nodes in position 3 are from "and_dbids3"\n
-            if nodes in positon 1 and positon 3 are neighbors returns graph to complete 3-vertex cliques
+            ResnetGraph with 1<-->2<-->3 relations, where nodes in position 1 are from "of_dbids1" and nodes in position 3 are from "and_dbids3"\n
+            if nodes in positon 1 and positon 3 are neighbors returns graph with 3-vertex cliques
         """
         hint = 'ids' if id_type == 'id' else 'props'
         sel_rels = 'SELECT Relation WHERE objectType = ({}) AND NOT Effect = unknown'
@@ -1626,32 +1619,35 @@ to retreive {my_sent_props} properties')
             neighbors_ids = [n[id_type][0] for n in neighbors]
         print('Found %d common neighbors' % len(neighbors_ids))
 
-        if dir12 == '>':
-            sel_12_graph_oql = sel_rels12 + ' AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'+1})) AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
-        elif dir12 == '<':
-            sel_12_graph_oql = sel_rels12 + ' AND upstream NeighborOf (SELECT Entity WHERE '+id_type+r' = ({'+hint+'1})) AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
-        else:
-            sel_12_graph_oql = sel_rels12 + ' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
-        rn12 = f'Find 1-2 relations between {len(of_dbids1)} entities in position 1 and {len(neighbors_ids)} common neighbors'
-       
+        if neighbors_ids:
+          if dir12 == '>':
+              sel_12_graph_oql = sel_rels12 + ' AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'+1})) AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
+          elif dir12 == '<':
+              sel_12_graph_oql = sel_rels12 + ' AND upstream NeighborOf (SELECT Entity WHERE '+id_type+r' = ({'+hint+'1})) AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
+          else:
+              sel_12_graph_oql = sel_rels12 + ' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
+          rn12 = f'Find 1-2 relations between {len(of_dbids1)} entities in position 1 and {len(neighbors_ids)} common neighbors'
+        
 
-        if dir23 == '>':
-            sel_23_graph_oql = sel_rels23 + ' AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
-        elif dir12 == '<':
-            sel_23_graph_oql = sel_rels23 + ' AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'}2))'
-        else:
-            sel_23_graph_oql = sel_rels23 + ' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
-        rn23 = f'Find 2-3 relations between {len(and_dbids3)} entities in position 3 and {len(neighbors_ids)} common neighbors'
+          if dir23 == '>':
+              sel_23_graph_oql = sel_rels23 + ' AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
+          elif dir12 == '<':
+              sel_23_graph_oql = sel_rels23 + ' AND downstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND upstream NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'}2))'
+          else:
+              sel_23_graph_oql = sel_rels23 + ' AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'1})) AND NeighborOf (SELECT Entity WHERE '+id_type+' = ({'+hint+'2}))'
+          rn23 = f'Find 2-3 relations between {len(and_dbids3)} entities in position 3 and {len(neighbors_ids)} common neighbors'
 
-        graph12 = self.iterate_oql2(sel_12_graph_oql,set(of_dbids1),set(neighbors_ids),True,rn12,step=250)
-        graph23 = self.iterate_oql2(sel_23_graph_oql,set(and_dbids3),set(neighbors_ids),True,rn23,step=250)
-        graph123 = graph12.compose(graph23)
-        # to remove relations with no Effect annotation:
-        rels_with_effect = list(graph123.psrels_with(['positive','negative'],['Effect']))
-        graph123_effect = graph123.subgraph_by_rels(rels_with_effect)
-        if self.add2self:
-            self.Graph = self.Graph.compose(graph123_effect)
-        return graph123_effect
+          graph12 = self.iterate_oql2(sel_12_graph_oql,set(of_dbids1),set(neighbors_ids),True,rn12,step=250)
+          graph23 = self.iterate_oql2(sel_23_graph_oql,set(and_dbids3),set(neighbors_ids),True,rn23,step=250)
+          graph123 = graph12.compose(graph23)
+          # to remove relations with no Effect annotation:
+          rels_with_effect = list(graph123.psrels_with(['positive','negative'],['Effect']))
+          graph123_effect = graph123.subgraph_by_rels(rels_with_effect)
+          if self.add2self:
+              self.Graph = self.Graph.compose(graph123_effect)
+          return graph123_effect
+        else:
+          return ResnetGraph()
 
 
     def gv2gene(self,GVs:list[PSObject])->dict[int,list[PSObject]]:
@@ -1733,7 +1729,7 @@ to retreive {my_sent_props} properties')
 
 
     def __dbid4prop(self,prop:str,psobjs:list[PSObject])->tuple[set[PSObject],set[PSObject]]:
-        prop_values = unpack([list(o.get_props(prop)) for o in psobjs])
+        prop_values = unpack([list(o.get_props([prop])) for o in psobjs])
         prop2objs,_ = self.map_props2objs(prop_values,[prop])
         prop2dbid = dict()
         for propval,objs in prop2objs.items():
@@ -1743,7 +1739,7 @@ to retreive {my_sent_props} properties')
         mapped_objs = set()
         notmapped_objs = set(psobjs)
         for psobj in psobjs:
-            for propval in psobj.get_props(prop):
+            for propval in psobj.get_props([prop]):
                 try:
                     my_dbid = prop2dbid[propval]
                     psobj.update_with_value(DBID,my_dbid)
@@ -1765,13 +1761,23 @@ to retreive {my_sent_props} properties')
         print(f'Reterieving database identifiers for {len(psobjs)} entities using Name identifier')
         kwargs = {TO_RETRIEVE:NO_REL_PROPERTIES}
         my_session = self._clone_session(**kwargs)
-        mapped_objs, notmapped_objs = my_session.__dbid4prop('Name',psobjs)
-        
-        if notmapped_objs:
-            mo, notmapped_objs = my_session.__dbid4prop('URN',notmapped_objs)
-            mapped_objs.update(mo)
-        
-        if notmapped_objs:
+        # mapping by URN has to be first because objects may have duplicate names
+        mapped_objs, notmapped_objs = my_session.__dbid4prop('URN',psobjs)
+        if notmapped_objs: # special case for URN with quotes
+          urns_no_quotes = [f"'{urn[:urn.find('\'')]}%'" for o in notmapped_objs if "'" in (urn := o.urn())]
+          if urns_no_quotes:
+            urn_list_str = ','.join(urns_no_quotes)
+            oql = f"SELECT Entity WHERE URN LIKE ({urn_list_str})"
+            reqname = 'Load object with quotes in URN'
+            objs_urns_no_quotes = self.process_oql(oql,request_name=reqname)._get_nodes()
+            mapped_objs.update(objs_urns_no_quotes)
+            notmapped_objs.difference_update(objs_urns_no_quotes)
+
+        if notmapped_objs: # mapping by Name-to-Name
+          mo, notmapped_objs = my_session.__dbid4prop('Name',notmapped_objs)
+          mapped_objs.update(mo)
+                  
+        if notmapped_objs: # mapping by Name-to-Alias 
             [x.set_property('Alias',x.name()) for x in notmapped_objs]
             mo,_ = my_session.__dbid4prop('Alias',notmapped_objs)
             mapped_objs.update(mo)
