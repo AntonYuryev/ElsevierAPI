@@ -10,7 +10,7 @@ from pandas.api.types import is_string_dtype,is_numeric_dtype
 
 MIN_COLUMN_WIDTH = 0.65 # in inches
 NUMBER_OF_REFERENCE = 'Number of references'
-
+MAX_TAB_LENGTH = 31
 
 class df(pd.DataFrame):
   # re-writing parent pd.DataFrame function is a BAD idea. Use other names
@@ -251,14 +251,14 @@ class df(pd.DataFrame):
 
 
   @classmethod 
-  def from_rows(cls,rows:list[list],header:list[str],index=-1):
+  def from_rows(cls,rows:list[list],header:list[str],index=-1,dfname=''):
       '''
       rows - list/set of lists/tuples
       '''
       _2return = pd.DataFrame(rows,columns=header)
       if index >= 0:
           _2return.set_index(header[index], inplace=True)
-      return df.from_pd(_2return)
+      return df.from_pd(_2return,dfname)
   
 
   @classmethod
@@ -281,8 +281,8 @@ class df(pd.DataFrame):
       if case_sensitive_match:
         my_dict = dict2add
       else:
-        my_dict = {k.lower():v for k,v in dict2add}
-        mapping_column = map2column+'lower'
+        my_dict = {k.lower():v for k,v in dict2add.items()}
+        mapping_column = map2column+'lowercase'
         in2df[mapping_column] = in2df[map2column].str.lower()
     
       pd2merge = df.from_dict2(my_dict,mapping_column,new_col)
@@ -889,5 +889,8 @@ class df(pd.DataFrame):
       sorted_df.copy_format(self)
     return sorted_df
     
-    
 
+  @staticmethod
+  def info_df()->"df":
+    rows = [['Number of worksheets in this file:','=INFO("numfile")']]
+    return df.from_rows(rows,['Info','Counts'],dfname='info')
