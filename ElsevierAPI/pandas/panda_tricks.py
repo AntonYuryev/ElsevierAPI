@@ -269,7 +269,7 @@ class df(pd.DataFrame):
   
 
   def merge_dict(self, dict2add:dict[str,str|int|float|tuple], new_col:str, map2column:str, 
-                 add_all=False, case_sensitive_match=False,default_val = ''):
+                 add_all=False,case_sensitive_match=True,default_val = ''):
       '''
       input:
         "dict2add" must have keys equal to values in "map2column"
