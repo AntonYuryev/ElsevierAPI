@@ -15,16 +15,16 @@ PHARMAPENDIUM_ID = 'Marketed Drugs'
 DRUG_CLASS = 'Drug class' # agonist/antagonist
 # do not propagate througuh Binding relations for drug rank calculation:
 DT_RELTYPES = ['DirectRegulation','Regulation','Expression','MolSynthesis','MolTransport']
+DIETARY_SUPPLEMENT='Dietary Supplement'
 
 class Drugs4Targets(DiseaseTargets):
   pass
   def __init__(self,*args,**kwargs):
     """
-    Input
-    -----
-    APIconfig - args[0]
-    what2retrieve - default BIBLIO_PROPERTIES which is required to load self.set_target_disease_state()
-    connect2server - default True
+    input:
+      APIconfig - args[0]
+      what2retrieve - default BIBLIO_PROPERTIES which is required to load self.set_target_disease_state()
+      connect2server - default True
     """
     my_kwargs = {
             'disease':[],
@@ -56,18 +56,6 @@ class Drugs4Targets(DiseaseTargets):
   def load_dt(self,**kwargs):
     self.dt_consist = DrugTargetConsistency(self.APIconfig,**kwargs)
     return self.dt_consist
-
-  @classmethod
-  def from_files(cls,**kwargs):
-      fake_config = {'ResnetURL':'','PSuserName':'','PSpassword':'','ETMURL':'','ETMapikey':''}
-      my_kwargs = dict(kwargs)
-      my_kwargs['connect2server'] = False
-      dt = cls(fake_config,**my_kwargs)
-      dt_consist_kwargs = dict(my_kwargs)
-      dt_consist_kwargs['what2retrieve'] = NO_REL_PROPERTIES
-      dt.dt_consist = DrugTargetConsistency(fake_config,**dt_consist_kwargs)
-      return dt
-
 ############################ service functions: read/write, load from database, cache######################################            
   def report_name(self):
       rep_pred = 'suggested' if self.params['strict_mode'] else 'predicted'
@@ -249,52 +237,54 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
 
 
   def load_target_ranks(self,from_ranked_targets_df:df,for_antagonists=True):
-      '''
-      input:
-        from_ranked_targets_df must have RANK column
-      output:
-        self.targets4agonists\n
-        self.targets4antagonists\n
-        self.target_uid2rank
-      '''
-      my_targets = self._targets()
-      name2target = {n.name():n for n in my_targets}
-      target_name_column = self.__resnet_name__ if self.__resnet_name__ in from_ranked_targets_df.columns else 'Name'
-      
-      df_targets = set()
-      missing_targets_counter = 0
-      for idx in from_ranked_targets_df.index:
-        target_name = from_ranked_targets_df.at[idx,target_name_column]
-        target_rank = from_ranked_targets_df.at[idx,RANK]
-        try:
-          target = name2target[target_name]
-          df_targets.add(target)
-          target_uid = target.uid()
-          self.target_uid2rank[target_uid] = float(target_rank)
+    '''
+    input:
+      from_ranked_targets_df must have RANK column
+    output:
+      self.targets4agonists\n
+      self.targets4antagonists\n
+      self.target_uid2rank
+    '''
+    my_targets = self._targets()
+    name2target = {n.name():n for n in my_targets}
+    target_name_column = self.__resnet_name__ if self.__resnet_name__ in from_ranked_targets_df.columns else 'Name'
+    
+    df_targets = set()
+    missing_targets_counter = 0
+    for idx in from_ranked_targets_df.index:
+      target_name = from_ranked_targets_df.at[idx,target_name_column]
+      target_rank = from_ranked_targets_df.at[idx,RANK]
+      if target_name in name2target:
+        target = name2target[target_name]
+        df_targets.add(target)
+        target_uid = target.uid()
+        self.target_uid2rank[target_uid] = float(target_rank)
+        if target_uid in self.Graph: # self.Graph is empty in df for SNEA
+          # boosting drug ranking by adding target children to ranking network with the rank of the parent
           children = self.Graph._get_node(target_uid).childs() # only self.Graph is guaranteed to have CHILDS annotation
           for child in children:
-              # boosting drug ranking by adding target children to ranking network with the rank of the parent
-              if child.name() not in name2target:
-                  self.target_uid2rank[child.uid()] = float(target_rank) 
-                  df_targets.add(child)
-        except KeyError:
-          print(f'Node named "{target_name}"  is not found in self.Graph') 
-          # to skip WEIGHTS row in df
-          missing_targets_counter += 1
-          continue
-      print(f'{missing_targets_counter} targets out of {len(my_targets)} were not found in self.Graph')
-
-      if for_antagonists:
-          self.targets4antagonists = list(df_targets)
+            if child.name() not in name2target:
+              self.target_uid2rank[child.uid()] = float(target_rank) 
+              df_targets.add(child)
       else:
-          self.targets4agonists = list(df_targets)
+        print(f'Node named "{target_name}" is not found')
+        missing_targets_counter += 1
+
+    if missing_targets_counter:
+      print(f'{missing_targets_counter} targets out of {len(my_targets)} were not found in self.targets()')
+
+    if for_antagonists:
+        self.targets4antagonists = list(df_targets)
+    else:
+        self.targets4agonists = list(df_targets)
+    return
 
 
   def init_drug_df(self, drugs:list[PSObject]):
       '''
       input:
-        drugs = [PSObject], used to load drugs from SNEA samples
-      output:
+        "drugs" used to load drugs from SNEA samples
+      loads:
         self.RefCountPandas
       '''
       forbidden_drugs =['DMSO', 'glucose','nicotine']
@@ -311,9 +301,8 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
           if drug_name in forbidden_drugs: 
               clean_drugs.remove(drug)
           
-          pp_id = str(drug.get_prop('PharmaPendium ID'))
-          if pp_id:
-              drug2pharmapendium_id[drug_name] = pp_id
+          pp_id = str(drug.get_prop('PharmaPendium ID',if_missing_return='Dietary Supplement'))
+          drug2pharmapendium_id[drug_name] = pp_id
 
       count = len(clean_drugs)
       clean_drugs = [d for d in clean_drugs if d not in self.disease_inducers]
@@ -340,9 +329,15 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
         before_count = len(clean_drugs)
         clean_drugs = [d for d in clean_drugs if d not in bad_drugs]
         print(f'Excluded {before_count-len(clean_drugs)} drugs that activate {all_targets2inhibit} by {rt}')
-          
-      drug_df = self.load_df(clean_drugs,max_childs=ALL_CHILDS,max_threads=25)
+      
+      mapped_drugs,_ = self.load_dbids4(clean_drugs,with_props=['Molecular Weight'])
+      drug2molweight = {d.name():d.get_prop('Molecular Weight') for d in mapped_drugs}
+      drug2molweight = {k:v for k,v in drug2molweight.items() if v}
+      print(f'Loaded Molecular Weight ptoperties for {len(drug2molweight)} drugs')
+
+      drug_df = self.load_df(clean_drugs,max_childs=0,max_threads=25)
       self.RefCountPandas = drug_df.merge_dict(drug2pharmapendium_id,new_col=PHARMAPENDIUM_ID,map2column='Name')
+      self.RefCountPandas = self.RefCountPandas.merge_dict(drug2molweight,new_col='Molecular Weight',map2column='Name')
       print('Initialized "Drugs" worksheet with %d drugs from database for ranking' % len(self.RefCountPandas))
       # self.RefCountPandas does not have self.__temp_id_col__ column at this point 
       # because ALL_CHILDS = 0. It will be added in link2disease_concepts()
@@ -505,17 +500,18 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
     self.load_target_ranks(self.report_pandas[ANTAGONIST_TARGETS_WS],for_antagonists=True) 
     ranked_df = self.regulatory_rank()
     # add here functions for speed debuging.  ranked_df does not have self.__temp_id_col__ column here
-    if 'disease' in self.params.keys(): # case of drug repositioning using input disease network and targets from knowledge graph
-      if self.params['debug']:
+    if self.params.get('disease',''): 
+    # case of drug repurposing using input disease network and targets from knowledge graph
+      if self.params.get('debug',False):
         if self.params.get("use_in_children",False):
           d2cd = self.drug2childdose(ranked_df,multithread=False)
           ranked_df = ranked_df.merge_dict(d2cd,'Children dose',PHARMAPENDIUM_ID)
         full_drug_df = self.link2disease_concepts(ranked_df)
-        if self.params['add_bibliography']:
+        if self.params.get('add_bibliography',False):
           drugs_df_with_tmrefs = self.bibliography(ranked_df,self.names4tmsearch(),'Name',[],len(ranked_df))
           etm_ref_colname = self.tm_refcount_colname('Name',self.names4tmsearch())
           full_drug_df = full_drug_df.merge_df(drugs_df_with_tmrefs,how='left',on='Name',columns=[etm_ref_colname])
-      elif self.params['add_bibliography']:
+      elif self.params.get('add_bibliography',False):
         tasks = [(self.bibliography,(ranked_df,self.names4tmsearch(),'Name',[],len(ranked_df)))]
         tasks.append((self.link2disease_concepts,(ranked_df,)))
         if self.params.get("use_in_children",False):
@@ -577,7 +573,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       return raw_drug_df,ranked_drugs_df
     else:
       print('Ranked drugs are in worksheet "rawDrugs" in raw data')
-      return raw_drug_df,df()
+      return raw_drug_df
     
 
   def drugs4metabolites(self)->ResnetGraph:
@@ -594,19 +590,20 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       return ResnetGraph()
 
 
-  def load_drugs(self,limit2drugs:set[PSObject]=set())->list[PSObject]:
+  def select_drugs(self,limit2drugs:set[PSObject]=set())->list[PSObject]:
       '''
       input:
-        self.__targets__ - [PSObject] that has to be filled prior to using this function
         limit2drugs - {PSObject}, used by SNEA make_drugs_df
+      loads:
+        self.drugs2targets - ResnetGraph with drugs linked to self._targets()
       output:
-        [PSObject] - list of drugs used by self.dt_consist.load_confidence_dict() and self.init_drug_df()
+        list of drugs from self.drugs2targets
       '''
       DTfromDB = self.params.get('DTfromDB',False)
       self.drugs2targets = self.dt_consist.load_drug_graph(self._targets(),limit2drugs,DTfromDB)
       self.drugs2targets = self.drugs2targets.compose(self.drugs4metabolites())
-      drugs_linked2targets = set(self.drugs2targets._psobjs_with('SmallMol','ObjTypeName'))
-      drugs_linked2targets = drugs_linked2targets.difference(self._targets()) # to remove metabolite targets
+      # subtracting self._targets( to remove metabolite targets
+      drugs_linked2targets = set(self.drugs2targets._psobjs_with('SmallMol','ObjTypeName')) - self._targets()
       print(f'Found {len(drugs_linked2targets)} drugs linked to {len(self._targets())} targets for ranking')
 
       drugs_withno_targets = []
@@ -632,18 +629,17 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
 
   def drug2childdose(self,rankedf:df,multithread = True):
     print('Adding use in children from FDA drug labels')
-    approved_drugs = rankedf[rankedf[PHARMAPENDIUM_ID].notna()][PHARMAPENDIUM_ID]
-    if not approved_drugs.empty:
-      approved_drugs = list(filter(None, approved_drugs.tolist()))
+    marketed_drugs = rankedf[rankedf[PHARMAPENDIUM_ID].notna()][PHARMAPENDIUM_ID].to_list()
+    marketed_drugs = [d for d in marketed_drugs if d and d != DIETARY_SUPPLEMENT]
+    if marketed_drugs:
       fda_api = FDA()
-      return fda_api.child_doses_mt(approved_drugs) if multithread else fda_api.child_doses(approved_drugs)
+      return fda_api.child_doses_mt(marketed_drugs) if multithread else fda_api.child_doses(marketed_drugs)
     else:
       return dict()
     
 
-
   def init_load_score(self):
-    my_drugs = self.load_drugs()
+    my_drugs = self.select_drugs()
     if self.params['debug']:
       self.init_drug_df(my_drugs)
       if self.params.get('consistency_correction4target_rank',True):
@@ -674,32 +670,21 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
 
 
   def __addBBBP(self,_2df:df):
-    print('Adding Blood-Brain Barrier Penetration (BBBP) probability to report')
-    ConceptName = 'Neurological disorders (BBBP)'
-    #self.add_ent_props(['Connectivity'])
-    concepts = self._props2psobj(["neurological disorder"],['Name'])
-    kwargs = { 
-              'clone2retrieve' : REFERENCE_IDENTIFIERS,
-              'column_name':ConceptName,
-              'column_rank': -1 # to avoid ranking and normalization
-              }
-    drug_df = self.score_concepts(concepts,_2df,**kwargs)[2]
-    my_columns = list(drug_df.columns)
-    #smallmols = self.Graph._psobjs_with('SmallMol',OBJECT_TYPE)
-    #drug_names = drug_df['Name'].to_list()
-    #connectivity_dict = {c.name():int(c.get_prop('Connectivity',if_missing_return=1)) for c in smallmols if c.name() in drug_names}
-    #drug_df = drug_df.merge_dict(connectivity_dict,'Connectivity','Name')
-    bbbp_col = self._refcount_colname(ConceptName)
-    col2remove = [self._weighted_refcount_colname(ConceptName),
-                  self._linkedconcepts_colname(ConceptName),
-                  self._concept_size_colname(ConceptName)]
-    #drug_df['BBBP probability'] = drug_df[bbbp_col]/drug_df['Connectivity']
-    #drug_df = drug_df.minmax_norm(['BBBP probability'])
-    #drug_df['BBBP probability'] = drug_df['BBBP probability'].round(decimals=2)
-    #self.entProps.remove('Connectivity')
-    #my_columns.append('BBBP probability')
-    my_columns = [c for c in my_columns if c not in col2remove]
-    return drug_df.dfcopy(my_columns)
+    print('Adding "Brain-Plasma ratio" to report')
+    bpG = ResnetGraph.fromRNEF('D:/Python/BBB/DrugsBrainPlasmaRatio.rnef')
+    nodes_with_bp = bpG._get_nodes()
+    print(f'Loaded {len(nodes_with_bp)} drugs with known brain-plasma ratio')
+    urn2bp = dict()
+    for n in nodes_with_bp:
+      bp = n.get_prop('Brain-Plasma ratio')
+      if bp:
+        urn2bp[n.urn()] = float(bp)
+        
+    drug_df = _2df.dfcopy()
+    drug_df['Brain-Plasma ratio (%)'] = drug_df['URN'].map(urn2bp)
+    not_nan_count = drug_df['Brain-Plasma ratio (%)'].count()
+    print(f"{not_nan_count} drugs were annotated with 'Brain-Plasma ratio (%)'")
+    return drug_df
 
 
   def annotate_report(self):

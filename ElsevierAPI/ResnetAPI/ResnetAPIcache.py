@@ -3,10 +3,9 @@ from pathlib import Path
 from shutil import copyfile
 from .ResnetAPISession import REFERENCE_IDENTIFIERS,REFCOUNT
 from .ResnetAPISession import APISession
-from ..utils import normalize,execution_time
+from ..utils import normalize,execution_time,Tee
 from .ResnetGraph import EFFECT,ResnetGraph
 from .NetworkxObjects import PSObject,PSObjectDecoder,PSObjectEncoder
-from contextlib import redirect_stdout
 
 CACHE_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI/__pscache__/')
 DEFAULT_CACHE_NAME = 'Resnet subset'
@@ -78,16 +77,24 @@ class APIcache(APISession):
       # loads cache_name from self.data_dir:
       load_cache = my_kwargs.pop('load_cache',True)
       if load_cache:
-          self.network = self._load_cache(**my_kwargs)
-          if self.network:
-              self.save_description()
+        self.network = self._load_cache(**my_kwargs)
+        if self.network:
+          self.save_description()
 
 
-  def __path2cache(self,cache_name:str,extension='.rnef'):
-      return self.data_dir+'simple/'+cache_name+extension
+  def __path2cache(self,**kwargs)->str:
+      cache_name = kwargs.get('cache_name',DEFAULT_CACHE_NAME)
+      extension = kwargs.get('extension','.rnef')
+      return os.path.join(self.__data_dir(**kwargs),'simple',cache_name+extension)
   
-  def __path2rawdir(self,cache_name:str):
-      return os.path.join(self.data_dir,'raw',cache_name+'_raw')
+
+  def __path2rawdir(self,**kwargs):
+      cache_name = kwargs.get('cache_name',DEFAULT_CACHE_NAME)
+      return os.path.join(self.__data_dir(**kwargs),'raw',cache_name+'_raw')
+  
+
+  def __data_dir(self,**kwargs):
+    return kwargs.get('data_dir',CACHE_DIR)
 
   @staticmethod
   def cache_filename(parameters:dict):
@@ -106,21 +113,21 @@ class APIcache(APISession):
 
       #converting sentence properties to relation properties before making a dump.  Used for pX dump
       for refprop, relprop in refprop2rel.items():
-          simple_graph.refprop2rel(refprop,relprop,refprop_minmax)
-          self.relprops2rnef.remove(refprop)
-          self.relprops2rnef.append(relprop)
+        simple_graph.refprop2rel(refprop,relprop,refprop_minmax)
+        self.relprops2rnef.remove(refprop)
+        self.relprops2rnef.append(relprop)
           
       if predict_effect4:
-          simple_graph,modified_rels = simple_graph.predict_effect4(**predict_effect4)
-          modified_rels_graph = simple_graph.subgraph_by_rels(modified_rels)
-          modified_rels_graph.name = 'relations with predicted effect'
-          modified_rels_graph.dump2rnef('Effect predicted4',self.entProps,self.relprops2rnef)
-      
+        simple_graph,modified_rels = simple_graph.predict_effect4(**predict_effect4)
+        modified_rels_graph = simple_graph.subgraph_by_rels(modified_rels)
+        modified_rels_graph.name = 'relations with predicted effect'
+        modified_rels_graph.dump2rnef('Effect predicted4',self.entProps,self.relprops2rnef)
+    
       if kwargs.get('remove_version',False):
-          for ent_prop in self.entProps:
-              if ent_prop.endswith(' ID'):
-                  print(f'Removing version numbers from {ent_prop} node property')
-                  simple_graph = simple_graph.clean_version_number(ent_prop)
+        for ent_prop in self.entProps:
+          if ent_prop.endswith(' ID'):
+            print(f'Removing version numbers from {ent_prop} node property')
+            simple_graph = simple_graph.clean_version_number(ent_prop)
 
       return simple_graph
   
@@ -148,59 +155,54 @@ class APIcache(APISession):
       stats_df.to_csv(descr_file+'.tsv',sep='\t',index=False)
 
 
-  def __dump_dir_name(self,**kwargs):
-      self.dump_folder = kwargs['cache_name'] + '_raw'
-      return self.data_dir+'raw/'+self.dump_folder+'/'
-
-
   def __download(self,**kwargs):
       cache_name = kwargs['cache_name']
-      dump_dir = self.__dump_dir_name(**kwargs)
+      dump_dir = self.__path2rawdir(**kwargs)
       print(f'Downloading {cache_name} into {dump_dir}')
+      # clone session with the same parameters as self to avoid adding dump to self.Graph
       my_session_kwargs = {
           'connect2server':True,
           'no_mess' : self.no_mess,
-          'data_dir' : kwargs['data_dir']
+          'data_dir' : dump_dir
           }
-      my_session = self._clone_session(**my_session_kwargs) #need identifiers to make graph simple
+      my_session = self._clone_session(**my_session_kwargs) 
 
       log_name = f'Download of {cache_name}.log'
-      log_path = self.data_dir+'log/'+log_name
-      with open(log_path, 'w', buffering=1) as fout:
-          print(f'Download log is in {log_path}')
-          with redirect_stdout(fout):
-              if kwargs['connect_nodes']:
-                  node_ids = set(kwargs['connect_nodes'][0])
-                  # node_ids can be either {str} or {int}
-                  if isinstance(next(iter(node_ids), None),str):
-                      node_types_str = ",".join(node_ids)
-                      rel_types = kwargs['connect_nodes'][1]
-                      rel_types_str = ",".join(rel_types)
-                      query = f'SELECT Entity WHERE objectType = ({node_types_str}) AND Connectivity > 0 AND NeighborOf (SELECT Relation WHERE objectType = ({rel_types_str}))'
-                      nodes_graph = my_session.process_oql(query,'Loading nodes from database')
-                      assert(isinstance(nodes_graph,ResnetGraph))                  
-                      node_ids = set(ResnetGraph.dbids(nodes_graph.psobjs_with())) if ResnetGraph else set()                  
-                      print(f'Found {len(node_ids)} entities of type: {node_types_str} connected with relations {rel_types_str} exist in database')
-                  if node_ids:
-                      print(f'Will connect {len(node_ids)} with {rel_types} relations')
-                      my_session.get_network(node_ids,rel_types,download=True)
-              else:
-                  for i, query in enumerate(self.my_oql_queries):
-                      oql = query[0]
-                      reqname = query[1]
-                      resume_from = query[2] if len(query)>2 else 0
-                      my_session.download_oql(oql,reqname,resume_page=resume_from,threads=kwargs['max_threads'])
+      log_path = os.path.join(kwargs['data_dir'], 'logs', log_name)
+      with Tee(log_path):
+        print(f'Download log is in {log_path}')
+        if kwargs.get('connect_nodes',False):
+          node_ids = set(kwargs['connect_nodes'][0])
+          # node_ids can be either {str} or {int}
+          if isinstance(next(iter(node_ids), None),str):
+            node_types_str = ",".join(node_ids)
+            rel_types = kwargs['connect_nodes'][1]
+            rel_types_str = ",".join(rel_types)
+            query = f'SELECT Entity WHERE objectType = ({node_types_str}) AND Connectivity > 0 AND NeighborOf (SELECT Relation WHERE objectType = ({rel_types_str}))'
+            nodes_graph = my_session.process_oql(query,'Loading nodes from database')
+            assert(isinstance(nodes_graph,ResnetGraph))                  
+            node_ids = set(ResnetGraph.dbids(nodes_graph.psobjs_with())) if ResnetGraph else set()                  
+            print(f'Found {len(node_ids)} entities of type: {node_types_str} connected with relations {rel_types_str} exist in database')
+          if node_ids:
+            print(f'Will connect {len(node_ids)} with {rel_types} relations')
+            my_session.get_network(node_ids,rel_types,download=True)
+        else:
+          for i, query in enumerate(self.my_oql_queries):
+            oql = query[0]
+            reqname = query[1]
+            resume_from = query[2] if len(query)>2 else 0
+            my_session.download_oql(oql,reqname,resume_page=resume_from)
 
 
   def __read_raw(self,**kwargs):
-      dump_dir = self.__dump_dir_name(**kwargs)
+    dump_dir = self.__path2rawdir(**kwargs)
+    database_graph = ResnetGraph.fromRNEFdir(dump_dir,merge=False)
+    if not database_graph or kwargs.get('reload',False):
+      print(f'Cache "{dump_dir}" was not found\nBegin graph download from database')
+      self.data_dir = dump_dir # dump2rnef uses self.data_dir to save files
+      self.__download(**kwargs)
       database_graph = ResnetGraph.fromRNEFdir(dump_dir,merge=False)
-      if not database_graph and kwargs['connect2server']:
-          print(f'Cache "{dump_dir}" was not found\nBegin graph download from database')
-          self.__download(**kwargs)
-          database_graph = ResnetGraph.fromRNEFdir(dump_dir,merge=False)
-
-      return database_graph
+    return database_graph
 
 
   def _load_cache(self,**kwargs)->'ResnetGraph':
@@ -239,38 +241,38 @@ class APIcache(APISession):
       # filter to load relations only for nodes with desired properties\n
 
       if kwargs.get('read_raw',False):
-          database_graph = self.__read_raw(**kwargs)
-          database_graph.name = cache_name
-          return self.simplify_graph(database_graph,**kwargs)
+        database_graph = self.__read_raw(**kwargs)
+        database_graph.name = cache_name
+        return self.simplify_graph(database_graph,**kwargs)
       else:
-          my_cache_file = self.__path2cache(cache_name)
-          try:
-              cached_graph = ResnetGraph.fromRNEF(my_cache_file,prop2values=prop2values)
-              print(f'Loaded "{cache_name}" cache with {len(cached_graph)} nodes and {cached_graph.number_of_edges()} edges')
-              cached_graph.name = cache_name
-              return cached_graph
-          except FileNotFoundError:
-              print(f'Cannot find {my_cache_file} cache file')
-              self.clear() #clearing self.Graph and self.network to releasae RAM
+        my_cache_file = self.__path2cache(**kwargs)
+        try:
+          cached_graph = ResnetGraph.fromRNEF(my_cache_file,prop2values=prop2values)
+          print(f'Loaded "{cache_name}" cache with {len(cached_graph)} nodes and {cached_graph.number_of_edges()} edges')
+          cached_graph.name = cache_name
+          return cached_graph
+        except FileNotFoundError:
+          print(f'Cannot find {my_cache_file} cache file')
+          self.clear() #clearing self.Graph and self.network to releasae RAM
 
-              if kwargs.get('resume_download',False):
-                  dump_dir = self.__dump_dir_name(**kwargs)
-                  print(f'Resume graph download from database into {dump_dir}')
-                  self.__download(**kwargs)
+          if kwargs.get('resume_download',False):
+            dump_dir = self.__path2rawdir(**kwargs)
+            print(f'Resume graph download from database into {dump_dir}')
+            self.__download(**kwargs)
 
-              database_graph = self.__read_raw(**kwargs)
-              
-              if database_graph:
-                  database_graph.name = cache_name
-                  database_graph = self.simplify_graph(database_graph,**kwargs)
-                  database_graph_nodup = database_graph.remove_undirected_duplicates()
-                  database_graph_nodup.dump2rnef(my_cache_file,self.entProps,self.relprops2rnef,with_section_size=1000) #with_section_size=1000
-                  
-                  print('%s with %d edges and %d nodes was written into %s' 
-                      % (database_graph.name,database_graph.number_of_edges(),database_graph.number_of_nodes(),my_cache_file))
-              else:
-                  print(f'No data is available in database for {cache_name}')
-              return database_graph
+          database_graph = self.__read_raw(**kwargs)
+          
+          if database_graph:
+            database_graph.name = cache_name
+            database_graph = self.simplify_graph(database_graph,**kwargs)
+            database_graph_nodup = database_graph.remove_undirected_duplicates()
+            database_graph_nodup.dump2rnef(my_cache_file,self.entProps,self.relprops2rnef) #with_section_size=1000
+            
+            print('%s with %d edges and %d nodes was written into %s' 
+        % (database_graph.name,database_graph.number_of_edges(),database_graph.number_of_nodes(),my_cache_file))
+          else:
+            print(f'No data is available in database for {cache_name}')
+          return database_graph
 
 
   def add2raw(self,graph:ResnetGraph):
@@ -287,19 +289,19 @@ class APIcache(APISession):
           self.add2raw(with_network)
           print(f'{cache_name} raw cache files were replaced')
 
-      path2cache = self.__path2cache(cache_name)
+      path2cache = self.__path2cache(cache_name=cache_name)
       if do_backup:
-          backup_cache = self.__path2cache(cache_name,'_backup.zip')
+          backup_cache = self.__path2cache(cache_name=cache_name,extension='_backup.zip')
           with zipfile.ZipFile(backup_cache,'w',zipfile.ZIP_DEFLATED) as z:
               z.write(path2cache,arcname=os.path.basename(path2cache))
       
-      with_network.dump2rnef(path2cache,ent_props,rel_props,with_section_size=1000)
+      with_network.dump2rnef(path2cache,ent_props,rel_props)
       # keep with_section_size low to save on memory
       print(f'{cache_name} cache file was replaced')
 
       if self.example_node:
           example_cache = with_network.neighborhood({self.example_node})
-          example_file = self.__path2cache(cache_name,extension='_example.rnef')
+          example_file = self.__path2cache(cache_name=cache_name,extension='_example.rnef')
           example_cache.name = self.example_node.name()+' example'
           example_cache.dump2rnef(example_file,ent_props,rel_props)
           print(f'{example_file} example file was replaced')
@@ -349,11 +351,11 @@ class APIcache(APISession):
 
 
   def subgraph(self,with_objs:list[PSObject],new_cache_name:str):
-      subg = self.network.subgraph(ResnetGraph.uids(with_objs))
-      if subg:
-          subg.name = new_cache_name
-          subg = subg.remove_undirected_duplicates()
-          subg.dump2rnef(self.data_dir+new_cache_name,self.entProps,self.relprops2rnef)
+    subg = self.network.subgraph(ResnetGraph.uids(with_objs))
+    if subg:
+      subg.name = new_cache_name
+      subg = subg.remove_undirected_duplicates()
+      subg.dump2rnef(self.data_dir+new_cache_name,self.entProps,self.relprops2rnef)
 
 
   staticmethod

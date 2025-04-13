@@ -326,12 +326,12 @@ class ResnetGraph (nx.MultiDiGraph):
               self[ruid][tuid][rel.urn()]['relation'] = merged_rel
 
 
-  def add_node_annotation(self, with_new_prop:str, map2prop:str, using_map:dict):
+  def add_node_annotation(self, with_new_prop:str, map2prop:str, using_map:dict[str,list]):
       """
       using_map = {map2prop_value:[annotations]}
       """
       annotation_counter = 0
-      for i, node in self._get_nodes():
+      for node in self._get_nodes():
           if map2prop in node:
               # collecting all values to add 
               map_by_values = node[map2prop]
@@ -1243,11 +1243,11 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def _psrels4(self, regulator_uid, target_uid)->list[PSRelation]:
-      try:
-          edges = dict(self[regulator_uid][target_uid]).values()
-          return [e['relation'] for e in edges]
-      except KeyError:
-          return []
+    try:
+      edges = dict(self[regulator_uid][target_uid]).values()
+      return [e['relation'] for e in edges]
+    except KeyError:
+      return []
 
 
   def psrels_with(self, with_values:list=[], in_properties:list=[OBJECT_TYPE])->set[PSRelation]:
@@ -2300,99 +2300,103 @@ class ResnetGraph (nx.MultiDiGraph):
 
 ################################# READ READ READ ##########################################
   @staticmethod
-  def _parse_nodes_controls(resnet:et._Element, prop2values:dict=dict(),
-      only_relprops:set=set(),only4objs:set[PSObject]=set(),on_both_ends=True)->tuple[set[PSObject],set[PSRelation]]:
+  def _parse_nodes_controls(resnet:et._Element, only_nodeprops:dict[str,list]=dict(),
+      only_relprops:set[str]=set(),only4objs:set[PSObject]=set(),on_both_ends=True)->tuple[set[PSObject],set[PSRelation]]:
       '''
-      prop2values = {prop_name:[values]} - filter to load relations only for nodes with desired properties,\n
+      only_nodeprops = {prop_name:[values]} - filter to load relations only for nodes with desired properties,\n
       merge - should be false if graph is loaded from RNEF file with single <resnet> section
       '''
       def validate(my_regulators:list[PSObject], my_targets:list[PSObject]):
-          is_valid = False
-          if only4objs:
-              is_valid = set(my_regulators).issubset(only4objs)
-              if not is_valid: return False
-              if on_both_ends:
-                  is_valid = set(my_targets).issubset(only4objs)
-              if not is_valid: return False
-
-          if prop2values:
-              if any(n.has_value_in(prop2values) for n in my_regulators + my_targets):
-                  return True
+        if only4objs:
+          if not set(my_regulators).issubset(only4objs):
+            return False
           
-          return True
+          if on_both_ends:
+            if not set(my_targets).issubset(only4objs):
+              return False
+
+        if only_nodeprops:
+          if not any(n.has_value_in(only_nodeprops) for n in my_regulators + my_targets):
+            return False
+
+        return True
   
-      nodel_local_ids = dict()
+      nodes_local_ids = dict()
       for node in resnet.findall('./nodes/node',''):
-          node_urn = node.get('urn')
-          local_id = node.get('local_id')
-          node_psobj = PSObject({'URN':[node_urn]})
-          [node_psobj.update_with_value(attr.get('name'), attr.get('value')) for attr in node.findall('attr')]
-          node_psobj[OBJECT_TYPE] = node_psobj.pop('NodeType')
+        node_urn = node.get('urn')
+        local_id = node.get('local_id')
+        node_psobj = PSObject({'URN':[node_urn]})
+        [node_psobj.update_with_value(attr.get('name'), attr.get('value')) for attr in node.findall('attr')]
+        node_psobj[OBJECT_TYPE] = node_psobj.pop('NodeType')
 
-          exist_obj = ResnetGraph.find_object(only4objs,node_urn)
-          if exist_obj:
-              node_psobj = exist_obj = node_psobj.merge_obj(exist_obj)
+        exist_obj = ResnetGraph.find_object(only4objs,node_urn)
+        if exist_obj:
+          node_psobj = node_psobj.merge_obj(exist_obj)
 
-          nodel_local_ids[local_id] = node_psobj
-  
-      valid_nodes = set()
-      valid_rels = list()
-      if only_relprops: only_relprops.add('ControlType')
-      
-      for rel_tag in resnet.findall('./controls/control',''):
-          regulators = list()
-          targets = list()
-          psobjs4rel = list()
-          for link in rel_tag.findall('link'):
-              link_ref = link.get('ref')
-              link_psobj = nodel_local_ids[link_ref]
-              assert(isinstance(link_psobj,PSObject))
-              psobjs4rel.append(link_psobj)
-              link_type = link.get('type')
-              if link_type == 'out': 
-                  targets.append(link_psobj)
-              else: 
-                  regulators.append(link_psobj)
+        nodes_local_ids[local_id] = node_psobj
 
-          is_valid_rel = validate(regulators,targets)
-          if is_valid_rel:
-              valid_nodes.update(psobjs4rel)
-              ps_rel = PSRelation(dict())
-              [ps_rel.Nodes[REGULATORS].append(reg) for reg in regulators]
-              [ps_rel.Nodes[TARGETS].append(targ) for targ in targets]
+      controls = resnet.findall('./controls/control','')
+      if controls:
+        valid_nodes = set()
+        valid_rels = list()
+        if only_relprops: only_relprops.add('ControlType')
+        
+        for rel_tag in resnet.findall('./controls/control',''):
+            regulators = list()
+            targets = list()
+            psobjs4rel = list()
+            for link in rel_tag.findall('link'):
+                link_ref = link.get('ref')
+                link_psobj = nodes_local_ids[link_ref]
+                assert(isinstance(link_psobj,PSObject))
+                psobjs4rel.append(link_psobj)
+                link_type = link.get('type')
+                if link_type == 'out': 
+                    targets.append(link_psobj)
+                else: 
+                    regulators.append(link_psobj)
 
-              for attr in rel_tag.findall('attr'):
-                  prop_id = attr.get('name')
-                  if only_relprops and prop_id not in only_relprops: continue
-                  prop_value = attr.get('value')    
-                  index = attr.get('index')
-                  if type(index) == type(None):
-                      # case if RNEF is generated by MedScan
-                      if prop_id in SENTENCE_PROPS_SET: # MedScan does not generate "index" if relation has only one reference
-                          propid = SENTENCE if prop_id == 'msrc' else prop_id
-                          if '1' in ps_rel.PropSetToProps:
-                              ps_rel.PropSetToProps['1'][propid] = [prop_value]
-                          else:
-                              ps_rel.PropSetToProps['1'] = {propid:[prop_value]}
-                      else:
-                          ps_rel.update_with_value(prop_id, prop_value)
-                  else:
-                      # property has index
-                      propid = SENTENCE if prop_id == 'msrc' else prop_id
-                      if index in ps_rel.PropSetToProps:
-                          try:
-                              ps_rel.PropSetToProps[index][propid].append(prop_value)
-                          except KeyError:
-                              ps_rel.PropSetToProps[index][propid] = [prop_value]
-                      else:
-                          ps_rel.PropSetToProps[index] = {propid:[prop_value]}
+            is_valid_rel = validate(regulators,targets)
+            if is_valid_rel:
+                valid_nodes.update(psobjs4rel)
+                ps_rel = PSRelation(dict())
+                [ps_rel.Nodes[REGULATORS].append(reg) for reg in regulators]
+                [ps_rel.Nodes[TARGETS].append(targ) for targ in targets]
 
-              ps_rel[OBJECT_TYPE] = ps_rel.pop('ControlType')
-              ps_rel.refs()
-              ps_rel.urn(refresh=True) # URN algorithm may change
-              valid_rels.append(ps_rel)
-      #ps_rel does not have 'Id' property.This is used by PSRelation.is_from_rnef()
-      return valid_nodes, set(valid_rels)
+                for attr in rel_tag.findall('attr'):
+                    prop_id = attr.get('name')
+                    if only_relprops and prop_id not in only_relprops: continue
+                    prop_value = attr.get('value')    
+                    index = attr.get('index')
+                    if type(index) == type(None):
+                        # case if RNEF is generated by MedScan
+                        if prop_id in SENTENCE_PROPS_SET: # MedScan does not generate "index" if relation has only one reference
+                            propid = SENTENCE if prop_id == 'msrc' else prop_id
+                            if '1' in ps_rel.PropSetToProps:
+                                ps_rel.PropSetToProps['1'][propid] = [prop_value]
+                            else:
+                                ps_rel.PropSetToProps['1'] = {propid:[prop_value]}
+                        else:
+                            ps_rel.update_with_value(prop_id, prop_value)
+                    else:
+                        # property has index
+                        propid = SENTENCE if prop_id == 'msrc' else prop_id
+                        if index in ps_rel.PropSetToProps:
+                            try:
+                                ps_rel.PropSetToProps[index][propid].append(prop_value)
+                            except KeyError:
+                                ps_rel.PropSetToProps[index][propid] = [prop_value]
+                        else:
+                            ps_rel.PropSetToProps[index] = {propid:[prop_value]}
+
+                ps_rel[OBJECT_TYPE] = ps_rel.pop('ControlType')
+                ps_rel.refs()
+                ps_rel.urn(refresh=True) # URN algorithm may change
+                valid_rels.append(ps_rel)
+        #ps_rel does not have 'Id' property.This is used by PSRelation.is_from_rnef()
+        return valid_nodes, set(valid_rels)
+      else:
+        return list(nodes_local_ids.values()),set()
 
 
   @staticmethod
@@ -2454,9 +2458,9 @@ class ResnetGraph (nx.MultiDiGraph):
         set merge=True if graph loaded form multiple RNEF files with multiple <resnet> sections
         prop2values={prop_name:[values]} - filter to load relations only for nodes with desired properties
       '''
-      max_workers = min(32,len(flist),(os.cpu_count() or 1) + 4)
+      #max_workers = min(32,len(flist),(os.cpu_count() or 1) + 4) now is default in Python > 3.8
       combo_g = ResnetGraph()
-      with ThreadPoolExecutor(max_workers=max_workers,thread_name_prefix='readRNEFdir') as e:
+      with ThreadPoolExecutor(thread_name_prefix='readRNEFdir') as e:
         futures = list()
         [futures.append(e.submit(combo_g.__read_rnef,f,prop2values,only_relprops,True)) for f in flist]
         for f in as_completed(futures):
@@ -2489,16 +2493,15 @@ class ResnetGraph (nx.MultiDiGraph):
       Raises FileNotFoundError if "rnef_file" is not found
       '''
       start = time.time()
-      real_path = os.path.join(path2dir, '')
-      listing = glob.glob(f'{real_path}/*.rnef')+glob.glob(os.path.join(real_path, '**/*.rnef'),recursive=include_subdirs)
+      listing = glob.glob(os.path.join(path2dir, '*.rnef'))+glob.glob(os.path.join(path2dir, '**/*.rnef'),recursive=include_subdirs)
       combo_g = ResnetGraph()
       if listing:
           combo_g = ResnetGraph.fromRNEFflist(listing,prop2values,only_relprops,merge)
           print('Graph (%d edges, %d nodes) was loaded from "%s" with %d files in %s' 
-          % (combo_g.number_of_edges(),combo_g.number_of_nodes(),real_path,len(listing),execution_time(start)))
-          combo_g.name = f'{os.path.basename(os.path.normpath(real_path))}'
+          % (combo_g.number_of_edges(),combo_g.number_of_nodes(),path2dir,len(listing),execution_time(start)))
+          combo_g.name = f'{os.path.basename(os.path.normpath(path2dir))}'
       else:
-          print('Cannot find "%s" directory' % real_path)
+          print('Cannot find "%s" directory' % path2dir)
       
       return combo_g
       
@@ -2815,10 +2818,17 @@ class ResnetGraph (nx.MultiDiGraph):
       function is used for SNEA
       """
       start = time.time()
-      input_target_uids = {PSObject.urn2uid(urn) for urn in for_targets_with_urns}
-
-      rel2copy = [e for r,t,e in self.edges(data='relation') if t in input_target_uids]
-      reg_subgraph = self.subgraph_by_rels(rel2copy)      
+      rel2copy = list()
+      subraph_nodes = set()
+      for r,t,rel in self.iterate():
+        if t.urn() in for_targets_with_urns:
+          subraph_nodes.add(r)
+          subraph_nodes.add(t)
+          rel2copy.append(rel)
+      reg_subgraph = ResnetGraph()
+      reg_subgraph.add_psobjs(subraph_nodes) # only targets in self are annotated with expression values
+      # cannot use from_psrels() here
+      reg_subgraph.__add_psrels(rel2copy,add_nodes=False,merge=False)      
       reg_subgraph.name = network_name
       print('%s subnetwork with %d edges was selected in %s from network with %d edges' % 
             (network_name, reg_subgraph.number_of_edges(), self.execution_time(start),self.number_of_edges()))
@@ -2848,16 +2858,15 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def clean_version_number(self,in_property:str):
-      uid2value = dict()
-      for uid, psobj in self.nodes(data=True):
-          if in_property in psobj:
-              identifiers = psobj[in_property]
-              no_version_set = set()
-              for i in identifiers:
-                  version_pos = str(i).rfind('.')
-                  id_end = version_pos if version_pos > 0 else len(i)
-                  no_version_set.add(i[:id_end])
-              uid2value[uid] = list(no_version_set)
+      uid2value = {uid: list(
+                        {
+                            str(i)[: str(i).rfind('.') if str(i).rfind('.') > 0 else len(i)]
+                            for i in psobj.get(in_property, [])
+                        }
+                    )
+                    for uid, psobj in self.nodes(data=True)
+                    if in_property in psobj
+                  }
 
       graph2return = self.copy()
       nx.function.set_node_attributes(graph2return,uid2value,in_property)
@@ -3061,26 +3070,26 @@ class ResnetGraph (nx.MultiDiGraph):
   
 
   def regulome_dict(self, only_objtype:list[str], min_size=2):
-      """
-      Returns
-      -------
-      {regulator_id : [targets]}, where len([targets]) >= min_size
-      """
-      regulators = list(self.regulators(only_objtype,min_targets=min_size))
-      subnetworks = dict()
-      len_targets = dict()
-      for regulator in regulators:
-          regulator_id = regulator.uid()
-          target_ids = list(self.neighbors(regulator_id))
-          if target_ids:
-              targets = self._get_nodes(target_ids)
-              subnetworks[regulator_id] = targets
-              len_targets[regulator_id] = len(target_ids)
-      
-      nx.function.set_node_attributes(self, len_targets, NUMBER_OF_TARGETS)
-      print('Generated %d regulome subnetworks with more than %d targets from %s' 
-                      % (len(subnetworks), min_size, self.name))
-      return subnetworks
+    """
+    Returns
+    -------
+    {regulator_id : [targets]}, where len([targets]) >= min_size
+    """
+    regulators = list(self.regulators(only_objtype,min_targets=min_size))
+    subnetworks = dict()
+    len_targets = dict()
+    for regulator in regulators:
+      regulator_id = regulator.uid()
+      target_ids = list(self.neighbors(regulator_id))
+      if target_ids:
+        targets = self._get_nodes(target_ids)
+        subnetworks[regulator_id] = targets
+        len_targets[regulator_id] = len(target_ids)
+    
+    nx.function.set_node_attributes(self, len_targets, NUMBER_OF_TARGETS)
+    print('Generated %d regulome subnetworks with more than %d targets from %s' 
+                    % (len(subnetworks), min_size, self.name))
+    return subnetworks
 
 
   def upstream_relations(self,node_uid:int,with_types=list()):

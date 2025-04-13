@@ -5,6 +5,7 @@ from .SemanticSearch import SemanticSearch,len,OQL,RANK,execution_time
 from .ResnetAPISession import NO_REL_PROPERTIES,ONLY_REL_PROPERTIES,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,DBID
 from .FolderContent import FolderContent
 from ..pandas.panda_tricks import df
+from ..utils import unpack
 import time
 
 RANK_KNOWN_TARGETS = True
@@ -137,6 +138,12 @@ class DiseaseTargets(SemanticSearch):
         for target in targets:# need to preserve the order of target names to support hierachal concept search
           if target not in search_names:
             search_names.append(target)
+
+      for reltype,targets in self.params.get('add_targets4',dict()).items():
+        for target in targets:# need to preserve the order of target names to support hierachal concept search
+          if target not in search_names:
+            search_names.append(target)
+            
       return search_names
 
 
@@ -210,18 +217,19 @@ class DiseaseTargets(SemanticSearch):
         
     
     def metabolite2inhibit(self):
-        metabolites2inhibit = self.params.get('metabolites2inhibit',[])
-        if metabolites2inhibit:
-            metabolites2inhibit = ','.join(self.params['metabolites2inhibit'])
-            select_metabolite = f'SELECT Entity WHERE Name = ({metabolites2inhibit})'
-            oql = f'SELECT Relation WHERE NeighborOf ({self.find_disease_oql}) AND NeighborOf ({select_metabolite})'
-            my_session = self._clone_session()
-            metbolite2diseaseG = my_session.process_oql(oql,'Find metabolites2inhibit')
-            [metbolite2diseaseG.set_edge_annotation(r.uid(),t.uid(),rel.urn(),EFFECT,['positive']) for r,t,rel in metbolite2diseaseG.iterate()]
-            self.Graph.add_graph(metbolite2diseaseG) # to ensure propert targets state in set_target_stae
-            return metbolite2diseaseG._psobjs_with('SmallMol',OBJECT_TYPE)
-        else:
-            return list()
+      metabolites2inhibit = self.params.get('metabolites2inhibit',[])
+      if metabolites2inhibit:
+        metabolites2inhibit = ','.join(self.params['metabolites2inhibit'])
+        select_metabolite = f'SELECT Entity WHERE Name = ({metabolites2inhibit})'
+        oql = f'SELECT Relation WHERE NeighborOf ({self.find_disease_oql}) AND NeighborOf ({select_metabolite})'
+        my_session = self._clone_session()
+        metbolite2diseaseG = my_session.process_oql(oql,'Find metabolites2inhibit')
+        [metbolite2diseaseG.set_edge_annotation(r.uid(),t.uid(),rel.urn(),EFFECT,['positive']) for r,t,rel in metbolite2diseaseG.iterate()]
+        self.Graph.add_graph(metbolite2diseaseG) # to ensure propert targets state in set_target_stae
+        metabolites2inhibit_objs = metbolite2diseaseG._psobjs_with('SmallMol',OBJECT_TYPE)
+        return metabolites2inhibit_objs
+      else:
+        return list()
         
 
     def expand_targets(self,reltype2targets:dict[str,list[str]],dir='upstream'):
@@ -763,6 +771,24 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
         return
 
 
+    def combine_processes(self):
+      processes2inhibit = self.params.get('processes2inhibit',dict())
+      if isinstance(processes2inhibit,list):
+        processes2inhibit = {p:[1.0] for p in processes2inhibit}
+      processes2activate = self.params.get('processes2activate',dict())
+      if isinstance(processes2activate,list):
+        processes2activate = {p:[1.0] for p in processes2activate}
+      processes = self.params.get('processes',dict())
+      if isinstance(processes,list):
+        processes = {p:[1.0] for p in processes}
+
+      processes.update(processes2inhibit)
+      processes.update(processes2activate)
+      if min(unpack(processes.values())) == 1.0:
+         processes == list(processes.keys())
+      self.params['processes'] = processes
+
+
     def score_target_semantics(self):
       #  do not multithread.  self.Graph will leak
       disease_str = self._disease2str()
@@ -802,17 +828,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
                 'clone2retrieve' : REFERENCE_IDENTIFIERS}
       self.RefCountPandas = self.score_concept('clinical_parameters',**kwargs)[2]
 
-      if 'processes2inhibit' in self.params:
-        self.params['processes'] = self.params['processes2inhibit']
-
-      if 'processes2activate' in self.params:
-        if 'processes' in self.params:
-          if isinstance(self.params['processes'],dict):
-            self.params['processes'].update(self.params['processes2activate'])
-          else:
-            self.params['processes'] += self.params['processes2activate']
-        else:
-          self.params['processes'] = self.params['processes2activate']
+      self.combine_processes()
 
       kwargs = {'connect_by_rels':['Regulation'],
                 'boost_with_reltypes':['FunctionalAssociation'],

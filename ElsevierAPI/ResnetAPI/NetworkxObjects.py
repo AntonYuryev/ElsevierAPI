@@ -227,9 +227,9 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
       my_copy = PSObject(self)
       [my_copy.update_with_list(prop_name,values) for prop_name,values in other.items()]
       if replace_identity:
-          my_copy['URN'] = other['URN']
-          my_copy['Name'] = other['Name']
-          my_copy['ObjTypeName'] = other['ObjTypeName']
+        my_copy['URN'] = other['URN']
+        my_copy['Name'] = other['Name']
+        my_copy['ObjTypeName'] = other['ObjTypeName']
       del other
       return my_copy
       

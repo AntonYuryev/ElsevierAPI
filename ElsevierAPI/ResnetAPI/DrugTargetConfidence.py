@@ -14,7 +14,7 @@ class DrugTargetConsistency(APIcache):
     '''
     drugs2targets = ResnetGraph()
     cache_name = 'drug2target'
-    cache_ent_props = ['Name','PharmaPendium ID']
+    cache_ent_props = ['Name','PharmaPendium ID','Molecular Weight']
     cache_rel_props = ['URN',EFFECT,REFCOUNT,CONSISTENCY,'pX','Affinity']
     drug_target_confidence = dict()
     debug = False
@@ -101,7 +101,7 @@ class DrugTargetConsistency(APIcache):
             print('Will search for their drugs in database')
             add2network = self.d2t_from_db(missing_targets,limit2drugs)
           else:
-             print('All targets are found in drug2target cache')
+            print('All targets are found in drug2target cache')
           
         if add2network:
           self.add2cache(add2network)
@@ -230,7 +230,7 @@ class DrugTargetConsistency(APIcache):
     def __consist_coeff(consistent_count:int,inconsistent_count:int):
         '''
         output:
-          if drug-target has only one disease in common consistency = 0.315
+          if drug-target has only one consistent disease in common consistency = 0.315
           if consistent_count == inconsistent_count, consistency coefficient = 0.0\n
           consistency becomes negative when inconsistent_count > consistent_count\n
           to correct drug ranking use correction = 1+consistency coefficient 

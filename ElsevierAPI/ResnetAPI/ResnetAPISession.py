@@ -157,14 +157,14 @@ class APISession(PSNetworx):
         my_kwargs['what2retrieve'] = my_kwargs.pop(TO_RETRIEVE,CURRENT_SPECS)
         my_kwargs['load_model'] = False
         if my_kwargs['what2retrieve'] == CURRENT_SPECS:  
-            new_session = APISession(self.APIconfig,**my_kwargs)
-            new_session.entProps = list(self.entProps)
-            new_session.relProps = list(self.relProps)
+          new_session = APISession(self.APIconfig,**my_kwargs)
+          new_session.entProps = list(self.entProps)
+          new_session.relProps = list(self.relProps)
         else:
-            new_session = APISession(self.APIconfig,**my_kwargs)
-            new_session.entProps = list(self.entProps)
+          new_session = APISession(self.APIconfig,**my_kwargs)
+          new_session.entProps = list(self.entProps)
         
-        new_session.data_dir = self.data_dir
+        new_session.data_dir = my_kwargs.get('data_dir',self.data_dir)
         new_session.dump_folder = self.dump_folder
         new_session.no_mess = my_kwargs.get('no_mess',self.no_mess)
         new_session.max_threads4ontology = self.max_threads4ontology
@@ -457,26 +457,26 @@ to retreive {my_sent_props} properties')
         dbids_list = list(dbids)
         lock = threading.Lock() if download else None
         with ThreadPoolExecutor(max_workers=self.max_sessions, thread_name_prefix=thread_name) as e:
-            future_sessions = list()
-            futures = list()
-            for i in range(0,len(dbids_list), iteration_size):
-                iter_dbids = dbids_list[i:i+iteration_size]
-                oql_query_with_dbids = my_oql.format(ids=join_list(iter_dbids))
-                iter_name = f'Iteration #{int(i/iteration_size)+1} in {number_of_iterations} for "{request_name}" retrieving {len(iter_dbids)} ids'
-                if self.dump_oql_queries:
-                    self.my_oql_queries.append((oql_query_with_dbids,iter_name))   
-                future_session = self._clone_session()
-                futures.append(e.submit(future_session.choose_process,oql_query_with_dbids,iter_name,download,lock))
-                future_sessions.append(future_session)
-            
-            if not download:
-                for future in as_completed(futures):
-                    entire_graph = entire_graph.compose(future.result())
-            
-            for session in future_sessions:
-                self.__add2self(session)
-                session.close_connection()
-            e.shutdown()
+          future_sessions = list()
+          futures = list()
+          for i in range(0,len(dbids_list), iteration_size):
+            iter_dbids = dbids_list[i:i+iteration_size]
+            oql_query_with_dbids = my_oql.format(ids=join_list(iter_dbids))
+            iter_name = f'Iteration #{int(i/iteration_size)+1} in {number_of_iterations} for "{request_name}" retrieving {len(iter_dbids)} ids'
+            if self.dump_oql_queries:
+                self.my_oql_queries.append((oql_query_with_dbids,iter_name))   
+            future_session = self._clone_session()
+            futures.append(e.submit(future_session.choose_process,oql_query_with_dbids,iter_name,download,lock))
+            future_sessions.append(future_session)
+          
+          if not download:
+              for future in as_completed(futures):
+                  entire_graph = entire_graph.compose(future.result())
+          
+          for session in future_sessions:
+              self.__add2self(session)
+              session.close_connection()
+          e.shutdown()
         
         if self.dump_oql_queries:
             with open(self.data_dir+"iterations_oql.json","w") as o:
@@ -785,33 +785,32 @@ to retreive {my_sent_props} properties')
             print(f'Estimated number of iterations with step {step}: {number_step_iterations}')
 
             for s in range(1, number_of_splits):
-                splitter_splits = list()
-                half = int(len(splitter[0]) / 2)
-                #iter_start = time.time()
-                ids1 = set()
-                ids2 = set()
-                for i, split in enumerate(splitter):
-                    uq_list1 = split[:half]
-                    uq_list2 = split[half:]
-                    if len(splitter) <= number_step_iterations: # it is faster to download large splits individually
-                        self.__iterate2__(oql_query,list(uq_list1),list(uq_list2),
-                        f'Download network: split #{i+1} in {len(splitter)} in iteration #{s} out of {number_of_splits}',
-                        download=True,step=step)
-                    else:
-                        ids1.update(uq_list1)
-                        ids2.update(uq_list2)
-                    splitter_splits.append(uq_list1)
-                    splitter_splits.append(uq_list2)
+              splitter_splits = list()
+              half = int(len(splitter[0]) / 2)
+              #iter_start = time.time()
+              ids1 = set()
+              ids2 = set()
+              for i, split in enumerate(splitter):
+                uq_list1 = split[:half]
+                uq_list2 = split[half:]
+                if len(splitter) <= number_step_iterations: # it is faster to download large splits individually
+                    self.__iterate2__(oql_query,list(uq_list1),list(uq_list2),
+                    f'Download network: split #{i+1} in {len(splitter)} in iteration #{s} out of {number_of_splits}',
+                    download=True,step=step)
+                else:
+                    ids1.update(uq_list1)
+                    ids2.update(uq_list2)
+                splitter_splits.append(uq_list1)
+                splitter_splits.append(uq_list2)
 
-                if len(splitter) > number_step_iterations: # it is faster to accumulate small splits and process them all at once
-                    self.__iterate2__(oql_query,list(ids1),list(ids2),f'Download network: iteration #{s} out of {number_of_splits}',
-                                      download=True,step=step)
-                splitter = splitter_splits
-                remaining_iterations = number_of_splits-s
-                executiontime, remaintime = execution_time2(retreival_start,remaining_iterations,number_of_splits)
-                print(f'Network retrieval iteration {s} out of {number_of_splits} was completed in {executiontime}')
-                print(f'Estimated remaining time for network retrieval: {remaintime}\n\n')
-                s += 1
+              if len(splitter) > number_step_iterations: # it is faster to accumulate small splits and process them all at once
+                  self.__iterate2__(oql_query,list(ids1),list(ids2),f'Download network: iteration #{s} out of {number_of_splits}',
+                                    download=True,step=step)
+              splitter = splitter_splits
+              executiontime, remaintime = execution_time2(retreival_start,s,number_of_splits)
+              print(f'Network retrieval iteration {s} out of {number_of_splits} was completed in {executiontime}')
+              print(f'Estimated remaining time for network retrieval: {remaintime}\n\n')
+              s += 1
             self.close_rnef_dump(self.dump_folder)
         else:
             return super().get_network(_4dbids,connect_by_reltypes,self.relProps,self.entProps)
@@ -1476,11 +1475,11 @@ to retreive {my_sent_props} properties')
         # 50 threads crashed connection
         '''
         input:
-          self.dump_folder must be specified
+          self.dump_folder defaults to ""
           threads - number of threads to use in one download iteration\n
           Inreasing "threads" accelerates download but slows down writing cache file to disk\n
           if cache file writing time exceeds 5 min (Apache default timeout) download will crash   
-        Dumps:
+        dumps:
           results of oql_query to self.dump_folder in self.data_dir.\n
           Splits dump into small files smaller than self.max_rnef_size\n
         use 
@@ -1498,22 +1497,24 @@ to retreive {my_sent_props} properties')
                 result_size = self.ResultSize
                 print(f'\n\nrequest "{request_name}" found {result_size} {return_type}. Begin download in {number_of_iterations} iterations')
                 with ThreadPoolExecutor(1,f'{request_name} Dump{number_of_iterations}iters') as e:
-                    # max_workers = 1 otherwise _dump2rnef gets locked
-                    for i in range(0,number_of_iterations,threads):
-                        iterations_graph = iterations_graph.compose(self.__thread__(threads))
-                        e.submit(self._dump2rnef, iterations_graph.copy(), self.dump_folder,'','',True,lock)
-                        page_ref_count = iterations_graph.weight()
-                        reference_counter += page_ref_count
-                        remaining_iterations = number_of_iterations-i-threads
-                        exec_time, remaining_time = execution_time2(start_time,remaining_iterations,number_of_iterations) 
-                        print("With %d in %d iterations, %d %s in %d results with %d references retrieved in %s using %d threads" % 
-                        (i+threads,number_of_iterations,self.ResultPos,return_type,result_size,reference_counter,exec_time,threads))
-                        if i < number_of_iterations:
-                            print(f'Estimated remaining retrieval time: {remaining_time}')
-                        self.clear()
-                        iterations_graph.clear()
-                    e.shutdown()
+                  # max_workers = 1 otherwise _dump2rnef gets locked
+                  for i in range(0,number_of_iterations,threads):
+                    iterations_graph = iterations_graph.compose(self.__thread__(threads))
+                    iterations_graph.name = f'{request_name} iteration{i+1}of{number_of_iterations}'
+                    e.submit(self._dump2rnef, iterations_graph.copy(), self.dump_folder,'','',True,lock)
+                    page_ref_count = iterations_graph.weight()
+                    reference_counter += page_ref_count
+                    #remaining_iterations = number_of_iterations-i-threads
+                    exec_time, remaining_time = execution_time2(start_time,i+1,number_of_iterations) 
+                    print("With %d in %d iterations, %d %s in %d results with %d references retrieved in %s using %d threads" % 
+                    (i+threads,number_of_iterations,self.ResultPos,return_type,result_size,reference_counter,exec_time,threads))
+                    if i < number_of_iterations:
+                      print(f'Estimated remaining retrieval time: {remaining_time}')
+                    self.clear()
+                    iterations_graph.clear()
+                  e.shutdown()
             else:
+                iterations_graph.name = f'{request_name} iteration1of1'
                 self._dump2rnef(iterations_graph, to_folder=self.dump_folder,lock=lock)
             
             if close_batch:
@@ -1729,64 +1730,61 @@ to retreive {my_sent_props} properties')
 
 
     def __dbid4prop(self,prop:str,psobjs:list[PSObject])->tuple[set[PSObject],set[PSObject]]:
-        prop_values = unpack([list(o.get_props([prop])) for o in psobjs])
-        prop2objs,_ = self.map_props2objs(prop_values,[prop])
-        prop2dbid = dict()
-        for propval,objs in prop2objs.items():
-            for obj in objs:
-                prop2dbid[propval] = obj.dbid()
-
-        mapped_objs = set()
-        notmapped_objs = set(psobjs)
-        for psobj in psobjs:
-            for propval in psobj.get_props([prop]):
-                try:
-                    my_dbid = prop2dbid[propval]
-                    psobj.update_with_value(DBID,my_dbid)
-                    mapped_objs.add(psobj)
-                    notmapped_objs.discard(psobj)
-                except KeyError:
-                    continue
-        return mapped_objs, notmapped_objs
+      prop_values = unpack([list(o.get_props([prop])) for o in psobjs])
+      prop2objs,_ = self.map_props2objs(prop_values,[prop])
+      mapped_objs = set()
+      notmapped_objs = set()
+      new_props = [DBID]+self.entProps
+      for psobj in psobjs:
+        mapped = False
+        for propval in psobj.get_props([prop]):
+          if propval in prop2objs:
+            for mapped_obj in prop2objs[propval]:
+              [psobj.update_with_list(p,mapped_obj.get_props([p]))  for p in new_props]
+              mapped_objs.add(psobj)
+              mapped = True
+        if not mapped:
+          notmapped_objs.add(psobj)
+  
+      return mapped_objs, notmapped_objs
 
 
-    def load_dbids4(self,psobjs:list[PSObject]):
-        '''
-        Return
-        ------
+    def load_dbids4(self,psobjs:list[PSObject],with_props=[]):
+      '''
+      output:
         mapped_objs,no_dbid_objs - [PSObject],[PSObject]
         mapping is done first by Name then by URN
-        '''
-        
-        print(f'Reterieving database identifiers for {len(psobjs)} entities using Name identifier')
-        kwargs = {TO_RETRIEVE:NO_REL_PROPERTIES}
-        my_session = self._clone_session(**kwargs)
-        # mapping by URN has to be first because objects may have duplicate names
-        mapped_objs, notmapped_objs = my_session.__dbid4prop('URN',psobjs)
-        if notmapped_objs: # special case for URN with quotes
-          urns_no_quotes = [f"'{urn[:urn.find('\'')]}%'" for o in notmapped_objs if "'" in (urn := o.urn())]
-          if urns_no_quotes:
-            urn_list_str = ','.join(urns_no_quotes)
-            oql = f"SELECT Entity WHERE URN LIKE ({urn_list_str})"
-            reqname = 'Load object with quotes in URN'
-            objs_urns_no_quotes = self.process_oql(oql,request_name=reqname)._get_nodes()
-            mapped_objs.update(objs_urns_no_quotes)
-            notmapped_objs.difference_update(objs_urns_no_quotes)
+      '''
+      print(f'Reterieving database identifiers for {len(psobjs)} entities using Name identifier')
+      kwargs = {TO_RETRIEVE:NO_REL_PROPERTIES}
+      my_session = self._clone_session(**kwargs)
+      my_session.entProps = with_props
+      # mapping by URN has to be first because objects may have duplicate names
+      mapped_objs, notmapped_objs = my_session.__dbid4prop('URN',psobjs)
+      if notmapped_objs: # special case for URN with quotes
+        urns_no_quotes = [f"'{urn[:urn.find('\'')]}%'" for o in notmapped_objs if "'" in (urn := o.urn())]
+        if urns_no_quotes:
+          urn_list_str = ','.join(urns_no_quotes)
+          oql = f"SELECT Entity WHERE URN LIKE ({urn_list_str})"
+          reqname = 'Load object with quotes in URN'
+          objs_urns_no_quotes = my_session.process_oql(oql,request_name=reqname)._get_nodes()
+          mapped_objs.update(objs_urns_no_quotes)
+          notmapped_objs.difference_update(objs_urns_no_quotes)
 
-        if notmapped_objs: # mapping by Name-to-Name
-          mo, notmapped_objs = my_session.__dbid4prop('Name',notmapped_objs)
+      if notmapped_objs: # mapping by Name-to-Name
+        mo, notmapped_objs = my_session.__dbid4prop('Name',notmapped_objs)
+        mapped_objs.update(mo)
+                
+      if notmapped_objs: # mapping by Name-to-Alias 
+          [x.set_property('Alias',x.name()) for x in notmapped_objs]
+          mo,_ = my_session.__dbid4prop('Alias',notmapped_objs)
           mapped_objs.update(mo)
-                  
-        if notmapped_objs: # mapping by Name-to-Alias 
-            [x.set_property('Alias',x.name()) for x in notmapped_objs]
-            mo,_ = my_session.__dbid4prop('Alias',notmapped_objs)
-            mapped_objs.update(mo)
 
-        urn2dbids = {n.urn():n[DBID] for n in mapped_objs}
-        self.Graph.set_node_annotation(urn2dbids,DBID)
-        print(f'Loaded {len(mapped_objs)} database identitiers for {len(psobjs)} entities')
-        my_session.close_connection()
-        return mapped_objs,notmapped_objs
+      urn2dbids = {n.urn():n[DBID] for n in mapped_objs}
+      self.Graph.set_node_annotation(urn2dbids,DBID)
+      print(f'Loaded {len(mapped_objs)} database identitiers for {len(psobjs)} entities')
+      my_session.close_connection()
+      return mapped_objs,notmapped_objs
     
 
     def update_graph(self,g:ResnetGraph,with_node_props:list[str],with_rel_props:list[str],inplace=True):
@@ -1806,7 +1804,7 @@ to retreive {my_sent_props} properties')
                 new_g = new_session.iterate_oql(oql,urns,use_cache=False,request_name=req_name)
                 new_g.load_references()
                 my_graph.add_graph(new_g)
-                time_passed, remaining_time = execution_time2(start,number_of_iterations-i,number_of_iterations)
+                time_passed, remaining_time = execution_time2(start,i+1,number_of_iterations)
                 print(f'Retrieved {i+chunk_len} entities out of {len(objs)} in {time_passed}')
                 print(f'Estimated remaining update time: {remaining_time}')
 
@@ -1818,7 +1816,6 @@ to retreive {my_sent_props} properties')
             start = time.time()
             chunk_len = 10000
             number_of_iterations = math.ceil(len(urns)/chunk_len)
-            iteration_counter = 0
             for i in range(0,len(urns),chunk_len):
                 update_len = min(len(urns)-i,chunk_len)
                 req_name = f'Updating {update_len} in {len(objs)} Relations with {len(with_rel_props)} properties'
@@ -1826,9 +1823,7 @@ to retreive {my_sent_props} properties')
                 new_g.load_references()
                 #new_g_rels = new_g.psrels_with()
                 my_graph.add_graph(new_g)
-                iteration_counter +=1
-                remaining_iteration = number_of_iterations-iteration_counter
-                time_passed, remaining_time = execution_time2(start,remaining_iteration,number_of_iterations)
+                time_passed, remaining_time = execution_time2(start,i+1,number_of_iterations)
                 retreived_len = min(len(urns),i+chunk_len)
                 print(f'Retrieved {retreived_len} relations out of {len(objs)} in {time_passed}')
                 print(f'Estimated remaining update time: {remaining_time}')

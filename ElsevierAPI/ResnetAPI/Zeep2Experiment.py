@@ -1,5 +1,5 @@
 from math import log2, isnan
-import time
+import time, os
 from .ResnetGraph import ResnetGraph,PSObject
 from ..pandas.panda_tricks import df, pd,np
 from  .PathwayStudioZeepAPI import DataModel
@@ -7,6 +7,7 @@ import scipy.stats as stats
 from datetime import timedelta
 
 HAS_PVALUE = 'hasPvalue'
+ENSEMBL_ID = 'Ensembl ID'
 
 class Sample(PSObject):
 
@@ -26,11 +27,11 @@ class Sample(PSObject):
 
     def has_pvalue(self):
         try:
-            return self[HAS_PVALUE]
+          return self[HAS_PVALUE]
         except KeyError:
-            haspval = not self.data['pvalue'].dropna().empty
-            self[HAS_PVALUE] = [haspval]
-            return haspval
+          haspval = not self.data['pvalue'].dropna().empty
+          self[HAS_PVALUE] = [haspval]
+          return haspval
 
 
     def mapped_data(self):
@@ -103,23 +104,22 @@ class Experiment(PSObject):
 
     def identifier_name(self):
         '''
-        Return
-        ------
-        name of the first column in self.identifiers\n
-        This name must be identical to property name of PSObject in ResnetGraph for mapping self.identifiers[URN] column
+        output:
+          name of the first column in self.identifiers\n
+          This name must be identical to property name of PSObject in ResnetGraph for mapping self.identifiers[URN] column
         '''
         try:
             mapping_name = self.identifiers.columns[0]
             if mapping_name.upper()[:7] == 'ENSEMBL': # To replace "ENSEMBLE_ID","ENSEMBLE ID"
-                self.identifiers = self.identifiers.copy_df(colname_mapper={mapping_name:'Ensembl ID'})
-                mapping_name = 'Ensembl ID'
+                self.identifiers = self.identifiers.dfcopy(rename2={mapping_name:ENSEMBL_ID})
+                mapping_name = ENSEMBL_ID
             return mapping_name
         except KeyError:
             print('self.identifiers has no column names !!!')
             return str()
 
 
-    def list_identifiers(self):
+    def list_identifiers(self)->list[str]:
         identifier_col = self.identifier_name()
         return self.identifiers.loc[:,identifier_col].tolist()
 
@@ -137,31 +137,30 @@ class Experiment(PSObject):
         return [str(k) for i,k in enumerate(sample_name_list) if i in sample_ids]
 
 
-    def get_samples(self, sample_names=[],sample_ids=[]):
-        s_names = sample_names
-        if sample_ids:
-            s_names += self.get_sample_names(sample_ids)
+    def get_samples(self, sample_names=[],sample_ids=[])->list[Sample]:
+      s_names = sample_names
+      if sample_ids:
+        s_names += self.get_sample_names(sample_ids)
 
-        if s_names:
-            return [v for k,v in self.samples.items() if k in s_names]
-        else:
-            return [v for k,v in self.samples.items()]
+      if s_names:
+        return [v for k,v in self.samples.items() if k in s_names]
+      else:
+        return [v for k,v in self.samples.items()]
         
     
     def mask_by_pval(self, max_pval=0.05):
-        masked_experiment = Experiment(self)
-        masked_experiment.identifiers = self.identifiers.dfcopy()
-        for sample in self.get_samples():
-            masked_counter = 0
-            sample_copy = sample.copy()
-            if sample_copy.has_pvalue():
-                for idx in sample_copy.data.index:
-                    if sample_copy.data.at[idx,'pvalue'] > max_pval:
-                        sample_copy.data.loc[idx,'value'] = np.nan
-                        masked_counter += 1
-            masked_experiment.samples[sample['Name'][0]] = sample_copy
-            print(f'{masked_counter} rows out of {len(sample.data)} total in sample {sample.name()} were masked because their p-value was greater than {max_pval}')
-        return masked_experiment
+      masked_experiment = Experiment(self)
+      masked_experiment.identifiers = self.identifiers.dfcopy()
+      for sample in self.get_samples():
+        sample_copy = sample.copy()
+        if sample_copy.has_pvalue():
+          mask = sample_copy.data['pvalue'] > max_pval
+          masked_counter = mask.sum()  # Count the number of True values in the mask
+          sample_copy.data.loc[mask, 'value'] = np.nan
+
+        masked_experiment.samples[sample.name()] = sample_copy
+        print(f'{masked_counter} rows out of {len(sample.data)} total in sample {sample.name()} were masked because their p-value was greater than {max_pval}')
+      return masked_experiment
 
 #################  CONSTRUCTORS CONSTRUCTORS CONSTRUCTORS  ###################################
     @classmethod
@@ -206,21 +205,19 @@ class Experiment(PSObject):
 
 
     @classmethod
-    def from_file(cls,*args,**kwargs):
+    def from_file(cls,exp_fname:str,**kwargs):
         """
-        Input
-        -----
-        filename = args[0], reads files with .xlsx, .tsv, .txt extensions\n
-        data_type from ['LogFC', 'Intensity', 'LogIntensity', 'SignedFC']\n
-        identifier_column - default 0\n
-        phenotype_rows - default []\n
-        header - default 0\n
-        has_pvalue - default True\n
-        sample_ids - defaults [], overrides "last_sample"
-        last_sample - column with last sample, default None. If experiment has p-value columns "last_sample" must point to the last p-value column\n
+        input:
+          filename = args[0], reads files with .xlsx, .tsv, .txt extensions\n
+          data_type from ['LogFC', 'Intensity', 'LogIntensity', 'SignedFC'], default - LogFC\n
+          identifier_column - default 0\n
+          phenotype_rows - default []\n
+          header - default 0\n
+          has_pvalue - default True\n
+          sample_ids - defaults [], overrides "last_sample"
+          last_sample - column with last sample, default None. If experiment has p-value columns "last_sample" must point to the last p-value column\n
         """
-        experiment_file_name = str(args[0])
-        identifier_column=int(kwargs.get('identifier_column',0))
+        identifier_column=kwargs.get('identifier_column',0)
         phenotype_rows=list(kwargs.get('phenotype_rows',[]))
         header=int(kwargs.get('header',0))
         data_type=str(kwargs.get('data_type','LogFC'))
@@ -233,14 +230,13 @@ class Experiment(PSObject):
                 last_sample += 1
 
         if phenotype_rows: 
-            exp_df = df.read(experiment_file_name,skiprows=phenotype_rows,header=header)
-            phenotypes_pd = df.read(experiment_file_name,header=header, nrows=len(phenotype_rows),index_col=False)
+            exp_df = df.read(exp_fname,skiprows=phenotype_rows,header=header)
+            phenotypes_pd = df.read(exp_fname,header=header, nrows=len(phenotype_rows),index_col=False)
         else:
-            exp_df = df.read(experiment_file_name,header=header,index_col=False)
+            exp_df = df.read(exp_fname,header=header,index_col=False)
             phenotypes_pd = df()
 
-        experiment_name = experiment_file_name[:experiment_file_name.rfind('.')]
-        experiment_name = experiment_name[experiment_name.rfind('/')+1:]
+        experiment_name = os.path.splitext(os.path.basename(exp_fname))[0]
         range_end = len(exp_df.columns) if type(last_sample) == type(None) else identifier_column+last_sample 
 
         samples = list()
@@ -277,8 +273,37 @@ class Experiment(PSObject):
         identifier_name = exp_df.columns[identifier_column]
         identifiers = exp_df[identifier_name].to_list()
         experiment = cls({'Name':[experiment_name]},identifier_name,identifiers,samples)
-        print(f'Read {experiment_name} from {experiment_file_name}')
+        print(f'Read {experiment_name} from {exp_fname}')
         return experiment
+    
+
+    @classmethod
+    def fromDESeq2(cls,experiment_file_name:str,ensemblid_col ='gene_id'):
+      """
+      input:
+        filename = args[0], reads files extensions .tab, .tsv, .txt \n
+        kwargs:
+          identifier_column - default "gene_id"\n
+      """
+      exp_df = df.read(experiment_file_name,header=0,index_col=False)
+      experiment_name = os.path.splitext(os.path.basename(experiment_file_name))[0]
+      sample_name = experiment_name+':log2FoldChange'
+
+      sample = Sample({'Name':[sample_name]})
+      sample['Type'] = ['Ratio']
+      sample['Subtype'] = ['Log']
+  
+      values = exp_df['log2FoldChange'].to_list()
+      pvalues = exp_df['pvalue'].to_list()
+      sample.data = df.from_dict({'value':values,'pvalue':pvalues})
+      sample[HAS_PVALUE] = [0] # to make consistent with database annotations
+
+      samples =[sample]
+      identifiers = exp_df[ensemblid_col].to_list()
+      identifiers = [i[:i.rfind('.')] for i in identifiers] # removing version number from Ensemble ID
+      experiment = Experiment({'Name':[experiment_name]},ENSEMBL_ID,identifiers,samples)
+      print(f'Read {experiment_name} from {experiment_file_name}')
+      return experiment
 
 
     def map(self, using_id2objs:dict):
@@ -289,7 +314,6 @@ class Experiment(PSObject):
         '''
         identifier_name = self.identifier_name()
         identifiers = self.list_identifiers()
-
         unmapped_identifiers = set(identifiers).difference(set(using_id2objs.keys()))
         unmapped_str = '\n'.join(unmapped_identifiers)
         print(f'Following {len(unmapped_identifiers)} identifiers out of {len(identifiers)} in {self.name()} experiment were not mapped:\n{unmapped_str}')
@@ -299,13 +323,13 @@ class Experiment(PSObject):
         identifiers_lst = list()
         urn_lst = list()
         for i in identifiers:
-            try:
-                psobjs = using_id2objs[i]
-                urns = [o.urn() for o in psobjs]
-                identifiers_lst += [i]*len(urns)
-                urn_lst += urns
-            except KeyError:
-                continue     
+          try:
+            psobjs = using_id2objs[i]
+            urns = [o.urn() for o in psobjs]
+            identifiers_lst += [i]*len(urns)
+            urn_lst += urns
+          except KeyError:
+            continue     
         assert(len(identifiers_lst) == len(urn_lst))
                 
         mapped_entities_df = df.from_dict({identifier_name:identifiers_lst,'URN':urn_lst})        
