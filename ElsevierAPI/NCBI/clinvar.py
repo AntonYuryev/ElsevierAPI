@@ -2,10 +2,9 @@ import urllib.request, urllib.parse, os, time
 from lxml import etree as ET
 from urllib.error import HTTPError
 from time import sleep
-from ..utils import dir2flist, execution_time,pretty_xml,next_tag,dir2flist,all_tags,urn_encode
-from ..ResnetAPI.NetworkxObjects import PSObject,PSRelation
+from ..utils import dir2flist, execution_time,pretty_xml,next_tag,dir2flist,replace_non_unicode,urn_encode
+from ..ResnetAPI.NetworkxObjects import PSObject,PSRelation,AUTHORS,JOURNAL,PUBYEAR
 from ..ResnetAPI.ResnetGraph import ResnetGraph,Reference,TITLE,SENTENCE,OBJECT_TYPE
-from ..ResnetAPI.ResnetAPIcache import APIcache
 from collections import defaultdict
 
 
@@ -18,7 +17,7 @@ CLINVAR_RNEF_PROPS = ['Name','Alias','Experimental System',CLINVAR_CLASSIFICATIO
 class cvSNP(PSObject):
    def __init__(self,name:str,id:str,database='dbSNP'):
        super().__init__()
-       self.set_property('Name',name)
+       self.set_property('Name',replace_non_unicode(name))
        self.Idendifires = {database:id}
        urn = 'urn:agi-gv-'+database.lower()+':'+id
        self.set_property('URN',urn)
@@ -73,37 +72,39 @@ def rs2rcv(rsids:list):
   return rcv_ids
 
 
-def parse_measure(measure:ET._Element,only_rsids=set())->tuple[PSObject,PSObject,set]:
+def parse_measure(measure:ET._Element,only_rsids=set(),assertion_id='')->tuple[PSObject,PSObject,set]:
     '''
     output:
-      gv,gene,molecular_consequences
+      gv, gene, molecular_consequences
     '''
+    empty_return = tuple(PSObject(),PSObject(),set())
     gv = PSObject({OBJECT_TYPE:['GeneticVariant']})
     name_tag = measure.find('./Name')
     if name_tag is not None:
       gv_name = name_tag.text.strip()
       if gv_name:
-        gv.update_with_value('Name',gv_name)
+        gv.update_with_value('Name',replace_non_unicode(gv_name))
 
       elemval_tag = name_tag.find('./ElementValue')
       if elemval_tag is not None:
         gvs_code = elemval_tag.text
-        gv.update_with_value('Alias',gvs_code)
+        gv.update_with_value('Alias',replace_non_unicode(gvs_code))
 
     rs = ''
     gv_ids = dict()
     gv_xrefs = measure.findall('./XRef')
     for xref in gv_xrefs:
-      db = xref.get('DB')
+      db = str(xref.get('DB'))
       if db  == 'dbSNP':
         rs = 'rs'+xref.get('ID')
       else:
         identifier = xref.get('ID')
-        gv.update_with_value(db +' ID',identifier)
+        db = db2attr(db)
+        gv.update_with_value(db,identifier)
         gv_ids[db] = identifier
     
     if only_rsids and rs not in only_rsids:
-      return PSObject(),PSObject(),set()
+      return empty_return
 
     if not gv.name():
       if rs:
@@ -120,7 +121,13 @@ def parse_measure(measure:ET._Element,only_rsids=set())->tuple[PSObject,PSObject
         db,identifier = next(iter(gv_ids.items()))
         gv.update_with_value('URN',urn_encode(identifier,f'clinvar-{db}'))
     else:
-        gv.update_with_value('URN',urn_encode(gv.name(),f'clinvar'))
+        gvname = gv.name()
+        if gvname:
+          gv.update_with_value('URN',urn_encode(gv.name(),f'clinvar'))
+        else:
+          print(f'cannot create URN for SNP in  Clinvar record {assertion_id}')
+          return empty_return
+
 
     gene_name = ''
     geneid = str()
@@ -165,14 +172,25 @@ def parse_measure(measure:ET._Element,only_rsids=set())->tuple[PSObject,PSObject
     return gv,gene,molecular_consequences
 
 
+@staticmethod
+def db2attr(db:str):
+  normdb = str(db)
+  comma_pos = normdb.find(',')
+  if comma_pos != -1:
+    normdb = normdb[comma_pos+1:].strip()
+    normdb = normdb.replace('&amp;','')
+    normdb = normdb.replace('&','')
+  return replace_non_unicode(normdb[:47]+' ID') # max attribute name length = 50 
+
+
 def parse_trait(assertion:ET._Element):
     trait = assertion.find('./TraitSet/Trait')
     assert(isinstance(trait,ET._Element))
     trait_type = trait.get('Type','')
 
     traid_ids = defaultdict(set)
-    [traid_ids[xr.get('DB') + ' ID'].add(xr.get('ID')) for xr in trait.findall('./XRef') if xr.get('Type') != 'Allelic variant']
-    [traid_ids[xr.get('DB') + ' ID'].add(xr.get('ID')) for xr in trait.findall('./Name/XRef') if xr.get('Type') != 'Allelic variant']
+    [traid_ids[db2attr(xr.get('DB'))].add(xr.get('ID')) for xr in trait.findall('./XRef') if xr.get('Type') != 'Allelic variant']
+    [traid_ids[db2attr(xr.get('DB'))].add(xr.get('ID')) for xr in trait.findall('./Name/XRef') if xr.get('Type') != 'Allelic variant']
 
     aliases = [n.find('./ElementValue').text for n in trait.findall('./Name')]
     aliases = [a for a in aliases if a not in  ['not provided','not specified','AllHighlyPenetrant']]
@@ -232,6 +250,7 @@ def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject
 
   title = ClinVarSet.find('./Title').text
   assertion = ClinVarSet.find('.ReferenceClinVarAssertion')
+  assertion_id = assertion.get('ID')
   
   classifications = {x.text for x in assertion.findall('Classifications/GermlineClassification/Description')}
   #ClinVar contains benign and unknown significancs SNPs that do not have disease associations
@@ -240,12 +259,12 @@ def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject
   if not include_benign:
     for c in classifications:
       if c in ['Benign','Likely benign','Uncertain significance']:
-        return rel_fa,rel_gc
+        return PSRelation(),PSRelation()
 
   measure_elem = assertion.find('./MeasureSet/Measure')
   if measure_elem is None:
     measure_elem = assertion.find('./GenotypeSet/MeasureSet/Measure')
-  gv,gene,molecular_consequences = parse_measure(measure_elem,only4rsids)
+  gv,gene,molecular_consequences = parse_measure(measure_elem,only4rsids,assertion_id)
   if not gv:
     return rel_fa,rel_gc
   
@@ -257,13 +276,13 @@ def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject
   observed_data = assertion.find('.ObservedIn/ObservedData')
   sentence = ''
   if observed_data is None:
-    gvdis_ref = Reference(TITLE,title)
-    gvgene_ref = Reference(TITLE,title)
+    gvdis_ref = Reference('Clinvar',assertion_id)
+    gvgene_ref = Reference('Clinvar',assertion_id)
   else:
     citation = observed_data.find('./Citation')
     if citation is None:
-      gvdis_ref = Reference(TITLE,title)
-      gvgene_ref = Reference(TITLE,title)
+      gvdis_ref = Reference('Clinvar',assertion_id)
+      gvgene_ref = Reference('Clinvar',assertion_id)
     else:
       sentence = observed_data.find('./Attribute').text
       if sentence == 'not provided':
@@ -292,8 +311,8 @@ def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject
         gvdis_ref[TITLE] = [title]
         gvgene_ref[TITLE] = [title]
       else:
-        gvdis_ref = Reference(TITLE,title)
-        gvgene_ref = Reference(TITLE,title)
+        gvdis_ref = Reference('Clinvar',assertion_id)
+        gvgene_ref = Reference('Clinvar',assertion_id)
 
   disease,sentences = parse_trait(assertion)
   if sentence:
@@ -302,10 +321,20 @@ def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject
   if disease:
     disease.remap(mapdic,['Name','Alias'])
       
+    gvdis_ref.Identifiers['Clinvar'] = assertion_id
+    gvdis_ref['Clinvar ID'] = [assertion_id]
     text_ref = gvdis_ref._make_textref()
+    if TITLE not in gvdis_ref:
+      gvdis_ref[TITLE] = ['ClinVar: public archive of interpretations of clinically relevant variants']
+    gvdis_ref[AUTHORS] = ['Landrum, M.J. et al.']
+    gvdis_ref[JOURNAL] = ['Nucleic Acids Res.']
+    gvdis_ref[PUBYEAR] = [2016]
     gvd_snippet = dict()
     if sentence:
       gvd_snippet[SENTENCE] = set(sentences)
+    else:
+      gvd_snippet[SENTENCE] = {'Record from ClinVar (NCBI) includes this association between SNP (SNV) and phenotype'}
+    
     if method:
       gvd_snippet['Experimental System'] = {method}
     if gvd_snippet:
@@ -321,12 +350,19 @@ def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject
     gene.remap(mapdic,['LocusLink ID','Name','Alias'])
     mol_consequences = '. '.join(molecular_consequences)
     if mol_consequences:
+      gvgene_ref.Identifiers['Clinvar'] = assertion_id
       text_ref = gvgene_ref._make_textref()
       gvg_snippet = dict()
       gvg_snippet[SENTENCE] = {mol_consequences}
       if gvg_snippet:
         gvg_snippet['Source'] = {'ClinVar'}
         gvgene_ref.add_snippet(text_ref,gvg_snippet)
+
+    if TITLE not in gvdis_ref:
+      gvgene_ref[TITLE] = ['ClinVar: public archive of interpretations of clinically relevant variants']
+    gvgene_ref[AUTHORS] = ['Landrum, M.J. et al.']
+    gvgene_ref[JOURNAL] = ['Nucleic Acids Res.']
+    gvgene_ref[PUBYEAR] = [2016]
 
     dict4rel_gc = defaultdict(list)
     dict4rel_gc[OBJECT_TYPE].append('GeneticChange')
