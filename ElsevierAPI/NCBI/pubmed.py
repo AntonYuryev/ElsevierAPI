@@ -5,50 +5,24 @@ import xml.etree.ElementTree as ET
 from time import sleep
 from collections import defaultdict
 from titlecase import titlecase
+from ..utils import atempt_request4,remove_duplicates,sortdict
 
 PUBMED_URL = 'https://pubmed.ncbi.nlm.nih.gov/?'
 PMC_URL = 'https://www.ncbi.nlm.nih.gov/pmc/?'
 DOI_URL = 'http://dx.doi.org/'
 RETMAX = 10000
 NCBI_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__ncbipubmedcache__/')
-#query = ['Aquilegia OR Arabidopsis OR Hordeum OR Brassica OR Theobroma OR Phaseolus OR Gossypium OR "Vitis vinifera" OR Mesembryanthemum OR Lactuca OR "Zea mays" OR Medicago OR "Nicotiana benthamiana" OR Allium OR Capsicum OR "Petunia hybrida" OR Pinus OR Strobus OR Solanum OR Oryza OR Secale OR "Sorghum bicolor" OR Picea OR Saccharum OR Helianthus OR Festuca OR Lycopersicon OR Triphysaria OR Triticum OR Populus OR anthocyanin OR "abscisic acid" OR brassinolide OR brassinosteroid OR brassinosteroids OR cytokinin OR cytokinins OR gibberellin OR gibberellins OR "gibberellic acid" OR "jasmonic acid" OR jasmonate OR jasmonates OR cultivar OR cultivars OR endosperm AND ((2021/08/07[PDat]:3019/12/31[PDat])','ArabidopsisUpdate']
-#query = ['(rice OR oryza OR sativa) AND (2021/08/07[PDat]:3019/12/31[PDat])','RiceUpdate']
-#query= ['(corn OR maize OR zea OR mays) AND (2021/08/07[PDat]:3019/12/31[PDat])','CornUpdate']
-#query= '(COVID19 OR SARS OR coronavirus) AND ("2020/09/17"[Date - Create] : "3000"[Date - Create])'
-#query= "cytolethal distending toxin"
-#query = '"inflammaging" OR "Inflamm-aging" OR "inflamm-ageing" OR "inflammageing" OR "age-increased inflammation" OR "age-associated inflammation" OR "age increased inflammation" OR "age associated inflammation"'
-#query= '("lewy body" OR "lewy bodies" OR protofibrils OR protofibril)'
-#query='(infection OR infectious OR pathogen OR parasite) AND (1989 [dp] OR 1994 [dp] OR 1999 [dp] OR 2004 [dp] OR 2009 [dp] OR 2014 [dp] OR 2019 [dp]) AND aug NOT (virus OR viral)'
-#query = 'MAIT OR "Mucosa-associated invariant T" OR "Mucosa-associated invariant T cells" OR "Mucosa-associated invariant T cell"'
-#query = 'bacillus OR subtilis AND ("2021/10/21"[Date - Create] : "3000"[Date - Create])'
-#qname = 'Bsubtilis_since10212021'
-#query = 'Clostridium AND ("2021/10/21"[Date - Create] : "3000"[Date - Create])'
-#qname = 'Clostridium_since10212021'
-#query = 'Cupriavidus OR necator AND ("2021/10/21"[Date - Create] : "3000"[Date - Create])'
-#qname = 'Cnecator_since10212021'
-#query = 'escherichia OR coli AND ("2021/10/21"[Date - Create] : "3000"[Date - Create])'
-#qname = 'Ecoli_since10212021'
-#query = 'H3K27M OR (K27M AND histone)'
-#query = '(mutant OR mutated OR mutation OR mutations) AND (p53 OR tp53)'
-#query = '("2019/11/29"[Date - Entry] : "3000"[Date - Entry])'
-#query = '"Perineuronal nets" OR "Perineuronal net" OR PNNs'
-#query = 'paxalisib OR GDC0084 OR "GDC-0084" OR P5DKZ70636 OR "EX-A1019"'
-#query = '(sulfoquinovosyl OR monogalactosylmonoacylglycerol OR digalactosyldiacylglycerol OR monogalactosyldiacylglycerol OR digalactosylmonoacylglycerol OR monogalactosylmonoacylglycerol OR digalactosyldiacylglycerols OR monogalactosyldiacylglycerols OR digalactosylmonoacylglycerols) AND (human OR sapiens OR mammal OR rat OR mouse)'
-#query = 'serine OR threonine OR tyrosine OR histidine'
-#query = ['"retracted article" OR  "retracted publication"','retracted articles']
-#query = ["Altria[Affil] OR Cronos Group[Affil] OR Lexaria Bioscience[Affil] OR Micreos[Affil] OR Philip Morris International[Affil] OR Softhale[Affil] OR Biovotion[Affil] OR Fertin Pharma[Affil] OR Swedish Match[Affil] OR OtiTopic[Affil] OR Biognosys[Affil] OR Syqe Medical[Affil] OR Vectura Group[Affil] OR Biofourmis[Affil] OR Japan Tobacco[Affil] OR Tularik[Affil] OR Akros Pharma[Affil] OR Torii Pharmaceutical[Affil] OR Imperial Brands[Affil] OR Auxly Cannabis[Affil] OR Compania de Distribucion[Affil] OR Oxford Cannabinoid Technologies[Affil] OR British American Tobacco[Affil] OR Philter Labs[Affil] OR Open Book Extracts[Affil] OR Velo[Affil] OR The Kanvas Co[Affil] OR Cannopeia[Affil] OR Purissima[Affil] OR Hesperos[Affil] OR Organigram[Affil] OR Trait Biosciences[Affil] OR Ajna Biosciences[Affil] OR Niconovum[Affil] OR Sanity Group[Affil] OR PlatoScience[Affil]' OR Charlotte's Web[Affil] OR KBio[Affil]",'TobaccoCompaniesPubs']
-query = ["(Altria[Affil] OR Cronos Group[Affil] OR Lexaria Bioscience[Affil] OR Micreos[Affil] OR Philip Morris International[Affil] OR Softhale[Affil] OR Biovotion[Affil] OR Fertin Pharma[Affil] OR Swedish Match[Affil] OR OtiTopic[Affil] OR Biognosys[Affil] OR Syqe Medical[Affil] OR Vectura Group[Affil] OR Biofourmis[Affil] OR Japan Tobacco[Affil] OR Tularik[Affil] OR Akros Pharma[Affil] OR Torii Pharmaceutical[Affil] OR Imperial Brands[Affil] OR Auxly Cannabis[Affil] \
-OR Compania de Distribucion[Affil] OR Oxford Cannabinoid Technologies[Affil] OR British American Tobacco[Affil] OR Philter Labs[Affil] OR Open Book Extracts[Affil] OR Velo[Affil] OR The Kanvas Co[Affil] OR Cannopeia[Affil] OR Purissima[Affil] OR Hesperos[Affil] OR Organigram[Affil] \
-OR Trait Biosciences[Affil] OR Ajna Biosciences[Affil] OR Niconovum[Affil] OR Sanity Group[Affil] OR PlatoScience[Affil]' OR Charlotte's Web[Affil] OR KBio[Affil]) AND (2023[Date - Create] : 3000[Date - Create])",'TobaccoCompaniesPubsSince2023']
 
 
 def removeThe(t:str):
     return t[4:] if t.startswith('The ') else t
 
+
 class NCBIeutils:
   baseURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
   
   def __init__(self,query:str):
+      #database names are in # from https://www.ncbi.nlm.nih.gov/books/NBK25497/table/chapter2.T._entrez_unique_identifiers_ui/?report=objectonly
       self.params = {'db':'pubmed','term':query}
       self.journalCounter = defaultdict(int)
       self.cache_path = NCBI_CACHE
@@ -61,14 +35,16 @@ class NCBIeutils:
       return self.baseURL+'efetch.fcgi?'+urllib.parse.urlencode(params)
   
   def mydb(self):
-      return self.params['db']
+    return self.params['db']
   
   def myquery(self):
-      return self.query[0]
+    return self.query
   
 
-  def get_count(self):
-    count_param = self.params = {'db':self.mydb(),'term':self.myquery()}
+  def get_count(self, query:str=''):
+    q = query if query else self.myquery()
+    self.params = {'db':self.mydb(),'term':q}
+    count_param = dict(self.params)
     count_param.update({'rettype':'count'})
     my_url = self._esearch_url(count_param)
     req = urllib.request.Request(url=my_url)
@@ -83,6 +59,7 @@ class NCBIeutils:
     [PMIDs] with size < RETMAX sorted in ascending order
     '''
     my_params = {'db':self.mydb(),'term':self.myquery(),'retstart':0,'retmax':RETMAX,'sort':'pub_date'}
+    my_params.update(params)
     my_url = self._esearch_url(my_params)
     req = urllib.request.Request(url=my_url)
     xml_str = urllib.request.urlopen(req).read()
@@ -101,16 +78,8 @@ class NCBIeutils:
       ------
       List of PMIDs sorted by PDAT
       '''
-      json_id_dump = query_name+'.json'
-      json_id_path = self.cache_path+json_id_dump
-
-      def remove_duplicates(uids:list):
-        '''
-        keeps uids order in uids
-        '''
-        seen = set()
-        return [id for id in uids if id not in seen and not seen.add(id)]
-      
+      json_id_dump = query_name+'PMIDs.json'
+      json_id_path = os.path.join(self.cache_path,json_id_dump)
       try:
           all_ids = json.load(open(json_id_path,'r'))
           print(f'Loaded {len(all_ids)} IDs from {json_id_dump}')
@@ -133,11 +102,11 @@ class NCBIeutils:
                     
 
   def fetch(self,query_name:str):
-    ids = self.get_uids(query_name)
+    allids = self.get_uids(query_name)
     params = {'db':self.params['db'],'rettype':'XML'}
     stepSize = 200
-    for i in range(0, len(ids), stepSize):
-      ids = ','.join(str(s) for s in ids[i:i+stepSize])
+    for i in range(0, len(allids), stepSize):
+      ids = ','.join(str(s) for s in allids[i:i+stepSize])
       params.update({'id':ids})
       my_url = self._efetch_url(params)
       req = urllib.request.Request(url=my_url)
@@ -148,6 +117,7 @@ class NCBIeutils:
   def path2cache(self,query_name:str):
       return self.cache_path+query_name+".xml"
 
+
   def download_pubmed(self,query_name:str):
       """
       Output
@@ -157,26 +127,28 @@ class NCBIeutils:
       """
       fpath = self.path2cache(query_name)
       result_counter = 0
-      with open(fpath, "a", encoding='utf-8') as file_result:
-          file_result.write('<PubmedArticleSet>\n')
-          for xml_str in self.fetch(query_name):
-              abstractTree = ET.fromstring(xml_str)
-              articles = abstractTree.findall('PubmedArticle')
-              result_counter += len(articles)
-              for article in articles:
-                  journal = str(article.find('MedlineCitation/Article/Journal/Title').text)
-                  jnames = normalize_journal(journal)
-                  for j in jnames:
-                      self.journalCounter[j] += 1
-                  file_result.write(ET.tostring(article, encoding="unicode"))
-          file_result.write('</PubmedArticleSet>\n')
-          print(f'Downloaded {result_counter} pubmed abstracts')
-          print(f'Downloaded abstracts are in "{fpath}"')
+      with open(fpath, "w", encoding='utf-8') as file_result:
+        file_result.write('<PubmedArticleSet>\n')
+        for xml_str in self.fetch(query_name):
+          abstractTree = ET.fromstring(xml_str)
+          articles = abstractTree.findall('PubmedArticle')
+          result_counter += len(articles)
+          for article in articles:
+            journal = str(article.find('MedlineCitation/Article/Journal/Title').text)
+            jnames = normalize_journal(journal)
+            for j in jnames:
+                self.journalCounter[j] += 1
+            file_result.write(ET.tostring(article, encoding="unicode"))
+#          sleep(1.0)
+        file_result.write('</PubmedArticleSet>\n')
+        print(f'Downloaded {result_counter} pubmed abstracts')
+        print(f'Downloaded abstracts are in "{fpath}"')
 
-          fstatpath = os.path.join(self.cache_path,query_name+'_stats.tsv')
-          with open(fstatpath, "w", encoding='utf-8') as f:
-              [f.write(f'{k}\t{v}\n') for k,v in self.journalCounter.items()]
-          print(f'Statistics is in "{fstatpath}"')
+        fstatpath = os.path.join(self.cache_path,query_name+'_stats.tsv')
+        journalCounter = sortdict(journalCounter,by_key=False,reverse=True)
+        with open(fstatpath, "w", encoding='utf-8') as f:
+            [f.write(f'{k}\t{v}\n') for k,v in self.journalCounter.items()]
+        print(f'Statistics is in "{fstatpath}"')
 
 
 def pubmed_hyperlink(pmids:list,display_str='',as_excel_formula=True):
@@ -293,20 +265,15 @@ def docid2pmid(docids:list[str]):
   docid2pmid = dict()
   idstr = ','.join(docids)
   requesturl = 'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids='+idstr+'&format=json'
-  req = urllib.request.Request(url=requesturl)
-  response_dict = json.loads(urllib.request.urlopen(req).read())
+  response_dict = json.loads(atempt_request4(requesturl))
   for record in response_dict["records"]:
-    pmid = record['pmid']
-    pmcid = record['pmcid']
-    doi = record.get('doi','')
-    if doi in docids:
-      docid2pmid[doi] = pmid
-    else:
-      docid2pmid[pmcid] = pmid
+    try:
+      pmid = record['pmid']
+      pmcid = record['pmcid']
+      doi = record.get('doi','')
+      doc_id = doi if doi in docids else pmcid
+      docid2pmid[doc_id] = pmid
+    except KeyError:
+        continue
   return docid2pmid
-
-
-if __name__ == "__main__":
-  ncbi = NCBIeutils(query[0])
-  ncbi.download_pubmed(query[1])
 
