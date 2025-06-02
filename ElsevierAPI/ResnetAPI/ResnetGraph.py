@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor,as_completed
 from .NetworkxObjects import PSObject,PSRelation,len, DIRECT, INDIRECT, DBID,EFFECT
 from .NetworkxObjects import REGULATORS,TARGETS,CHILDS,REFCOUNT,STATE,DIRECT_RELTYPES,OBJECT_TYPE
 from ..ETM_API.references import Reference, pubmed_hyperlink, make_hyperlink
-from ..ETM_API.references import PUBYEAR,TITLE,REFERENCE_PROPS,INT_PROPS,PS_CITATION_INDEX,SENTENCE_PROPS,SENTENCE
+from ..ETM_API.references import PUBYEAR,TITLE,REFERENCE_PROPS,INT_PROPS,PS_CITATION_INDEX,SENTENCE_PROPS,SENTENCE,AUTHORS
 from ..ETM_API.RefStats import RefStats,IDENTIFIER_COLUMN
 from ..utils import execution_time, execution_time2,str2str,unpack,normalize
 
@@ -66,7 +66,7 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def property2node(self, node_uid,prop_name:str,prop_values:list):
-      self.set_node_attributes(self,{node_uid:{prop_name:prop_values}})
+      self.set_node_attributes({node_uid:{prop_name:prop_values}})
 
 
   def copy_node_annotation(self, from_property:str, in_other:"ResnetGraph", as_propname=''):
@@ -965,7 +965,7 @@ class ResnetGraph (nx.MultiDiGraph):
       yield self._get_node(r), self._get_node(t), rel
 
 
-  def targets_of(self,n:PSObject):
+  def targets_of(self,n:PSObject)->Generator[PSObject,PSObject,PSRelation]:
     for r,t,rel in self.edges(n.uid(),data='relation'):
       assert(isinstance(rel,PSRelation))
       yield self._get_node(r), self._get_node(t), rel
@@ -2139,7 +2139,11 @@ class ResnetGraph (nx.MultiDiGraph):
 
                 for prop_name, prop_values in ref.items():
                     if _2b_printed(prop_name,list(snippet_props)):
-                        for prop_value in prop_values:
+                        if prop_name == AUTHORS:
+                          auth_str = ';'.join(ref.author_list())
+                          et.SubElement(xml_control, 'attr',{'name': str(prop_name), 'value': auth_str, 'index': str(ref_index)},nsmap=None)
+                        else:
+                          for prop_value in prop_values:
                             et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
                     
                 for ref_id_type,ref_id in ref.Identifiers.items():
@@ -2420,6 +2424,27 @@ class ResnetGraph (nx.MultiDiGraph):
               elem.clear()
           del context
       return nodes,rels
+
+
+  @staticmethod
+  def read_rnef(rnef_file:str,prop2values:dict=dict(),only_relprops:set=set(),
+    no_mess=False,only4objs:set[PSObject]=set(),on_both_ends=True):
+      '''
+      Input
+      -----
+      prop2values={prop_name:[values]} - filter to load relations only for nodes with desired properties
+      '''
+      if not no_mess:
+        print ('\nLoading graph from file %s' % rnef_file,flush=True)
+      with open(rnef_file, "rb") as f:
+        context = et.iterparse(f, tag="resnet")
+        for action, elem in context:
+          yield ResnetGraph._parse_nodes_controls(elem,prop2values,only_relprops,only4objs,on_both_ends)
+          elem.clear()
+          while elem.getprevious() is not None:
+            del elem.getparent()[0]
+        del context
+
 
 
   @classmethod

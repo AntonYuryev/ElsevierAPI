@@ -118,6 +118,7 @@ class RepurposeDrug(Indications4targets):
             if self.drug2targetG:
               refprops2print = ['Organism',MEASUREMENT,'pX'] # additional props from Reaxys
             else:
+              print('Could not find targets in Reaxys')
               print('Attempting to find targets in Pathway Studio')
               oql += f' AND objectType = DirectRegulation'
               oql += f' AND NeighborOf upstream (SELECT Entity WHERE objectType = ({PROTEIN_TYPES})'
@@ -127,9 +128,9 @@ class RepurposeDrug(Indications4targets):
               if self.drug2targetG:
                 dt_rels = list(self.drug2targetG._psrels())
                 if len(dt_rels) > 10: # taking top 10 targets in PS
-                    dt_rels.sort(key=lambda x: len(x.refs()),reverse=True)
-                    dt_rels = dt_rels[:10]
-                    self.drug2targetG = self.drug2targetG.subgraph_by_rels(dt_rels)
+                  dt_rels.sort(key=lambda x: len(x.refs()),reverse=True)
+                  dt_rels = dt_rels[:10]
+                  self.drug2targetG = self.drug2targetG.subgraph_by_rels(dt_rels)
               
                 [self.drug2targetG[r][t][urn]['relation'].set_affinity() for r,t,urn in self.drug2targetG.edges(keys=True)]
                 refprops2print = PS_SENTENCE_PROPS
@@ -972,9 +973,9 @@ class RepurposeDrug(Indications4targets):
         df4etm = df.from_dict({'Name':indication_names})
         drug_names = self.drug_names()
         df4etm._name_ = f'Indication4 {drug_names}'
-        tm_biblio_future = tm_other.submit(self.bibliography,df4etm,drug_names,'Name',[],len(df4etm))
+        multithread = self.params.get('debug',True)
+        tm_biblio_future = tm_other.submit(self.RefStats.reflinks,df4etm,'Name',drug_names,[],multithread)
     
-
       if self.init_semantic_search():
         self.perform_semantic_search()
         ranked_df_names = list()
@@ -1008,10 +1009,9 @@ class RepurposeDrug(Indications4targets):
       self.report_pandas[TOXICITIES].tab_format['tab_color'] = 'pink'
       other_effects_future.result()
       if self.params['add_bibliography']:
-        tm_refs_df = tm_biblio_future.result()
-        tm_ref_colname = self.tm_refcount_colname('Name',self.drug_names_str())
-        doi_ref_colname = self.tm_doi_colname('Name',self.drug_names_str())
+        names2reflinks = tm_biblio_future.result()
+        refcount_col = self.tm_refcount_colname('Name',self.drug_names_str())
         for ws in ranked_df_names:
-          self.report_pandas[ws] = self.report_pandas[ws].merge_df(tm_refs_df,on='Name',columns=[tm_ref_colname,doi_ref_colname])
+          self.report_pandas[ws][refcount_col] = self.report_pandas[ws]['Name'].map(names2reflinks)
         self.add_tm_bibliography_df()
       return

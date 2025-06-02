@@ -128,11 +128,11 @@ class OQL:
             search_query = search_query + ' AND objectType = (' + object_types + ')'
 
         if include_parents:
-            if not search_by_id:
-                return str(search_query+' OR '+entity_query)
-            else:
-                print('Cannot include parents into ontology query which uses database Id for searching')
-                return str()
+          if not search_by_id:
+            return str(search_query+' OR '+entity_query)
+          else:
+            print('Cannot include parents into ontology query which uses database Id for searching')
+            return ''
 
         return search_query
 

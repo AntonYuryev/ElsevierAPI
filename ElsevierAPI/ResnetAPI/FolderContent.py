@@ -243,6 +243,7 @@ class FolderContent(APISession):
 
         self.__make_cache_dir(self.__folder_id(root_folder_name))
         self.rnefs2dump(subtree_xml,root_folder_name)
+        self.close_rnef_dump(root_folder_name)
         return [folder for dbid,folder in self.id2folder.items() if dbid in self.subfold_id2fold_id]
 
     
@@ -588,7 +589,6 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
         
 
 ############################  OTHER DOWNLOAD FUNCTIONS #############################################
-
     def folder2rnef(self,root_folder_name:str,include_subfolders=True,
                     add_props2rel=dict(),add_pathway_props=dict()):
         """

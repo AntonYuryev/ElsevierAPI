@@ -7,7 +7,7 @@ from ..pandas.panda_tricks import df,MAX_TAB_LENGTH
 from .ResnetGraph import ResnetGraph,PSObject,EFFECT
 from .ResnetAPISession import APISession,len,CHILDS
 from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
-from ..ETM_API.RefStats import RefStats
+from ..ETM_API.RefStats import SBSstats
 from ..utils import execution_time,sortdict
 
 
@@ -21,7 +21,8 @@ WEIGHTED = 'weighted '
 MAX_CHILDS = 11 # (10 children + 1 top-level concept)
 TOTAL_REFCOUNT = 'Total Semantic refcount'
 RELEVANT_CONCEPTS = 'Relevant concepts'
-HYPERLINKED_COLUMN = 'Sentence co-occurrence. Link opens most relevant articles in PubMed'
+#HYPERLINKED_COLUMN = 'Sentence co-occurrence. Link opens most relevant articles in PubMed'
+REFCOUNT_COLUMN = '#sentences with co-occurence. Link opens most relevant articles in PubMed'
 INFO_WORKSHEET = 'info'
 INPUT_WOKSHEET = 'Input'
 PHENOTYPE_WORKSHEET = 'Phenotype'
@@ -85,8 +86,9 @@ class SemanticSearch (APISession):
       self.max_ontology_parent = self.params.get('max_ontology_parent',10)
 
       search_kwargs = {'limit':10,'min_relevance':self.min_etm_relevance}
-      if my_kwargs['init_refstat']:
-        self.RefStats = RefStats(self.APIconfig,**search_kwargs)
+      if my_kwargs.get('add_bibliography',True):
+        if my_kwargs['init_refstat']:
+          self.RefStats = SBSstats(self.APIconfig,**search_kwargs)
 
       self.report_pandas=dict() # stores pandas used to generate report file
       self.raw_data = dict() # stores raw data pandas used for generation pandas in self.report_pandas
@@ -904,6 +906,7 @@ class SemanticSearch (APISession):
 
   def _normalize(self,incidence_df:df,col2rank:dict=dict(),entity_column='Name',
                  drop_empty_columns=True,nozero_rank=True,add_pvalue=True):
+
     if not col2rank: col2rank = incidence_df.col2rank
     weight_row = {entity_column:'WEIGHTS:'}
     col2weight = self.rank2weight(col2rank)
@@ -943,8 +946,6 @@ class SemanticSearch (APISession):
       normdf4raw = normdf4raw.sortrows(by=[RANK,rank_pval,entity_column], ascending=[False, True,True])
       pvals_columns = [rank_pval,rank_expopval]
 
-    if drop_empty_columns:
-      normdf4raw = normdf4raw.drop_empty_columns()
 
     rename_cols = dict()
     header4rankedf = [entity_column]
@@ -970,8 +971,8 @@ class SemanticSearch (APISession):
     other_cols4rankedf = [x for x in normdf4raw_cols if x not in forbidden_cols]
     header4rankedf += other_cols4rankedf
     header4rankedf +=  [RANK]+pvals_columns+[CHILDREN_COUNT,'URN','ObjType']
-    if self.__colname4GV__ in normdf4raw_cols:
-        header4rankedf.append(self.__colname4GV__)
+   # if self.__colname4GV__ in normdf4raw_cols:
+    #    header4rankedf.append(self.__colname4GV__)
     # at this point: header4rankedf = [entity_column]+refcount_colnames+other_cols4rankedf+[RANK,'URN','ObjType',self.__colname4GV__]
 
     rankedf4report = normdf4raw.dfcopy(only_columns=header4rankedf)
@@ -986,7 +987,10 @@ class SemanticSearch (APISession):
 
     rankedf4report.copy_format(incidence_df)
     rankedf4report.add_column_format(RANK,'align','center')
+    if drop_empty_columns:
+      rankedf4report = rankedf4report.drop_empty_columns()
     return rankedf4report,normdf4raw
+
 
   def clear(self):
     super().clear()
@@ -1125,62 +1129,28 @@ class SemanticSearch (APISession):
 
 
 ##################  ANNOTATE  ############################## ANNOTATE ############################
-  def tm_refcount_colname(self,between_names_in_col,and_concepts):
-      return self.RefStats.refcount_column(between_names_in_col,and_concepts)
-  
+  def tm_refcount_colname(self,between_column:str,and_concepts:str|list):
+    concept_str = and_concepts if isinstance(and_concepts,str) else ','.join(and_concepts)
+    return REFCOUNT_COLUMN + ' between '+between_column+' and '+concept_str
 
   def tm_doi_colname(self,between_names_in_col,and_concepts):
       return self.RefStats.doi_column(between_names_in_col,and_concepts)
 
 
-  def bibliography(self,to_df:df,input_names:list,entity_name_col:str='Name',add2query=[],max_row=300):
-      '''
-      output:
-        copy of "to_df" with added columns: REFS_COLUMN,DOIs
-      '''
-      print(f'Finding {self.RefStats._limit()} most relevant articles using {self.TMsearch} for {len(to_df)} rows \
-in "{to_df._name_}" worksheet and {input_names}', flush=True)
-      multithread = not self.params.get('debug',False)
-      return self.RefStats.add_refs(to_df,entity_name_col,input_names,self.TMsearch,add2query,max_row,multithread)
-
-
-  def refs2(self,_df:df,input_names:list[str],entity_name_col:str='Name',
-                  add2query=[],skip1strow=True):
-    '''
-    output:
-      same as bibliography but allows to skip first row (containing WEIGHTS: values)
-    '''
-    if skip1strow:
-      weights = _df.iloc[[0]].copy()
-      df_no_weights = df.from_pd(_df.drop(0, axis=0,inplace=False), _df._name_ )
-      df_no_weights.copy_format(_df)
-      if df_no_weights.empty: return _df
-
-      df_with_links = self.bibliography(df_no_weights,input_names,entity_name_col,
-                                        add2query,max_row=len(df_no_weights))
-    # weights is pd therefore use pd functions for concatenation:
-      pd_withlinks = pd.concat([weights, df_with_links]).reset_index(drop=True)
-      my_df = df.from_pd(pd_withlinks,_df._name_)     
-      my_df.copy_format(df_with_links) # copy format from df_with_links since self.bibliography modifies it
-      return my_df
-    else:
-      return self.bibliography(_df._name_,input_names,entity_name_col,
-                                add2query,max_row=len(my_df))
-
-
   def refs2report(self,to_df_named:str,input_names:list,entity_name_col:str='Name',
-                  add2query=[],add2report=True,skip1strow=True):
+                  add2query=[],add2report=True):
     """
     input:
-        df with "to_df_named" must be in self.report_pandas and have column RANK
-        skip1strow - used to skip first row containing weights
+      self.report_pandas[to_df_named] must existsnand have column 'Name'
     output:
-        copy of "to_df_named" with added columns:
-            etm.ETM_REFS_COLUMN
-            etm._doi_column()
+        copy of self.report_pandas[to_df_named] with added columns:
+          RefStats.refcount_column(between_names_in_col,and_concepts)
     """
-    my_df = self.refs2(self.report_df(to_df_named),input_names,entity_name_col,
-                                          add2query,skip1strow)
+    multithread = False if self.params.get('debug',False) else True
+    names2hyperlinks = self.RefStats.reflinks(self.report_df(to_df_named),entity_name_col,input_names,add2query,multithread)
+    refcountcol = self.tm_refcount_colname(entity_name_col,input_names)
+    my_df = self.RefStats.add_reflinks(names2hyperlinks,refcountcol,self.report_df(to_df_named),entity_name_col)
+    #my_df = self.RefStats.add_refs(self.report_df(to_df_named),entity_name_col,input_names,add2query,multithread)
     if add2report:
       self.add2report(my_df)
     return my_df
@@ -1406,17 +1376,25 @@ in "{to_df._name_}" worksheet and {input_names}', flush=True)
     if 'Name' in clean_df_columns:
       rank_pos = clean_df_columns.index('Name') +1
       
-    hyperlinked_cols = [c for c in clean_df_columns if c.startswith(HYPERLINKED_COLUMN)]
+    hyperlinked_cols = [c for c in clean_df_columns if c.startswith(REFCOUNT_COLUMN)]
     _1st_columns = hyperlinked_cols+[CHILDREN_COUNT]
+    move2 = dict()
     for c in _1st_columns:
       if c in clean_df.columns:
-        clean_df = clean_df.move_cols({c:rank_pos})
+        #clean_df = clean_df.move_cols({c:rank_pos})
+        move2[c] = rank_pos
         clean_df.add_column_format(c,'align','center')
         rank_pos += 1
 
-    move2 = dict()
+    # moving main rank column after Name, REFCOUNT_COLUMN, CHILDREN_COUNT
     for c in clean_df_columns:
-      if 'rank' in c.lower() or RANK in c:
+      if 'rank' in c.lower():
+        move2[c] = rank_pos
+        rank_pos += 1
+
+    # moving refcount coulmns after main rank column:
+    for c in clean_df_columns:
+      if c in report_df.col2rank:
         move2[c] = rank_pos
         rank_pos += 1
 
@@ -1426,11 +1404,13 @@ in "{to_df._name_}" worksheet and {input_names}', flush=True)
         if c in clean_df_columns:
           move2[c] = rank_pos
           rank_pos += 1
+      hyperlinked_cols += list(self.RefStats.refcols)
+
+    clean_df.set_hyperlink_color(hyperlinked_cols)
     clean_df = clean_df.move_cols(move2)
     clean_df = df.from_pd(clean_df.fillna('')) # critical for printing WEIGHTS header
     clean_df.copy_format(report_df)
-    clean_df.set_hyperlink_color(list(self.RefStats.refcols)+hyperlinked_cols)
-
+    
     if any(k in report_df._name_ for k in ('bibliography','snippets','refs',INPUT_WOKSHEET,PHENOTYPE_WORKSHEET)):
       clean_df.make_header_horizontal()
     else:
@@ -1443,7 +1423,6 @@ in "{to_df._name_}" worksheet and {input_names}', flush=True)
     input:
       self.columns2drop
     '''
-    
     if df_names:
       my_pandas = {k:self.report_pandas[k] for k in df_names if k in self.report_pandas}
     else:

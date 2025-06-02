@@ -1,6 +1,6 @@
 from .ResnetGraph import PROTEIN_TYPES,EFFECT,PHYSICAL_INTERACTIONS,ResnetGraph,PSRelation,PSObject
 from .PSPathway import PSPathway
-from .NetworkxObjects import ACTIVATED,REPRESSED,UNKNOWN_STATE,OBJECT_TYPE
+from .NetworkxObjects import ACTIVATED,REPRESSED,UNKNOWN_STATE,OBJECT_TYPE,MECHANISM
 from .SemanticSearch import SemanticSearch,len,OQL,RANK,execution_time
 from .ResnetAPISession import NO_REL_PROPERTIES,ONLY_REL_PROPERTIES,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,DBID
 from .FolderContent import FolderContent
@@ -120,7 +120,7 @@ class DiseaseTargets(SemanticSearch):
         return
 
 
-    def input_names(self):
+    def input_disease_names(self)->list[str]:
       if self.input_diseases:
         prop2values = {'Name':self.params['disease'], 'Alias':self.params['disease']}
         diseas_names = list(set([x['Name'][0] for x in self.input_diseases if x.has_value_in(prop2values)]))
@@ -243,24 +243,40 @@ class DiseaseTargets(SemanticSearch):
       expansion = 'regulators' if dir=='upstream' else 'targets'
       for reltype,t_names in reltype2targets.items():
         targets2expand = [n for n in self.__targets__ if n.name() in t_names]
+        neighbs = 'regulators' if dir == 'upstream' else 'targets'
         t_dbids = ResnetGraph.dbids(targets2expand)
         oql_query = OQL.expand_entity(t_dbids,['Id'],[reltype],PROTEIN_TYPES,dir) 
-        neighbs = 'regulators' if dir == 'upstream' else 'targets'
+        if reltype == 'ProtModification': # ProtModification with Mechanism = cleavage is Expression regulation
+          oql_query += ' AND NOT (Mechanism = cleavage)'
         reqname = f'Find {reltype} {neighbs} 4 {t_names}'
-        expanded_targets_g = self.process_oql(oql_query,reqname)
-        if expanded_targets_g:
+        expanded_targetsG = self.process_oql(oql_query,reqname)
+        if reltype == 'Expression': # ProtModification with Mechanism = cleavage is Expression regulation with Effect negative
+          oql_query = OQL.expand_entity(t_dbids,['Id'],['ProtModification'],PROTEIN_TYPES,dir) 
+          oql_query += ' AND Mechanism = cleavage'
+          reqname = f'Find {reltype} {neighbs} 4 {t_names}'
+          new_session = self._clone_session()
+          proteasesG = new_session.process_oql(oql_query,reqname)
+          if proteasesG:
+            proteasesGrels = proteasesG._psrels()
+            for rel in proteasesGrels:
+              rel[OBJECT_TYPE] = ['Expression']
+              rel[EFFECT] = ['negative']
+              rel.urn(refresh=True)
+            expanded_targetsG = expanded_targetsG.compose(ResnetGraph.from_rels(proteasesGrels))
+
+        if expanded_targetsG:
           expansion_descr = f'{reltype} {expansion} of {t_names}'
-          expanded_targets_g.name = expansion_descr
+          expanded_targetsG.name = expansion_descr
           rel_rank = ['DirectRegulation','Binding','ProtModification','MolTransport','Regulation','PromoterBinding','Expression']
           # assume that Regulation means post-translational regulation
-          expanded_targets_g = expanded_targets_g.make_simple(rel_rank)
-          self.__targets__.update(expanded_targets_g._get_nodes())
+          expanded_targetsG = expanded_targetsG.make_simple(rel_rank)
+          self.__targets__.update(expanded_targetsG._get_nodes())
           for t in targets2expand:
-            t_neighbors = expanded_targets_g.get_neighbors({t})
+            t_neighbors = expanded_targetsG.get_neighbors({t})
             neigh2target = dict({n.name():t.name() for n in t_neighbors})       
             self.expanded_targets.update(neigh2target)
           print(f'Added {len(neigh2target)} {expansion_descr}')
-          self.Graph = self.Graph.compose(expanded_targets_g)
+          self.Graph = self.Graph.compose(expanded_targetsG)
 
 
     def find_targets(self):
@@ -310,9 +326,23 @@ class DiseaseTargets(SemanticSearch):
             oql_query += ' AND Effect = (positive,negative)'
             self.target_inhibitorsG = self.process_oql(oql_query,f'Find inhibitors 4 {target_names}')
             
-            before_add = len(self.__targets__)
-            self.__targets__.update(self.target_inhibitorsG._get_nodes())
-            print(f'Added {len(self.__targets__) - before_add} inhibitors of {target_names} {reltype}')
+            if reltype == 'Expression': # ProtModification with Mechanism = cleavage is Expression regulation with Effect negative
+              oql_query = OQL.expand_entity(targets2expand_dbids,['Id'],['ProtModification'],PROTEIN_TYPES,'upstream') 
+              oql_query += ' AND Mechanism = cleavage'
+              new_session = self._clone_session()
+              proteasesG = new_session.process_oql(oql_query,f'Find proteases 4 {target_names}')
+              if proteasesG:
+                proteasesGrels = proteasesG._psrels()
+                for rel in proteasesGrels:
+                  rel[OBJECT_TYPE] = ['Expression']
+                  rel[EFFECT] = ['negative']
+                  rel.urn(refresh=True)
+                self.target_inhibitorsG = self.target_inhibitorsG.add_graph(ResnetGraph.from_rels(proteasesGrels))
+            
+            if self.target_inhibitorsG:
+              before_add = len(self.__targets__) 
+              self.__targets__.update(self.target_inhibitorsG._get_nodes())
+              print(f'Added {len(self.__targets__) - before_add} inhibitors of {target_names} {reltype}')
           return
  
 
@@ -504,8 +534,8 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             print('%s has no known Genetic Variants' % self._disease2str())
             return
 
-        concept_name = 'GVs'
-        self.__colnameGV__ = concept_name+' for '+self._disease2str()
+        concept_name = 'GVs for '+self._disease2str()
+        self.__colnameGV__ = concept_name
         refcount_column = self._refcount_colname(concept_name)
         weighted_refcount_column = self._weighted_refcount_colname(concept_name) 
         linked_count_column = self._linkedconcepts_colname(concept_name)
@@ -706,7 +736,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
 
 
     def make_disease_network(self):
-        print(f'Creating physical interaction network between targets of {self.input_names()} \
+        print(f'Creating physical interaction network between targets of {self.input_disease_names()} \
               to calculate target closeness for "score_regulators" function')
         my_session = self._clone_session(to_retrieve=NO_REL_PROPERTIES,init_refstat=False)
         disease_network = my_session.get_ppi(self.__targets__, self.params.get('ppiRNEFs',[]))
@@ -903,7 +933,7 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
       adds ETM_BIBLIOGRAPHY worksheet to report
       '''
       print('Adding ETM bibliography for ranked targets', flush=True)
-      #etm_refcount_colname = self.etm_refcount_colname('Name',self.input_names())
+      #etm_refcount_colname = self.etm_refcount_colname('Name',self.input_disease_names())
       self.refs2report(ANTAGONIST_TARGETS_WS,self.names4tmsearch())
       self.refs2report(AGONIST_TARGETS_WS,self.names4tmsearch())
       self.refs2report(UNKNOWN_TARGETS_WS,self.names4tmsearch())

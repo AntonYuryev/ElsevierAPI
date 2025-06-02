@@ -1,14 +1,15 @@
-from .DiseaseTargets import DiseaseTargets,execution_time
+from .DiseaseTargets import DiseaseTargets
 from .DiseaseTargets import ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,REFERENCE_IDENTIFIERS,UNKNOWN_TARGETS_WS
-from .ResnetGraph import ResnetGraph,PSObject,OBJECT_TYPE,REFCOUNT
+from .ResnetGraph import ResnetGraph,PSObject,PSRelation,OBJECT_TYPE,EFFECT,PROTEIN_TYPES
 from .SemanticSearch import RANK,time,PHENOTYPE_WORKSHEET
 from .ResnetAPISession import APISession,OQL,NO_REL_PROPERTIES,BIBLIO_PROPERTIES,ALL_CHILDS
 from ..pandas.panda_tricks import df,np
 from ..FDA.fda_api import FDA
+from ..ReaxysAPI.Reaxys_API import drugs2props
 from numpy import nan_to_num
 import networkx as nx
 from .DrugTargetConfidence import DrugTargetConsistency
-from ..utils import run_tasks
+from ..utils import run_tasks,execution_time
 
 DRUG2TARGET_REGULATOR_SCORE = 'Regulator score'
 PHARMAPENDIUM_ID = 'Marketed Drugs'
@@ -16,6 +17,12 @@ DRUG_CLASS = 'Drug class' # agonist/antagonist
 # do not propagate througuh Binding relations for drug rank calculation:
 DT_RELTYPES = ['DirectRegulation','Regulation','Expression','MolSynthesis','MolTransport']
 DIETARY_SUPPLEMENT='Dietary Supplement'
+REAXYS_FIELDS = {'IDE.CHA':'Charge',
+                'IDE.MW':'Molecular Weight',
+                'CALC.LOGP':'Lipophilicity',
+                'CALC.TPSA':'TPSA', # Topological Polar Surface Area
+                'DE.DE':'pKa'
+                }
 
 class Drugs4Targets(DiseaseTargets):
   pass
@@ -86,11 +93,12 @@ class Drugs4Targets(DiseaseTargets):
       target_uid = target.uid()
       dt_rels = self.drugs2targets._psrels4(_4drug.uid(),target_uid)
       if dt_rels: # dt_rels may be empty because not every target from df is linked to drug
-        if dt_rels[0].isprimarytarget():
+        dt_rel = dt_rels[0]
+        if dt_rel.isprimarytarget():
           pX = float(dt_rels[0].get_prop('Affinity',0,meanpX))
           pXcorrection = 1.5 + pX/12.0
           target_uid2corrected_rank[target_uid] *= pXcorrection
-
+          
         if correct_by_consistency:
           consistency_correction = self.dt_consist.consistency_correction(_4drug,target,with_effect)
           target_uid2corrected_rank[target_uid] *= consistency_correction
@@ -293,16 +301,16 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       clean_drugs = list(drugs)
       # bad fix for PS ontology problem:
       for drug in drugs:
-          drug_name = drug.name()
-          if 'antigen' in drug_name:
-              clean_drugs.remove(drug)
-          if 'vaccine' in drug_name: 
-              clean_drugs.remove(drug)
-          if drug_name in forbidden_drugs: 
-              clean_drugs.remove(drug)
-          
-          pp_id = str(drug.get_prop('PharmaPendium ID',if_missing_return='Dietary Supplement'))
-          drug2pharmapendium_id[drug_name] = pp_id
+        drug_name = drug.name()
+        if 'antigen' in drug_name:
+          clean_drugs.remove(drug)
+        if 'vaccine' in drug_name: 
+          clean_drugs.remove(drug)
+        if drug_name in forbidden_drugs: 
+          clean_drugs.remove(drug)
+        
+        pp_id = str(drug.get_prop('PharmaPendium ID',if_missing_return='Dietary Supplement'))
+        drug2pharmapendium_id[drug_name] = pp_id
 
       count = len(clean_drugs)
       clean_drugs = [d for d in clean_drugs if d not in self.disease_inducers]
@@ -310,38 +318,14 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       removed_count = count-len(clean_drugs)
       print(f'{removed_count} drugs were removed because they are known to induce {self._disease2str()}')
 
-      reltype2targets = dict(self.params.get("add_inhibitors4",dict()))
-      bad_drugs = set()
-      all_targets2inhibit = set()
-      rt = list()
-      for reltype,target_names in reltype2targets.items():
-        targets2expand = [n for n in self.__targets__ if n.name() in target_names]
-        targets2expand_dbids = ResnetGraph.dbids(targets2expand)
-        reltypes = [reltype] if reltype else []
-        rt.append(reltype)
-        oql_query = OQL.expand_entity(targets2expand_dbids,['Id'],reltypes,['SmallMol'],'upstream')
-        oql_query += ' AND Effect = positive'
-        expanded_targets_g = self.process_oql(oql_query,f'Find drugs activating {target_names} by {reltype}')
-        bad_drugs.update(expanded_targets_g._psobjs_with('SmallMol',OBJECT_TYPE))
-        all_targets2inhibit.update(target_names)
-      
-      if bad_drugs:
-        before_count = len(clean_drugs)
-        clean_drugs = [d for d in clean_drugs if d not in bad_drugs]
-        print(f'Excluded {before_count-len(clean_drugs)} drugs that activate {all_targets2inhibit} by {rt}')
-      
-      mapped_drugs,_ = self.load_dbids4(clean_drugs,with_props=['Molecular Weight'])
-      drug2molweight = {d.name():d.get_prop('Molecular Weight') for d in mapped_drugs}
-      drug2molweight = {k:v for k,v in drug2molweight.items() if v}
-      print(f'Loaded Molecular Weight ptoperties for {len(drug2molweight)} drugs')
-
+      mapped_drugs,_ = self.load_dbids4(clean_drugs,with_props=['Reaxys ID'])
       drug_df = self.load_df(clean_drugs,max_childs=0,max_threads=25)
       self.RefCountPandas = drug_df.merge_dict(drug2pharmapendium_id,new_col=PHARMAPENDIUM_ID,map2column='Name')
-      self.RefCountPandas = self.RefCountPandas.merge_dict(drug2molweight,new_col='Molecular Weight',map2column='Name')
+
       print('Initialized "Drugs" worksheet with %d drugs from database for ranking' % len(self.RefCountPandas))
       # self.RefCountPandas does not have self.__temp_id_col__ column at this point 
       # because ALL_CHILDS = 0. It will be added in link2disease_concepts()
-      return
+      return mapped_drugs
 
 
   def regulatory_rank(self):
@@ -374,12 +358,12 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       new_ranked_df = new_ranked_df.filter_by(drugs2score,'Name')
       new_ranked_df[DRUG2TARGET_REGULATOR_SCORE] = new_ranked_df[DRUG2TARGET_REGULATOR_SCORE].fillna(0.0)
 
-      disnames = ','.join(self.input_names())
+      disnames = ','.join(self.input_disease_names())
       new_ranked_df._name_ = f'Drugs for {disnames}'
       new_ranked_df = new_ranked_df.sortrows(by=[DRUG2TARGET_REGULATOR_SCORE])
       new_ranked_df.col2rank[DRUG2TARGET_REGULATOR_SCORE] = 1
       print('Found %d drugs for %d antagonist targets and %d agonist targets for "%s"' % 
-          (len(new_ranked_df),len(self.targets4antagonists),len(self.targets4agonists),self.input_names()),flush=True)
+          (len(new_ranked_df),len(self.targets4antagonists),len(self.targets4agonists),self.input_disease_names()),flush=True)
       return new_ranked_df
       
 
@@ -506,22 +490,26 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
         if self.params.get("use_in_children",False):
           d2cd = self.drug2childdose(ranked_df,multithread=False)
           ranked_df = ranked_df.merge_dict(d2cd,'Children dose',PHARMAPENDIUM_ID)
-        full_drug_df = self.link2disease_concepts(ranked_df)
+
         if self.params.get('add_bibliography',False):
-          drugs_df_with_tmrefs = self.bibliography(ranked_df,self.names4tmsearch(),'Name',[],len(ranked_df))
-          etm_ref_colname = self.tm_refcount_colname('Name',self.names4tmsearch())
-          full_drug_df = full_drug_df.merge_df(drugs_df_with_tmrefs,how='left',on='Name',columns=[etm_ref_colname])
+          names2reflinks = self.RefStats.reflinks(ranked_df,'Name',self.names4tmsearch())
+          full_drug_df = self.link2disease_concepts(ranked_df)
+          refcount_col = self.tm_refcount_colname('Name',self.names4tmsearch())
+          full_drug_df = self.RefStats.add_reflinks(names2reflinks,refcount_col,full_drug_df,'Name')
+        else:
+          full_drug_df = self.link2disease_concepts(ranked_df)
+
       elif self.params.get('add_bibliography',False):
-        tasks = [(self.bibliography,(ranked_df,self.names4tmsearch(),'Name',[],len(ranked_df)))]
+        tasks = [(self.RefStats.reflinks,(ranked_df,'Name',self.names4tmsearch(),[],True))]
         tasks.append((self.link2disease_concepts,(ranked_df,)))
         if self.params.get("use_in_children",False):
           tasks.append((self.drug2childdose,(ranked_df,)))
         results = run_tasks(tasks)
 
         full_drug_df = results['link2disease_concepts']
-        drugs_df_with_tmrefs = results['bibliography']
-        etm_ref_colname = self.tm_refcount_colname('Name',self.names4tmsearch())
-        full_drug_df = full_drug_df.merge_df(drugs_df_with_tmrefs,how='left',on='Name',columns=[etm_ref_colname])
+        names2reflinks = results['reflinks']
+        refcount_col = self.tm_refcount_colname('Name',self.names4tmsearch())
+        full_drug_df = self.RefStats.add_reflinks(names2reflinks,refcount_col,full_drug_df,'Name')
 
         if self.params.get("use_in_children",False):
           d2cd = results['drug2childdose']
@@ -547,8 +535,8 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
   def score_drugs(self,normalize=True):
     '''
     output:
-      raw_drug_df,ranked_drugs_df
-      adds  raw_drug_df to self.raw_data, adds ranked_drugs_df to self.report_pandas
+      raw_drug_df ('rawDrugs'),ranked_drugs_df ('Drugs')
+      adds  raw_drug_df to self.raw_data['rawDrugs'], adds ranked_drugs_df to self.report_pandas['Drugs]
       set SNEA "normalize" to False 
     '''
     start_time = time.time()
@@ -588,7 +576,76 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       return drugs4metG
     else:
       return ResnetGraph()
+    
 
+  def drugs4add_inhibitors4(self)->tuple[ResnetGraph,ResnetGraph]:
+    reltype2targets = dict(self.params.get("add_inhibitors4",dict()))
+    if not reltype2targets: return ResnetGraph(), ResnetGraph()
+    targetnames4antagonists = self.report_pandas[ANTAGONIST_TARGETS_WS]['Name'].to_list()
+    targetnames4agonists = self.report_pandas[AGONIST_TARGETS_WS]['Name'].to_list()
+    bad_drugsG = ResnetGraph()
+    good_drugsG = ResnetGraph()
+    for reltype,target_names in reltype2targets.items():
+      targets2expand = [n for n in self.__targets__ if n.name() in target_names]
+      targets2expand_dbids = ResnetGraph.dbids(targets2expand)
+      oql_query = f'SELECT Relation WHERE NeighborOf upstream (SELECT Entity WHERE id = ({targets2expand_dbids}))'
+      oql_query += f' AND NeighborOf downstream ({OQL.select_drugs()}) AND objectType = {reltype}'
+      expanded_targets_g = self.process_oql(oql_query,f'Find drugs modulating {target_names} by {reltype}')
+      bad_drugsG =  bad_drugsG.compose(expanded_targets_g.subgraph_by_relprops(['positive'],[EFFECT]))
+      good_rels = (expanded_targets_g.subgraph_by_relprops(['negative'],[EFFECT]))._psrels()
+      # assigning synergistic effect to good drugs relations ensures use of target rank 
+      # by self.__rank_drugs4 to score good drug.
+      for rel in good_rels:
+        t_name = rel.targets()[0].name()
+        if t_name in targetnames4antagonists:
+          rel[EFFECT] = ['negative']
+        elif t_name in targetnames4agonists:
+          rel[EFFECT] = ['positive']
+        else: continue
+        rel.urn(refresh=True)
+      good_drugsG = good_drugsG.compose(ResnetGraph.from_rels(good_rels))
+
+    return good_drugsG, bad_drugsG # bad drugs must de deleted from ranking 
+
+
+  def drugs_induce_symptoms(self,minref=4):
+    symptom_names = self.params.get('symptoms',[])
+    if isinstance(symptom_names,dict):
+      symptom_names = list(symptom_names.keys())
+
+    processes2inhibit = self.params.get('processes2inhibit',[])
+    if isinstance(processes2inhibit,dict):
+      processes2inhibit = list(processes2inhibit.keys())
+
+    symptom_names += processes2inhibit
+    symptom_names += self.input_disease_names()
+
+    bad_drugs = []
+    if symptom_names:
+      #select_symptoms = OQL.get_childs(symptom_names,['Name'],include_parents=True)
+      select_symptoms = OQL.get_entities_by_props(symptom_names,['Name'])
+      oql = f'SELECT Relation WHERE NeighborOf downstream ({OQL.select_drugs()}) \
+        AND NeighborOf upstream ({select_symptoms}) AND Effect = positive'
+      if minref:
+        oql += f' AND RelationNumberOfReferences >= {minref}'
+      bad_drugs += self.process_oql(oql)._psobjs_with('SmallMol',OBJECT_TYPE)
+
+    processes2activate = self.params.get('processes2activate',[])
+    if isinstance(processes2activate,dict):
+      processes2activate = list(processes2activate.keys())
+
+    if processes2activate:
+      #select_processes = OQL.get_childs(processes2activate,['Name'],include_parents=True)
+      select_processes = OQL.get_entities_by_props(processes2activate,['Name'])
+      oql = f'SELECT Relation WHERE NeighborOf downstream ({OQL.select_drugs()}) \
+        AND NeighborOf upstream ({select_processes}) AND Effect = negative'
+      if minref:
+        oql += f' AND RelationNumberOfReferences >= {minref}'
+      bad_drugs += self.process_oql(oql)._psobjs_with('SmallMol',OBJECT_TYPE)
+
+    print(f'Found {len(bad_drugs)} drugs inducing symptoms.  They will be deleted from the drug list')
+    return set(bad_drugs)
+    
 
   def select_drugs(self,limit2drugs:set[PSObject]=set())->list[PSObject]:
       '''
@@ -600,7 +657,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
         list of drugs from self.drugs2targets
       '''
       DTfromDB = self.params.get('DTfromDB',False)
-      self.drugs2targets = self.dt_consist.load_drug_graph(self._targets(),limit2drugs,DTfromDB)
+      self.drugs2targets = self.dt_consist.load_drug_graph(self._targets(),limit2drugs,DTfromDB).copy()
       self.drugs2targets = self.drugs2targets.compose(self.drugs4metabolites())
       # subtracting self._targets( to remove metabolite targets
       drugs_linked2targets = set(self.drugs2targets._psobjs_with('SmallMol','ObjTypeName')) - self._targets()
@@ -623,8 +680,19 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
           if drugs_withno_targets:
             print('Found additional %d drugs linked to "%s" but not linked to its targets' % 
                 (len(drugs_withno_targets),self._disease2str()))
-      
-      return list(drugs_linked2targets) + drugs_withno_targets
+            
+      good_drugsG, bad_drugsG = self.drugs4add_inhibitors4()
+      if bad_drugsG:
+        bad_drugs = set(bad_drugsG._psobjs_with('SmallMol','ObjTypeName'))
+        self.drugs2targets.remove_nodes_from(ResnetGraph.uids(bad_drugs))
+        print(f'Excluded {len(bad_drugs)} drugs that activate targets that must be inhibited')
+      if good_drugsG:
+        self.drugs2targets = self.drugs2targets.compose(good_drugsG)
+        print(f'Add {len(good_drugsG)} drugs that inhibit targets that must be inhibited')
+
+      selected_drugs = drugs_linked2targets - set(drugs_withno_targets)
+      selected_drugs = selected_drugs - self.drugs_induce_symptoms()
+      return list(selected_drugs)
   
 
   def drug2childdose(self,rankedf:df,multithread = True):
@@ -641,7 +709,11 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
   def init_load_score(self):
     my_drugs = self.select_drugs()
     if self.params['debug']:
-      self.init_drug_df(my_drugs)
+      DBdrugs = self.init_drug_df(my_drugs) # DBdrugs have "Molecular weight","Reaxys ID" properties
+      if self.params.get('BBBP',False):
+        f2d2prop = drugs2props(list(DBdrugs),REAXYS_FIELDS)
+        for f,mapdict in f2d2prop.items():
+          self.RefCountPandas[f] = self.RefCountPandas['Name'].map(mapdict)
       if self.params.get('consistency_correction4target_rank',True):
         load_fromdb = self.params.get('recalculate_dtconsistency',False)
         self.dt_consist.load_confidence_dict(self._targets(),{},load_fromdb)
@@ -652,8 +724,18 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       load_fromdb = self.params.get('recalculate_dtconsistency',False)
       tasks = [(self.init_drug_df,(my_drugs,))] # need comma after my_drugs to make it a tuple
       tasks.append((self.dt_consist.load_confidence_dict,(self._targets(),{},load_fromdb)))
-      run_tasks(tasks)
-      run_tasks([(self.score_drugs,()),(self.dt_consist.save_network,())])
+      DBdrugs = run_tasks(tasks)['init_drug_df']
+
+      tasks = [(self.score_drugs,()),(self.dt_consist.save_network,())]
+      if self.params.get('BBBP',False):
+        tasks.append((drugs2props,(list(DBdrugs),REAXYS_FIELDS)))
+        results = run_tasks(tasks)
+        f2d2prop = results['drugs2props']
+        for f,mapdict in f2d2prop.items():
+          self.report_pandas['Drugs'][f] = self.report_pandas['Drugs']['Name'].map(mapdict)
+      else:
+        run_tasks(tasks)
+
       self.dt_consist.clear()
     else:
       self.init_drug_df(my_drugs)
@@ -676,7 +758,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
     print(f'Loaded {len(nodes_with_bp)} drugs with known brain-plasma ratio')
     urn2bp = dict()
     for n in nodes_with_bp:
-      bp = n.get_prop('Brain-Plasma ratio')
+      bp = n.get_prop('Average blood-plasma ratios')
       if bp:
         urn2bp[n.urn()] = float(bp)
         

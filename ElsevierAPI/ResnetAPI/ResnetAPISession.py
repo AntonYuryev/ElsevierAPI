@@ -1287,6 +1287,9 @@ to retreive {my_sent_props} properties')
 
 
     def __dump_base_name(self,folder_name:str):
+        if not folder_name:
+          cleaned_path = self.data_dir.rstrip(os.path.sep + os.path.altsep)
+          head, folder_name = os.path.split(cleaned_path)
         return 'content_of_'+ APISession.filename4(folder_name)+'_'
 
 
@@ -1468,9 +1471,20 @@ to retreive {my_sent_props} properties')
                   (my_graph.name,to_folder,execution_time(dump_start)),flush=True)
                 
         return time.time()-dump_start
+    
+
+    def set_dump_folder(self,dump_folder='',data_dir=''):
+      dump_folder = dump_folder if dump_folder else self.data_dir
+      cleaned_dump_folder = dump_folder.rstrip(os.path.sep + os.path.altsep)
+      path,self.dump_folder = os.path.split(cleaned_dump_folder)
+      if data_dir:    
+        self.data_dir = data_dir
+      elif path:
+        self.data_dir = path
 
 
-    def download_oql(self,oql_query,request_name:str,resume_page=0,threads=25,close_batch=True,lock=None):
+    def download_oql(self,oql_query,request_name:str,
+                     resume_page=0,threads=25,close_batch=True,lock=None):
         # Use for oql_query producing large results
         # 50 threads crashed connection
         '''
@@ -1480,53 +1494,56 @@ to retreive {my_sent_props} properties')
           Inreasing "threads" accelerates download but slows down writing cache file to disk\n
           if cache file writing time exceeds 5 min (Apache default timeout) download will crash   
         dumps:
-          results of oql_query to self.dump_folder in self.data_dir.\n
+          results of oql_query to self.dump_folder \n
           Splits dump into small files smaller than self.max_rnef_size\n
+        clears:
+          self.Graph before download to save RAM
         use 
         '''
         self.__replace_goql(oql_query)
-        reference_counter = 0
-        start_time = time.time()
-        return_type = 'relations' if self.getLinks else 'entities'
+        self.set_dump_folder()
+        self.clear() # to save RAM self.Graph is cleared
         resume_pos = resume_page*self.PageSize
         iterations_graph = self.__init_session(resume_pos)
-        self.clear() # to save RAM self.Graph is cleared
         if iterations_graph:
-            number_of_iterations = int(self.ResultSize / self.PageSize)
-            if number_of_iterations:
-                result_size = self.ResultSize
-                print(f'\n\nrequest "{request_name}" found {result_size} {return_type}. Begin download in {number_of_iterations} iterations')
-                with ThreadPoolExecutor(1,f'{request_name} Dump{number_of_iterations}iters') as e:
-                  # max_workers = 1 otherwise _dump2rnef gets locked
-                  for i in range(0,number_of_iterations,threads):
-                    iterations_graph = iterations_graph.compose(self.__thread__(threads))
-                    iterations_graph.name = f'{request_name} iteration{i+1}of{number_of_iterations}'
-                    e.submit(self._dump2rnef, iterations_graph.copy(), self.dump_folder,'','',True,lock)
-                    page_ref_count = iterations_graph.weight()
-                    reference_counter += page_ref_count
-                    #remaining_iterations = number_of_iterations-i-threads
-                    exec_time, remaining_time = execution_time2(start_time,i+1,number_of_iterations) 
-                    print("With %d in %d iterations, %d %s in %d results with %d references retrieved in %s using %d threads" % 
-                    (i+threads,number_of_iterations,self.ResultPos,return_type,result_size,reference_counter,exec_time,threads))
-                    if i < number_of_iterations:
-                      print(f'Estimated remaining retrieval time: {remaining_time}')
-                    self.clear()
-                    iterations_graph.clear()
-                  e.shutdown()
-            else:
-                iterations_graph.name = f'{request_name} iteration1of1'
-                self._dump2rnef(iterations_graph, to_folder=self.dump_folder,lock=lock)
-            
-            if close_batch:
-                self.close_rnef_dump(for_folder=self.dump_folder)
-            self.clear()
-            self.ResultRef = str()
-            self.ResultPos = int()
-            self.ResultSize = int()
-            self.__IsOn1st_page = True
-            return ResnetGraph() # fake return for consistency with process_oql
+          reference_counter = 0
+          start_time = time.time()
+          return_type = 'relations' if self.getLinks else 'entities'
+          number_of_iterations = int(self.ResultSize / self.PageSize)
+          if number_of_iterations:
+              result_size = self.ResultSize
+              print(f'\n\nrequest "{request_name}" found {result_size} {return_type}. Begin download in {number_of_iterations} iterations')
+              with ThreadPoolExecutor(1,f'{request_name} Dump{number_of_iterations}iters') as e:
+                # max_workers = 1 otherwise _dump2rnef gets locked
+                for i in range(0,number_of_iterations,threads):
+                  iterations_graph = iterations_graph.compose(self.__thread__(threads))
+                  iterations_graph.name = f'{request_name} iteration{i+1}of{number_of_iterations}'
+                  e.submit(self._dump2rnef, iterations_graph.copy(), self.dump_folder,'','',True,lock)
+                  page_ref_count = iterations_graph.weight()
+                  reference_counter += page_ref_count
+                  #remaining_iterations = number_of_iterations-i-threads
+                  exec_time, remaining_time = execution_time2(start_time,i+1,number_of_iterations) 
+                  print("With %d in %d iterations, %d %s in %d results with %d references retrieved in %s using %d threads" % 
+                  (i+threads,number_of_iterations,self.ResultPos,return_type,result_size,reference_counter,exec_time,threads))
+                  if i < number_of_iterations:
+                    print(f'Estimated remaining retrieval time: {remaining_time}')
+                  self.clear()
+                  iterations_graph.clear()
+                e.shutdown()
+          else:
+              iterations_graph.name = f'{request_name} iteration1of1'
+              self._dump2rnef(iterations_graph, to_folder=self.dump_folder,lock=lock)
+          
+          if close_batch:
+              self.close_rnef_dump(for_folder=self.dump_folder)
+          self.clear()
+          self.ResultRef = str()
+          self.ResultPos = int()
+          self.ResultSize = int()
+          self.__IsOn1st_page = True
+          return ResnetGraph() # fake return for consistency with process_oql
         else:
-           return ResnetGraph() # fake return for consistency with process_oql 
+          return ResnetGraph() # fake return for consistency with process_oql 
     
 
     def common_neighbors(self,with_entity_types:list,of_dbids1:list,reltypes12:list,dir12:str,
@@ -1914,15 +1931,18 @@ to retreive {my_sent_props} properties')
         return graph.remap_graph(props2objs,map_by)
     
 
-    def get_ppi(self, interactors:set[PSObject], fromRNEFs:list=[]):
+    def get_ppi(self, interactors:set[PSObject], useRNEFs:list=[],minref=2):
         '''
-        Return
-        ------
-        ResnetGraph with relation types: Binding, DirectRegulation, ProtModification 
+        input:
+          useRNEFs - list of RNEF files with protein-protein interactions to use instead of database queries
+          minref - minimum number of references for a relation to be included in the output graph
+          since Resnet contains HT PPIs from BioGRID minref defualts to 2 to avoid too many low-confidence interactions
+        output:
+          ResnetGraph with relation types: Binding, DirectRegulation, ProtModification between interactors
         '''
         ppi_keeper = ResnetGraph()
-        if fromRNEFs:
-            for fname in fromRNEFs:
+        if useRNEFs:
+            for fname in useRNEFs:
                 ppi_keeper = ppi_keeper.compose(ResnetGraph.fromRNEF(fname,only4objs=interactors))
         else:
             interactors_dbids = ResnetGraph.dbids(list(interactors))
@@ -1942,6 +1962,8 @@ to retreive {my_sent_props} properties')
                         oql_query = "SELECT Relation WHERE objectType = (Binding, DirectRegulation, ProtModification) "
                         oql_query += "AND NeighborOf (SELECT Entity WHERE id = ({ids1})) "
                         oql_query += "AND NeighborOf (SELECT Entity WHERE id = ({ids2}))"
+                        if minref > 1:
+                            oql_query += f' AND {REFCOUNT} >= {minref}'
                         new_session = self._clone_session() # need to clone since self.dbid2relation mutates
                         new_session.add2self = False
                         futures.append(e.submit(new_session.iterate_oql2,oql_query,set(uq_list1),set(uq_list2),request_name=job_name))

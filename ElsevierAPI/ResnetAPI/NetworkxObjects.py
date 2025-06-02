@@ -64,11 +64,13 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
   
   def get_prop(self,prop_name:str,value_index=0,if_missing_return:str|int|float='')->str|int|float:
       '''
-      Return
-      ------
-      returns self[prop_name][value_index]
+      output:
+        self[prop_name][value_index]
       '''
-      return self[prop_name][value_index] if prop_name in self else if_missing_return
+      if prop_name in self:
+        return self[prop_name][value_index] if value_index < len(self[prop_name]) else if_missing_return
+      else:
+         return if_missing_return
 
 
   def urn(self):
@@ -386,8 +388,9 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
 
 
 class PSObjectEncoder(json.JSONEncoder):
+  pass
   def default(self, obj):
-    if isinstance(obj, PSObject):
+    if isinstance(obj, (PSObject,defaultdict)):
       obj['hook'] = 'PSObject'
       obj_dict = {k:v for k,v in obj if not str(k).endswith('Id')}
       return dict(obj_dict)  # Convert PSObject to a regular dictionary
@@ -444,13 +447,19 @@ class PSRelation(PSObject):
   
 
   def flip_effect(self):
-      if self.effect() == 'positive':
-          self[EFFECT][0] = 'negative'
-          return True
-      elif self.effect() == 'negative':
-          self[EFFECT][0] = 'positive'
-          return True
-      return False
+    '''
+    flip effect from positive to negative and vice versa\n
+    output:
+        True if effect was flipped;
+        False if effect was not changed
+    '''
+    if self.effect() == 'positive':
+      self[EFFECT][0] = 'negative'
+      return True
+    elif self.effect() == 'negative':
+      self[EFFECT][0] = 'positive'
+      return True
+    return False
 
 
   def mechanisms(self):
@@ -537,8 +546,8 @@ class PSRelation(PSObject):
       tar_urns = sorted([r.urn() for r in targets])
       rel_urn = 'urn:agi-'+self.objtype()+':'
       if tar_urns:
-          rel_urn += 'in-out:'+'in-out:'.join(reg_urns)
           rel_urn += ':out:'+'out:'.join(tar_urns) # out:urn:out:
+          rel_urn += 'in-out:'+'in-out:'.join(reg_urns)
           effect = self.effect()
           if effect in ['positive','negative']:
               rel_urn += ':'+ effect

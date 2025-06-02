@@ -3,7 +3,7 @@ from pathlib import Path
 from shutil import copyfile
 from .ResnetAPISession import REFERENCE_IDENTIFIERS,REFCOUNT
 from .ResnetAPISession import APISession
-from ..utils import normalize,execution_time,Tee
+from ..utils import execution_time,Tee
 from .ResnetGraph import EFFECT,ResnetGraph
 from .NetworkxObjects import PSObject,PSObjectDecoder,PSObjectEncoder
 
@@ -88,13 +88,20 @@ class APIcache(APISession):
       return os.path.join(self.__data_dir(**kwargs),'simple',cache_name+extension)
   
 
-  def __path2rawdir(self,**kwargs):
-      cache_name = kwargs.get('cache_name',DEFAULT_CACHE_NAME)
-      return os.path.join(self.__data_dir(**kwargs),'raw',cache_name+'_raw')
-  
-
   def __data_dir(self,**kwargs):
     return kwargs.get('data_dir',CACHE_DIR)
+  
+
+  def __path2rawdir(self,**kwargs):
+    '''
+    output:
+      self.daa_dir/cache_name
+    '''
+    cache_name = kwargs.get('cache_name',DEFAULT_CACHE_NAME)
+    path2raw = os.path.join(self.__data_dir(**kwargs),'raw',cache_name+'_raw')
+    os.makedirs(path2raw, exist_ok=True) 
+    return path2raw
+  
 
   @staticmethod
   def cache_filename(parameters:dict):
@@ -145,7 +152,7 @@ class APIcache(APISession):
 
   def save_description(self,do_backup=True):
       stats_df = self.network.get_stats()
-      descr_file = self.data_dir+'descriptions/'+self.network.name+"_description"
+      descr_file = os.path.join(self.data_dir,self.network.name+"_description")
       if do_backup:
           backup_descr = descr_file + '_old.tsv'
           try:
@@ -156,42 +163,43 @@ class APIcache(APISession):
 
 
   def __download(self,**kwargs):
-      cache_name = kwargs['cache_name']
-      dump_dir = self.__path2rawdir(**kwargs)
-      print(f'Downloading {cache_name} into {dump_dir}')
-      # clone session with the same parameters as self to avoid adding dump to self.Graph
-      my_session_kwargs = {
-          'connect2server':True,
-          'no_mess' : self.no_mess,
-          'data_dir' : dump_dir
-          }
-      my_session = self._clone_session(**my_session_kwargs) 
+    cache_name = kwargs['cache_name']
+    dump_dir = self.__path2rawdir(**kwargs)
+    self.set_dump_folder(dump_dir)
+    print(f'Downloading {cache_name} into {dump_dir}')
+    # clone session with the same parameters as self to avoid adding dump to self.Graph
+    my_session_kwargs = {
+        'connect2server':True,
+        'no_mess' : self.no_mess,
+        'data_dir' : dump_dir
+        }
+    my_session = self._clone_session(**my_session_kwargs) 
 
-      log_name = f'Download of {cache_name}.log'
-      log_path = os.path.join(kwargs['data_dir'], 'logs', log_name)
-      with Tee(log_path):
-        print(f'Download log is in {log_path}')
-        if kwargs.get('connect_nodes',False):
-          node_ids = set(kwargs['connect_nodes'][0])
-          # node_ids can be either {str} or {int}
-          if isinstance(next(iter(node_ids), None),str):
-            node_types_str = ",".join(node_ids)
-            rel_types = kwargs['connect_nodes'][1]
-            rel_types_str = ",".join(rel_types)
-            query = f'SELECT Entity WHERE objectType = ({node_types_str}) AND Connectivity > 0 AND NeighborOf (SELECT Relation WHERE objectType = ({rel_types_str}))'
-            nodes_graph = my_session.process_oql(query,'Loading nodes from database')
-            assert(isinstance(nodes_graph,ResnetGraph))                  
-            node_ids = set(ResnetGraph.dbids(nodes_graph.psobjs_with())) if ResnetGraph else set()                  
-            print(f'Found {len(node_ids)} entities of type: {node_types_str} connected with relations {rel_types_str} exist in database')
-          if node_ids:
-            print(f'Will connect {len(node_ids)} with {rel_types} relations')
-            my_session.get_network(node_ids,rel_types,download=True)
-        else:
-          for i, query in enumerate(self.my_oql_queries):
-            oql = query[0]
-            reqname = query[1]
-            resume_from = query[2] if len(query)>2 else 0
-            my_session.download_oql(oql,reqname,resume_page=resume_from)
+    log_name = f'Download of {cache_name}.log'
+    log_path = os.path.join(kwargs['data_dir'], 'logs', log_name)
+    with Tee(log_path):
+      print(f'Download log is in {log_path}')
+      if kwargs.get('connect_nodes',False):
+        node_ids = set(kwargs['connect_nodes'][0])
+        # node_ids can be either {str} or {int}
+        if isinstance(next(iter(node_ids), None),str):
+          node_types_str = ",".join(node_ids)
+          rel_types = kwargs['connect_nodes'][1]
+          rel_types_str = ",".join(rel_types)
+          query = f'SELECT Entity WHERE objectType = ({node_types_str}) AND Connectivity > 0 AND NeighborOf (SELECT Relation WHERE objectType = ({rel_types_str}))'
+          nodes_graph = my_session.process_oql(query,'Loading nodes from database')
+          assert(isinstance(nodes_graph,ResnetGraph))                  
+          node_ids = set(ResnetGraph.dbids(nodes_graph.psobjs_with())) if ResnetGraph else set()                  
+          print(f'Found {len(node_ids)} entities of type: {node_types_str} connected with relations {rel_types_str} exist in database')
+        if node_ids:
+          print(f'Will connect {len(node_ids)} with {rel_types} relations')
+          my_session.get_network(node_ids,rel_types,download=True)
+      else:
+        for i, query in enumerate(self.my_oql_queries):
+          oql = query[0]
+          reqname = query[1]
+          resume_from = query[2] if len(query) > 2 else 0
+          my_session.download_oql(oql,reqname,resume_page=resume_from)
 
 
   def __read_raw(self,**kwargs):
@@ -199,7 +207,7 @@ class APIcache(APISession):
     database_graph = ResnetGraph.fromRNEFdir(dump_dir,merge=False)
     if not database_graph or kwargs.get('reload',False):
       print(f'Cache "{dump_dir}" was not found\nBegin graph download from database')
-      self.data_dir = dump_dir # dump2rnef uses self.data_dir to save files
+      self.set_dump_folder(dump_dir)
       self.__download(**kwargs)
       database_graph = ResnetGraph.fromRNEFdir(dump_dir,merge=False)
     return database_graph
@@ -257,6 +265,7 @@ class APIcache(APISession):
 
           if kwargs.get('resume_download',False):
             dump_dir = self.__path2rawdir(**kwargs)
+            self.set_dump_folder(dump_dir)
             print(f'Resume graph download from database into {dump_dir}')
             self.__download(**kwargs)
 

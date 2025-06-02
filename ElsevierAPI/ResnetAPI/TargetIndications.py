@@ -1511,19 +1511,19 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
         target_names = self.target_names()
         df4etm._name_ = f'Targets4 {target_names}'
         etm_other = ThreadPoolExecutor(thread_name_prefix='ETMother')
-        etm_future = etm_other.submit(self.bibliography,df4etm,target_names,'Name',[],len(df4etm))
+        etm_future = etm_other.submit(self.RefStats.reflinks,df4etm,'Name',target_names)
         other_effects_future = etm_other.submit(self.other_effects2df)
       
       if self.init_semantic_search():
         self.perform_semantic_search()
         
         if self.params['add_bibliography']:
-          indication_etmrefs = etm_future.result()
-          etm_ref_colname = self.tm_refcount_colname('Name',self.target_names())
-          doi_ref_colname = self.tm_doi_colname('Name',self.target_names())
+          names2reflinks = etm_future.result()
+          refcount_col = self.tm_refcount_colname('Name',self.target_names())
           for ws in self.ws_names():
             if ws in self.report_pandas.keys():
-              self.report_pandas[ws] = self.report_pandas[ws].merge_df(indication_etmrefs,how='left',on='Name',columns=[etm_ref_colname,doi_ref_colname])
+              self.report_pandas[ws][refcount_col] = self.report_pandas[ws]['Name'].map(names2reflinks)
+              self.report_pandas[ws] = self.RefStats.add_reflinks(names2reflinks,refcount_col,self.report_pandas[ws],'Name')
           self.add_tm_bibliography_df()
           self.add_graph_bibliography()
           other_effects_future.result()
