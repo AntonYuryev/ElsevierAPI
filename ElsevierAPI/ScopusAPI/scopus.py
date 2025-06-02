@@ -1,8 +1,8 @@
-import urllib.request,urllib.parse,json
+import urllib.request,urllib.parse,json,os
 from xml.etree.ElementTree import fromstring
 from time import sleep
 from ..ETM_API.references import Reference, Author, DocMine
-from ..ETM_API.references import SCOPUS_CI,ARTICLE_ID_TYPES,INSTITUTIONS,AUTHORS,PUBLISHER
+from ..ETM_API.references import SCOPUS_CI,ARTICLE_ID_TYPES,INSTITUTIONS,AUTHORS,PUBLISHER,_AUTHORS_
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from titlecase import titlecase
 
@@ -10,7 +10,7 @@ from titlecase import titlecase
 AUTHOR_SEARCH = 0
 AUTHOR_RETRIEVAL = 1
 SCOPUS_API_BASEURL = 'https://api.elsevier.com/content/'
-SCOPUS_CACHE_DIR = 'D:/Python/ENTELLECT_API/ElsevierAPI/ScopusAPI/__scpcache__/'
+SCOPUS_CACHE_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ScopusAPI/__scpcache__/')
 # for Scopus query limits read https://dev.elsevier.com/guides/Scopus%20API%20Guide_V1_20230907.pdf
 SCOPUS_AUTHORIDS = 'scopusAuthors'
 SCOPUS_CITESCORE = 'CiteScore'
@@ -43,6 +43,8 @@ class Scopus:
             self.AffiliationInfo = json.load(open(self.__aff_cache_name(),'r',encoding='utf-8'))
         except FileNotFoundError:
             self.AffiliationInfo = dict()
+
+        os.makedirs(SCOPUS_CACHE_DIR, exist_ok=True)
         
 
     def _get_param_str(self):
@@ -241,11 +243,10 @@ class AuthorSearch(Scopus):
         return int(author_id),str(given_name),str(initials),str(surname),affiliation
 
 
-    def get_author_id(self, auLast:str, au1st='', institutions=[])->tuple[int,str,str,str]:
+    def get_author(self, auLast:str, au1st='', institutions=[])->tuple[int,str,str,str]:
         '''
-        Return
-        ------
-        [author_id,author['given-name'],author['initials'],author['surname'],institution]
+        output:
+          [author_id,author['given-name'],author['initials'],author['surname'],institution]
         '''
         for institution in institutions:
             try:
@@ -257,8 +258,9 @@ class AuthorSearch(Scopus):
         query = 'authlast({})'.format(auLast)
         if au1st: query += ' and authfirst({})'.format(au1st)
         self.params.update({'query': query})
-        authors = self._get_results()
-        if not authors: return (0,'','','')
+        response = self._get_results()
+        if not response: return (0,'','','')
+        authors = response['search-results']['entry']
         if len(authors) == 1:
             au_info = self.__parse_results(authors[0])
             self.author_cache[auLast+' '+au1st] = au_info
@@ -292,14 +294,14 @@ class AuthorSearch(Scopus):
             au_names = str(author).split(' ')
             surname = au_names[0]
             _1stname = au_names[1] if len(au_names) > 1 else ''
-            scopus_author = self.get_author_id(surname,_1stname,instituts)
-            ref.authors.append(Author(surname,_1stname,instituts[0]))
+            scopus_author = self.get_author(surname,_1stname,instituts)
+            ref[_AUTHORS_].append(Author(surname,_1stname,instituts[0]))
         return scopus_author
 
 
     @staticmethod
     def authorid(author_info:tuple):
-        return author_info[0][10:]
+        return int(author_info[0])
 
 
 class ScopusSearch(Scopus):
@@ -348,10 +350,12 @@ class ScopusSearch(Scopus):
 
 def g_index(APIconfig:dict,last_name:str,first_name:str,institution = ''):
     au = AuthorSearch(APIconfig)
-    author = au.get_author_id(last_name,first_name,institution)
-    query = f'AU-ID({au.authorid(author)}'
+    author = au.get_author(last_name,first_name,institution)
+    query = f'AU-ID({au.authorid(author)})'
     search = ScopusSearch(query,APIconfig)
     author_articles = list(search._get_results())
+    fname = os.path.join(SCOPUS_CACHE_DIR, f'{last_name}_{first_name}_articles.json')
+    json.dump(author_articles, open(fname,'w',encoding='utf-8'),indent=1)
     author_articles.sort(key=lambda x: int(x['citedby-count']), reverse=True)
     
     citation_sum = 0
