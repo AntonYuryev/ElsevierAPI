@@ -1,4 +1,4 @@
-from ..utils import load_api_config, greek2english
+from ..utils import load_api_config, greek2english,urlencode
 from ..ETM_API.references import Reference,DocMine, Author
 from ..ETM_API.references import AUTHORS,_AUTHORS_,GRANT_APPLICATION,JOURNAL,SENTENCE,RELEVANCE
 from scibite_toolkit.scibite_search import SBSRequestBuilder as s
@@ -180,7 +180,7 @@ class SBSRef(DocMine):
       authors = self[_AUTHORS_]
       return len(authors) > 0
     except KeyError:
-      return any(w in self.Identifiers for w in ['NCT ID', 'EudraCT Number'])
+      return any(w in self.Identifiers for w in ['NCT ID', 'EudraCT Number','PMC','PMID','PII','DOI'])
 
 
   def has_bibliography(self):
@@ -243,7 +243,7 @@ class SBSapi():
     return ''
   
 
-  def __search_term(self,search_term:str, in_vocabs:list=['GENETREE','EMTREE']):
+  def __search_term(self,search_term:str, in_vocabs:list=['GENETREE','EMTREE'])->str:
     # quoted search_term is a signal to search it as is without ontology synonym expansion
     if search_term[0] == '"' and search_term[-1] == '"':
       if len(search_term) > 2:
@@ -252,9 +252,9 @@ class SBSapi():
         print(f'{search_term} is empty')
         return ''
     else:
-      try:
+      if search_term in self.term2id:
         return self.term2id[search_term]
-      except KeyError:
+      else:
         term_id = self.get_id(search_term,in_vocabs)
         if not term_id:
           term_id = f'"{search_term}"'
@@ -299,25 +299,51 @@ class SBSapi():
       ref[RELEVANCE] = [ref.relevance(BM25SCORE)*(1.0+ref.number_of_sentences()/2.0)]
 
 
-  def conjunct2lists(self,entities1:list[str],entities2:list[str],add2query:list[str]=[]):
-    entity1_ids = self.__map2terms(entities1)
-    if entity1_ids:
-      entity2_ids = self.__map2terms(entities2)
-      if entity2_ids:
-        str1 = ' OR '.join(entity1_ids)
-        str2 = ' OR '.join(entity2_ids)
-        query = f'({str1}) AND ({str2})'
-        if add2query:
-          query += ' AND '.join(self.__map2terms(add2query))
-        return query
-    return ''
+  def search_url(self,entities:list[str], link2concepts:list[str]|set[str])->str:
+    #https://psgscibitesearch.lifesciencepsg.com/documents?document_schema=journal&ssql=[sptbn1](GENETREE$GENETREE_6711) [AND](AND) [dopamine](GENETREE$GENETREE_1003345)
+    url = self.APIconfig['SBSurl'] + '/documents?document_schema=journal&ssql='
+    entity_ids = self.__map2terms(entities)
+    concept_ids = self.__map2terms(link2concepts)
+    entities_str = ' [OR](OR) '.join([f'[{entity}]({entity_id})' for entity,entity_id in zip(entities,entity_ids)])
+    concepts_str = ' [OR](OR) '.join([f'[{concept}]({concept_id})' for concept,concept_id in zip(link2concepts,concept_ids)])
+    return urlencode(url + entities_str + ' [AND](AND) ' + concepts_str)
   
 
-  def join2query(self,entity:str,concepts:list[str],add2query:list[str]=[]):
+  def conjunct2lists(self,entities1:list[str],entities2:list[str],add2query:list[str]=[])->tuple[str,str]:
+    '''
+    output:
+      query - conjunct search query for SBS
+      encoded_search_url - url for SBS search
+    '''
+    entity1_ids = self.__map2terms(entities1)
+    entity2_ids = self.__map2terms(entities2)
+    str1 = ' OR '.join(entity1_ids)
+    str2 = ' OR '.join(entity2_ids)
+
+    base_url = self.APIconfig['SBSurl'] + '/documents?document_schema=journal&ssql='
+    entities1_search_str = ' [OR](OR) '.join([f'[{entity}]({entity_id})' for entity,entity_id in zip(entities1,entity1_ids)])
+    entities2_search_str = ' [OR](OR) '.join([f'[{concept}]({concept_id})' for concept,concept_id in zip(entities2,entity2_ids)])
+    
+    search_url = f'[(](() {entities1_search_str} [)]()) [AND](AND) [(](() {entities2_search_str} [)]())'
+  
+    query = f'({str1}) AND ({str2})'
+    if add2query:
+      add2query_ids = self.__map2terms(add2query)
+      query += ' AND '.join(add2query_ids)
+      add2query_search_str = ' [OR](OR) '.join([f'[{entity}]({entity_id})' for entity,entity_id in zip(add2query,add2query_ids)])
+      search_url += f' [AND](AND) [(](() {add2query_search_str} [)]())'
+
+    encoded_search_url = base_url+urlencode(search_url)
+    return query,encoded_search_url
+
+
+  def join2query(self,entity:str,concepts:list[str],add2query:list[str]=[])->tuple[str,str]:
     '''
       if entity is in double quotes it will be searched as is without ontology synonym expansion
     '''
-    return self.conjunct2lists([entity],concepts,add2query)
+    my_concepts = [c for c in concepts if c != entity]
+    return self.conjunct2lists([entity],my_concepts,add2query)
+
   
 
 ################# SENTENCE SEARCH ############### SENTENCE SEARCH ##########################
@@ -438,28 +464,26 @@ class SBSapi():
 
 
   def __sentcooc4list(self,entities:list[str], and_concepts:list[str]|set[str],
-                add2query:list[str]=[])->dict[str,tuple[int,list[SBSRef]]]:
+                add2query:list[str]=[])->dict[str,tuple[str,int,list[SBSRef]]]:
     '''
     input:
       quoted entities are searched as is without ontology synonym expansion
     output:
-        references for each search "entity and_concepts" as {entity:(sentence_count,[SBSRef])}
+      references for each search "entity and_concepts" as {entity:(sentence_count,[SBSRef])}
     '''
-    message_printed = False
     results = dict()
     for entity in entities:
-      query = self.join2query(entity,and_concepts,add2query)
-      if not message_printed:
+      query,search_url = self.join2query(entity,and_concepts,add2query)
+      if entity == entities[0]:
         print(f'Will find sentence coocurence for {len(entities)} entities')
-        print(f'\nSample query for sentence co-ocurence: {query}')
-        message_printed = True
+        print(f'Sample query for sentence co-ocurence: {query}')
       sentence_count,refs = self.search_sents(query)
-      results[entity] = (sentence_count,refs)
+      results[entity] = (search_url,sentence_count,refs)
     return results
   
 
   def sentcooc4list(self,entities:list[str], link2concepts:list[str]|set[str],
-    add2query:list[str]=[],multithread=True)->dict[str,tuple[int,list[Reference]]]:
+    add2query:list[str]=[],multithread=True)->dict[str,tuple[str,int,list[Reference]]]:
     '''
     Entry function for RefStat.add_refs_sbs\n
     output:
@@ -487,12 +511,11 @@ class SBSapi():
     e2refs = dict()
     rows_counter = 0
     for entity in entities:
-      sentence_count,refs = entity2rfks.get(entity,(0,[]))
-      if sentence_count:
-        rows_counter += 1
+      search_url,sentence_count,refs = entity2rfks.get(entity,('',0,[]))
+      rows_counter += bool(sentence_count)
       clean_refs = [r for r in refs if r.is_valid()]
       clean_refs.sort(key=lambda x:x.relevance(),reverse=True)
-      e2refs[entity] = (sentence_count,clean_refs)
+      e2refs[entity] = (search_url,sentence_count,clean_refs)
 
     print(f'Found sentences in SBS for {rows_counter} rows')
     return e2refs
