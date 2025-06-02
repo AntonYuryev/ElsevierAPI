@@ -215,7 +215,7 @@ class Reference(dict):
 
   @staticmethod
   def __clean_vals(prop:str,values:list):
-    if prop == AUTHORS:
+    if prop == _AUTHORS_:
        return set(values)
     elif prop in INT_PROPS:
       return set(map(int,values))
@@ -592,8 +592,8 @@ class Reference(dict):
       year = 'year unknown' if year == 1812 else str(year)
 
       try:
-        authors_list = self[_AUTHORS_]
-        authors_list = [x.tostr() for x in authors_list if isinstance(x,Author)]
+        authors = self[_AUTHORS_]
+        authors_list = [x.tostr() for x in authors if isinstance(x,Author)]
         authors_str = ','.join(authors_list[:3]) if authors_list else 'unknown authors.'
         if len(authors_list) > 3:
           authors_str = authors_list[0]+' et al.'
@@ -873,14 +873,17 @@ class Author:
   def institutions(self):
     return list(self.affiliations.keys())
   
-  def _key(self):
+  def __key(self):
     return tuple([self._1stName,self.MiddleName,self.LastName] + self.institutions())
 
   def __hash__(self):#__hash__ needs __eq__ to work properly
-    return hash(self._key())
+    return hash(self.__key())
   
+
   def __eq__(self, other:"Author"):#__hash__ needs __eq__ to work properly
-    return self._key() == other._key()
+    my_key = self.__key()
+    other_key = tuple([other._1stName,other.MiddleName,other.LastName] + other.institutions())
+    return my_key == other_key
 
 
   def name(self):

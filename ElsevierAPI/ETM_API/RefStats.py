@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.error import HTTPError
 from collections import defaultdict
 
-REFCOUNT_COLUMN = '#sentences with co-occurence. Link opens most relevant articles in PubMed'
+
 IDENTIFIER_COLUMN = 'Document identifier: PMID or DOI'
 MAX_TM_SESSIONS = 10 #ETM performance deteriorates if number of concurrent sessions is > 5
 
@@ -23,19 +23,17 @@ class RefStats:
   """
   def __init__(self,APIconfig:dict,**kwargs):
       """
-          self.ref_counter = {str(id_type+':'+identifier):(ref,count)}
+        self.ref_counter = {(id_type,identifier):(ref,count)}
       """
       my_kwargs = {'load_medlineTA': True,'limit':5}
       my_kwargs.update(kwargs)
-      self.ref_counter = dict() # {str(id_type+':'+identifier):(ref,count)}
-      self.refcols = set()
+      self.ref_counter = dict() # {(id_type,identifier):(ref,count)}
+      self.refcols = set() # stores refcount columns names for formatting by SemanticSearch.clean_df()
       self.doi_columns = set()
 
       self.APIconfig = APIconfig if APIconfig else load_api_config()
       self.AuthorSearch = AuthorSearch(self.APIconfig)
       self.Scopus = Scopus(self.APIconfig)
-      self.ETMsearch = ETMsearch(self.APIconfig,**my_kwargs)
-      self.SBSsearch = SBSapi(self.APIconfig)
       self.ref_limit = my_kwargs.get('limit',5)
       self.NormalizedAffs = dict()
 
@@ -61,78 +59,79 @@ class RefStats:
 
 
   def _add2counter(self, ref:DocMine):
-      '''
-      Updates
-      -------
+    '''
+    updates:
       self.ref_counter - {str(id_type+':'+identifier):(ref,count)}
       ref[RELEVANCE] with ref.relevance()
 
-      Return
-      ------
+    output:
       id_type,identifier of added ref
-      '''
-      id_type,identifier = ref.get_doc_id()
-      counter_key = id_type+':'+identifier
-      
-      try:
-          count_exist = self.ref_counter[counter_key][1]
-          self.ref_counter[counter_key] = (ref, count_exist+1)
-          self.ref_counter[counter_key][0][RELEVANCE][0] += ref.relevance()
-      except KeyError:
-          self.ref_counter[counter_key] = (ref,1)
+    '''
+    counter_key = ref.get_doc_id()
+    if counter_key in self.ref_counter:
+      count_exist = self.ref_counter[counter_key][1]
+      self.ref_counter[counter_key] = (ref, count_exist+1)
+      self.ref_counter[counter_key][0][RELEVANCE][0] += ref.relevance()
+    else:
+      self.ref_counter[counter_key] = (ref,1)
 
 
   def counter2df(self, use_relevance=True):
-      """
-      Creates DataFrame from self.ref_counter = {identifier:(ref,ref_count)}
-      used to count references from ETM
-      """
-      first_col = RELEVANCE if use_relevance else ETM_CITATION_INDEX
-      header = [first_col,PUBYEAR,'Identifier type',IDENTIFIER_COLUMN,'Citation']
+    """
+    Creates DataFrame from self.ref_counter = {identifier:(ref,ref_count)}
+    used to count references from ETM
+    """
+    if not self.ref_counter: 
+      print('No TM references found')
+      return df()
+    
+    first_col = RELEVANCE if use_relevance else ETM_CITATION_INDEX
+    header = [first_col,PUBYEAR,'Identifier type',IDENTIFIER_COLUMN,'Citation']
 
-      # normalization constant for relevance score between 0 and 100
-      log_scores = []
-      for ref, refcount in self.ref_counter.values():
-        boosted_relevance = ref.relevance() * int(refcount)
-        ref[RELEVANCE] = [boosted_relevance]
-        log_scores.append(math.log(boosted_relevance,10))
-      
-      #normalization_constant = statistics.median(relevance_vec)
-      min_log = min(log_scores)
-      max_log = max(log_scores)
-      maxmin = max_log - min_log
+    # normalization constant for relevance score between 0 and 100
+    log_scores = []
+    for ref, refcount in self.ref_counter.values():
+      boosted_relevance = ref.relevance() * int(refcount)
+      ref[RELEVANCE] = [boosted_relevance]
+      log_scores.append(math.log(boosted_relevance,10))
+    
+    #normalization_constant = statistics.median(relevance_vec)
+    min_log = min(log_scores)
+    max_log = max(log_scores)
+    maxmin = max_log - min_log
 
-      table_rows = set()
-      for identifier, (ref,refcount) in self.ref_counter.items():
-          assert(isinstance(ref,Reference))
-          if use_relevance:
-            score = 100 * (math.log(ref[RELEVANCE][0],10)-min_log)/maxmin
-          else:
-            score = refcount
-          biblio_str, id_type, identifier = ref._biblio_tuple()
-          if id_type == 'PMID':
-              identifier = pubmed_hyperlink([identifier],identifier)
-          elif id_type == 'DOI':
-              identifier = make_hyperlink(identifier,'http://dx.doi.org/')
-          elif id_type == 'PMC':
-              identifier = pmc_hyperlink([identifier],identifier)
-          elif id_type == 'PII':
-              identifier =  pii_hyperlink(identifier,identifier)
-          table_rows.add(tuple([score,ref.pubyear(),id_type,identifier,biblio_str]))
-
-      return_df = df.from_rows(list(table_rows),header)
+    table_rows = set()
+    for (id_type,identifier), (ref,refcount) in self.ref_counter.items():
+      assert(isinstance(ref,Reference))
       if use_relevance:
-          return_df[RELEVANCE] = return_df[RELEVANCE].astype(float).round(2)
+        score = 100 * (math.log(ref[RELEVANCE][0],10)-min_log)/maxmin
       else:
-          return_df[ETM_CITATION_INDEX] = return_df[ETM_CITATION_INDEX].astype(int)
+        score = refcount
+        
+      biblio_str,_,_ = ref._biblio_tuple()
+      if id_type == 'PMID':
+          identifier = pubmed_hyperlink([identifier],identifier)
+      elif id_type == 'DOI':
+          identifier = make_hyperlink(identifier,'http://dx.doi.org/')
+      elif id_type == 'PMC':
+          identifier = pmc_hyperlink([identifier],identifier)
+      elif id_type == 'PII':
+          identifier =  pii_hyperlink(identifier,identifier)
+      table_rows.add(tuple([score,ref.pubyear(),id_type,identifier,biblio_str]))
 
-      return_df[PUBYEAR] = pd.to_numeric(return_df[PUBYEAR], errors='coerce')
-      return_df = return_df.sortrows(by=first_col)
-      return_df.add_column_format('Citation','width',150)
-      return_df.add_column_format('Citation','wrap_text',True)
-      return_df.make_header_horizontal()
-      return_df.set_hyperlink_color([IDENTIFIER_COLUMN])
-      return return_df
+    return_df = df.from_rows(list(table_rows),header)
+    if use_relevance:
+      return_df[RELEVANCE] = return_df[RELEVANCE].astype(float).round(2)
+    else:
+      return_df[ETM_CITATION_INDEX] = return_df[ETM_CITATION_INDEX].astype(int)
+
+    return_df[PUBYEAR] = pd.to_numeric(return_df[PUBYEAR], errors='coerce')
+    return_df = return_df.sortrows(by=first_col)
+    return_df.add_column_format('Citation','width',150)
+    return_df.add_column_format('Citation','wrap_text',True)
+    return_df.make_header_horizontal()
+    return_df.set_hyperlink_color([IDENTIFIER_COLUMN])
+    return return_df
 
 
   @staticmethod
@@ -220,60 +219,13 @@ class RefStats:
           except KeyError:
               ref['Citation index'] = [1]
       return
-
-
-  def dispatch2TMsoft(self,search_name:str,for_entity:str,concept:str,add2query:list)->tuple[int,dict[str,list],list[Reference]]:
-      '''
-      input:
-          search_name in ['ETMbasicSearch','ETMadvancedSearch','ETMrel','SBSsearch']
-      output tuple:
-          [0] hit_count - TOTAL number of reference found by ETM basic search 
-          [1] ref_ids = {id_type:[identifiers]}, where len(ref_ids) == ETMsearch.params['limit']\n
-          id_type is from [PMID, DOI, 'PII', 'PUI', 'EMBASE','NCT ID']\n
-          [2] references = [ref] list of Reference objects sorted by ETM relevance. len(references) == ETMsearch.params['limit'] 
-          Relevance score is stored in ref['Relevance'] for every reference
-      ''' 
-      if search_name == 'ETMbasicSearch':
-          search4concepts = [for_entity,concept]+add2query
-          return self.ETMsearch.basic_search(search4concepts)
-      elif search_name == 'ETMadvancedSearch':
-          return self.ETMsearch.advanced_query(for_entity,concept,add2query)
-      elif search_name == 'ETMrel':
-          return self.ETMsearch.advanced_query_rel(for_entity,concept,add2query)
-      else:
-          return None
   
 
-  def __multiple_search(self,for_entity:str,and_concepts:list,tm_soft:str,
-                        add2query=[],getScopusInfo=False)->tuple[list[Reference],int]:
-    '''
-      performs search for_entity and each concept in "and_concepts"
-      input:
-        tm_soft - type of TM serach. Options: ETMbasicSearch, ETMadvancedSearch, ETMrel, SBSsearch
-    '''
-    assert(isinstance(and_concepts,list|set))
-    references = set()
-    total_hits = 0
-    for concept in and_concepts:
-      if for_entity != concept:
-        hit_count,_,refs = self.dispatch2TMsoft(tm_soft,for_entity,concept,add2query)
-        total_hits += hit_count
-        references.update(refs)
-
-    [self._add2counter(ref) for ref in references]
-    if getScopusInfo:
-      [self.Scopus.scopus_stats4(ref) for ref in references]
-
-    return references, total_hits
-  
-
-  def __get_refs(self, entity_name:str, concepts2link:list,use_query,add2query=[]):
-      references = set()
-      references, total_hits = self.__multiple_search(entity_name,concepts2link,use_query,add2query)
-      return self.__2hyperlink(references,total_hits),''
+ # def search_url(self,total_hits):
+ #   return str(total_hits)
 
 
-  def __2hyperlink(self,references:list[Reference],total_hits:int):
+  def _2hyperlink(self,references:list[Reference],total_hits:int,default_url='') -> str:
     references.sort(key=lambda x:float(x[RELEVANCE][0]),reverse=True)
     my_limit = self._limit()
 
@@ -310,18 +262,10 @@ class RefStats:
       return pii_hyperlink(piis[0],total_hits)
     elif dois:
       return doi_hyperlink(dois[0],total_hits)
-    elif total_hits:
-      return str(total_hits)
+    elif total_hits and default_url and len(default_url) < 255:
+      return f'=HYPERLINK("{default_url}","{total_hits}")'
     else:
       return ''
-
-
-  @staticmethod
-  def refcount_column(between_column:str, and_concepts:str|list):
-      if isinstance(and_concepts,str):
-          return REFCOUNT_COLUMN + ' between '+between_column+' and '+and_concepts
-      else:
-          return REFCOUNT_COLUMN + ' between '+between_column+' and '+','.join(and_concepts)
 
 
   @staticmethod
@@ -332,90 +276,85 @@ class RefStats:
           return 'DOIs' + ' between '+between_column+' and '+','.join(and_concepts)
 
 
-  def __add_refs1(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[]):
-      '''
-          applies search results and creates self.refcount_column and self.doi_columns
-      '''
-      my_df = to_df.dfcopy()
-      refcountcol = self.refcount_column(between_names_in_col,and_concepts)
-      doi_ref_column_name = self.doi_column(between_names_in_col,and_concepts)
-      my_df[[refcountcol,doi_ref_column_name]] = my_df[between_names_in_col].apply(lambda row: self.__get_refs(row,and_concepts,use_query,add2query)).apply(pd.Series)
-      return my_df,self.ref_counter # need to return self.ref_counter to concatenate ref_counters after cloning
+
+  @staticmethod
+  def refcounter2tsv(fname:str, ref_counter:set[Reference], use_relevance=False,include_idtype=False):
+      to_sort = list(ref_counter)
+      if use_relevance:
+          for ref in to_sort:
+              try:
+                  relevance_index = float(ref[ETM_CITATION_INDEX][0])*float(ref[RELEVANCE][0])
+              except KeyError: relevance_index = 0.0
+              ref['Relevance index'] = [float(relevance_index)]
+          to_sort.sort(key=lambda x: x['Relevance index'][0], reverse=True)
+          with open(fname, 'w', encoding='utf-8') as f:
+              f.write('Relevance\tCitation\tPMID or DOI\n')
+              for ref in to_sort:
+                  biblio_tup = ref._biblio_tuple()
+                  if not biblio_tup[2]: 
+                      continue
+                  if include_idtype:
+                      biblio_str = biblio_tup[0]+'\t'+biblio_tup[1]+':'+biblio_tup[2]
+                  else:
+                      biblio_str = biblio_tup[0]+'\t'+biblio_tup[2]
+
+                  f.write(str(ref['Relevance index'][0])+'\t'+biblio_str+'\n')
+      else:        
+          to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
+          with open(fname, 'w', encoding='utf-8') as f:
+              f.write('Citation index\tCitation\tPMID or DOI\n')
+              for ref in to_sort:
+                  biblio_tup = ref._biblio_tuple()
+                  if not biblio_tup[2]: 
+                      continue #to remove reference with no ID type
+                  biblio_tup = ref._biblio_tuple()
+                  if include_idtype:
+                      biblio_str = biblio_tup[0]+'\t'+biblio_tup[1]+':'+biblio_tup[2]
+                  else:
+                      biblio_str = biblio_tup[0]+'\t'+biblio_tup[2]
+                  f.write(str(ref['Citation index'][0])+'\t'+biblio_str+'\n')
 
 
-  def add_refs_etm(self,to_df:df,between_names_in_col:str,and_concepts:list,
-               use_query:str,add2query=[],max_row=0):
-      """
-      input:
-          use_query - function to generate query from "between_names_in_col" and each concept in "and_concepts"
-          "use_query" must have 3 arguments: my_query(entity1:str, entity2:str, add2query:list)\n
-          where add2query - list of additinal keywords used for all pairs "between_names_in_col" and "and_concepts"
+class SBSstats(RefStats):
+  def __init__(self, APIconfig, **kwargs):
+      super().__init__(APIconfig, **kwargs)
+      self.SBSsearch = SBSapi(self.APIconfig)
 
-      output:
-          copy of "to_df" with added columns. Added reference count columns are listed in self.refcols\n
-          self.refcols - []\n
-          self.doi_columns - []\n
-      """
-      if to_df.empty: return to_df
-      
-      if max_row:
-          df2annotate = df.from_pd(to_df.iloc[:max_row])
-          unannoated_rows = df.from_pd(to_df.iloc[max_row:])
-      else:
-          df2annotate = to_df.dfcopy()
-          unannoated_rows = df()
-      row_count = len(to_df)
-      
-      if row_count > 9:
-          thread_name = f'{use_query} refs 4 {len(df2annotate)} rows in {MAX_TM_SESSIONS} thrds'
-          partition_size = 100
-          with ThreadPoolExecutor(max_workers=MAX_TM_SESSIONS, thread_name_prefix=thread_name) as e:
-              futures = list()
-              for i in range(0,len(df2annotate),partition_size):
-                  df_part = df.from_pd(df2annotate.iloc[i:i+partition_size])
-                  new_session = self.clone() # need to clone here to avoid self.ref_counter mutation
-                  futures.append(e.submit(new_session.__add_refs1,df_part,between_names_in_col,and_concepts,use_query,add2query))
+ # @staticmethod
+ # def search_url(entity:str,and_concepts:list[str]):
+ # return f'https://psgscibitesearch.lifesciencepsg.com/documents?document_schema=journal&ssql=%5Bsptbn1%5D%28GENETREE%24GENETREE_6711%29%20%5BAND%5D%28AND%29%20%5Bdopamine%5D%28GENETREE%24GENETREE_1003345%29'
 
-              dfs2concat = list()
-              for f in futures: # cannot use as_completed here to ensure the same order for concatenation
-                  session_df, session_refcounter = f.result()
-                  dfs2concat.append(session_df)
-                  [self._add2counter(t[0]) for t in session_refcounter.values()] # combine references from all futures
-              
-              dfs2concat.append(unannoated_rows)
-              annotated_df = df.concat_df(dfs2concat,to_df._name_)
-      else:
-          annotated_df = self. __add_refs1(to_df,between_names_in_col,and_concepts,use_query,add2query)[0]
-
-      return annotated_df
-  
-
-  def sbs_reflinks(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
-          add2query=[],multithread=False):
+  def reflinks(self,to_df:df,between_names_in_col:str,and_concepts:list[str],add2query=[],multithread=False):
     '''
     output:
       {name in to_df[between_names_in_col]:sentence_coocurence hyperlinked to top 10 references in pubmed}
     '''
+    start_time = time.time()
     names = to_df[between_names_in_col].to_list()
     names = [x for x in names if ':' not in x] # ':' is invalid character in URL parameter
-    e2refs = self.SBSsearch.sentcooc4list(names,and_concepts,add2query,multithread)
-    return {k:self.__2hyperlink(refs,count) for k,(count,refs) in e2refs.items()}
+    name2refs = self.SBSsearch.sentcooc4list(names,and_concepts,add2query,multithread)
+    names2hyperlinks = dict()
+    for name, (search_url,count, refs) in name2refs.items():
+      names2hyperlinks[name] = self._2hyperlink(refs,count,search_url)
+      [self._add2counter(ref) for ref in refs]
+    print(f'Added SBS references to {len(name2refs)} out of {len(to_df)} rows in worksheet "{to_df._name_}" in {execution_time(start_time)}')
+    return names2hyperlinks
+  
 
+  def add_reflinks(self,names2hyperlinks:dict[str,str], _2col:str,in_df:df, map2col:str):
+    '''
+    input:
+      names2hyperlinks - {name in to_df[map_col]:sentence_coocurence hyperlinked to top 10 references in pubmed}
+      _2col - new column name in to_df with hyperlinks
+      map_col - column name in to_df used for mapping
+    '''
+    if not names2hyperlinks: return in_df
 
-  def add_refs_sbs(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
-                   add2query=[],multithread=False):
-    names = to_df[between_names_in_col].to_list()
-    e2refs = self.SBSsearch.sentcooc4list(names,and_concepts,add2query,multithread)
-    my_df = to_df.dfcopy()
-
-    refcountcol = self.refcount_column(between_names_in_col,and_concepts)
-    for i in my_df.index:
-      row_name = my_df.at[i,between_names_in_col]
-      refcount,row_refs = e2refs[row_name]
-      my_df.loc[i,refcountcol] = self.__2hyperlink(row_refs,refcount)
-      [self._add2counter(ref) for ref in row_refs]
-
-    return my_df
+    in_df[_2col] = in_df[map2col].map(names2hyperlinks)
+    in_df.add_column_format(_2col,'align','center')
+    in_df.set_hyperlink_color([_2col])
+    self.refcols.add(_2col)
+    return in_df
   
 
   def abs_cooc(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
@@ -479,29 +418,14 @@ class RefStats:
       return to_df,name2abscooc
 
 
-  def add_refs(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query:str,
-               add2query=[],max_row=0,multithread=True):
-      start_time = time.time()
-      if use_query == 'SBSsearch':
-        annotated_df = self.add_refs_sbs(to_df,between_names_in_col,and_concepts,add2query,multithread)
-      else:
-        annotated_df = self.add_refs_etm(to_df,between_names_in_col,and_concepts,use_query,add2query,max_row)
-  
-      annotated_df.copy_format(to_df)
-      refcols = self.refcount_column(between_names_in_col,and_concepts)
-      self.refcols.add(refcols)
-      annotated_df.add_column_format(refcols,'align','center')
 
-      doi_column = self.doi_column(between_names_in_col,and_concepts)
-      self.doi_columns.add(doi_column)
+class ETMStats(RefStats):
+  def __init__(self, APIconfig, **kwargs):
+    super().__init__(APIconfig, **kwargs)
+    self.ETMsearch = ETMsearch(self.APIconfig,**kwargs)
 
-      annotated_df.set_hyperlink_color([refcols,doi_column])
-      
-      rows_annotated = max_row if max_row else len(to_df)
-      print('Annotated with TM references %d rows from worksheet "%s" in %s' % 
-              (rows_annotated,to_df._name_,execution_time(start_time)))
-      return annotated_df
-
+  #else:
+  #  annotated_df = self.add_refs_etm(to_df,between_names_in_col,and_concepts,use_query,add2query,max_row)
 
   def __etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[]):
       my_df = in_df.dfcopy()
@@ -555,47 +479,117 @@ class RefStats:
       print('Annotated %d rows from %s with ETM references in %s' % 
               (len(in_df),in_df._name_,execution_time(start_time)))
       return annotated_df
+  
+
+  def add_refs_etm(self,to_df:df,between_names_in_col:str,and_concepts:list,
+               use_query:str,add2query=[],max_row=0):
+      """
+      input:
+          use_query - function to generate query from "between_names_in_col" and each concept in "and_concepts"
+          "use_query" must have 3 arguments: my_query(entity1:str, entity2:str, add2query:list)\n
+          where add2query - list of additinal keywords used for all pairs "between_names_in_col" and "and_concepts"
+
+      output:
+          copy of "to_df" with added columns. Added reference count columns are listed in self.refcols\n
+          self.refcols - []\n
+          self.doi_columns - []\n
+      """
+      if to_df.empty: return to_df
+      
+      if max_row:
+          df2annotate = df.from_pd(to_df.iloc[:max_row])
+          unannoated_rows = df.from_pd(to_df.iloc[max_row:])
+      else:
+          df2annotate = to_df.dfcopy()
+          unannoated_rows = df()
+      row_count = len(to_df)
+      
+      if row_count > 9:
+          thread_name = f'{use_query} refs 4 {len(df2annotate)} rows in {MAX_TM_SESSIONS} thrds'
+          partition_size = 100
+          with ThreadPoolExecutor(max_workers=MAX_TM_SESSIONS, thread_name_prefix=thread_name) as e:
+              futures = list()
+              for i in range(0,len(df2annotate),partition_size):
+                  df_part = df.from_pd(df2annotate.iloc[i:i+partition_size])
+                  new_session = self.clone() # need to clone here to avoid self.ref_counter mutation
+                  futures.append(e.submit(new_session.__add_refs1,df_part,between_names_in_col,and_concepts,use_query,add2query))
+
+              dfs2concat = list()
+              for f in futures: # cannot use as_completed here to ensure the same order for concatenation
+                  session_df, session_refcounter = f.result()
+                  dfs2concat.append(session_df)
+                  [self._add2counter(t[0]) for t in session_refcounter.values()] # combine references from all futures
+              
+              dfs2concat.append(unannoated_rows)
+              annotated_df = df.concat_df(dfs2concat,to_df._name_)
+      else:
+          annotated_df = self. __add_refs1(to_df,between_names_in_col,and_concepts,use_query,add2query)[0]
+
+      return annotated_df
+  
+  def __add_refs1(self,to_df:df,between_names_in_col:str,and_concepts:list,use_query,add2query=[]):
+      '''
+          applies search results and creates self.refcount_column and self.doi_columns
+      '''
+      my_df = to_df.dfcopy()
+      refcountcol = self.refcount_column(between_names_in_col,and_concepts)
+      doi_ref_column_name = self.doi_column(between_names_in_col,and_concepts)
+      my_df[[refcountcol,doi_ref_column_name]] = my_df[between_names_in_col].apply(lambda row: self.__get_refs(row,and_concepts,use_query,add2query)).apply(pd.Series)
+      return my_df,self.ref_counter # need to return self.ref_counter to concatenate ref_counters after cloning
+
+  def dispatch2TMsoft(self,search_name:str,for_entity:str,concept:str,add2query:list)->tuple[int,dict[str,list],list[Reference]]:
+      '''
+      input:
+          search_name in ['ETMbasicSearch','ETMadvancedSearch','ETMrel','SBSsearch']
+      output tuple:
+          [0] hit_count - TOTAL number of reference found by ETM basic search 
+          [1] ref_ids = {id_type:[identifiers]}, where len(ref_ids) == ETMsearch.params['limit']\n
+          id_type is from [PMID, DOI, 'PII', 'PUI', 'EMBASE','NCT ID']\n
+          [2] references = [ref] list of Reference objects sorted by ETM relevance. len(references) == ETMsearch.params['limit'] 
+          Relevance score is stored in ref['Relevance'] for every reference
+      ''' 
+      if search_name == 'ETMbasicSearch':
+          search4concepts = [for_entity,concept]+add2query
+          return self.ETMsearch.basic_search(search4concepts)
+      elif search_name == 'ETMadvancedSearch':
+          return self.ETMsearch.advanced_query(for_entity,concept,add2query)
+      elif search_name == 'ETMrel':
+          return self.ETMsearch.advanced_query_rel(for_entity,concept,add2query)
+      else:
+          return None
+  
+
+  def __multiple_search(self,for_entity:str,and_concepts:list,tm_soft:str,
+                        add2query=[],getScopusInfo=False)->tuple[list[Reference],int]:
+    '''
+      performs search for_entity and each concept in "and_concepts"
+      input:
+        tm_soft - type of TM serach. Options: ETMbasicSearch, ETMadvancedSearch, ETMrel, SBSsearch
+    '''
+    assert(isinstance(and_concepts,list|set))
+    references = set()
+    total_hits = 0
+    for concept in and_concepts:
+      if for_entity != concept:
+        hit_count,_,refs = self.dispatch2TMsoft(tm_soft,for_entity,concept,add2query)
+        total_hits += hit_count
+        references.update(refs)
+
+    [self._add2counter(ref) for ref in references]
+    if getScopusInfo:
+      [self.Scopus.scopus_stats4(ref) for ref in references]
+
+    return references, total_hits
+  
+
+  def __get_refs(self, entity_name:str, concepts2link:list,use_query,add2query=[]):
+      references = set()
+      references, total_hits = self.__multiple_search(entity_name,concepts2link,use_query,add2query)
+      return self._2hyperlink(references,total_hits),''
 
 
-  @staticmethod
-  def refcounter2tsv(fname:str, ref_counter:set, use_relevance=False,include_idtype=False):
-      to_sort = list(ref_counter)
-      if use_relevance:
-          for ref in to_sort:
-              try:
-                  relevance_index = float(ref[ETM_CITATION_INDEX][0])*float(ref[RELEVANCE][0])
-              except KeyError: relevance_index = 0.0
-              ref['Relevance index'] = [float(relevance_index)]
-          to_sort.sort(key=lambda x: x['Relevance index'][0], reverse=True)
-          with open(fname, 'w', encoding='utf-8') as f:
-              f.write('Relevance\tCitation\tPMID or DOI\n')
-              for ref in to_sort:
-                  biblio_tup = ref._biblio_tuple()
-                  if not biblio_tup[2]: 
-                      continue
-                  if include_idtype:
-                      biblio_str = biblio_tup[0]+'\t'+biblio_tup[1]+':'+biblio_tup[2]
-                  else:
-                      biblio_str = biblio_tup[0]+'\t'+biblio_tup[2]
-
-                  f.write(str(ref['Relevance index'][0])+'\t'+biblio_str+'\n')
-      else:        
-          to_sort.sort(key=lambda x: x['Citation index'][0], reverse=True)
-          with open(fname, 'w', encoding='utf-8') as f:
-              f.write('Citation index\tCitation\tPMID or DOI\n')
-              for ref in to_sort:
-                  biblio_tup = ref._biblio_tuple()
-                  if not biblio_tup[2]: 
-                      continue #to remove reference with no ID type
-                  biblio_tup = ref._biblio_tuple()
-                  if include_idtype:
-                      biblio_str = biblio_tup[0]+'\t'+biblio_tup[1]+':'+biblio_tup[2]
-                  else:
-                      biblio_str = biblio_tup[0]+'\t'+biblio_tup[2]
-                  f.write(str(ref['Citation index'][0])+'\t'+biblio_str+'\n')
-
-
-
+########## ETMcache class ########## ETMcache class ########## ETMcache class ##########
+# ETMcache is used to download and cache ETM results
 ETM_CACHE_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ETM_API/__etmcache__')
 
 class ETMcache (RefStats):
