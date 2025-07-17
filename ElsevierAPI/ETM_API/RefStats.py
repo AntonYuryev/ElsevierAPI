@@ -324,7 +324,8 @@ class SBSstats(RefStats):
  # def search_url(entity:str,and_concepts:list[str]):
  # return f'https://psgscibitesearch.lifesciencepsg.com/documents?document_schema=journal&ssql=%5Bsptbn1%5D%28GENETREE%24GENETREE_6711%29%20%5BAND%5D%28AND%29%20%5Bdopamine%5D%28GENETREE%24GENETREE_1003345%29'
 
-  def reflinks(self,to_df:df,between_names_in_col:str,and_concepts:list[str],add2query=[],multithread=False):
+  def reflinks(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
+               add2query:list[str]=[],multithread=False):
     '''
     output:
       {name in to_df[between_names_in_col]:sentence_coocurence hyperlinked to top 10 references in pubmed}
@@ -406,7 +407,7 @@ class SBSstats(RefStats):
         my_df.copy_format(df_no_weights)
         return my_df,name2abscooc
       else:
-        return  to_df, dict()
+        return to_df, dict()
     else:
       names = to_df[between_names_in_col].to_list()
       name2abs_cooc = self.SBSsearch.abscooc4list(names,and_concepts,multithread)
@@ -416,7 +417,6 @@ class SBSstats(RefStats):
       to_df['AbsCooccur'] = to_df['Name'].map(name2relevance)
       to_df['AbsCooccur'] = to_df['AbsCooccur'].fillna(0)
       return to_df,name2abscooc
-
 
 
 class ETMStats(RefStats):

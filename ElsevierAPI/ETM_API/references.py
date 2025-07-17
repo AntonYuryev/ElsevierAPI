@@ -35,11 +35,14 @@ IN_OPENACCESS = 'is_openaccess'
 PUBLISHER = 'Publisher'
 GRANT_APPLICATION = 'Grant Application'
 EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", flags=re.IGNORECASE)
+CLINVAR_ID = 'Clinvar RCV ID'
+CLINVAR_ACC = 'Clinvar RCV Accession'
 
 INT_PROPS = {PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX,SBS_CITATION_INDEX}
 FLOAT_PROPS = {RELEVANCE}
 ARTICLE_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE']
-PS_REFIID_TYPES = ARTICLE_ID_TYPES + ['NCT ID','NCTID']
+CLINVAR_ID_TYPES = ['Clinvar',CLINVAR_ACC,CLINVAR_ID]
+PS_REFIID_TYPES = ARTICLE_ID_TYPES + ['NCT ID','NCTID'] + CLINVAR_ID_TYPES
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
 ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
 PATENT_ID_TYPES = [PATENT_APP_NUM, PATENT_GRANT_NUM]
@@ -52,16 +55,41 @@ PS_BIBLIO_PROPS = {TITLE, PUBYEAR, AUTHORS, JOURNAL, MEDLINETA,'Start'} # contai
 BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
 REF_ID_TYPES = PS_REFIID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
-PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD,'pX','Phase','Start','TrialStatus','URL','Experimental System']
+PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD,
+                     'pX','Phase','Start','TrialStatus','URL','Experimental System',CLINVAR_ID,'TextRef',
+                     CLINVAR_ACC,'Clinvar ID']
 SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence','msrc','mref','Similarity']
 # SENTENCE_PROPS needs to be a list for ordered printing
-#also TextRef - used as key in Reference.Sentences
+#also TextRef - used as key in Reference.snippets
 
-PS_REFERENCE_PROPS = list(CLINTRIAL_PROPS)+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS+['TextRef']
+PS_REFERENCE_PROPS = list(CLINTRIAL_PROPS)+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS
 
 REFERENCE_PROPS = list(BIBLIO_PROPS)+list(CLINTRIAL_PROPS)+REF_ID_TYPES+SENTENCE_PROPS
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences, titles, abstracts
+
+IDENTIFIER_PREFIXES = [
+        ('PMID', 'info:pmid/{}'),
+        ('DOI', 'info:doi/{}'),
+        ('PII', 'info:pii/{}'),
+        ('PUI', 'info:pui/{}'),
+        ('EMBASE', 'info:embase/{}'),
+        ('ELSEVIER', 'info:pii/{}'),  # Note: ELSEVIER also uses 'info:pii/'
+        ('PMC', 'info:pmc/{}'),
+        ('Clinvar', 'info:clinvar/{}'),
+        (CLINVAR_ACC, 'info:clinvar/{}')
+      ]
+
+NONSTANDARD_IDENTIFIER_PREFIXES = [
+        ('NCT ID', 'info:nctid/{}'),
+        ('TextRef', '{}'), # No prefix needed for TextRef itself
+        ('REPORTER', 'info:nihreporter/{}'),
+        ('GRANTNUMREPORTER', 'info:nihgrant/{}'),
+        (PATENT_APP_NUM, 'info:patentapp/{}'),
+        (PATENT_GRANT_NUM, 'info:patentgrant/{}'),
+        (TITLE, 'info:title/{}')
+      ]
+
 
 def make_hyperlink(identifier:str,url:str,display_str=''):
         # hyperlink in Excel does not work with long URLs, 
@@ -361,7 +389,23 @@ class Reference(dict):
         [my_copy.Identifiers.pop(p,'') for p in prop_names]
         return my_copy
       return Reference()
+  
 
+  def rename_prop(self, old_prop_name:str, new_prop_name:str):
+      '''
+      Rename property in self and in self.snippets
+      '''
+      if old_prop_name in self:
+        self[new_prop_name] = self.pop(old_prop_name)
+        return True
+      
+      was_renamed = False
+      for snippet_props in self.snippets.values():
+        if old_prop_name in snippet_props:
+          snippet_props[new_prop_name] = snippet_props.pop(old_prop_name)
+          was_renamed = True
+
+      return was_renamed
   
   def get_doc_id(self):
       '''
@@ -639,47 +683,19 @@ class Reference(dict):
 
 
   def _make_standard_textref(self):
-    identifier_prefixes = {
-        'PMID': 'info:pmid/',
-        'DOI': 'info:doi/',
-        'PII': 'info:pii/',
-        'PUI': 'info:pui/',
-        'EMBASE': 'info:embase/',
-        'ELSEVIER': 'info:pii/',  # Note: ELSEVIER also uses 'info:pii/'
-        'PMC': 'info:pmc/',
-        'Clinvar': 'info:clinvar/'
-    }
-    for identifier, prefix in identifier_prefixes.items():
-      try:
-        return prefix + self.Identifiers[identifier]
-      except KeyError:
-        pass  # Continue to the next identifier
+    for identifier, prefix_format in IDENTIFIER_PREFIXES:
+      value = self.Identifiers.get(identifier,'')
+      if value:
+        return prefix_format.format(value)
     return ''
 
 
   def _make_non_standard_textref(self):
-      try:
-          return 'info:nctid/'+ self.Identifiers['NCT ID']
-      except KeyError:
-          try:
-              return self.Identifiers['TextRef']
-          except KeyError:
-              try:
-                  return 'info:nihreporter/'+ self.Identifiers['REPORTER']
-              except KeyError:
-                  try:
-                      return 'info:nihgrant/'+ self.Identifiers['GRANTNUMREPORTER']
-                  except KeyError:
-                      try:
-                          return 'info:patentapp/'+ self.Identifiers[PATENT_APP_NUM]
-                      except KeyError:
-                          try:
-                              return 'info:patentgrant/'+ self.Identifiers[PATENT_GRANT_NUM]
-                          except KeyError:
-                              try:
-                                  return 'info:title/'+self.Identifiers[TITLE] #.replace(' ','%20')
-                              except KeyError:
-                                  return 'NotImplemented'
+    for identifier, prefix_format in NONSTANDARD_IDENTIFIER_PREFIXES:
+      value = self.Identifiers.get(identifier,'')
+      if value:
+        return prefix_format.format(value)
+    return NotImplemented
 
 
   def _make_textref(self):
@@ -731,7 +747,7 @@ class Reference(dict):
 
   def _snippets(self):
     for textref, snippet in self.snippets.items():
-      sentences = snippet.get(SENTENCE,{}) 
+      sentences = snippet.get(SENTENCE,set()) 
       if len(sentences) > 1:
         for i,sentence in enumerate(sentences):
           new_snippet = snippet.copy()
