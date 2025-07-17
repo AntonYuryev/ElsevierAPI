@@ -440,17 +440,42 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
     if concepts:
       phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
 
-    kwargs['column_name'] = 'inhibit symptoms for '+ self._disease2str()
-    kwargs['with_effects'] = ['negative']
-    drug_df,concepts = self.score_concept('symptoms',drug_df,**kwargs)[2:4]
-    if concepts:
-      phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
+    if 'symptoms' in self.params:
+      # calculating first symptoms aggravated by the drug. All columns except 'Aggravated symptoms" will be deleted
+      # column  Refcount aggravate symptoms for ... will be subtaracted from symptoms columns 
+      # and drugs known to exacerbate symptoms more than inhibit them will be deleted from drug_df
+      kwargs['with_effects'] = ['positive']
+      aggravate_symptoms_col = 'aggravate symptoms for '+ self._disease2str()
+      kwargs['column_name'] = aggravate_symptoms_col
+      drug_df = self.score_concept('symptoms',drug_df,**kwargs)[2]
+      drug_df = drug_df.dfcopy(rename2={'Relevant symptoms':'Aggravated symptoms'})
 
-    kwargs['with_effects'] = ['unknown']
-    kwargs['column_name'] = 'symptoms for '+ self._disease2str()
-    drug_df,concepts = self.score_concept('symptoms',drug_df,**kwargs)[2:4]
-    if concepts:
-      phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
+      symptoms_columns = []
+      colname = 'inhibit symptoms for '+ self._disease2str()
+      kwargs['column_name'] = colname
+      kwargs['with_effects'] = ['negative']
+      drug_df,concepts = self.score_concept('symptoms',drug_df,**kwargs)[2:4]
+      if concepts:
+        phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
+        symptoms_columns.append(colname)
+
+      kwargs['with_effects'] = ['unknown']
+      colname = 'symptoms for '+ self._disease2str()
+      kwargs['column_name'] = colname
+      drug_df,concepts = self.score_concept('symptoms',drug_df,**kwargs)[2:4]
+      if concepts:
+        phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
+        symptoms_columns.append(colname)
+
+      aggravated_symptoms_refcount_col = self._refcount_colname(aggravate_symptoms_col)
+      for col in symptoms_columns:
+        drug_df[col] -= drug_df[aggravated_symptoms_refcount_col]
+        drug_df = drug_df.greater_than(-1,col) # removing drugs that aggravate symptoms more than inhibit them
+      
+      #dropping aggravated_symptoms_refcount_col:
+      my_cols = [c for c in drug_df.columns if c != aggravated_symptoms_refcount_col]
+      drug_df = drug_df.dfcopy(my_cols)
+      
 
     kwargs.pop('with_effects')
     kwargs['column_name'] = 'regulation of diseases similar to '+ self._disease2str()
@@ -691,7 +716,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
         print(f'Add {len(good_drugsG)} drugs that inhibit targets that must be inhibited')
 
       selected_drugs = drugs_linked2targets - set(drugs_withno_targets)
-      selected_drugs = selected_drugs - self.drugs_induce_symptoms()
+     # selected_drugs = selected_drugs - self.drugs_induce_symptoms()
       return list(selected_drugs)
   
 

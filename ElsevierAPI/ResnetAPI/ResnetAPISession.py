@@ -1,7 +1,6 @@
 import time, math, os, glob, json, threading
 import networkx as nx
 from zeep import exceptions
-from xml.dom import minidom
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
@@ -13,7 +12,7 @@ from .PathwayStudioGOQL import OQL,PERCNT
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES
 from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
-from ..utils import unpack,execution_time,execution_time2,load_api_config
+from ..utils import unpack,execution_time,execution_time2,load_api_config,pretty_xml,list2chunks_generator
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
@@ -94,7 +93,6 @@ class APISession(PSNetworx):
         self.add_rel_props(rel_props)
 
         self.add2self = my_kwargs.get('add2self',True) # if False will not add new graph to self.Graph
-        self.print_rel21row = False
         self.getLinks = True
         self.__IsOn1st_page = True # to print header in dump file
         self.dump_folder = str()
@@ -247,15 +245,15 @@ to retreive {my_sent_props} properties')
                                                                                  getLinks = self.getLinks)
         
         if max_result and self.ResultSize > max_result:
-            return ResnetGraph()
+          return ResnetGraph()
     
         if first_iteration > 0:
-            self.ResultPos = first_iteration
-            print (f'Resuming retrieval from {first_iteration} position' ,flush=True)
-            return self.__nextpage__(self.ResultPos)
+          self.ResultPos = first_iteration
+          print (f'Resuming retrieval from {first_iteration} position' ,flush=True)
+          return self.__nextpage__(self.ResultPos)
         else:
-            if request_name and not max_result:  # to suppress messages from load_children4
-              print(f'query "{request_name}" found {self.ResultSize} results',flush=True)
+          if request_name and not max_result:  # to suppress messages from load_children4
+            print(f'query "{request_name}" found {self.ResultSize} results',flush=True)
 
         if not isinstance(zeep_data, type(None)):
             if self.getLinks:
@@ -952,6 +950,7 @@ to retreive {my_sent_props} properties')
       output:
         Tuple: parent:PSObject, children:list[PSObject]
       '''
+      assert(CHILDS not in self.Graph.nodes[parent.uid()]) 
       parent_dbid = parent.dbid()
       if parent_dbid:
           query_ontology = OQL.get_childs([parent_dbid],['id'],depth=depth)
@@ -971,7 +970,7 @@ to retreive {my_sent_props} properties')
           return parent,[]
       
 
-    def __load_children4(self,parents:list[PSObject],min_connectivity=0,depth=0,
+    def __load_children4(self,parents:set[PSObject],min_connectivity=0,depth=0,
                       max_childs=ALL_CHILDS,max_threads=MAX_SESSIONS)->tuple[set[PSObject],list[PSObject]]:
       '''
       Input:
@@ -988,32 +987,21 @@ to retreive {my_sent_props} properties')
       process_start = time.time()
       print(f'Loading ontology children for {len(parents)} entities')
       # by default sessions_max=200 in Oracle
-      thread_name_prefix = f'Childs 4 {len(parents)} prnts in {max_threads} thrds-'
-      need_children = list()
+      thread_name_prefix = f'Childs4 {len(parents)} prnts in {max_threads} thrds-'
+      max_workers = min(max_threads,MAX_SESSIONS)
       child_counter = set()
-      iteration_counter = 0
-      for p, parent in enumerate(parents):
-        parent_uid = parent.uid()
-        assert(CHILDS not in self.Graph.nodes[parent_uid])
-        need_children.append(parent)
-        if len(need_children) >= max_threads or p == len(parents)-1:
-          max_workers = min(len(need_children),max_threads,MAX_SESSIONS)
-          iteration_counter += 1
-          thread_name = thread_name_prefix+str(iteration_counter) + 'iter'
-          with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name) as e:
-            futures = list()
-            [futures.append(e.submit(self.___load_children,nc,min_connectivity,depth,max_childs)) for nc in need_children]
-
-            for future in as_completed(futures):
-              f_parent, children = future.result()
-              # !!!!children has empty PSObjects if len(children) <= max_childs !!!
-              nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
-              if max_childs == ALL_CHILDS or len(children) <= max_childs:
-                # case when children are real PSObjects
-                self.Graph.add_psobjs(children) # set_node_attributes() does not update nodes that do not exist in Graph
-                child_counter.update(children)
+      for i, chunk in list2chunks_generator(list(parents), chunk_size=max_workers):
+        thread_name = thread_name_prefix+str(i) + 'chunk'   
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name) as e:
+          futures = [e.submit(self.___load_children,nc,min_connectivity,depth,max_childs) for nc in chunk]
+          for future in as_completed(futures):
+            f_parent, children = future.result()
+            # !!!!children has empty PSObjects if len(children) <= max_childs !!!
+            nx.function.set_node_attributes(self.Graph, {f_parent.uid():{CHILDS:children}})
+            if max_childs == ALL_CHILDS or len(children) <= max_childs: # when children are real PSObjects
+              self.Graph.add_psobjs(children) # set_node_attributes() does not update nodes that do not exist in Graph
+              child_counter.update(children)
           e.shutdown()
-          need_children.clear()
       
       #to remove empty children from parents with number of children bigger than max_childs
       child_counter = {x for x in child_counter if x}
@@ -1054,12 +1042,11 @@ to retreive {my_sent_props} properties')
       else:
         parents_need_childs = graph_nodes
  
-      children2return = set(unpack([o.childs() for o in exist_parents]))
-      children2return = set(unpack([o.childs() for o in exist_parents]))
+      children2return = unpack([o.childs() for o in exist_parents])
       children2return = {x for x in children2return if x} # to remove empty children that may come from exist_parents
       parents2return = set(exist_parents)
       if parents_need_childs:
-        new_children,parents_with_children = self.__load_children4(parents_need_childs,min_connectivity,depth,max_childs,max_threads)
+        new_children,parents_with_children = self.__load_children4(set(parents_need_childs),min_connectivity,depth,max_childs,max_threads)
         parents2return.update(parents_with_children)
         children2return.update(new_children)
         # since only parents with children are returned by __load_children4
@@ -1193,38 +1180,32 @@ to retreive {my_sent_props} properties')
 
 
 ###################################  WRITE DUMP  CACHE, WRITE, DUMP  CACHE, WRITE DUMP  CACHE ##############################################
-    def to_csv(self, file_out, in_graph=ResnetGraph(), access_mode='w'):
-        debug = not self.no_mess
-        my_graph = in_graph if in_graph else self.Graph
-        my_graph.print_references(file_out, self.relProps, self.entProps, access_mode, printHeader=self.__IsOn1st_page,
-                                col_sep=self.sep,debug=debug,single_rel_row=self.print_rel21row)
+    def to_csv(self, file_out, in_graph=ResnetGraph(), access_mode='w',single_rel_row=False):
+      '''
+      input:
+        if single_rel_row = True prints reference properties concatenated into 1 string per relation
+      '''
+      debug = not self.no_mess
+      my_graph = in_graph if in_graph else self.Graph
+      my_graph.print_references(file_out, self.relProps, self.entProps, access_mode, printHeader=self.__IsOn1st_page,
+                              col_sep=self.sep,debug=debug,single_rel_row=single_rel_row)
 
 
-    def to_pandas (self, in_graph=None, RefNumPrintLimit=0)-> 'df':
-        if not isinstance(in_graph, ResnetGraph): in_graph = self.Graph
-        return df(in_graph.ref2pandas(self.relProps,self.entProps,RefNumPrintLimit,single_rel_row=self.print_rel21row))
-
-
-    @staticmethod
-    def pretty_xml(xml_string:str, remove_declaration = False):
-        '''
-        xml_string must have xml declration
-        '''
-        pretty_xml = str(minidom.parseString(xml_string).toprettyxml(indent='   '))
-        if remove_declaration:
-            pretty_xml = pretty_xml[pretty_xml.find('\n')+1:]
-        return pretty_xml
+    def to_pandas (self, in_graph=None, RefNumPrintLimit=0,single_rel_row=False)-> 'df':
+      '''
+      input:
+        if single_rel_row = True prints reference properties concatenated into 1 string per relation
+      '''
+      if not isinstance(in_graph, ResnetGraph): in_graph = self.Graph
+      return df(in_graph.ref2pandas(self.relProps,self.entProps,RefNumPrintLimit,single_rel_row=single_rel_row))
+  
 
 
     @staticmethod
     def filename4(name: str) -> str:
         """
         Normalizes a filename by replacing illegal characters.
-
-        Args:
-            name: The filename to normalize.
-
-        Returns:
+        output:
             The normalized filename with illegal characters replaced.
         """
         replacements = {'>': '-', '<': '-', '|': '-', '/': '-', ':': '_'}
@@ -1310,7 +1291,7 @@ to retreive {my_sent_props} properties')
                       break
                   f.seek(-2, 1) # f.seek(-1, 1) does not work
                 last_line = f.readline().decode('utf-8').strip()  # Read and decode the last line
-                return "</batch>" == last_line  # Check if "</batch>" is present
+                return last_line.endswith("</batch>")  # Check if "</batch>" is present
         except FileNotFoundError:
             return False # directory has no RNEF 
 
@@ -1417,6 +1398,8 @@ to retreive {my_sent_props} properties')
                 new_f.write(rnef_xml)
                 new_f.flush()
 
+        return write2
+
 
     def _dump2rnef(self,graph=ResnetGraph(),to_folder='',in_parent_folder='',root_folder='',can_close=True,lock=None):
         '''
@@ -1443,7 +1426,7 @@ to retreive {my_sent_props} properties')
         if my_graph:
           if my_graph.number_of_edges() == 0:
             rnef_str = my_graph.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-            rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+            rnef_str = pretty_xml(rnef_str,remove_declaration=True)
             self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
             self.close_rnef_dump(to_folder,in_parent_folder,root_folder,True)
           else:
@@ -1454,7 +1437,7 @@ to retreive {my_sent_props} properties')
               if len(section_rels) == self.resnet_size:
                 resnet_section = my_graph.subgraph_by_rels(list(section_rels))
                 rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-                rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+                rnef_str = pretty_xml(rnef_str,remove_declaration=True)
                 # dumps section
                 self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
                 resnet_section.clear_resnetgraph()
@@ -1463,7 +1446,7 @@ to retreive {my_sent_props} properties')
             # dumps leftover resnet_section with size < self.resnet_size
             resnet_section = my_graph.subgraph_by_rels(list(section_rels))
             rnef_str = resnet_section.to_rnefstr(ent_props=self.entProps,rel_props=self.relProps)
-            rnef_str = self.pretty_xml(rnef_str,remove_declaration=True)
+            rnef_str = pretty_xml(rnef_str,remove_declaration=True)
             self.rnefs2dump(rnef_str,to_folder,in_parent_folder,root_folder,can_close,lock)
             self.close_rnef_dump(to_folder,in_parent_folder,root_folder,True)
 

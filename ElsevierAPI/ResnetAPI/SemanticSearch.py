@@ -5,7 +5,7 @@ from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import Reference
 from ..pandas.panda_tricks import df,MAX_TAB_LENGTH
 from .ResnetGraph import ResnetGraph,PSObject,EFFECT
-from .ResnetAPISession import APISession,len,CHILDS
+from .ResnetAPISession import APISession,len
 from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
 from ..ETM_API.RefStats import SBSstats
 from ..utils import execution_time,sortdict
@@ -146,6 +146,10 @@ class SemanticSearch (APISession):
       return colname[len(self._col_name_prefix+self._col_name_prefix2):]
   
   def _refcount_colname(self,concept_name:str):
+      '''
+      output: 
+        self._col_name_prefix2 + concept_name
+      '''
       return self._col_name_prefix2 + concept_name
   
   def _weighted_refcount_colname(self,concept_name:str):
@@ -728,15 +732,17 @@ class SemanticSearch (APISession):
       input:
         uses table._name_ attribute to call worksheet in the report
       '''
-      table_name = table._name_
-      if not table_name:
-          table_name = 'Sheet' + str(len(self.report_pandas))
-      self.report_pandas[str(table_name)] = table
+      if not table.empty:
+        table_name = table._name_
+        if not table_name:
+            table_name = 'Sheet' + str(len(self.report_pandas))
+        self.report_pandas[str(table_name)] = table
 
 
   def add2raw(self,table:df):
-      assert(table._name_)
-      self.raw_data[table._name_] = table
+      if not table.empty:
+        assert(table._name_)
+        self.raw_data[table._name_] = table
 
 
   def find_ref(self,ref:Reference):
@@ -1301,7 +1307,8 @@ class SemanticSearch (APISession):
         return_df._name_ = from_df._name_
     return return_df
 
-
+  def _relevant_concept_colname(self,concept_name:str):
+     return 'Relevant '+concept_name
 
   def add_relevant_concepts(self,to_df:df,name2concepts:dict[str,list[PSObject]]):
     '''
@@ -1312,7 +1319,7 @@ class SemanticSearch (APISession):
     '''
     my_df = to_df.dfcopy()
     for name, concepts in name2concepts.items():
-      column = 'Relevant '+name
+      column = self._relevant_concept_colname(name)
       print(f'Adding {column} column to {to_df._name_}')
       for i in my_df.index:
         dbids = list(to_df.at[i,self.__temp_id_col__])
@@ -1353,7 +1360,8 @@ class SemanticSearch (APISession):
       for name,weight in name2weights.items():
         rows.append([type,name,weight])
 
-    param_df = df.from_rows(rows,['Parameter','Name','Value'])
+    param_df = df.from_rows(rows,['Parameter','Name'])
+    param_df = param_df.sortrows(by=['Value','Parameter','Name'])
     param_df._name_ = INPUT_WOKSHEET
     param_df.tab_format['tab_color'] = 'yellow'
     self.add2report(param_df)
@@ -1437,7 +1445,7 @@ class SemanticSearch (APISession):
     [my_ws_order.append(w) for w in my_worksheets if w not in my_ws_order]
 
     # gathering worksheet statistics into Info worksheet:
-    info_rows = [['Worksheets in this file:','=INFO("numfile")']]
+    info_rows = [['Worksheets in this file:','=SHEETS()']]
     [info_rows.append([f'=HYPERLINK("#\'{truncate_ws(w)}\'!A1", "{truncate_ws(w)}")',1]) for w in my_ws_order]
     infodf = df.from_rows(info_rows,['Info','Counts'],dfname=INFO_WORKSHEET)
     infodf.set_hyperlink_color(['Info'])

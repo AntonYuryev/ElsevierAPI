@@ -176,7 +176,9 @@ class APIcache(APISession):
     my_session = self._clone_session(**my_session_kwargs) 
 
     log_name = f'Download of {cache_name}.log'
-    log_path = os.path.join(kwargs['data_dir'], 'logs', log_name)
+    log_dir = os.path.join(kwargs['data_dir'], 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, log_name)
     with Tee(log_path):
       print(f'Download log is in {log_path}')
       if kwargs.get('connect_nodes',False):
@@ -383,7 +385,8 @@ class APIcache(APISession):
   def get_map(_4nodetypes:list,using_props:list,dump2file='mapfile',norm=True)->dict[str,dict[str,dict[str,PSObject]]]:
     '''
     output:
-      {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
+      mapdic = {objectype:{propname:{propval:PSObject}}}, where propval is in lowercase()
+    either reads map from CACHE_DIR/dump2file or downloads it from database and saves to CACHE_DIR/dump2file
     '''
     dump_path = os.path.join(CACHE_DIR,dump2file)
     if dump_path[-5:] != '.json': dump_path += '.json'

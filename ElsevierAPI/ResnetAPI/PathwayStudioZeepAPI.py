@@ -28,7 +28,11 @@ class DataModel:
         no_mess - default True, if False your script becomes more verbose\n
         connect2server - default True, set to False to run script using data in __pscache__ files instead of database
         '''
-        self.APIconfig = dict(args[0]) if args else load_api_config()
+        if args:
+          self.APIconfig = load_api_config(args[0]) if isinstance(args[0], str) else dict(args[0])
+        else:
+          self.APIconfig = load_api_config()
+        assert isinstance(self.APIconfig, dict), "APIconfig must be a dictionary or a path to a json file"
         my_kwargs = {'connect2server':True,'no_mess':True,'load_model':True}
         my_kwargs.update(kwargs)
         self.no_mess = my_kwargs.get('no_mess',True)
@@ -76,28 +80,31 @@ class DataModel:
 
 
     def __load_model(self):
-        object_types = self.SOAPclient.service.GetObjectTypes()
-        property_types = self.SOAPclient.service.GetPropertyDefinitions()
-    
-        for i in range(0, len(object_types)):
-            db_id = object_types[i]['Id']
-            obj_type_name = object_types[i]['Name']
-            obj_type_display_name = object_types[i]['DisplayName']
-            self.IdtoObjectType[obj_type_name] = object_types[i]
-            self.IdtoObjectType[obj_type_display_name] = object_types[i]
-            self.IdtoObjectType[db_id] = object_types[i]
-            for s in object_types[i]['Synonyms']:
-                self.IdtoObjectType[s] = object_types[i]
+      object_types = self.SOAPclient.service.GetObjectTypes()
+      property_types = self.SOAPclient.service.GetPropertyDefinitions()
+  
+      for i in range(0, len(object_types)):
+          db_id = object_types[i]['Id']
+          obj_type_name = object_types[i]['Name']
+          obj_type_display_name = object_types[i]['DisplayName']
+          self.IdtoObjectType[obj_type_name] = object_types[i]
+          self.IdtoObjectType[obj_type_display_name] = object_types[i]
+          self.IdtoObjectType[db_id] = object_types[i]
+          for s in object_types[i]['Synonyms']:
+            self.IdtoObjectType[s] = object_types[i]
 
-        for i in range(0, len(property_types)):
-            db_id = property_types[i]['Id']
-            prop_type_name = property_types[i]['Name']
-            prop_type_display_name = property_types[i]['DisplayName']
-            self.IdToPropType[prop_type_name] = property_types[i]
-            self.IdToPropType[prop_type_display_name] = property_types[i]
-            self.IdToPropType[db_id] = property_types[i]
-            
-            self.RNEFnameToPropType[prop_type_name] = property_types[i]
+      for i in range(0, len(property_types)):
+          db_id = property_types[i]['Id']
+          prop_type_name = str(property_types[i]['Name'])
+          prop_type_display_name = str(property_types[i]['DisplayName'])
+          self.IdToPropType[prop_type_name] = property_types[i]
+          self.IdToPropType[prop_type_display_name] = property_types[i]
+          self.IdToPropType[db_id] = property_types[i]
+          
+          
+          self.RNEFnameToPropType[prop_type_name] = property_types[i]
+      return
+      
 
 
     def __id2objtype(self, classID):

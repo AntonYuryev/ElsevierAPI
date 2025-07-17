@@ -182,9 +182,9 @@ class Indications4targets(SemanticSearch):
     def _set_targets(self):
         '''
         input:
-            self.params['target_names']
+          self.params['target_names']
         output:
-            self.__targets__
+          self.__targets__
         '''
         self.__targets__ = self.__load_targets()
         if self.__targets__:
@@ -801,7 +801,7 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
                         if not __resolve(conflict,partner_rels,'QuantitativeChange'):
                             unresolved_uids.add(conflict.uid())
         if unresolved_uids:
-          print(f'{len(unresolved_uids)} indications cannot be resolved.\n They will appear in both worksheets for agonists and antagonist:')
+          print(f'{len(unresolved_uids)} indications cannot be resolved.\nThey will appear in both worksheets for agonists and antagonist:')
           for uid in unresolved_uids:
             try:
               print(self.Graph._psobj(uid).name())
@@ -815,7 +815,7 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
           oql = OQL.get_childs(ontology_group,['Name'])
           mustbe_indications = self.process_oql(oql)._get_nodes()
           childs,self.mustbe_indications = self.load_children4(mustbe_indications,
-                                           max_childs=self.max_ontology_parent)
+                                           max_childs=self.max_ontology_parent,max_threads=10)
           
           #terminal_childs = [o for o in childs if not o.childs()]
           #self.mustbe_indications = set(self.mustbe_indications+terminal_childs)
@@ -834,10 +834,11 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
 
       if 'include_toxicity4ontology_groups' in self.params:
         if not hasattr(self,'mustbe_toxicities'):
+          print(f'Loading toxicities from {self.params['include_toxicity4ontology_groups']} ontology group')
           oql = OQL.get_childs(self.params['include_toxicity4ontology_groups'],['Name'])
           mustbe_toxicities = self.process_oql(oql)._get_nodes()
           childs,self.mustbe_toxicities = self.load_children4(mustbe_toxicities,
-                                           max_childs=self.max_ontology_parent)
+                                           max_childs=self.max_ontology_parent,max_threads=10)
           
         if self.__moa() == ANTAGONIST:
           len_before = len(self.__indications4antagonists__)

@@ -13,7 +13,8 @@ PATHWAY_ID = 'Pathway ID'
 SYMLINK = 'Symlink'
 FOLDER_OBJECTS = ['Pathway','Group','attributesSearch']
 FOBJECTS_PROPS = ['Name','Description','Notes']
-MAX_FOLDER_SESSIONS = 8
+MAX_FOLDER_SESSIONS = 10
+MAX_FOBJ_SESSIONS = 1 # suggested value = 1, because pathways in the same folder often share same relations and nodes
 
 '''
 NOTAION:
@@ -26,7 +27,6 @@ class FolderContent(APISession):
     def __init__(self,  *args,**kwargs):
         my_kwargs = {'preload_folder_tree':True,'what2retrieve':SNIPPET_PROPERTIES}
         my_kwargs.update(kwargs)
-        self.root_folder = self.filename4(my_kwargs.pop('root_folder','')) # default root folder
         super().__init__(*args,**my_kwargs)
         self.SOAPclient.transport.load_timeout = 600 # pathways tend to have relations with large number of references
         self.PageSize = 1000
@@ -35,7 +35,9 @@ class FolderContent(APISession):
         self.dbid2fobj = dict() # {dbid:PSObject}
         self.parent2childs = dict()
         self.subfold_id2fold_id = dict()
+        self.root_folder = ''
         # where PSObject corresponds to types in FOLDER_OBJECTS: Pathway, Group, attributesSearch
+        self.downloaded_folder_counter = 0
         self.fobj_counter = Counter()
         self.FolderGraph = ResnetGraph() # graph of folders, used to store folder tree
 
@@ -50,15 +52,13 @@ class FolderContent(APISession):
       my_kwargs['preload_folder_tree'] = False
       new_session = FolderContent(api_session.APIconfig,**my_kwargs)
       if copy_graph:
-        new_session.Graph = self.Graph
+          new_session.Graph = self.Graph
       new_session.entProps = api_session.entProps
       new_session.relProps = api_session.relProps
       new_session.data_dir = api_session.data_dir
       new_session.id2folder = dict(self.id2folder)
       new_session.FolderGraph = self.FolderGraph
-      new_session.root_folder = self.root_folder
       return new_session
-
 
     def __folder_id(self,folder_name:str) -> int:
         '''
@@ -396,7 +396,7 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
         if size of dump file exceeds 100000000, "rnef_xml" is splitted into several RNEF files\n
         dump RNEF files are named as: 'content of folder_name#',
         where # - dump file number
-      output:
+      Return:
         new_pathway_counter,symlinks,folder_name,parent_folder_name,fobj_counter
       """
       folder_id = self.__folder_id(folder_id_or_name) if isinstance(folder_id_or_name, str) else folder_id_or_name
@@ -404,11 +404,12 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
       my_fobjs = set(self.update_dbid2fobj([folder_id],with_layout=True).values())
       if not my_fobjs:
         print(f'\nFolder "{my_folder.Name}" has no objects')
-        return set(),my_folder.Name,parent_folder_name,Counter()
+        return set(),my_folder.Name,parent_folder_name,Counter({'Pathway':0,'Group':0,'attributesSearch':0,SYMLINK:0})
       else:
         all_fobjs_count = len(my_fobjs)
         print(f'\n"{my_folder.Name}" folder in "{parent_folder_name}" has {all_fobjs_count} objects')
     
+
       folderpath_rnef = self.folderpath_rnef(my_folder.Id)
       fobj_counter = Counter()
       symlinks = set()
@@ -422,26 +423,23 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
           fobjs2download.append(fobj)
 
       if symlinks:
-        symlink_count = len(symlinks)
         # overrides existing symlink file:
         my_folder_name = self.filename4(my_folder.Name)
+        print(f'Dumping {len(SYMLINK)} symlinks to "{my_folder_name}" folder')
         my_folder_path = self.dump_path(my_folder.Name,parent_folder_name,self.root_folder)
-        print(f'Dumping {symlink_count} symlinks for "{my_folder.Name}" folder into "{my_folder_path}"')
         with open(os.path.join(my_folder_path,my_folder_name+'_symlinks.rnef'), 'w',encoding='utf-8') as symf:
           symf.write('<batch>\n')
+          fobj_counter[SYMLINK] += len(symlinks)
           symf.write(self.__fobj2folder_rnef(symlinks,my_folder))
           symf.write('\n'+folderpath_rnef)
-          symf.write('\n</batch>')
-          fobj_counter[SYMLINK] += symlink_count
+          symf.write('</batch>')
 
-      fobjs2dload = len(fobjs2download)
-      if fobjs2dload:
-        print(f'{all_fobjs_count-fobjs2dload} objects for {my_folder.Name} were downloaded previously')
-        print(f'Begin download remaining {fobjs2dload} objects for {my_folder.Name}')
+      if not fobjs2download:
+        print('All folder objects were downloaded previosly. Skipping download')
+        return symlinks,my_folder.Name,parent_folder_name,fobj_counter
       else:
-        print(f'All objects in {my_folder.Name} folder were downloaded previosly. Skipping download')
-        return symlinks,my_folder.Name,parent_folder_name,fobj_counter       
-        
+        print(f'{all_fobjs_count-len(fobjs2download)} objects were downloaded previously')
+
       # multithreading download of folder objects is a bad idea 
       # because pathways in folder often share same relations and nodes
       # their simultaneous downlaod will be lock database
@@ -453,8 +451,9 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
           added_fobjs.append(fobj)
           fobj_counter[fobj_type] += 1
           _,_,fobj_xml  = self.__download_fobj(fobj,props4rel,props4pathway,True)
+          fobj_count = sum(fobj_counter.values())
           my_parentfolder_name = '' if parent_folder_name == my_folder.Name else parent_folder_name
-          path2file = self.rnefs2dump(fobj_xml+'\n',my_folder.Name,my_parentfolder_name,self.root_folder,can_close=False)
+          path2file = self.rnefs2dump(fobj_xml,my_folder.Name,my_parentfolder_name,self.root_folder,can_close=False)
           fobjs2skip.add(fobj)
         else:
           print (f'{my_folder.Name} folder has object with id={fobj.dbid()} of unknown type "{fobj.objtype()}"')
@@ -472,10 +471,10 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
     def __download_folders(self,folders:list,job_name:str,downloaded_fobjs:set[PSObject]=set(),
                            props4rel=dict(),props4pathway=dict())->tuple[set[PSObject],Counter]:
         '''
-        input:
-          folders - list of zeep objects
+        Input:
+            folders - list of zeep objects
 
-        output:
+        Return:
             symlinks to be printed. Updates downloaded_fobjs
         '''
         chunks = list()
@@ -488,32 +487,34 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
         for i,chunk in enumerate(chunks):
             thread_name = f'{job_name} chunk #{i+1} of {len(chunks)}'
             with ThreadPoolExecutor(max_workers=MAX_FOLDER_SESSIONS, thread_name_prefix=thread_name) as e:
-              futures = list()
-              sessions = list()
-              for folder in chunk:
-                parent_id = self.subfold_id2fold_id[folder.Id]
-                parent_folder_name = self.id2folder[parent_id].Name
-                new_session = self.clone(copy_graph=True)
-                futures.append(e.submit(new_session.__download_folder,folder.Id,parent_folder_name,downloaded_fobjs,props4rel,props4pathway))
-                sessions.append(new_session)
+                futures = list()
+                sessions = list()
+                for folder in chunk:
+                    parent_id = self.subfold_id2fold_id[folder.Id]
+                    parent_folder_name = self.id2folder[parent_id].Name
+                    new_session = self.clone(copy_graph=True)
+                    futures.append(e.submit(new_session.__download_folder,folder.Id,parent_folder_name,downloaded_fobjs,props4rel,props4pathway))
+                    sessions.append(new_session)
 
-              future_to_index = {future: i for i, future in enumerate(futures)}
-              for f in as_completed(futures):
-                  index = future_to_index[f]
-                  sessions[index].close_connection() # close connection ASAP to avoid locking database
-                  self.Graph = self.Graph.compose(sessions[index].Graph)
+                future_to_index = {future: i for i, future in enumerate(futures)}
+                for f in as_completed(futures):
+                    index = future_to_index[f]
+                    sessions[index].close_connection() # close connection ASAP to avoid locking database
+                    self.Graph = self.Graph.compose(sessions[index].Graph)
 
-                  syms,subfolder_name,parent_folder_name,fobc = f.result()
-                  fobj_counter.update(fobc)
-                  fobj_counter['Folder'] += 1
-                  self.close_rnef_dump(subfolder_name,parent_folder_name,self.root_folder,True)
+                    syms,subfolder_name,parent_folder_name,fobc = f.result()
+                    fobj_counter.update(fobc)
+                    self.close_rnef_dump(subfolder_name,parent_folder_name,self.root_folder,True)
 
-                  print(f'\nFinished downloading "{subfolder_name}" subfolder in "{parent_folder_name}" folder: {fobj_counter['Folder']} out of {len(folders)}')
-                  if fobj_counter:
-                    print(f'Download {fobj_counter}')
+                    self.downloaded_folder_counter += 1
+                    print(f'Finished downloading "{subfolder_name}" subfolder in "{parent_folder_name}" folder:')
+                    print(f'{self.downloaded_folder_counter} out of {len(folders)}')
+                    if fobj_counter:
+                        print(f'Downloaded {fobj_counter}')
 
-                  symlinks.update(syms)                  
-              e.shutdown()
+                    symlinks.update(syms)
+                    
+                e.shutdown()
 
             if self.Graph.weight() > self.reference_cache_size:
                 print('Clearing cache due to large size: %d' % self.Graph.weight())
@@ -533,19 +534,14 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
         fobjs = set()  # Using a set directly to avoid duplicate URNs
         fobj_counter = Counter()
         with open(rnef_file, "r", encoding='utf-8') as f:
-          content = f.read().strip()
-        
-        # Unfinished RNEF files will be missing </batch> tag
-        if not content.endswith('</batch>'):
-          content += '</batch>'  # Ensure the file ends with a closing tag. 
-            
-        for resnet in et.fromstring(content).findall('./resnet'):
-          ps_pathway = PSPathway.from_resnet(resnet, ignore_graph=True)
-          objtype = ps_pathway.objtype()
-          if objtype in FOLDER_OBJECTS:
-            fobjs.add(PSObject({'URN':[ps_pathway.urn()],OBJECT_TYPE:[objtype]}))
-            fobj_counter[objtype] += 1
-        print(f'\nFound {len(fobjs)} objects in "{rnef_file}"')
+          for line in f:
+            if line.startswith('<resnet '):# only true fobj with name and type are read. Memberof are ignored
+              resnet = et.fromstring(line+'</resnet>')
+              ps_pathway = PSPathway.from_resnet(resnet, ignore_graph=True)
+              objtype = ps_pathway.objtype()
+              fobjs.add(PSObject({'URN':[ps_pathway.urn()],OBJECT_TYPE:[objtype]}))
+              fobj_counter[objtype] += 1
+        print(f'Found {len(fobjs)} objects in "{rnef_file}"')
         return fobjs, fobj_counter
     
 
@@ -587,43 +583,57 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
         return path_exist,downloaded_fobjs,dir_symlinks,fobj_counter
 
 
-    def download_dir(self):
-       return os.path.join(self.data_dir,self.root_folder)
-
-
-    def resume_download(self, root_folder_name:str):
+    def resume_download(self, root_folder_name:str, last_downloaded_folder=''):
       '''
-        Inspects download directory and resumes download of folders and objects that have not beed downloaded in the previous run
+        Lookup log file for the last downloaded folder. It is identified by message "Finished downloading ..."
       '''
       global_start = time.time()
-      assert(self.data_dir+self.root_folder), 'Data directory is not set. Use set_dir() first'
-      # inspect download directory and load folder structure from DB:
-      tasks = [(self.get_subfolder_trees,(root_folder_name,)), (self._inspect_dir,(self.download_dir(),))]
+      download_dir = os.path.join(self.data_dir,self.filename4(root_folder_name))
+      tasks = [(self.get_subfolder_trees,(root_folder_name,)), (self._inspect_dir,(download_dir,))]
       results = run_tasks(tasks)
       self.subfold_id2fold_id,_ = results['get_subfolder_trees']
       path_exist,downloaded_fobjs,_,self.fobj_counter = results['_inspect_dir']
-      print(f'Stats from previous download attempt: {self.fobj_counter}')
-      
+
+      subfolders_dbids = list(self.subfold_id2fold_id.keys())
+      self.root_folder = root_folder_name
+      if last_downloaded_folder:
+        try:
+          last_downloaded_folder_id = self.__folder_id(last_downloaded_folder)
+        except ValueError:
+          print ('Folder %s was not found in folder tree' % last_downloaded_folder)
+          return
+      else:
+        last_downloaded_folder_id = 0     
+
       if not path_exist:# case when nothing was downloaded yet
-        self.make_cache_dir(root_folder_name)
-    
-      subfolders = [folder for dbid,folder in self.id2folder.items() if dbid in self.subfold_id2fold_id]
-      # subfolders are zeep objects
-      job = 'Resume download'
-      symlinks4topfolder,fobj_counter = self.__download_folders(subfolders,job,downloaded_fobjs)
+        folders2download = self.make_cache_dir(root_folder_name)
+      else:
+        subfolders = [folder for dbid,folder in self.id2folder.items() if dbid in self.subfold_id2fold_id]
+        start_idx = subfolders_dbids.index(last_downloaded_folder_id) if last_downloaded_folder_id else -1
+        if start_idx > MAX_FOLDER_SESSIONS:
+          start_idx -= MAX_FOLDER_SESSIONS # folders are downloaded in MAX_FOLDER_SESSIONS threads 
+        # because download can be interrupted at any thread 
+        folders2download = subfolders[start_idx+1:]
+        print(f'Previously downloaded {start_idx} out of {len(subfolders)} folders')
+        print('Stats from previous download attempt:')
+        print(self.fobj_counter)
+
+      job = f'Resume download from {folders2download[0].Name}'
+      symlinks4topfolder,fobj_counter = self.__download_folders(folders2download,job,downloaded_fobjs)
       self.fobj_counter.update(fobj_counter)
 
       if symlinks4topfolder:
-        print(f'Will print {len(symlinks4topfolder)} pathways into top-level folder to support symlinks')
-        # dumping loose symlinks into root folder
-        for symlink in symlinks4topfolder:
-          _,_,xml_str = self.__download_fobj(symlink) #downloading missing fobjs necessary to support symlinks
-          self.rnefs2dump(xml_str,root_folder_name,'',self.root_folder)
-        self.close_rnef_dump(root_folder_name,'',self.root_folder)
+          print(f'Will print {len(symlinks4topfolder)} pathways into top-level folder to support symlinks')
+          # dumping loose symlinks into root folder
+          for symlink in symlinks4topfolder:
+            _,_,xml_str = self.__download_fobj(symlink) #downloading missing fobjs necessary to support symlinks
+            self.rnefs2dump(xml_str,root_folder_name,'',self.root_folder)
+          self.close_rnef_dump(root_folder_name,'',self.root_folder)
       else:
-        print('All pathways for symlinks were downloaded into other folders')
+          print('All pathways for symlinks were downloaded into other folders')
           
-      print(f'Total download stats: {self.fobj_counter}')
+      print('Total download stats:')
+      print(self.fobj_counter)
       print(f'Resumed download was finished in {execution_time(global_start)}')
       
 
@@ -639,6 +649,7 @@ and {obj_graph.number_of_edges()} relations in {execution_time(fobj_download_sta
         if include_subfolders:
             print(f'Including subfolders of {root_folder_name} into download')
         download_start_time = time.time()
+        #download_dir = os.path.join(self.data_dir,self.filename4(root_folder_name))
         if not include_subfolders:
             return self.__download_folder(root_folder_name,'',props4rel=add_props2rel,props4pathway=add_pathway_props)
         else:

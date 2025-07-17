@@ -34,6 +34,11 @@ RNEF_DISCLAIMER = str('Disclaimer: please refer to our Terms and Conditions on a
 MAX_RNEF_THREADS = 4
 
 
+CLINVAR_PMIDS = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],
+                      ['25741868'],['26582918'],['28492532'],['24033266'],['18414213'],
+                      ['26467025'],['24728327']]
+
+
 class ResnetGraph (nx.MultiDiGraph):
   pass
 
@@ -357,18 +362,18 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def rename_rel_property(self, oldPropertyName='MedlineTA', newPropertyName='Journal'):
-      for ruid,tuid,rel in self.edges.data():
-          try:
-              rel[newPropertyName] = rel['relation'].pop(oldPropertyName)
-          except KeyError:
-              for prop in rel.PropSetToProps.values():
-                  try:
-                      prop[newPropertyName] = prop.pop(oldPropertyName)
-                  except KeyError:
-                      continue
-              continue
+    '''
+      Renames relation property in all relations of the graph.\n
+      Annotates only properties in PSRelation.references.\n
+      Does not reannotate properties in PropSetToProps.Pr.\n
+    '''
+    for ruid,tuid,urn,rel in self.edges.data(keys=True):
+      self[ruid][tuid][urn]['relation'].rename_prop(oldPropertyName, newPropertyName)
 
-
+  
+  def rename_node_property(self, oldPropertyName:str, newPropertyName:str):
+    for uid,node_dict in self.nodes.data(oldPropertyName):
+      self[uid][newPropertyName] = self[uid].pop(oldPropertyName)
 ############################   LABELING LABELS LABELING   ######################################
   def connectivity(self,node:PSObject,with_children=False):
     try:
@@ -653,10 +658,7 @@ class ResnetGraph (nx.MultiDiGraph):
       ref_df = RefStats.external_counter2pd(set(references.values()),stat_prop=PS_CITATION_INDEX)
       ref_df._name_ = df_name
 
-      clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],
-                      ['25741868'],['26582918'],['28492532'],['24033266'],['18414213'],
-                      ['26467025'],['24728327']]
-      clinvar_hyperlinks = list(map(pubmed_hyperlink,clinvar_pmids))
+      clinvar_hyperlinks = list(map(pubmed_hyperlink,CLINVAR_PMIDS))
       ref_df = ref_df.remove_rows_by(clinvar_hyperlinks,IDENTIFIER_COLUMN)
       return ref_df
 
@@ -756,6 +758,8 @@ class ResnetGraph (nx.MultiDiGraph):
       target_name = my_graph.nodes[targetID]['Name'][0]
       assert(isinstance(rel,PSRelation))
       reltype = rel.objtype()
+      if reltype == 'FunctionalAssociation':
+        pass
       relname = rel.name()
       releffect = rel.effect()
       refcount = rel.count_refs()
@@ -780,10 +784,7 @@ class ResnetGraph (nx.MultiDiGraph):
       snippet_df[PUBYEAR] = snippet_df[PUBYEAR].fillna(0).astype(int)
     snippet_df = snippet_df.sortrows([PS_CITATION_INDEX,'Concept','Entity'],ascending=[False,True,True])
 
-    clinvar_pmids = [['10447503'],['10592272'],['10612825'],['11125122'],['26619011'],
-                    ['25741868'],['26582918'],['28492532'],['24033266'],['18414213'],
-                    ['26467025'],['24728327']]
-    clinvar_hyperlinks = list(map(pubmed_hyperlink,clinvar_pmids))
+    clinvar_hyperlinks = list(map(pubmed_hyperlink,CLINVAR_PMIDS))
     snippet_df = snippet_df.remove_rows_by(clinvar_hyperlinks,'PMID')
 
     snippet_df._name_ = df_name
@@ -960,12 +961,19 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
 ######################   GET GET GET   ######################################
-  def iterate(self)->Generator[PSObject,PSObject,PSRelation]:
+  def iterate(self)->Generator[tuple[PSObject, PSObject, PSRelation], None, None]:
+    '''
+      hint: Generator[YieldType, SendType, ReturnType]
+    '''
     for r,t,rel in self.edges.data('relation'):
-      yield self._get_node(r), self._get_node(t), rel
+      #assert(isinstance(rel,PSRelation))
+      yield self._get_node(r), self._get_node(t),rel
 
 
-  def targets_of(self,n:PSObject)->Generator[PSObject,PSObject,PSRelation]:
+  def targets_of(self,n:PSObject)->Generator[tuple[PSObject,PSObject,PSRelation],PSObject,None]:
+    '''
+      hint: Generator[YieldType, SendType, ReturnType]
+    '''
     for r,t,rel in self.edges(n.uid(),data='relation'):
       assert(isinstance(rel,PSRelation))
       yield self._get_node(r), self._get_node(t), rel
@@ -1251,22 +1259,22 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def psrels_with(self, with_values:list=[], in_properties:list=[OBJECT_TYPE])->set[PSRelation]:
-      '''
-      Return
-      -----
-      if "with_values" is empty will return unique set of relations for entire graph with no non-directional duplicates 
-      '''
-      if with_values:
-          relations2return = set()
-          for r,t,rel in self.iterate():
-              for prop_name in in_properties:
-                  if rel.is_annotated(prop_name, with_values):
-                      relations2return.add(rel.copy())
-                      break
-      else:
-          relations2return = self._psrels()
+    '''
+    output:
+      if "with_values" is empty returns unique set of relations for entire graph with no non-directional duplicates 
+    '''
+    if with_values:
+      assert(in_properties) # in_properties should not be empty
+      relations2return = set()
+      for r,t,rel in self.iterate():
+        for prop_name in in_properties:
+          if rel.is_annotated(prop_name, with_values): # includes case when with_values is empty
+            relations2return.add(rel.copy())
+            break
+    else:
+      relations2return = self._psrels()
 
-      return relations2return
+    return relations2return
 
   
   def __find_relations(self, reg_uid, targ_uid, rel_types:list=[], with_effects:list=[], mechanism:list=[], any_direction=False):
@@ -1564,11 +1572,10 @@ class ResnetGraph (nx.MultiDiGraph):
 
   def props2obj_dict(self, propValues:list, prop_names:list, case_insensitive=False) -> tuple[dict[str, list[PSObject]], dict[int, list[str]]]:
       '''
-      Returns
-      -------
-      propval2objs = {search_by_property_value:[PSObject]}
-      objuid2propval = {id:[search_by_property_value]}\n
-      if propValues empty returns dictionary keyed by all values in prop_names
+      output:
+        propval2objs = {prop_value:[PSObject]}
+        objuid2propval = {uid:[search_by_property_value]}\n
+        if propValues empty returns dictionary keyed by all values in prop_names
       '''
       propval2objs = dict()
       uid2propval = dict()
@@ -2062,108 +2069,109 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def __2resnet(self,resnet:et._Element,ent_props:list,rel_props:list,
-                add_rel_props:dict[str,list[str]]={},add_pathway_props:dict[str,list[str]]={},
-                delete_nodes=False):
-      '''
-      Input
-      -----
+              add_rel_props:dict[str,list[str]]={},add_pathway_props:dict[str,list[str]]={},
+              delete_nodes=False):
+    '''
+    input:
       add_rel_props,add_pathway_props structure - {PropName:[PropValues]}
-      '''
-      def _2b_printed(prop_name:str,prop_list:list):
-          return prop_name in prop_list if prop_list else True
+    '''
+    def _2b_printed(prop_name:str,prop_list:list):
+        return prop_name in prop_list if prop_list else True
 
-      if add_pathway_props:
-          pathway_props = et.SubElement(resnet, 'properties',attrib=None, nsmap=None)
-          for prop_name,prop_val in add_pathway_props.items():
-              for val in prop_val:
-                  et.SubElement(pathway_props, 'attr', {'name':str(prop_name), 'value':str(val)},nsmap=None)
+    if add_pathway_props:
+      pathway_props = et.SubElement(resnet, 'properties',attrib=None, nsmap=None)
+      for prop_name,prop_val in add_pathway_props.items():
+        for val in prop_val:
+          et.SubElement(pathway_props, 'attr', {'name':str(prop_name), 'value':str(val)},nsmap=None)
+  
+    node_attr = {'delete':'true'} if delete_nodes else None
+    xml_nodes = et.SubElement(resnet,'nodes',attrib=node_attr,nsmap=None)  
+    for nodeId, n in self.nodes(data=True):
+      try: 
+        local_id = n['URN'][0]
+        xml_node = et.SubElement(xml_nodes, 'node', {'local_id': local_id, 'urn': n['URN'][0]},nsmap=None)
+        et.SubElement(xml_node, 'attr', {'name': 'NodeType', 'value': str(n[OBJECT_TYPE][0])},nsmap=None)
+        for prop_name, prop_values in n.items():
+          if _2b_printed(prop_name, ent_props):
+            for prop_value in prop_values:
+              et.SubElement(xml_node, 'attr', {'name': str(prop_name), 'value': str(prop_value)},nsmap=None)
+      except KeyError:
+        continue
+
+    xml_controls = et.SubElement(resnet, 'controls',attrib=None,nsmap=None)
+    graph_relations = self._psrels()
+    for rel in graph_relations:
+      control_id = rel.urn()
+      xml_control = et.SubElement(xml_controls, 'control', {'local_id':control_id},nsmap=None)
+      et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':str(rel[OBJECT_TYPE][0])},nsmap=None)
       
-      node_attr = {'delete':'true'} if delete_nodes else None
-      xml_nodes = et.SubElement(resnet,'nodes',attrib=node_attr,nsmap=None)  
-      for nodeId, n in self.nodes(data=True):
-          try: 
-              local_id = n['URN'][0]
-              xml_node = et.SubElement(xml_nodes, 'node', {'local_id': local_id, 'urn': n['URN'][0]},nsmap=None)
-              et.SubElement(xml_node, 'attr', {'name': 'NodeType', 'value': str(n[OBJECT_TYPE][0])},nsmap=None)
-              for prop_name, prop_values in n.items():
-                  if _2b_printed(prop_name, ent_props):
-                      for prop_value in prop_values:
-                          et.SubElement(xml_node, 'attr', {'name': str(prop_name), 'value': str(prop_value)},nsmap=None)
-          except KeyError:
+      # adding links
+      if TARGETS in rel.Nodes:
+          linktype4reg = 'in'
+          for t in rel.Nodes[TARGETS]:
+              et.SubElement(xml_control, 'link', {'type': 'out', 'ref': t.urn()},nsmap=None)
+      else:
+          linktype4reg = 'in-out'
+
+      for r in rel.Nodes[REGULATORS]:
+          try:
+              et.SubElement(xml_control, 'link', {'type':linktype4reg, 'ref':r.urn()},nsmap=None)
+          except IndexError or KeyError:
               continue
+      # non-reference properties
+      for prop_name, prop_values in rel.items():
+        if _2b_printed(prop_name,rel_props):
+          for prop_value in prop_values:
+            et.SubElement(xml_control, 'attr', {'name':str(prop_name), 'value':str(prop_value)},nsmap=None)
 
-      xml_controls = et.SubElement(resnet, 'controls',attrib=None,nsmap=None)
-      graph_relations = self._psrels()
-      for rel in graph_relations:
-          control_id = rel.urn()
-          xml_control = et.SubElement(xml_controls, 'control', {'local_id':control_id},nsmap=None)
-          et.SubElement(xml_control, 'attr', {'name':'ControlType', 'value':str(rel[OBJECT_TYPE][0])},nsmap=None)
-          
-          # adding links
-          if TARGETS in rel.Nodes:
-              linktype4reg = 'in'
-              for t in rel.Nodes[TARGETS]:
-                  et.SubElement(xml_control, 'link', {'type': 'out', 'ref': t.urn()},nsmap=None)
-          else:
-              linktype4reg = 'in-out'
+      for prop_name,prop_val in add_rel_props.items():
+        for val in prop_val:
+          et.SubElement(xml_control, 'attr', {'name':str(prop_name), 'value':str(val)},nsmap=None)
 
-          for r in rel.Nodes[REGULATORS]:
-              try:
-                  et.SubElement(xml_control, 'link', {'type':linktype4reg, 'ref':r.urn()},nsmap=None)
-              except IndexError or KeyError:
-                  continue
-          # non-reference properties
-          for prop_name, prop_values in rel.items():
-              if _2b_printed(prop_name,rel_props):
+      # adding references
+      snippet_props = set(REFERENCE_PROPS).intersection(rel_props)
+      print_snippets = True if not rel_props else True if snippet_props else False
+      if print_snippets:
+        references = list(set(rel.refs()))
+        ref_index = 0
+        for ref in references:# each snippet has its own index in RNEF
+          for textref, snippet in ref._snippets(): # printing snippets props
+            et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)},nsmap=None)
+            for sentprop_name, sentprop_values in snippet.items():
+              if _2b_printed(sentprop_name,list(snippet_props)):
+                v_str = ','.join(sentprop_values)
+                et.SubElement(xml_control, 'attr',{'name':str(sentprop_name), 'value':str(v_str), 'index':str(ref_index)},nsmap=None)
+
+            for prop_name, prop_values in ref.items(): # printing references props
+              if _2b_printed(prop_name,list(snippet_props)):
+                if prop_name == AUTHORS:
+                  auth_str = ';'.join(ref.author_list())
+                  et.SubElement(xml_control, 'attr',{'name': str(prop_name), 'value': auth_str, 'index': str(ref_index)},nsmap=None)
+                else:
                   for prop_value in prop_values:
-                      et.SubElement(xml_control, 'attr', {'name':str(prop_name), 'value':str(prop_value)},nsmap=None)
+                    et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
+            
+            for ref_id_type,ref_id in ref.Identifiers.items(): # printing reference identifiers
+              if _2b_printed(ref_id_type,list(snippet_props)): # printing only if ref_id_type is in snippet_props
+                if ref_id_type != TITLE: # rare cases when Title is used for identifier
+                  et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)},nsmap=None)
+              
+            ref_index += 1 # incrementing index for next snippet
 
-          for prop_name,prop_val in add_rel_props.items():
-              for val in prop_val:
-                  et.SubElement(xml_control, 'attr', {'name':str(prop_name), 'value':str(val)},nsmap=None)
+          if not ref.snippets:
+            textref = ref._make_textref()
+            et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)},nsmap=None)
+            for prop_name, prop_values in ref.items():
+              if prop_name in snippet_props:
+                for prop_value in prop_values:
+                  et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
+            
+            for ref_id_type,ref_id in ref.Identifiers.items():
+              if ref_id_type in snippet_props:
+                et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)},nsmap=None)
+    return
 
-          # adding references
-          snippet_props = set(REFERENCE_PROPS).intersection(rel_props)
-          print_snippets = True if not rel_props else True if snippet_props else False
-          if print_snippets:
-            references = list(set(rel.refs()))
-            ref_index = 0
-            for ref in references:
-              # each snippet has its own index in RNEF
-              for textref, snippet in ref._snippets():
-                et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)},nsmap=None)
-                for sentprop_name, sentprop_values in snippet.items():
-                  if _2b_printed(sentprop_name,list(snippet_props)):
-                    v_str = ','.join(sentprop_values)
-                    et.SubElement(xml_control, 'attr',{'name':str(sentprop_name), 'value':str(v_str), 'index':str(ref_index)},nsmap=None)
 
-                for prop_name, prop_values in ref.items():
-                    if _2b_printed(prop_name,list(snippet_props)):
-                        if prop_name == AUTHORS:
-                          auth_str = ';'.join(ref.author_list())
-                          et.SubElement(xml_control, 'attr',{'name': str(prop_name), 'value': auth_str, 'index': str(ref_index)},nsmap=None)
-                        else:
-                          for prop_value in prop_values:
-                            et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
-                    
-                for ref_id_type,ref_id in ref.Identifiers.items():
-                    if _2b_printed(ref_id_type,list(snippet_props)):
-                        et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)},nsmap=None)
-                ref_index+=1
-
-              if not ref.snippets:
-                  textref = ref._make_textref()
-                  et.SubElement(xml_control, 'attr',{'name': str('TextRef'), 'value': textref, 'index': str(ref_index)},nsmap=None)
-                  for prop_name, prop_values in ref.items():
-                      if prop_name in snippet_props:
-                          for prop_value in prop_values:
-                              et.SubElement( xml_control, 'attr',{'name': str(prop_name), 'value': str(prop_value), 'index': str(ref_index)},nsmap=None)
-                      
-                  for ref_id_type,ref_id in ref.Identifiers.items():
-                      if ref_id_type in snippet_props:
-                          et.SubElement(xml_control, 'attr',{'name':str(ref_id_type), 'value':str(ref_id), 'index':str(ref_index)},nsmap=None)
-                  
-                    
   def to_rnefstr(self,ent_props:list,rel_props:list,add_rel_props:dict={},add_pathway_props:dict={},delete_nodes=False):
       resnet_attr = {'refonly':'true'} if delete_nodes else None
       resnet = et.Element('resnet',resnet_attr,nsmap=None)
@@ -2173,13 +2181,14 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def __2rnef(self,to_file:str,ent_props:list,rel_props:list,add_rel_props:dict={},add_pathway_props:dict={},delete_nodes=False):
-      with et.xmlfile(to_file,encoding='utf-8',buffered=False) as xf:
-          xf.write(et.Comment(RNEF_DISCLAIMER),pretty_print=True)
-          resnet_attr = {'refonly':'true'} if delete_nodes else None
-          with xf.element('batch'):
-              resnet = et.Element('resnet',attrib=resnet_attr,nsmap=None)
-              self.__2resnet(resnet,ent_props,rel_props,add_rel_props,add_pathway_props,delete_nodes)
-              xf.write(resnet,pretty_print=True)
+    with et.xmlfile(to_file,encoding='utf-8',buffered=False) as xf:
+      xf.write(et.Comment(RNEF_DISCLAIMER),pretty_print=True)
+      resnet_attr = {'refonly':'true'} if delete_nodes else None
+      with xf.element('batch'):
+        resnet = et.Element('resnet',attrib=resnet_attr,nsmap=None)
+        self.__2resnet(resnet,ent_props,rel_props,add_rel_props,add_pathway_props,delete_nodes)
+        xf.write(resnet,pretty_print=True)
+    return
   
 
   def __2rnef_secs(self,xmlfile:et.xmlfile,ent_prop2print:list,rel_prop2print:list,add_rel_props=dict(),with_section_size=1000,delete_nodes=False):
@@ -2224,7 +2233,7 @@ class ResnetGraph (nx.MultiDiGraph):
       relset = set()
       to_return = self.copy()
       for r,t,rel in self.edges.data('relation'):
-          assert(isinstance(rel,PSRelation))
+         # assert(isinstance(rel,PSRelation))
           if rel in relset:
               to_return.remove_edge(r,t,rel.urn())
           else:
@@ -2233,35 +2242,37 @@ class ResnetGraph (nx.MultiDiGraph):
       return to_return
       
 
-  def dump2rnef(self,fname:str,ent_prop2print:list=['Name'],rel_prop2print:list=[],add_rel_props:dict={},with_section_size=0,delete_nodes=False):
-      '''
-      Input
-      -----
+  def dump2rnef(self,fname='',ent_prop2print:list=['Name'],rel_prop2print:list=[],add_rel_props:dict={},with_section_size=0,delete_nodes=False):
+    '''
+    input:
       if fname is empty will create file with graph self.name
 
-      Dumps
-      -----
+    Dumps:
       graph into RNEF file with <resnet> sections of size "with_section_size".
       if "with_section_size" is zero dumps graph into RNEF file with single <resnet>. Large graphs must be dumped with resnet sections
       single <resnet> section reduces size of RNEF file, but may slow down import of large RNEF files into Pathway Studio
-      '''
-      rnef_fname = fname if fname else self.name
-      if fname[-5:] != '.rnef':
-          rnef_fname += '.rnef'
+    '''
+    rnef_fname = fname if fname else self.name
+    assert(rnef_fname), 'RNEF file fname must be specified of self.name must be set'
+    if fname[-5:] != '.rnef':
+        rnef_fname += '.rnef'
 
-      message = f'Writing graph "{self.name}" with {self.number_of_nodes()} nodes, {self.number_of_edges()} edges to {rnef_fname} file'
-      graph_copy = self.remove_undirected_duplicates() 
-      # copying graph to enable using the function in multithreaded file writing
-      
-      if with_section_size:
-          with et.xmlfile(rnef_fname,encoding='utf-8',buffered=False) as xf:  
-              print(message + f' in resnet section of size {with_section_size}')
-              xf.write(et.Comment(RNEF_DISCLAIMER),pretty_print=True) 
-              with xf.element('batch'):
-                  graph_copy.__2rnef_secs(xf,ent_prop2print,rel_prop2print,add_rel_props,with_section_size,delete_nodes)
-      else:
-          print(message + f' in one resnet section')
-          graph_copy.__2rnef(rnef_fname,ent_prop2print,rel_prop2print,add_rel_props,delete_nodes=delete_nodes)
+    message = f'Writing graph "{self.name}" with {self.number_of_nodes()} nodes, {self.number_of_edges()} edges to {rnef_fname} file'
+    graph_copy = self.remove_undirected_duplicates() 
+    # copying graph to enable using the function in multithreaded file writing
+    
+    if with_section_size:
+        with et.xmlfile(rnef_fname,encoding='utf-8',buffered=False) as xf:  
+            print(message + f' in resnet section of size {with_section_size}')
+            xf.write(et.Comment(RNEF_DISCLAIMER),pretty_print=True) 
+            with xf.element('batch'):
+                graph_copy.__2rnef_secs(xf,ent_prop2print,rel_prop2print,add_rel_props,with_section_size,delete_nodes)
+    else:
+        print(message + f' in one resnet section')
+        graph_copy.__2rnef(rnef_fname,ent_prop2print,rel_prop2print,add_rel_props,delete_nodes=delete_nodes)
+
+    print(f'Graph "{self.name}" with {self.number_of_nodes()} nodes and {self.number_of_edges()} edges dumped to {rnef_fname} file')
+    return
 
 
   def add_row2(self,to_df:df,from_relation_types:list,between_node_id,and_node_id,from_properties:list,cell_sep=';'):
@@ -2416,13 +2427,13 @@ class ResnetGraph (nx.MultiDiGraph):
       if not no_mess:
           print ('\nLoading graph from file %s' % rnef_file,flush=True)
       with open(rnef_file, "rb") as f:
-          context = et.iterparse(f, tag="resnet")
-          for action, elem in context:
-              resnet_nodes,resnet_rels = ResnetGraph._parse_nodes_controls(elem,prop2values,only_relprops,only4objs,on_both_ends)
-              nodes.update(resnet_nodes)
-              rels.update(resnet_rels)
-              elem.clear()
-          del context
+        context = et.iterparse(f, tag="resnet")
+        for action, elem in context:
+          resnet_nodes,resnet_rels = ResnetGraph._parse_nodes_controls(elem,prop2values,only_relprops,only4objs,on_both_ends)
+          nodes.update(resnet_nodes)
+          rels.update(resnet_rels)
+          elem.clear()
+        del context
       return nodes,rels
 
 
@@ -2755,18 +2766,18 @@ class ResnetGraph (nx.MultiDiGraph):
 
 ########################  SUBGRAPH SUBGRAPH SUBGRAPH #####################################
   def subgraph(self,node_uids:list):
-      '''
-      Returns subgraph made by nx.subgraph containg all edges between node_ids
-      '''
-      sub_g = ResnetGraph(super().subgraph(node_uids))
-      subg_rels = sub_g._psrels()
-      all_uids = set()
-      [all_uids.update(r.entities_uids()) for r in subg_rels] 
-      all_nodes = set(self._get_nodes(all_uids))
-      # need to collect nodes from ChemicalReaction
-      sub_g.add_psobjs(all_nodes)
-      sub_g.load_urn_dicts()
-      return sub_g
+    '''
+    Returns subgraph made by nx.subgraph containg all edges between node_ids
+    '''
+    sub_g = ResnetGraph(super().subgraph(node_uids))
+    subg_rels = sub_g._psrels()
+    all_uids = set()
+    [all_uids.update(r.entities_uids()) for r in subg_rels] 
+    all_nodes = set(self._get_nodes(all_uids))
+    # need to collect nodes from ChemicalReaction
+    sub_g.add_psobjs(all_nodes)
+    sub_g.load_urn_dicts()
+    return sub_g
 
 
   def neighborhood(self,_4psobs:set[PSObject],only_neighbors:list[PSObject]=[],

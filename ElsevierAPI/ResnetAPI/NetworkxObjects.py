@@ -22,14 +22,14 @@ GENETICVARIANT = 'GeneticVariant'
 FUNC_ASSOC = 'FunctionalAssociation'
 DBID = 'Id'
 ENTITY_IDENTIFIERS = ["CAS ID","EC Number","Ensembl ID","LocusLink ID","GO ID","GenBank ID",
-                      "HMDB ID","MedScan ID","Microarray ID","PharmaPendium ID","PubChem CID","miRBase ID"]
+                    "HMDB ID","MedScan ID","Microarray ID","PharmaPendium ID","PubChem CID","miRBase ID"]
 
 CHEMICAL_PROPS = ["CAS ID","HMDB ID","IUPAC Name","InChIKey","LMSD ID","Alias",
-                        "Molecular Formula", "Molecular Weight","NCIm ID","PubChem CID","PubChem SID",
-                        "Reaxys ID","Rotatable Bond Count","XLogP","XLogP-AA","Description","PharmaPendium ID"]
+                  "Molecular Formula", "Molecular Weight","NCIm ID","PubChem CID","PubChem SID",
+                  "Reaxys ID","Rotatable Bond Count","XLogP","XLogP-AA","Description","PharmaPendium ID"]
 
 DIRECT_RELTYPES = {'DirectRegulation','Binding','ChemicalReaction','ProtModification','PromoterBinding'}
-        
+NONDIRECTIONAL_RELTYPES = {'Binding','CellExpression',FUNC_ASSOC,'Metabolization','Paralog'}
 
 STATE = "state"
 ACTIVATED = 1
@@ -155,7 +155,18 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
   def set_property(self, PropId, PropValue: str):
       self[PropId] = [PropValue]
 
+
+  def rename_prop(self, old_prop_name:str, new_prop_name:str):
+      '''
+      renames property in self
+      '''
+      if old_prop_name in self.keys():
+        self[new_prop_name] = self.pop(old_prop_name)
+        return True
+      else:
+        return False
   
+
   def childs(self)->list['PSObject']:
       if CHILDS in self.keys():
           return self[CHILDS]
@@ -546,8 +557,8 @@ class PSRelation(PSObject):
       tar_urns = sorted([r.urn() for r in targets])
       rel_urn = 'urn:agi-'+self.objtype()+':'
       if tar_urns:
-          rel_urn += ':out:'+'out:'.join(tar_urns) # out:urn:out:
-          rel_urn += 'in-out:'+'in-out:'.join(reg_urns)
+          rel_urn += 'out:'+'out:'.join(tar_urns) # out:urn:out:
+          rel_urn += ':in-out:'+'in-out:'.join(reg_urns)
           effect = self.effect()
           if effect in ['positive','negative']:
               rel_urn += ':'+ effect
@@ -559,18 +570,17 @@ class PSRelation(PSObject):
       self.set_property('URN', rel_urn)
       return str(rel_urn)
   
-  '''
-    def __refDict2refs(self)->list[Reference]:
-        """
-        Return
-        ------
-        self.references
-        """
-        my_refs = list(set(self.RefDict.values()))
-        my_refs.sort(key=lambda r: r._sort_key(by_property=PUBYEAR), reverse=True)
-        self.references = my_refs
-        return self.references
-  '''
+
+  def rename_prop(self, old_prop_name:str, new_prop_name:str):
+    '''
+    Renames property in self
+    '''
+    if not super().rename_prop(old_prop_name, new_prop_name):
+        for ref in self.refs():
+          ref.rename_prop(old_prop_name, new_prop_name)
+
+    return
+   
 
   def _add_refs(self, references:list[Reference])->list[Reference]:
     '''
@@ -759,22 +769,25 @@ class PSRelation(PSObject):
 
   def entities_uids(self):
       return self.regulator_uids()+self.target_uids()
+  
+
+  def get_props(self,propname:str)->list:
+    if propname in self:
+      return self[propname]
+    else:
+      prop_set_values = set()
+      my_refs = self.refs()
+      [prop_set_values.update(ref.get_values(propname)) for ref in my_refs]
+      return list(prop_set_values)
 
 
-  def _prop2str(self, prop_id, cell_sep:str =';'):
-      if prop_id in self:
-          return cell_sep.join(list(map(str, self[prop_id])))
-      else:
-          prop_set_values = set()
-          for ref in self.refs():
-            prop_set_values.update(ref.get_values(prop_id))
-          
-          to_return = cell_sep.join(prop_set_values)
-          if prop_id in [SENTENCE,TITLE]:
-              to_return = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', to_return)
-          return to_return
-          
-
+  def _prop2str(self, propname:str, cell_sep:str =';'):
+    propvals = self.get_props(propname)
+    to_return = cell_sep.join(map(str,propvals))
+    if propname in [SENTENCE,TITLE]:
+      to_return = re.sub(NOT_ALLOWED_IN_SENTENCE, ' ', to_return)
+    return to_return
+  
 
   def props2dict(self, prop_ids:list,cell_sep:str =';'):
       return {k:self._prop2str(k,cell_sep) for k in self.keys() if k in prop_ids}
@@ -909,7 +922,6 @@ class PSRelation(PSObject):
           return PSRelation()
       
 
-
   def is_from_abstract(self):
       for ref in self.refs():
           if ref.is_from_abstract():
@@ -937,10 +949,20 @@ class PSRelation(PSObject):
 
 
   def rel_prop_str(self, sep=':'):
-      # returns string of relation properties with no references
-      to_return = str()
-      for prop_id, prop_values in self.items():
-          to_return += prop_id + sep + ','.join(prop_values)+';'
+    # returns string of relation properties with no references
+    to_return = str()
+    for prop_id, prop_values in self.items():
+      to_return += prop_id + sep + ','.join(prop_values)+';'
+
+
+  def is_annotated(self,with_prop:str,having_values:list=[],case_sensitive=False):
+    if not super().is_annotated(with_prop,having_values,case_sensitive):
+      for ref in self.refs():
+         if ref.has_values_in({with_prop:having_values}):
+          return True
+      return False
+    else:
+       return True
 
 
   def to_table_dict(self, columnPropNames:list, cell_sep:str=';', RefNumPrintLimit=0, add_entities=False)->dict[int,str]:

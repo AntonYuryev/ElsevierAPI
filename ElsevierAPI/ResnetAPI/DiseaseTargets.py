@@ -808,14 +808,12 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
       processes2activate = self.params.get('processes2activate',dict())
       if isinstance(processes2activate,list):
         processes2activate = {p:[1.0] for p in processes2activate}
+
       processes = self.params.get('processes',dict())
       if isinstance(processes,list):
         processes = {p:[1.0] for p in processes}
-
       processes.update(processes2inhibit)
       processes.update(processes2activate)
-      if min(unpack(processes.values())) == 1.0:
-         processes == list(processes.keys())
       self.params['processes'] = processes
 
 
