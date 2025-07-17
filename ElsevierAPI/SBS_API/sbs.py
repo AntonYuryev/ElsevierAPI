@@ -1,10 +1,10 @@
-from ..utils import load_api_config, greek2english,urlencode
+from ..utils import load_api_config, greek2english,urlencode,json,multithread,execution_time
 from ..ETM_API.references import Reference,DocMine, Author
 from ..ETM_API.references import AUTHORS,_AUTHORS_,GRANT_APPLICATION,JOURNAL,SENTENCE,RELEVANCE
 from scibite_toolkit.scibite_search import SBSRequestBuilder as s
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re,threading
-from time import sleep
+from time import sleep, time
 from datetime import datetime
 
 DATASET2IDTYPE = {'Medline':'PMID',
@@ -176,6 +176,10 @@ class SBSRef(DocMine):
 
 
   def is_valid(self):
+    '''
+    checks:
+      if self has _AUTHORS_ or valid identifiers: 'NCT ID','EudraCT Number','PMC','PMID','PII','DOI'
+    '''
     try:
       authors = self[_AUTHORS_]
       return len(authors) > 0
@@ -245,6 +249,7 @@ class SBSapi():
 
   def __search_term(self,search_term:str, in_vocabs:list=['GENETREE','EMTREE'])->str:
     # quoted search_term is a signal to search it as is without ontology synonym expansion
+    # + term expansion sign is stripped from the end of search_term
     if search_term[0] == '"' and search_term[-1] == '"':
       if len(search_term) > 2:
         return search_term
@@ -252,17 +257,28 @@ class SBSapi():
         print(f'{search_term} is empty')
         return ''
     else:
-      if search_term in self.term2id:
-        return self.term2id[search_term]
+      if search_term.endswith('+'):
+        noplus_term = search_term.rstrip(' +')
+        expand = ' +'
       else:
-        term_id = self.get_id(search_term,in_vocabs)
+        noplus_term = search_term
+        expand = ''
+
+      if noplus_term in self.term2id:
+        return self.term2id[noplus_term]+expand
+      else:
+        term_id = self.get_id(noplus_term,in_vocabs)
         if not term_id:
-          term_id = f'"{search_term}"'
-          self.term2id[search_term] = term_id
-        return term_id
+          term_id = f'"{noplus_term}"'
+          self.term2id[noplus_term] = term_id
+          return term_id
+        return term_id + expand
   
 
   def __map2terms(self,terms:list[str],in_vocabs:list=['GENETREE','EMTREE']):
+    '''
+    handles search terms with quotes and with + signs at the end
+    '''
     return list(filter(None,(map(lambda t: self.__search_term(t, in_vocabs),terms))))
   
   
@@ -320,31 +336,33 @@ class SBSapi():
     str1 = ' OR '.join(entity1_ids)
     str2 = ' OR '.join(entity2_ids)
 
-    base_url = self.APIconfig['SBSurl'] + '/documents?document_schema=journal&ssql='
     entities1_search_str = ' [OR](OR) '.join([f'[{entity}]({entity_id})' for entity,entity_id in zip(entities1,entity1_ids)])
     entities2_search_str = ' [OR](OR) '.join([f'[{concept}]({concept_id})' for concept,concept_id in zip(entities2,entity2_ids)])
     
     search_url = f'[(](() {entities1_search_str} [)]()) [AND](AND) [(](() {entities2_search_str} [)]())'
-  
     query = f'({str1}) AND ({str2})'
+
     if add2query:
       add2query_ids = self.__map2terms(add2query)
-      query += ' AND '.join(add2query_ids)
+      query += ' AND (' + 'OR'.join(add2query_ids)+')'
       add2query_search_str = ' [OR](OR) '.join([f'[{entity}]({entity_id})' for entity,entity_id in zip(add2query,add2query_ids)])
       search_url += f' [AND](AND) [(](() {add2query_search_str} [)]())'
 
+    base_url = self.APIconfig['SBSurl'] + '/documents?document_schema=journal&ssql='
     encoded_search_url = base_url+urlencode(search_url)
     return query,encoded_search_url
 
 
   def join2query(self,entity:str,concepts:list[str],add2query:list[str]=[])->tuple[str,str]:
     '''
+      output:
+        query - conjunct search query for SBS
+        encoded_search_url - url for SBS search
       if entity is in double quotes it will be searched as is without ontology synonym expansion
     '''
     my_concepts = [c for c in concepts if c != entity]
     return self.conjunct2lists([entity],my_concepts,add2query)
 
-  
 
 ################# SENTENCE SEARCH ############### SENTENCE SEARCH ##########################
   def __sent2doc(self,sent_ref:SBSRef):
@@ -352,11 +370,16 @@ class SBSapi():
     loads bibliography for sent_ref
     '''
     assert (not sent_ref.has_bibliography())
-    doc = self.SBSsearch.get_document(sent_ref.sbsid(),markup=False)
-    ref = SBSRef.from_doc(doc['data'])
-    sent_ref._merge(ref)
-    assert(self.refCache[sent_ref.key()].has_bibliography())
-    return sent_ref if ref.is_valid() else None
+    senref_sbsid = sent_ref.sbsid()
+    doc = self.SBSsearch.get_document(senref_sbsid,markup=False)
+    if 'data' in doc:
+      ref = SBSRef.from_doc(doc['data'])
+      sent_ref._merge(ref)
+      assert(self.refCache[sent_ref.key()].has_bibliography())
+      return sent_ref if ref.is_valid() else None
+    else:
+      print(f'Invalid document: {str(self.APIconfig['SBSurl']).rstrip('/')+'/documents/'+senref_sbsid}\n')
+      return None
 
 
   def sents2docs(self,sent_refs:list[SBSRef]):
@@ -366,18 +389,18 @@ class SBSapi():
     output:
       list of clean references with bibliography
     '''
-    futures = []
-    with ThreadPoolExecutor(max_workers=MAX_SBS_SESSIONS, thread_name_prefix='__sent2doc') as e:
-      [futures.append(e.submit(self.__sent2doc,r)) for r in sent_refs]
-
-    refs = []
-    for f in as_completed(futures):
-      merged_ref = f.result()
-      if merged_ref is not None:
-        refs.append(merged_ref)
-
+    refs = multithread(sent_refs,self.__sent2doc,max_workers=MAX_SBS_SESSIONS)
+    refs = list(filter(None,refs))
     return refs
   
+
+  def __get_sentences2__(self,query,**my_kwargs):
+    try:
+      return self.SBSsearch.get_sentences2(query,**my_kwargs)
+    except json.JSONDecodeError: # get_sentences2 raises error only if token is expired
+      self.token_refresh()
+      return self.__get_sentences2__(query,**my_kwargs)
+
 
   def _try2getsents(self,query:str,**kwargs)->tuple[int,list[SBSRef]]:
     '''
@@ -393,7 +416,6 @@ class SBSapi():
     
     my_kwargs.update(kwargs)
     hit_count = my_kwargs.pop('hit_count',0)
-    sleep_time = 5
     for attempt in range(1,11):
       try:
         json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
@@ -405,26 +427,30 @@ class SBSapi():
               limit = leftover
             while 'error' in json_response: #usually the real hit count is close to incorrect hit count
               limit -= 1
+              if limit <= 0: break
               my_kwargs['limit'] = limit
               json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
-                 
+              
           while 'error' in json_response: # case when hit count is not known
             limit -= 10
+            if limit <= 0: break
             my_kwargs['limit'] = limit
             json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
             
           while 'error' not in json_response:
             limit += 5
+            if limit > 100: break
             my_kwargs['limit'] = limit
             json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
 
           limit -= 5
           while 'error' in json_response:
             limit -= 1
+            if limit <= 0: break
             my_kwargs['limit'] = limit
             json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
             
-        if json_response and 'data' in json_response:
+        if 'data' in json_response:
           data = json_response['data']
           if data: # data may be empty
             sentence_count = json_response['pagination']['totalItems']
@@ -442,7 +468,7 @@ class SBSapi():
           return 0,[]
       except Exception as ex:
         print(f'{attempt} attempt to retreive data for SBS query {query} failed with {ex} exception',flush=True)
-        sleep(sleep_time)
+        sleep(5)
         self.token_refresh()
         continue
     raise ex
@@ -475,8 +501,8 @@ class SBSapi():
     for entity in entities:
       query,search_url = self.join2query(entity,and_concepts,add2query)
       if entity == entities[0]:
-        print(f'Will find sentence coocurence for {len(entities)} entities')
-        print(f'Sample query for sentence co-ocurence: {query}')
+        print(f'Will find sentence co-occurence for {len(entities)} entities')
+        print(f'Sample query for sentence co-occurence: {query}\n')
       sentence_count,refs = self.search_sents(query)
       results[entity] = (search_url,sentence_count,refs)
     return results
@@ -489,6 +515,7 @@ class SBSapi():
     output:
       {entity:(sentence_count,[SBSRef])}, where RELEVANCE is adjusted by number of sentences in every SBSRef
     '''
+    start = time()
     entity2rfks = dict()
     if multithread:
       chunk_size = int(len(entities)/MAX_SBS_SESSIONS)
@@ -517,14 +544,14 @@ class SBSapi():
       clean_refs.sort(key=lambda x:x.relevance(),reverse=True)
       e2refs[entity] = (search_url,sentence_count,clean_refs)
 
-    print(f'Found sentences in SBS for {rows_counter} rows')
+    print(f'Found sentences in SBS for {rows_counter} rows in {execution_time(start)}')
     return e2refs
 
 ################# DOCUMENT SEARCH ####################### DOCUMENT SEARCH ###############
   def _try2getdocs(self,query='',**kwargs)->tuple[int,list[SBSRef]]:
     '''
-    hit_count
-     # refs are between offset and offset+limit from kwargs
+    output:
+      hit_count, references
     '''
     my_kwargs = {'markup':False,
                  'limit':self.limit,
@@ -533,27 +560,15 @@ class SBSapi():
                  'fields':[]}
     my_kwargs.update(kwargs)
     
-    sleep_time = 5
-    for attempt in range(1,11):
-      try:
-        json_response = self.SBSsearch.get_docs2(query,**my_kwargs)
-        if json_response and 'data' in json_response:
-          data = json_response['data']
-          if data: # data may be empty
-            hit_count = int(data['pagination']['totalItems'])
-            refs = [SBSRef.from_doc(data[i]) for i in range(0,len(data))]
-            # refs are between offset and offset+limit
-            return hit_count, refs
-        else:
-          print('SBS server response is empty.  Will make {attempt} attempt in {sleep_time}')
-          sleep(sleep_time)
-          continue
-      except Exception as ex:
-        print(f'{attempt} attempt to retreive data for SBS {query} failed with {ex} exception')
-        sleep(sleep_time)
-        self.token_refresh()
-        continue
-    raise ex
+    json_response = self.get_docs2(query,**my_kwargs)
+    if json_response and 'data' in json_response:
+      data = json_response['data']
+      if data: # data may be empty
+        hit_count = int(data['pagination']['totalItems'])
+        refs = [SBSRef.from_doc(data[i]) for i in range(0,len(data))]
+        # refs are between offset and offset+limit
+        return hit_count, refs
+    return 0,[]
 
 
   def search_docs(self,query:str,relevance_rank=1)->list[SBSRef]:
@@ -566,13 +581,20 @@ class SBSapi():
     fields = ['doi',"article_type","journal_title","issn","last_modified_date",'authors']
     if query:
       step = 100
-      docs = self._try2getdocs(query,fields=fields,limit=step)
-      all_refs = set(self.add_refs(docs))
-      hit_count =  docs['pagination']['totalItems']
+      hit_count,_1strefs = self._try2getdocs(query,fields=fields,limit=step)
+      all_refs = set(self.add_refs(_1strefs))
       for offset in range(step,hit_count,step):
-        step_refs = self._try2getdocs(query,fields=fields,offset=offset,limit=step)
+        hit_count,step_refs = self._try2getdocs(query,fields=fields,offset=offset,limit=step)
         all_refs.update(self.add_refs(step_refs))
     return all_refs
+
+
+  def get_docs2(self,query,**kwargs):
+    try:
+      return self.SBSsearch.get_docs2(query,**kwargs)
+    except json.JSONDecodeError: # get_docs2 raises error only if token expires
+      self.token_refresh()
+      return self.get_docs2(query,**kwargs)
 
 
   def __abscooc4list(self,entities:list[str],concepts:list[str])->dict[str,tuple[int,float]]:
@@ -586,18 +608,16 @@ class SBSapi():
     self.token_refresh()
     entity2abscount = dict()
     number_of_entities = len(entities)
-    message_printed = False
     #abs_query = 'dataset = "medline" AND field = "abstract" AND content ~ ({q})'
     abs_query = 'dataset = "medline" AND abstract ~ ({q})'
     for entity in entities:
-      query = self.join2query(entity,concepts)
-      if query:
+      jq,_ = self.join2query(entity,concepts)
+      if jq:
         limit = 100
-        query = abs_query.format(q=query)
-        if not message_printed:
+        query = abs_query.format(q=jq)
+        if entity == entities[0]:
           print(f'\nWill find abstract coocurence for {number_of_entities} entities')
           print(f'Sample query for abstract co-ocurence: {query}\n')
-          message_printed = True
         kwargs = {'markup':False,
                  'limit':limit,
                  'offset':0,
@@ -605,7 +625,7 @@ class SBSapi():
                  'fields':[]}
         abstract_count = 0
         abstract_relevance = 0.0
-        json_response = self.SBSsearch.get_docs2(query,**kwargs)
+        json_response = self.get_docs2(query,**kwargs)
         if json_response and 'data' in json_response:
           data = json_response['data']
           if data:
@@ -615,21 +635,23 @@ class SBSapi():
           
             for offset in range(limit,hit_count,limit):
               kwargs['offset'] = offset
-              json_response = self.SBSsearch.get_docs2(query,**kwargs)
+              json_response = self.get_docs2(query,**kwargs)
               if json_response and 'data' in json_response :
                 abstract_relevance += sum([a['_score'] for a in json_response['data']])
         else:
-          print('SBS server response for abstract co-occurence is empty')
+          print(f'No abstract co-occurence for query {query}')
           continue
 
       entity2abscount[entity]=(abstract_count,abstract_relevance)
     return entity2abscount
   
 
-  def abscooc4list(self,entities:list[str],link2concepts:list[str]|set[str],multithread=True)->dict[str,tuple[int,float]]:
+  def abscooc4list(self,entities:list[str],link2concepts:list[str]|set[str],
+                   multithread=True)->dict[str,tuple[int,float]]:
     '''
     Entry function for RefStat.add_abs_cooc\n
     '''
+    start = time()
     entity2stat = dict()
     if multithread:
       chunk_size = int(len(entities)/MAX_SBS_SESSIONS)
@@ -647,6 +669,7 @@ class SBSapi():
     else:
       entity2stat = self.__abscooc4list(entities,link2concepts)
 
+    print(f'Abstract co-occurence for {len(entities)} entities finished in {execution_time(start)}')
     return entity2stat
 
 
