@@ -1,15 +1,25 @@
 
-import time,sys,os,json, requests,re,traceback
-from datetime import timedelta
+import time,sys,os,json, requests,re,traceback,urllib.request,unicodedata
+from urllib.parse import quote as urlencode
+from collections import Counter
+from itertools import chain as iterchain
+from time import sleep
+from math import ceil
+from typing import Generator
+from datetime import timedelta,datetime
 from xml.dom import minidom
-from urllib.parse import quote
 from requests.auth import HTTPBasicAuth
 from lxml import etree as et
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor,as_completed
 DEFAULT_CONFIG_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/')
 DEFAULT_APICONFIG = os.path.join(DEFAULT_CONFIG_DIR,'APIconfig.json')
-
 PCT = '%'
+
+
+def current_time():
+  """Prints the current date and time in a human-readable format."""
+  now = datetime.now()
+  return now.strftime('%Y-%m-%d %H:%M:%S')
 
 
 def execution_time(execution_start):
@@ -68,6 +78,21 @@ def dir2flist(path2dir:str,include_subdirs=True,subdirs_only=False,file_ext='',f
     return [f for f in my_files if any(s in f for s in fnames_has)] if fnames_has else my_files
 
 
+def path2folderlist(path2dir:str, first_folder=''):
+  '''
+  output:
+    list of folder until first_folder, no first_folder in the list
+  '''
+  drive, path_without_drive = os.path.splitdrive(path2dir)
+  folders = []
+  while True:
+    path_without_drive, tail = os.path.split(path_without_drive)
+    if tail == first_folder:
+        break
+    folders.insert(0, tail) # Insert at the beginning to maintain order
+  return folders
+
+
 def normalize_filename(name:str) -> str:
   """
   Normalizes a filename by replacing illegal characters.
@@ -96,9 +121,20 @@ def file_head(full_path:str,number_of_lines = 10000):
     return
 
 
-def unpack(list_of_lists:list,make_unique=True):
-    flat_list = [item for sublist in list_of_lists for item in sublist]
-    return list(set(flat_list)) if make_unique else flat_list
+def remove_duplicates(items:list):
+  '''
+    keeps uids order in uids
+  '''
+  seen = set()
+  return [i for i in items if i not in seen and not seen.add(i)]
+
+
+def unpack(list_of_lists:list[list]|list[tuple],make_unique=True):
+  if make_unique:
+    return list(dict.fromkeys(iterchain.from_iterable(list_of_lists)))
+  else:
+    return list(iterchain.from_iterable(list_of_lists))
+  #  flat_list = [item for sublist in list_of_lists for item in sublist]
 
 
 def next_tag(in_xml_file:str,tag:str,namespace=''):
@@ -135,7 +171,7 @@ def urn_encode(string:str,prefix:str):
     output:
         urn:prefix:URN-encoded(string) 
   """
-  encoded_string = quote(string, safe='-_.!~')
+  encoded_string = urlencode(string, safe='-_.!~')
   return f"urn:{prefix}:{encoded_string}"
 
 
@@ -201,15 +237,27 @@ GREEK2ENGLISH = {
       "Ψ": "Psi",
       "Ω": "Omega"
   }
+
+pattern = re.compile("|".join(GREEK2ENGLISH.keys()))
+def greek2english(text: str) -> str:
+  return pattern.sub(lambda m: GREEK2ENGLISH[re.escape(m.group(0))], text)
+
+'''
 def greek2english(text:str):
   for symbol, spelling in GREEK2ENGLISH.items():
     text = text.replace(symbol, spelling)
   return text
+'''
+
+def replace_non_unicode(text:str):
+  normalized_text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
+  return normalized_text
 
 
 def normalize(s:str):
   text = greek2english(s)
   text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)  # Remove non-alphanumeric characters
+  text = replace_non_unicode(text)
   text = text.replace('  ',' ')
   return text
 
@@ -256,23 +304,12 @@ def get_auth_token(**kwargs):
         
     body = response.json()
     token = str(body['access_token'])
-
-    '''
-    using urllib.request for some websites:
-    req = urllib.request.Request(kwargs['token_url'], method='POST')
-    us_pas = '{}:{}'.format(kwargs['username'],kwargs['password'])
-    us_pas_e = us_pas.encode()
-    base64string = b64encode(us_pas_e)
-    req.add_header("Authorization", "Basic %s" % base64string.decode())
-    response = urllib.request.urlopen(req)
-    body = json.loads(response.read())
-    '''
     return {"Authorization": "Bearer " + token}, time.time()
 
 def print_error_info(x:Exception,thread_name =''):
   exc_type, exc_value, exc_traceback = sys.exc_info()
   traceback_list = traceback.extract_tb(exc_traceback)
-  error_message = f'{thread_name} thread has finished with error "{x}":'
+  error_message = f'{thread_name} thread has finished with error "{x}"\n{x.__doc__}:'
   for tb_info in traceback_list:
     filename = tb_info.filename
     module_name = tb_info.name
@@ -281,13 +318,13 @@ def print_error_info(x:Exception,thread_name =''):
   print(error_message)
 
 
-def run_tasks(tasks:list):
+def run_tasks(tasks:list)->dict:
   '''
   Executes a list of tasks concurrently using ThreadPoolExecutor
   Args:
     tasks: A list of tuples, where each tuple contains a function and a tuple of its arguments. For example:
             [(func1, (arg1, arg2)), (func2, (arg1,))]
-    if function argument is a single list convert it to tuple as (my_list,)
+    if function has one argument convert it to tuple as (my_list,)
   '''
   future_dic = {}
   with ThreadPoolExecutor() as ex:
@@ -301,12 +338,135 @@ def run_tasks(tasks:list):
       except Exception as e:
         print_error_info(e,func_name)
     return result_dic
+  
+
+def multithread(big_list:list, func, **kwargs):
+  '''
+  input:
+    big_list: list of items to be processed
+    func: function to be applied to each item in the list
+    max_workers: number of threads to use for processing
+  output:
+    list of results from applying func to each item in big_list
+  '''
+  max_workers = kwargs.pop('max_workers', 10)
+  def chunk_func(chunk:list):
+    return [func(item,**kwargs) for item in chunk]
+  
+  results = []
+  with ThreadPoolExecutor(max_workers=max_workers) as ex:
+    futures = [ex.submit(chunk_func, chunk) for i,chunk in list2chunks_generator(big_list,max_workers)]   
+    [results.extend(f.result()) for f in as_completed(futures)]
+  return results
+
+'''
+def list2chunks(input_list:list, num_chunks:int=0,chunk_size:int=0):
+  list_length = len(input_list)
+  if chunk_size:
+    num_chunks = list_length // chunk_size
+    if num_chunks*chunk_size < list_length:
+      num_chunks += 1
+  else:
+    assert(num_chunks),"Either num_chunks or chunk_size must be specified"
+    chunk_size = list_length // num_chunks # floor division
+
+  remainder = list_length % num_chunks
+  chunks = []
+  start = 0
+  for i in range(num_chunks):
+    end = start + chunk_size
+    if i < remainder:
+      end += 1  # Distribute the remainder among the first 'remainder' chunks
+    chunks.append(input_list[start:end])
+    start = end
+  return chunks
+'''
+
+def list2chunks_generator(input_list:list, num_chunks:int=0, chunk_size:int=0)->Generator[tuple[int,list],None,None]:
+    '''
+      hint: Generator[YieldType, SendType, ReturnType]
+    '''
+    list_length = len(input_list)
+    if chunk_size:
+      num_chunks = ceil(list_length / chunk_size)
+    else:
+      assert num_chunks > 0, "Either num_chunks or chunk_size must be specified and positive."
+
+    if list_length == 0:
+      return 0,[]# Yields nothing for empty list
+    if num_chunks == 0:
+      yield 0,input_list # Yield the whole list as one chunk
+
+    base_chunk_size = list_length // num_chunks
+    remainder = list_length % num_chunks
+    start = 0
+    for i in range(num_chunks):
+      real_chunk_size = base_chunk_size + int(i < remainder) # distributing remainder among chunks
+      if real_chunk_size == 0 and start < list_length:
+        continue
+
+      end = start + real_chunk_size
+      yield i, input_list[start:end]
+      start = end
+      if start >= list_length:
+        break
+
+
+def bisect(data_list:list, criterion):
+    """
+    input:
+      data_list - list of objects in ascending order
+      criterion - function applied to the element in the list. Must return bool
+
+    Returns:
+      index of the first element object with true criterion.
+    """
+    low = 0
+    high = len(data_list) - 1
+    bisector_index = -1
+
+    while low <= high:
+      mid = (low + high) // 2
+      if criterion(data_list[mid]):
+        bisector_index = mid
+        high = mid - 1 # This element's criterion is true, search lower
+      else:
+        low = mid + 1  # This element's criterion is not true, search higher
+
+    return bisector_index
+
+
+def atempt_request4(url:str,retries=10,sleeptime=5):
+  req = urllib.request.Request(url=url)
+  for attempt in range(retries):
+    try:
+      response = urllib.request.urlopen(req).read()
+      return response
+    except Exception as e:
+      print(f'{e} on attempt {attempt} out of {retries} to obtain {url}')
+      sleep(sleeptime)
+      continue
+  return ''
+
+
+
+def most_frequent(data:list,if_data_empty_return=''):
+    """
+    output:
+      most frequently occurring value in a list.
+    """
+    if not data:
+        return None
+    counts = Counter(data)
+    most_common = counts.most_common(1)
+    return most_common[0][0]
 
 
 class Tee(object):
     def __init__(self, filename, mode="w"):
         self.file = open(filename, mode,encoding='utf-8')
         self.stdout = sys.stdout
+        print(f'Runtime messages will be in {filename}')
 
     def write(self, data):
         self.file.write(data)
