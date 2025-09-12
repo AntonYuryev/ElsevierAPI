@@ -1,9 +1,8 @@
 
-import time,sys,os,json, requests,re,traceback,urllib.request,unicodedata
+import time,sys,os,json, requests,re,traceback,urllib3,unicodedata,certifi
 from urllib.parse import quote as urlencode
 from collections import Counter
 from itertools import chain as iterchain
-from time import sleep
 from math import ceil
 from typing import Generator
 from datetime import timedelta,datetime
@@ -11,9 +10,17 @@ from xml.dom import minidom
 from requests.auth import HTTPBasicAuth
 from lxml import etree as et
 from concurrent.futures import ThreadPoolExecutor,as_completed
+
 DEFAULT_CONFIG_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/')
 DEFAULT_APICONFIG = os.path.join(DEFAULT_CONFIG_DIR,'APIconfig.json')
 PCT = '%'
+
+CHROME_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://www.google.com/'  # Optional: set a referer if needed
+}
 
 
 def current_time():
@@ -43,7 +50,7 @@ def execution_time2(execution_start:float,current_iteration:int,number_of_iterat
     return time_passed, remaining_time_str
 
 
-def load_api_config(api_config_file=''):# file with your API keys and API URLs
+def load_api_config(api_config_file='')->dict[str,str]:# file with your API keys and API URLs
     if not api_config_file:
         print('No API config file was specified\nWill use default %s instead'% DEFAULT_APICONFIG)
         api_config_file = DEFAULT_APICONFIG
@@ -436,18 +443,35 @@ def bisect(data_list:list, criterion):
     return bisector_index
 
 
-def atempt_request4(url:str,retries=10,sleeptime=5):
-  req = urllib.request.Request(url=url)
-  for attempt in range(retries):
-    try:
-      response = urllib.request.urlopen(req).read()
-      return response
-    except Exception as e:
-      print(f'{e} on attempt {attempt} out of {retries} to obtain {url}')
-      sleep(sleeptime)
-      continue
-  return ''
-
+def atempt_request4(url:str,retries=10,backoff_factor=1):
+  retry_strategy = urllib3.Retry(
+    total=retries,
+    backoff_factor=backoff_factor,
+    status_forcelist=[429, 500, 502, 503, 504]
+    )
+  
+  http = urllib3.PoolManager(
+        cert_reqs='CERT_REQUIRED',  # Ensure certificate verification is required
+        ca_certs=certifi.where(),    # Use certifi's CA bundle
+        retries=retry_strategy
+    )
+  
+  try:
+    return http.request('GET', url)
+  except urllib3.exceptions.MaxRetryError as e:
+      print(f"Error: Max retries exceeded: {e}")
+      if e.reason:
+          print(f"  Reason: {e.reason}")
+      return None
+  except urllib3.exceptions.NewConnectionError as e:
+      print(f"Connection Error: {e}")
+      return None
+  except urllib3.exceptions.SSLError as e:
+      print(f"SSL Error: {e}")
+      return None
+  except Exception as e:
+      print(f"An unexpected error occurred: {e}")
+      return None
 
 
 def most_frequent(data:list,if_data_empty_return=''):
