@@ -6,13 +6,11 @@ from time import sleep
 from collections import defaultdict
 from titlecase import titlecase
 from ..utils import atempt_request4,remove_duplicates,sortdict
+from ..ETM_API.references import Reference,JOURNAL,TITLE,AUTHORS,PUBYEAR
 
-PUBMED_URL = 'https://pubmed.ncbi.nlm.nih.gov/?'
-PMC_URL = 'https://www.ncbi.nlm.nih.gov/pmc/?'
-DOI_URL = 'http://dx.doi.org/'
+
 RETMAX = 10000
-NCBI_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__ncbipubmedcache__/')
-
+PUBMED_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__ncbipubmedcache__/')
 
 def removeThe(t:str):
     return t[4:] if t.startswith('The ') else t
@@ -25,7 +23,7 @@ class NCBIeutils:
       #database names are in # from https://www.ncbi.nlm.nih.gov/books/NBK25497/table/chapter2.T._entrez_unique_identifiers_ui/?report=objectonly
       self.params = {'db':'pubmed','term':query}
       self.journalCounter = defaultdict(int)
-      self.cache_path = NCBI_CACHE
+      self.cache_path = PUBMED_CACHE
       self.query = query
   
   def _esearch_url(self,params:dict):
@@ -52,7 +50,7 @@ class NCBIeutils:
     return int(str(response.find('./Count').text))
   
 
-  def _retmax_uids(self,params:dict={}):
+  def _retmax_uids(self,params:dict={})->list[int]:
     '''
     Return
     ------
@@ -72,7 +70,7 @@ class NCBIeutils:
     return reversed_list
   
 
-  def get_uids(self,query_name:str):
+  def get_uids(self,query_name:str)->list[int]:
       '''
       Return
       ------
@@ -88,111 +86,100 @@ class NCBIeutils:
           count = self.get_count()
           all_ids = list()
           if count > RETMAX:
-              current_year = datetime.date.today().year
-              for year in range(1965, current_year,1):
-                  year_params = dict(self.params)
-                  year_params['term'] += f' AND ({year}/01/01[PDat]:{year}/12/31[PDat])'
-                  all_ids += self._retmax_uids(year_params)
-                  sleep(0.5) # 0.1 - too many requests
-              all_ids = remove_duplicates(all_ids)
-              json.dump(all_ids, open(json_id_path,'w'), indent = 2)
-              return all_ids
+            current_year = datetime.date.today().year
+            for year in range(1965, current_year,1):
+                year_params = dict(self.params)
+                year_params['term'] += f' AND ({year}/01/01[PDat]:{year}/12/31[PDat])'
+                all_ids += self._retmax_uids(year_params)
+                sleep(0.5) # 0.1 - too many requests
+            all_ids = remove_duplicates(all_ids)
+            json.dump(all_ids, open(json_id_path,'w'), indent = 2)
+            return all_ids
           else:
-              return self._retmax_uids(self.params)
-                    
+            return self._retmax_uids(self.params)
 
-  def fetch(self,query_name:str):
-    allids = self.get_uids(query_name)
+
+  def ids2records(self,ids:list[int]):
     params = {'db':self.params['db'],'rettype':'XML'}
     stepSize = 200
-    for i in range(0, len(allids), stepSize):
-      ids = ','.join(str(s) for s in allids[i:i+stepSize])
-      params.update({'id':ids})
+    for i in range(0, len(ids), stepSize):
+      str_ids = ','.join(str(s) for s in ids[i:i+stepSize])
+      params.update({'id':str_ids})
       my_url = self._efetch_url(params)
       req = urllib.request.Request(url=my_url)
       xml_str = urllib.request.urlopen(req).read()
       yield xml_str
 
 
+  def fetch(self,query_name:str):
+    allids = self.get_uids(query_name)
+    return self.ids2records(allids)
+
+
   def path2cache(self,query_name:str):
       return self.cache_path+query_name+".xml"
 
 
-  def download_pubmed(self,query_name:str):
-      """
-      Output
-      ------
-      query_name.json: has list of pmids found by query\n
-      query_name.xml: pubmed abstracts
-      """
+  @staticmethod
+  def pubmed2ref(article:ET.Element)->Reference:
+    def parse_authors(AuthorList:ET.Element):
+      authors = []
+      for author_elem in AuthorList.findall('Author'):
+          last_name = author_elem.find('LastName').text
+          fore_name = author_elem.find('ForeName').text
+          initials = author_elem.find('Initials').text
+          # Assuming Initials is always available and accurate for the format
+          formatted_name = f"{last_name} {initials}{fore_name}"
+          authors.append(formatted_name)
+      return ';'.join(authors)
+      
+    medline_citation = article.find('MedlineCitation')
+    pmid_elem = medline_citation.find('PMID')
+    ref = Reference('PMID', pmid_elem.text)
+    article_elem = medline_citation.find('Article')
+    journal_elem = article_elem.find('Journal')
+    ref['ISSN'] = [journal_elem.find('ISSN').text]
+    ref[JOURNAL] = [journal_elem.find('ISOAbbreviation').text]
+    ref[PUBYEAR] = [journal_elem.find('JournalIssue/PubDate/Year').text]
+    ref[TITLE] = [article_elem.find('ArticleTitle').text]
+    ref[AUTHORS] = [parse_authors(article_elem.find('AuthorList'))]
+    return ref
+    
+
+  def download_refs(self,pmids:list[int])->list[Reference]:
+    refs = []
+    for xml_str in self.ids2records(pmids):
+      articles = ET.fromstring(xml_str).findall('PubmedArticle')
+      [refs.append(NCBIeutils.pubmed2ref(article))for article in articles]
+    return refs
+
+
+  def download_pubmed(self,query_name:str)->list[Reference]:
       fpath = self.path2cache(query_name)
-      result_counter = 0
-      with open(fpath, "w", encoding='utf-8') as file_result:
-        file_result.write('<PubmedArticleSet>\n')
+      refs = []
+      with open(fpath, "w", encoding='utf-8') as result:
+        result.write('<PubmedArticleSet>\n')
         for xml_str in self.fetch(query_name):
           abstractTree = ET.fromstring(xml_str)
           articles = abstractTree.findall('PubmedArticle')
-          result_counter += len(articles)
           for article in articles:
+            refs.append(NCBIeutils.pubmed2ref(article))
             journal = str(article.find('MedlineCitation/Article/Journal/Title').text)
             jnames = normalize_journal(journal)
             for j in jnames:
                 self.journalCounter[j] += 1
-            file_result.write(ET.tostring(article, encoding="unicode"))
+            result.write(ET.tostring(article, encoding="unicode"))
 #          sleep(1.0)
-        file_result.write('</PubmedArticleSet>\n')
-        print(f'Downloaded {result_counter} pubmed abstracts')
+        result.write('</PubmedArticleSet>\n')
+        print(f'Downloaded {len(refs)} pubmed abstracts')
         print(f'Downloaded abstracts are in "{fpath}"')
 
-        fstatpath = os.path.join(self.cache_path,query_name+'_stats.tsv')
-        journalCounter = sortdict(journalCounter,by_key=False,reverse=True)
-        with open(fstatpath, "w", encoding='utf-8') as f:
-            [f.write(f'{k}\t{v}\n') for k,v in self.journalCounter.items()]
-        print(f'Statistics is in "{fstatpath}"')
-
-
-def pubmed_hyperlink(pmids:list,display_str='',as_excel_formula=True):
-    if as_excel_formula:
-        ids4hyperlink = pmids[:20] 
-        # hyperlink in Excel does not work with long URLs, 
-        params = {'term':','.join(ids4hyperlink)}
-        if display_str:
-            to_display = str(display_str)
-        elif len(pmids) == 1:
-            to_display = str(pmids[0])
-        else:
-            to_display = str(len(pmids))
-
-        data = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-        return '=HYPERLINK("'+PUBMED_URL+data+'",\"{}\")'.format(to_display)
-    else:
-        ids4hyperlink = pmids[:100]
-        params = {'term':','.join(ids4hyperlink)}
-        data = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-        return PUBMED_URL+data
-
-
-def pmc_hyperlink(pmcs:list,display_str='',as_excel_formula=True):
-    if as_excel_formula:
-        ids4hyperlink = pmcs[:20] 
-        # hyperlink in Excel does not work with long URLs
-        terms_string = '+OR+'.join(ids4hyperlink)
-        query_string = f'term={terms_string}'
-
-        #params = {'term':ids4hyperlink}
-        if display_str:
-            to_display = str(display_str)
-        elif len(pmcs) == 1:
-            to_display = str(pmcs[0])
-        else:
-            to_display = str(len(pmcs))
-        
-        return '=HYPERLINK("'+PMC_URL+query_string+'",\"{}\")'.format(to_display)
-    else:
-        ids4hyperlink = pmcs[:100]
-        terms_string = '+OR+'.join(ids4hyperlink)
-        query_string = f'term={terms_string}'
-        return PMC_URL+query_string
+      fstatpath = os.path.join(self.cache_path,query_name+'_stats.tsv')
+      self.journalCounter = sortdict(self.journalCounter,by_key=False,reverse=True)
+      with open(fstatpath, "w", encoding='utf-8') as f:
+          [f.write(f'{k}\t{v}\n') for k,v in self.journalCounter.items()]
+      print(f'Download statistics is in "{fstatpath}"')
+      return refs
 
 
 def normalize_journal(journal_title:str):
@@ -208,7 +195,7 @@ def normalize_journal(journal_title:str):
 def medlineTA2issn()->tuple[dict[str,str],dict[str,str]]:
     abbrev2journal = dict()
     journal2issns = defaultdict(list)
-    path2cache = NCBI_CACHE+'J_Medline.txt'
+    path2cache = PUBMED_CACHE+'J_Medline.txt'
     try: 
         m = open(path2cache,'r',encoding='utf-8')
         line = m.readline().strip()
@@ -256,24 +243,29 @@ def medlineTA2issn()->tuple[dict[str,str],dict[str,str]]:
     return abbrev2journal, dict(journal2issns)
 
 
-def docid2pmid(docids:list[str]):
+def docid2pmid(docids:list[str])->dict[str,str]:
   '''
   input:
     docids - homogeneous list of PMC or DOI 
     only DOIs for PMC articles will produce valid response
   '''
   docid2pmid = dict()
-  idstr = ','.join(docids)
-  requesturl = 'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids='+idstr+'&format=json'
-  response_dict = json.loads(atempt_request4(requesturl))
-  for record in response_dict["records"]:
-    try:
-      pmid = record['pmid']
-      pmcid = record['pmcid']
-      doi = record.get('doi','')
-      doc_id = doi if doi in docids else pmcid
-      docid2pmid[doc_id] = pmid
-    except KeyError:
-        continue
+  for chunk in range(0,len(docids),100):
+    idstr = ','.join(docids[chunk:chunk+100])
+    requesturl = 'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids='+idstr+'&format=json'
+    http_response = atempt_request4(requesturl)
+    if http_response:
+      response_dict = json.loads(http_response.data.decode('utf-8'))
+    if response_dict:
+      for record in response_dict["records"]:
+        if 'pmcid' in record: 
+          if 'pmid' in record:
+            pmid = record['pmid']
+            pmcid = record['pmcid']
+            doi = record.get('doi','')
+            doc_id = doi if doi in docids else pmcid
+            docid2pmid[doc_id] = pmid
+          else:
+            print(f'No PMID in {record}')
   return docid2pmid
 
