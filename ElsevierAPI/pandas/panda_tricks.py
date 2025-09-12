@@ -826,6 +826,18 @@ class df(pd.DataFrame):
       return sorted_self # Rearrange the columns based on the sorted sums
   
   
+  def deduplicate_rows(self,**kwargs):
+    '''
+    kwargs:
+      subset - column label or sequence of labels, optional
+      keep : {'first', 'last', False}, default 'first'
+    '''
+    my_kwargs = dict(kwargs)
+    my_kwargs['ignore_index '] = True
+    dedupl_df = df.from_pd(self.drop_duplicates(**kwargs))
+    dedupl_df.__copy_attrs(self)
+    return dedupl_df
+
 
   @staticmethod
   def calculate_pvalues(scores:pd.Series,skip1strow=False):
@@ -872,19 +884,29 @@ class df(pd.DataFrame):
       return p_values
   
 
-  def sortrows(self,by:str|list[str],ascending:bool|list[bool]=False,skip_rows=0):
+  def sortrows(self,**kwargs)->"df":
     # re-writing parent pd.DataFrame function is a BAD idea. Use other names
+    '''
+    by: str|list[str] - column name(s) to sort by\n
+    ascending: bool|list[bool] - sort order for each column, default is False (descending)\n
+    skip_rows: int - number of rows to skip before sorting, default is 0 (no rows skipped)\n
+    key - function to be called on each column before sorting, default is None (no key function)\n
+    '''
+    skip_rows = kwargs.pop('skip_rows',0)
     if skip_rows:
       if len(self) > skip_rows:
         top_rows = self.iloc[:skip_rows]
-        remaining_rows = self.iloc[skip_rows:].sort_values(by=by, ascending=ascending,inplace=False)
+        remaining_rows = self.iloc[skip_rows:].sort_values(**kwargs)
         sorted_df = df.from_pd(pd.concat([top_rows, remaining_rows], ignore_index=True),dfname=self._name_)
         sorted_df.copy_format(self)
         return sorted_df
       else:
         return self
     else:
-      sorted_df = pd.DataFrame(self.sort_values(by,ascending=ascending,inplace=False))
+      my_kwargs = {'ascending':False}
+      my_kwargs.update(kwargs)
+      my_kwargs['inplace'] = False
+      sorted_df = pd.DataFrame(self.sort_values(**my_kwargs))
       sorted_df = df.from_pd(sorted_df,self._name_)
       sorted_df.copy_format(self)
     return sorted_df
