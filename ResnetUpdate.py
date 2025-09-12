@@ -4,26 +4,25 @@ from ENTELLECT_API.ElsevierAPI.utils import dir2flist
 from os import path
 
 UPDATE_YEAR = 2024
-DATA_DIR = 'C:/ResnetDump/ResnetClean/ResnetSplit'
-UPDATE_DIR = 'C:/ResnetDump/ResnetClean/Update2024'
+DATA_DIR = 'C:/ResnetDump/BiomarkerTest'
+UPDATE_DIR = 'C:/ResnetDump'
 #RESNET_DUMP = path.join(DATA_DIR,'resnet18_dump_05062025.rnef')
 RESNET_UPDATE =  path.join(UPDATE_DIR,f'resnet_since{UPDATE_YEAR}_')
 MAX_REL_COUNT = 40000
 
-def update_resnet(resnet_dump:str,year = UPDATE_YEAR,file_count=0):
+def update_resnet(resnet_dump:str,year=UPDATE_YEAR,file_count=0):
     """
     Generates the ResNet graph with the latest data from resnet_dump
-    
-    :param date: The date of the update.
+    :param year: The year of the update.
     :param resnet_dump: The path to the ResNet dump file.
     """
     update_rels = list()
     dump_files_count = file_count
     for nodes,rels in ResnetGraph.read_rnef(resnet_dump):
       for rel in rels:
-        assert(isinstance(rel,PSRelation))
+        #assert(isinstance(rel,PSRelation))
         refs = rel.refs()
-        update_refs = [r for r in refs if r.pubyear() >= UPDATE_YEAR]
+        update_refs = [r for r in refs if r.pubyear() >= year]
         if update_refs:
           rel.references = update_refs
           update_rels.append(rel)
