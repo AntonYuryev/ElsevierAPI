@@ -3,7 +3,7 @@ from ..ETM_API.references import Reference,DocMine, Author
 from ..ETM_API.references import AUTHORS,_AUTHORS_,GRANT_APPLICATION,JOURNAL,SENTENCE,RELEVANCE
 from scibite_toolkit.scibite_search import SBSRequestBuilder as s
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import re,threading
+import re,threading,requests
 from time import sleep, time
 from datetime import datetime
 
@@ -62,7 +62,7 @@ class SBSRef(DocMine):
       return DATASET2IDTYPE[dataset],native_id
     except KeyError:
       try:
-        return SBSRef.parse_doi(doc['doi'])
+        return SBSRef.__parse_doi(doc['doi'])
       except KeyError:
         return dataset, native_id
 
@@ -106,6 +106,9 @@ class SBSRef(DocMine):
     sbsj = SBSRef(SBS_ID, doc_id)
     id_type, native_id = cls.__docids(doc)
     sbsj.Identifiers[id_type] = native_id
+    if 'doi' in doc:
+      id_type,id = SBSRef.__parse_doi(doc['doi'])
+      sbsj.Identifiers[id_type] = id
 
     try:
       sbsj._set_title(doc['title'])
@@ -143,6 +146,12 @@ class SBSRef(DocMine):
 
     return sbsj
 
+
+  def bm25(self)->float:
+    if BM25SCORE in self:
+      return float(self[BM25SCORE][0])
+    return 0.0
+   
 
   @classmethod
   def from_sent(cls,sent:dict,relevance_rank=1):
@@ -192,15 +201,19 @@ class SBSRef(DocMine):
   
 
   @staticmethod
-  def parse_doi(doi:str):
+  def __parse_doi(doi:str)->tuple[str,str]:
+    '''
+    determines if doi is a PII or DOI
+    output:
+      (id_type, id)
+    '''
     if doi[:2] == 'P0':
-      return 'PII',doi   
+      return 'PII',doi
     s_pos = doi.find('/S')
     if s_pos > 0:
       return 'PII', doi[s_pos+1:]
     else:
       return 'DOI', doi
-
 
 ####################### SBSapi ############# SBSapi ###################### SBSapi ##############
 class SBSapi():
@@ -210,6 +223,7 @@ class SBSapi():
     self.refCache = dict() # {ref_key:SBSRef}
     self.timestamp = datetime.now()
     self.SBSsearch = self.__get_token()
+    self.multithread = True
     
 
   def clone(self):
@@ -311,8 +325,9 @@ class SBSapi():
     '''
     adjusts ref[RELEVANCE] in self.refCache by ref.number_of_sentences()
     '''
-    for ref in self.refCache.values():
-      ref[RELEVANCE] = [ref.relevance(BM25SCORE)*(1.0+ref.number_of_sentences()/2.0)]
+    with threading.Lock():
+      for ref in self.refCache.values():
+        ref[RELEVANCE] = [ref.relevance(BM25SCORE)*(1.0+ref.number_of_sentences()/2.0)]
 
 
   def search_url(self,entities:list[str], link2concepts:list[str]|set[str])->str:
@@ -389,17 +404,35 @@ class SBSapi():
     output:
       list of clean references with bibliography
     '''
-    refs = multithread(sent_refs,self.__sent2doc,max_workers=MAX_SBS_SESSIONS)
-    refs = list(filter(None,refs))
+    if self.multithread:
+      refs = multithread(sent_refs,self.__sent2doc,max_workers=MAX_SBS_SESSIONS)
+    else:
+      refs = [self.__sent2doc(r) for r in sent_refs ]
     return refs
   
 
-  def __get_sentences2__(self,query,**my_kwargs):
+  def __get_sentences2__(self,query,**kwargs):
+    '''
+      kwargs: "markup"-bool, "limit"-int, "offset"-int
+    '''
+    options = dict(kwargs)
+    options["queries"] = query
+    req = requests.get(self.SBSsearch.url + "/api/search/v1/sentences/", params=options, 
+                        headers=self.SBSsearch.headers, verify=self.SBSsearch.verify_request)
     try:
-      return self.SBSsearch.get_sentences2(query,**my_kwargs)
-    except json.JSONDecodeError: # get_sentences2 raises error only if token is expired
-      self.token_refresh()
-      return self.__get_sentences2__(query,**my_kwargs)
+      return req.json()
+    except json.JSONDecodeError as e:
+      if req:
+        if req.status_code in [401,403]:
+          print(f'Response status: {req.status_code}')
+          self.token_refresh()
+          return self.__get_sentences2__(query,**kwargs)
+        else:
+          print(f'{query} produced invalid response: {e}')
+          return dict()
+      else:
+        print(f'{query} produced empty response')
+        return dict()
 
 
   def _try2getsents(self,query:str,**kwargs)->tuple[int,list[SBSRef]]:
@@ -418,7 +451,7 @@ class SBSapi():
     hit_count = my_kwargs.pop('hit_count',0)
     for attempt in range(1,11):
       try:
-        json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
+        json_response = self.__get_sentences2__(query,**my_kwargs)
         if 'data' not in json_response: # bug in SBS
           limit = my_kwargs['limit']
           if hit_count: # case when hit count is known but is incorrect
@@ -429,26 +462,26 @@ class SBSapi():
               limit -= 1
               if limit <= 0: break
               my_kwargs['limit'] = limit
-              json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
+              json_response = self.__get_sentences2__(query,**my_kwargs)
               
           while 'error' in json_response: # case when hit count is not known
             limit -= 10
             if limit <= 0: break
             my_kwargs['limit'] = limit
-            json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
+            json_response = self.__get_sentences2__(query,**my_kwargs)
             
           while 'error' not in json_response:
             limit += 5
             if limit > 100: break
             my_kwargs['limit'] = limit
-            json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
+            json_response = self.__get_sentences2__(query,**my_kwargs)
 
           limit -= 5
           while 'error' in json_response:
             limit -= 1
             if limit <= 0: break
             my_kwargs['limit'] = limit
-            json_response = self.SBSsearch.get_sentences2(query,**my_kwargs)
+            json_response = self.__get_sentences2__(query,**my_kwargs)
             
         if 'data' in json_response:
           data = json_response['data']
@@ -509,7 +542,7 @@ class SBSapi():
   
 
   def sentcooc4list(self,entities:list[str], link2concepts:list[str]|set[str],
-    add2query:list[str]=[],multithread=True)->dict[str,tuple[str,int,list[Reference]]]:
+    add2query:list[str]=[])->dict[str,tuple[str,int,list[Reference]]]:
     '''
     Entry function for RefStat.add_refs_sbs\n
     output:
@@ -517,7 +550,7 @@ class SBSapi():
     '''
     start = time()
     entity2rfks = dict()
-    if multithread:
+    if self.multithread:
       chunk_size = int(len(entities)/MAX_SBS_SESSIONS)
       with ThreadPoolExecutor(max_workers=MAX_SBS_SESSIONS, thread_name_prefix='SBS') as e:
         futures = list()
@@ -530,6 +563,7 @@ class SBSapi():
         for f in as_completed(futures):
           results = f.result()
           entity2rfks.update(results)
+        e.shutdown()
     else:
       entity2rfks = self.__sentcooc4list(entities,link2concepts,add2query)
 
@@ -548,13 +582,43 @@ class SBSapi():
     return e2refs
 
 ################# DOCUMENT SEARCH ####################### DOCUMENT SEARCH ###############
+  def get_docs2(self,query,**kwargs)->dict:
+    '''
+    kwargs: 
+    "markup"-bool, "limit"-int, "offset"-int\n
+    "fields"-['doi',"article_type","journal_title","issn","last_modified_date",'authors'], defaults to []
+    output:
+      JSON response from SciBite Search API
+    '''
+    options = dict(kwargs)
+    options["queries"] = query
+    req = requests.get(self.SBSsearch.url + "/api/search/v1/documents", params=options,
+                       headers=self.SBSsearch.headers, verify=self.SBSsearch.verify_request)
+    try:
+      return req.json()
+    except json.JSONDecodeError as e:
+      if req:
+        if req.status_code in [401,403]:
+          print(f'Response status: {req.status_code}')
+          self.token_refresh()
+          return self.get_docs2(query,**kwargs)
+        else:
+          print(f'invalid response {e} to "{query}"')
+          return dict()
+      else:
+        print(f'response to {query} is empty')
+        return dict()
+      
+
   def _try2getdocs(self,query='',**kwargs)->tuple[int,list[SBSRef]]:
     '''
+    kwargs: 
+      markup:bool, limit:int, offset:int, maxSnippets:int, fields:list
     output:
       hit_count, references
     '''
     my_kwargs = {'markup':False,
-                 'limit':self.limit,
+                 'limit':100,
                  'offset':0,
                  'maxSnippets':0,
                  'fields':[]}
@@ -564,14 +628,13 @@ class SBSapi():
     if json_response and 'data' in json_response:
       data = json_response['data']
       if data: # data may be empty
-        hit_count = int(data['pagination']['totalItems'])
+        hit_count = int(json_response['pagination']['totalItems'])
         refs = [SBSRef.from_doc(data[i]) for i in range(0,len(data))]
-        # refs are between offset and offset+limit
         return hit_count, refs
     return 0,[]
 
 
-  def search_docs(self,query:str,relevance_rank=1)->list[SBSRef]:
+  def search_docs(self,query:str)->list[SBSRef]:
     '''
     output:
       references found by search "entity1 AND entity2" deduplicated by titles and are added to self.refCache
@@ -586,15 +649,9 @@ class SBSapi():
       for offset in range(step,hit_count,step):
         hit_count,step_refs = self._try2getdocs(query,fields=fields,offset=offset,limit=step)
         all_refs.update(self.add_refs(step_refs))
-    return all_refs
-
-
-  def get_docs2(self,query,**kwargs):
-    try:
-      return self.SBSsearch.get_docs2(query,**kwargs)
-    except json.JSONDecodeError: # get_docs2 raises error only if token expires
-      self.token_refresh()
-      return self.get_docs2(query,**kwargs)
+    
+    sorted_refs = sorted(all_refs, key=lambda x: x.bm25(), reverse=True)
+    return sorted_refs
 
 
   def __abscooc4list(self,entities:list[str],concepts:list[str])->dict[str,tuple[int,float]]:
@@ -646,14 +703,13 @@ class SBSapi():
     return entity2abscount
   
 
-  def abscooc4list(self,entities:list[str],link2concepts:list[str]|set[str],
-                   multithread=True)->dict[str,tuple[int,float]]:
+  def abscooc4list(self,entities:list[str],link2concepts:list[str]|set[str],)->dict[str,tuple[int,float]]:
     '''
     Entry function for RefStat.add_abs_cooc\n
     '''
     start = time()
     entity2stat = dict()
-    if multithread:
+    if self.multithread:
       chunk_size = int(len(entities)/MAX_SBS_SESSIONS)
       with ThreadPoolExecutor(max_workers=MAX_SBS_SESSIONS, thread_name_prefix='SBS') as e:
         futures = list()
