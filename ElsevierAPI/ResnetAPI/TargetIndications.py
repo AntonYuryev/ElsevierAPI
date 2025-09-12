@@ -7,6 +7,7 @@ from .FolderContent import FolderContent,PSPathway
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from ..utils import execution_time
 import time,os
+from collections import defaultdict
 
 
 RANK_SUGGESTED_INDICATIONS = True 
@@ -851,6 +852,7 @@ Effect = {eff} AND NeighborOf ({partners}) AND NeighborOf ({indications})'
        
       if 'exclude_ontology_groups' in self.params:
         if not hasattr(self,'mustnotbe'):
+          print(f'Loading excluded indications from {self.params['exclude_ontology_groups']} ontology group')   
           oql = OQL.get_childs(self.params['exclude_ontology_groups'],['Name'],include_parents=True)
           self.mustnotbe = self.process_oql(oql)._get_nodes()
         len_before = len(self.__indications4antagonists__)
@@ -1355,16 +1357,6 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
         self.normalize(ws4tox,ws4tox,drop_empty_columns=empty_cols2drop,add_pvalue=False)
         self.report_pandas[ws4tox].tab_format['tab_color'] = 'red'
       return
-    
-
-    def add_target_columns(self):
-      for ws in self.ws_names():
-        if ws in self.report_pandas.keys():
-          self.report_pandas[ws],_t2iG = self.add_target_column(self.report_pandas[ws])
-          snippets_ws = ws[0:22]+'_snippets'
-          snippets_df = _t2iG.snippets2df(snippets_ws,ref_sentence_props=[SENTENCE])
-          self.add2report(snippets_df)
-      return
 
 
     def _perform_semantic_search(self):
@@ -1462,14 +1454,17 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
 
 
     def other_effects2df(self):
-        '''
-        Adds
-        ----
-        __unknown_effect_indications__ worksheet to self.report_data with snippets for unknown effect indications
-        '''
-        other_effects_graph = self.other_effects()
-        other_indications = other_effects_graph.snippets2df(df_name=UNKEFFECTDF)
-        self.add2report(other_indications)
+      '''
+      Adds:
+      __unknown_effect_indications__ worksheet to self.report_data with snippets for unknown effect indications
+      '''
+      other_effects_graph = self.other_effects()
+      other_indications = other_effects_graph.snippets2df(df_name=UNKEFFECTDF)
+      self.add2report(other_indications)
+
+
+    def __target_concepts(self):
+      return list(self.__targets__) + list(self.__GVs__)+list(self.__partners__)
 
 
     def add_target_column(self,_2df:df,indication_col='Name'):
@@ -1477,18 +1472,20 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
       my_copy[TOTAL_REFCOUNT] = pd.Series(dtype='int')
       my_copy[RELEVANT_CONCEPTS] = pd.Series(dtype='str')
       t2iG = ResnetGraph()
-      target_concepts = list(self.__targets__) + list(self.__GVs__)+list(self.__partners__)
       for idx in my_copy.index:
         ind_name = str(_2df.at[idx,indication_col])
         indications = self.Graph._psobjs_with(ind_name)
         if indications:
-          indications += indications[0].childs()
+          row_indications = list(indications)
+          for i in indications:
+            row_indications += i.childs()
+
           target_ref = list()
           all_refs = set()
-          for target in target_concepts:
-            sub_graph = self.Graph.get_subgraph(indications,[target])
-            t2iG = t2iG.compose(sub_graph)
+          for target in self.__target_concepts():
+            sub_graph = self.Graph.get_subgraph(row_indications,[target])
             t2i_refs = sub_graph.load_references()
+            t2iG = t2iG.compose(sub_graph)
             if t2i_refs:
               target_ref.append(f'{target.name()} ({str(len(t2i_refs))})')
               all_refs.update(t2i_refs)
@@ -1496,9 +1493,82 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
             my_copy.loc[idx,TOTAL_REFCOUNT] = len(all_refs)
             my_copy.loc[idx,RELEVANT_CONCEPTS] = ','.join(target_ref)
         else:
-          assert(ind_name == 'WEIGHTS:')
+          assert(ind_name == 'WEIGHTS:'), 'Only WEIGHTS can be missing from the self.Graph'
       
       return my_copy,t2iG
+    
+
+    def snippets4df(self,_4df:df,g:ResnetGraph,dfname:str):
+      '''
+      input:
+        _4df: df with column "Name" containing indication names
+        uses self.Graph to map indications to their children in "Concept" or "Entity"
+      output:
+        df with columns: "Indication","Target","Concept","Entity",'Concept','Concept Type','Entity','Entity Type'},add_rel_props,add_ref_props,PS_CITATION_INDEX,"PMID","DOI",PUBYEAR,TITLE,"Snippets",\n
+        where "Concept" contains graph regulators, "Entity" contains graph targets
+      '''
+      indication_names = _4df['Name'].to_list()
+      if not g:
+        g = self.Graph.neighborhood(self.Graph._psobjs_with(indication_names),self.__target_concepts())
+    
+      # must get indications from self.Graph here because only self.Graph nodes have children:
+      name2indications,_ = self.Graph.get_prop2obj_dic('Name',indication_names)
+
+      child2indication = defaultdict(set)
+      for indications in name2indications.values():
+        for indication in indications:
+          for child in indication.childs():
+            if child: # child can be empty PSObject for large ontology groups
+              child_name = child.name()
+              if child_name not in name2indications:
+                child2indication[child_name].add(indication)
+
+      name2indications.update({k:list(v) for k,v in child2indication.items()})
+
+      g = g.curate()
+      snippets_df = g.snippets2df(dfname)
+      # finding indication in Concept and Entity columns:
+      for idx in snippets_df.index:
+        concept = snippets_df.at[idx,'Concept']
+        entity = snippets_df.at[idx,'Entity']
+
+        if concept in name2indications:
+          disease_name = concept 
+          target_name = entity
+        elif entity in name2indications:
+          disease_name = entity
+          target_name = concept
+        else:
+          print(f'Neither "{concept}" nor "{entity}" found in self.Graph for {dfname}')
+          continue # skip if neither concept nor entity is in name2indications. This can be if cooccurence is not in the self.Graph
+
+        snippets_df.at[idx,'Target'] = target_name
+        indications = name2indications[disease_name]
+        #must use .at here because .loc assigns list aligned with selected columns
+        if indications:
+          snippets_df.at[idx,'Indication'] = ','.join(set(ResnetGraph.names(indications)))
+        else:
+          snippets_df.at[idx,'Indication'] = disease_name
+          print(f'No indication objects found in input for {disease_name}')
+      
+      exploded_snippets_pd = snippets_df.explode('Indication',ignore_index=True)
+      exploded_snippets_df = df.from_pd(exploded_snippets_pd,snippets_df._name_)
+      exploded_snippets_df.copy_format(snippets_df)
+      column_count = len(exploded_snippets_df.columns)
+      exploded_snippets_df = exploded_snippets_df.move_cols(
+         {'Indication':0,'Target':1,'Concept':column_count-2,'Entity':column_count-1})
+      return exploded_snippets_df
+
+
+    def add_target_columns(self):
+      for ws in self.ws_names():
+        if ws in self.report_pandas.keys():
+          self.report_pandas[ws],_t2iG = self.add_target_column(self.report_pandas[ws])
+          if _t2iG:
+            snippets_ws = ws[0:22]+'_snippets'
+            snippets_df = self.snippets4df(self.report_pandas[ws],_t2iG,snippets_ws)
+            self.add2report(snippets_df)
+      return
 
 
     def make_report(self):

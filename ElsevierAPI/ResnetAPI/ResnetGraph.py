@@ -734,15 +734,14 @@ class ResnetGraph (nx.MultiDiGraph):
                   add_rel_props:list=['Name','RelType',EFFECT,REFCOUNT],
                   ref_identifiers:list = ['PMID','DOI'],
                   ref_biblio_props:list = [PUBYEAR,TITLE],
-                  ref_sentence_props:list=[SENTENCE]):
+                  ref_sentence_props:list=[SENTENCE])->df:
     '''
     input:
-        add_rel_props - can be either empty or ['Name','RelType',EFFECT,REFCOUNT]
-        ref_sentence_props - additional reference properties 
-    Returns
-    -------
-    df with columns: "Concept","Entity",{}'Concept','Concept Type','Entity','Entity Type'},add_rel_props,add_ref_props,PS_CITATION_INDEX,"PMID","DOI",PUBYEAR,TITLE,"Snippets",\n
-    where "Concept" contains graph regulators, "Entity" contains graph targets
+      add_rel_props - can be either empty or ['Name','RelType',EFFECT,REFCOUNT]
+      ref_sentence_props - additional reference properties 
+    output:
+      df with columns: "Concept","Entity",'Concept','Concept Type','Entity','Entity Type'},add_rel_props,add_ref_props,PS_CITATION_INDEX,"PMID","DOI",PUBYEAR,TITLE,"Snippets",\n
+      where "Concept" contains graph regulators, "Entity" contains graph targets
     '''
     my_graph = self.remove_undirected_duplicates()
     my_graph.load_references()
@@ -778,14 +777,26 @@ class ResnetGraph (nx.MultiDiGraph):
           continue
 
     snippet_df = df.from_rows(rows,header)
-    snippet_df[PS_CITATION_INDEX] = snippet_df[PS_CITATION_INDEX].astype(int)
     if PUBYEAR in snippet_df.columns:
       snippet_df[PUBYEAR] = pd.to_numeric(snippet_df[PUBYEAR], errors='coerce')
       snippet_df[PUBYEAR] = snippet_df[PUBYEAR].fillna(0).astype(int)
-    snippet_df = snippet_df.sortrows([PS_CITATION_INDEX,'Concept','Entity'],ascending=[False,True,True])
+    
 
     clinvar_hyperlinks = list(map(pubmed_hyperlink,CLINVAR_PMIDS))
     snippet_df = snippet_df.remove_rows_by(clinvar_hyperlinks,'PMID')
+    
+    # removing duplicate sentences:
+    def sentences_key(row):
+      return row['Concept']+'_'+row['Entity']+'_'+row[SENTENCE][0:30]+row['RelType']+' '+row[EFFECT]
+
+    before_count = len(snippet_df)
+    snippet_df['sentence_key'] = snippet_df.apply(sentences_key, axis=1)
+    snippet_df = snippet_df.sortrows(by=SENTENCE, key=lambda x: x.str.len(), ascending=False)
+    snippet_df = snippet_df.deduplicate_rows(subset='sentence_key')
+    cols = snippet_df.columns.to_list()
+    cols.remove('sentence_key')
+    snippet_df = snippet_df.dfcopy(cols)
+    print(f'{before_count - len(snippet_df)} duplicate snippets were removed from {df_name} worksheet')
 
     snippet_df._name_ = df_name
     snippet_df.set_hyperlink_color(ref_identifiers)
@@ -797,6 +808,9 @@ class ResnetGraph (nx.MultiDiGraph):
     snippet_df.add_column_format(TITLE,'width',50)
     snippet_df.add_column_format(TITLE,'wrap_text',True)
     snippet_df.add_column_format(TITLE,'font_size',10)
+
+    snippet_df[PS_CITATION_INDEX] = snippet_df[PS_CITATION_INDEX].astype(int)
+    snippet_df = snippet_df.sortrows(by=[PS_CITATION_INDEX,'Concept','Entity'],ascending=[False,True,True])
     return snippet_df
 
 ##################### DEL DEL DEL ######################################
@@ -814,6 +828,7 @@ class ResnetGraph (nx.MultiDiGraph):
     else:
       ids2remove = {x for x in self.nodes() if self.degree(x) > max_degree}
       ids2remove.update({x for x in self.nodes() if self.degree(x) < min_degree})
+
 
     self.remove_nodes_from(ids2remove)
     if min_degree:
@@ -1751,79 +1766,44 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def _psobj(self, node_uid:int):
-      '''
-      raises KeyError if node_uid does not exist in self
-      '''
-      return PSObject({k:v for k,v in self.nodes[node_uid].items()}) if node_uid in self.nodes else PSObject()
+    return PSObject({k:v for k,v in self.nodes[node_uid].items()}) if node_uid in self.nodes else PSObject()
 
 
-  def __psobjs(self,with_uids=None):
-      '''
-      Input
-      ----
-      returns [PSObject] for all nodes in self "with_uids"
-      if "with_uids" is None returns all nodes in self
-      '''
-      if isinstance(with_uids,(set,list)):
-        return {PSObject(n) for u,n in self.nodes(data=True) if u in with_uids}
-      else:
-        return {PSObject(n) for u,n in self.nodes(data=True)}
+  def __psobjs(self,with_uids:set[int]|list[int]=None):
+    if isinstance(with_uids,(set,list)):
+      return {PSObject(n) for u,n in self.nodes(data=True) if u in with_uids}
+    else:
+      return {PSObject(n) for u,n in self.nodes(data=True)}
 
 
   @staticmethod
   def uids(nodes:list[PSObject])->list[int]:
-      '''
-      Input
-      -----
-      nodes = [PSObject]
-      '''
       return [n.uid() for n in nodes]
   
 
   @staticmethod
-  def urns(nodes:list[PSObject]):
-      '''
-      Input
-      -----
-      nodes = [PSObject]
-      '''
-      return [n.urn() for n in nodes]
+  def urns(nodes:list[PSObject])->list[str]:
+    return [n.urn() for n in nodes]
   
 
   @staticmethod
   def dbids(nodes:list[PSObject])->list[int]:
-      '''
-      Input
-      -----
-      nodes = [PSObject]
-      '''
-      return [n.dbid() for n in nodes]
+    return [n.dbid() for n in nodes]
 
 
   @staticmethod
-  def names(nodes:list[PSObject]):
-      '''
-      Input
-      -----
-      nodes = [PSObject]
-      '''
-      return [n.name() for n in nodes]
+  def names(nodes:list[PSObject])->list[str]:
+    return [n.name() for n in nodes]
   
 
   @staticmethod
-  def classes(nodes:list[PSObject]):
-      '''
-      Input
-      -----
-      nodes = [PSObject]
-      '''
-      return {n.get_prop('Class',0,'') for n in nodes}
+  def classes(nodes:list[PSObject])->set[str]:
+    return {n.get_prop('Class',0,'') for n in nodes}
   
 
   @staticmethod
-  def find_object(my_set:set[PSObject], urn:str):
+  def has_object_in(my_set:set[PSObject], urn:str):
       """
-      Finds the first object in the set that matches the given condition.
       Returns a reference to the object, or None if no match is found.
       """
       return next((o for o in my_set if o.urn() == urn), PSObject())
@@ -2344,7 +2324,7 @@ class ResnetGraph (nx.MultiDiGraph):
         [node_psobj.update_with_value(attr.get('name'), attr.get('value')) for attr in node.findall('attr')]
         node_psobj[OBJECT_TYPE] = node_psobj.pop('NodeType')
 
-        exist_obj = ResnetGraph.find_object(only4objs,node_urn)
+        exist_obj = ResnetGraph.has_object_in(only4objs,node_urn)
         if exist_obj:
           node_psobj = node_psobj.merge_obj(exist_obj)
 

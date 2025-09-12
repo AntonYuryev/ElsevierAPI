@@ -22,7 +22,7 @@ MAX_CHILDS = 11 # (10 children + 1 top-level concept)
 TOTAL_REFCOUNT = 'Total Semantic refcount'
 RELEVANT_CONCEPTS = 'Relevant concepts'
 #HYPERLINKED_COLUMN = 'Sentence co-occurrence. Link opens most relevant articles in PubMed'
-REFCOUNT_COLUMN = '#sentences with co-occurence. Link opens most relevant articles in PubMed'
+REFCOUNT_COLUMN = '#sentences with co-occurrence. Link opens most relevant articles in PubMed'
 INFO_WORKSHEET = 'info'
 INPUT_WOKSHEET = 'Input'
 PHENOTYPE_WORKSHEET = 'Phenotype'
@@ -988,7 +988,7 @@ class SemanticSearch (APISession):
     self.add2raw(normdf4raw)
 
     assert(weights_df.columns.to_list() == rankedf4report.columns.to_list()[:len(weights_df.columns)])
-    rankedf4report = rankedf4report.sortrows(RANK)
+    rankedf4report = rankedf4report.sortrows(by=RANK)
     rankedf4report = weights_df.append_df(rankedf4report)# append will add columns missing in weights_str 
 
     rankedf4report.copy_format(incidence_df)
@@ -1358,10 +1358,14 @@ class SemanticSearch (APISession):
         name2weights = {f'{name2weights}':''}
 
       for name,weight in name2weights.items():
-        rows.append([type,name,weight])
+        concept_objs = self.Graph._psobjs_with(name)
+        for concept_obj in concept_objs:
+          concept_childs = concept_obj.childs()
+          for child in concept_childs:
+            rows.append([type,name,child.name(),weight])
 
-    param_df = df.from_rows(rows,['Parameter','Name'])
-    param_df = param_df.sortrows(by=['Value','Parameter','Name'])
+    param_df = df.from_rows(rows,['Parameter','Concept','Ontology child','Value'])
+    param_df = param_df.sortrows(by=['Value','Parameter','Concept'])
     param_df._name_ = INPUT_WOKSHEET
     param_df.tab_format['tab_color'] = 'yellow'
     self.add2report(param_df)
@@ -1419,7 +1423,7 @@ class SemanticSearch (APISession):
     clean_df = df.from_pd(clean_df.fillna('')) # critical for printing WEIGHTS header
     clean_df.copy_format(report_df)
     
-    if any(k in report_df._name_ for k in ('bibliography','snippets','refs',INPUT_WOKSHEET,PHENOTYPE_WORKSHEET)):
+    if any(s in report_df._name_ for s in {'ibliography','nippets','refs','snpt',INPUT_WOKSHEET,PHENOTYPE_WORKSHEET}):
       clean_df.make_header_horizontal()
     else:
       clean_df.make_header_vertical()

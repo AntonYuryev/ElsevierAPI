@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from ..utils import normalize
 from ..ETM_API.references import Reference, len, reflist2dict,pubmed_hyperlink,make_hyperlink,pmc_hyperlink
-from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,BIBLIO_PROPS,SENTENCE_PROPS,CLINTRIAL_PROPS
+from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS_ALL,SENTENCE_PROPS,CLINTRIAL_PROPS
 from ..ETM_API.references import MEDLINETA,PUBYEAR,SENTENCE,TITLE,AUTHORS,_AUTHORS_,PS_REFERENCE_PROPS
 
 OBJECT_TYPE = 'ObjTypeName'
@@ -15,8 +15,8 @@ REFCOUNT = 'RelationNumberOfReferences'
 CHILDS = 'Childs'
 EFFECT = 'Effect'
 MECHANISM = 'Mechanism'
-RELATION_PROPS = {EFFECT,MECHANISM,'ChangeType','BiomarkerType','QuantitativeType'}
-ALL_PSREL_PROPS = list(RELATION_PROPS)+PS_REFERENCE_PROPS
+RELATION_PROPS = [EFFECT,MECHANISM]
+ALL_PSREL_PROPS = RELATION_PROPS+PS_REFERENCE_PROPS
 #enums for objectypes to avoid misspeling
 GENETICVARIANT = 'GeneticVariant'
 FUNC_ASSOC = 'FunctionalAssociation'
@@ -817,11 +817,9 @@ class PSRelation(PSObject):
       for propSet in self.PropSetToProps.values():
         my_reference_tuples = list()
         for ref_id_type in PS_REFIID_TYPES:
-          try:
+          if ref_id_type in propSet:
             ref_id = propSet[ref_id_type][0]
             my_reference_tuples.append((ref_id_type, ref_id))
-          except KeyError:
-            continue
 
         if my_reference_tuples: # propSet is valid reference - resolving duplicates 
             # case when reference have valid identifiers
@@ -869,7 +867,7 @@ class PSRelation(PSObject):
           textref = ref._make_textref()
           
         for propId, propValues in propSet.items():  
-          if propId in BIBLIO_PROPS or propId in CLINTRIAL_PROPS:
+          if propId in PS_BIBLIO_PROPS_ALL or propId in CLINTRIAL_PROPS:
             ref.update_with_list(propId, propValues)
           elif propId in SENTENCE_PROPS:
             ref.add_sentence_props(textref,propId, propValues)
