@@ -2,10 +2,11 @@ from builtins import len
 from .medscan import MedScan
 import xlsxwriter,re,time,json,unicodedata
 from datetime import timedelta
-from ..NCBI.pubmed import pubmed_hyperlink,pmc_hyperlink
+from urllib.parse import urlencode,quote
 from titlecase import titlecase
 from ..utils import str2str,sortdict
 from collections import defaultdict
+
 
 AUTHORS = 'Authors'
 _AUTHORS_ = 'AuthorsObject'
@@ -57,14 +58,14 @@ REF_ID_TYPES = PS_REFIID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
 
 PS_SENTENCE_PROPS = [SENTENCE,'Organism','CellType','CellLineName','Organ','Tissue','Source','Percent',THRESHOLD,
                      'pX','Phase','Start','TrialStatus','URL','Experimental System',CLINVAR_ID,'TextRef',
-                     CLINVAR_ACC,'Clinvar ID']
+                     CLINVAR_ACC,'Clinvar ID','TextMods','BiomarkerType','ChangeType','QuantitativeType']
 SENTENCE_PROPS = PS_SENTENCE_PROPS + ['Evidence','msrc','mref','Similarity']
 # SENTENCE_PROPS needs to be a list for ordered printing
 #also TextRef - used as key in Reference.snippets
 
 PS_REFERENCE_PROPS = list(CLINTRIAL_PROPS)+PS_REFIID_TYPES+list(PS_BIBLIO_PROPS_ALL)+PS_SENTENCE_PROPS
 
-REFERENCE_PROPS = list(BIBLIO_PROPS)+list(CLINTRIAL_PROPS)+REF_ID_TYPES+SENTENCE_PROPS
+REFERENCE_PROPS = list(PS_BIBLIO_PROPS_ALL)+list(CLINTRIAL_PROPS)+REF_ID_TYPES+SENTENCE_PROPS
 
 NOT_ALLOWED_IN_SENTENCE='[\t\r\n\v\f]' # regex to clean up special characters in sentences, titles, abstracts
 
@@ -74,10 +75,12 @@ IDENTIFIER_PREFIXES = [
         ('PII', 'info:pii/{}'),
         ('PUI', 'info:pui/{}'),
         ('EMBASE', 'info:embase/{}'),
-        ('ELSEVIER', 'info:pii/{}'),  # Note: ELSEVIER also uses 'info:pii/'
+        ('ELSEVIER', 'info:pii/{}'),
         ('PMC', 'info:pmc/{}'),
+        (CLINVAR_ID, 'info:clinvar/{}'),
         ('Clinvar', 'info:clinvar/{}'),
-        (CLINVAR_ACC, 'info:clinvar/{}')
+        (CLINVAR_ACC, 'info:clinvar/{}'),
+        
       ]
 
 NONSTANDARD_IDENTIFIER_PREFIXES = [
@@ -90,24 +93,73 @@ NONSTANDARD_IDENTIFIER_PREFIXES = [
         (TITLE, 'info:title/{}')
       ]
 
+PUBMED_URL = 'https://pubmed.ncbi.nlm.nih.gov/?'
+PMC_URL = 'https://www.ncbi.nlm.nih.gov/pmc/?'
+DOI_URL = 'http://dx.doi.org/'
+
+def pubmed_hyperlink(pmids:list,display_str='',as_excel_formula=True):
+    if as_excel_formula:
+      ids4hyperlink = list(map(str,pmids[:20]))
+      # hyperlink in Excel does not work with long URLs, 
+      params = {'term':','.join(ids4hyperlink)}
+      if display_str:
+        to_display = str(display_str)
+      elif len(pmids) == 1:
+        to_display = str(pmids[0])
+      else:
+        to_display = str(len(pmids))
+
+      data = urlencode(params, quote_via=quote)
+      return '=HYPERLINK("'+PUBMED_URL+data+'",\"{}\")'.format(to_display)
+    else:
+      ids4hyperlink = pmids[:100]
+      params = {'term':','.join(ids4hyperlink)}
+      data = urlencode(params, quote_via=quote)
+      return PUBMED_URL+data
+
+
+def pmc_hyperlink(pmcs:list,display_str='',as_excel_formula=True):
+    if as_excel_formula:
+        ids4hyperlink = pmcs[:20] 
+        # hyperlink in Excel does not work with long URLs
+        terms_string = '+OR+'.join(ids4hyperlink)
+        query_string = f'term={terms_string}'
+
+        #params = {'term':ids4hyperlink}
+        if display_str:
+            to_display = str(display_str)
+        elif len(pmcs) == 1:
+            to_display = str(pmcs[0])
+        else:
+            to_display = str(len(pmcs))
+        
+        return '=HYPERLINK("'+PMC_URL+query_string+'",\"{}\")'.format(to_display)
+    else:
+      ids4hyperlink = pmcs[:100]
+      terms_string = '+OR+'.join(ids4hyperlink)
+      query_string = f'term={terms_string}'
+      return PMC_URL+query_string
+
 
 def make_hyperlink(identifier:str,url:str,display_str=''):
         # hyperlink in Excel does not work with long URLs, 
         display_str = display_str if display_str else identifier
         return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
 
+
 def pii_hyperlink(identifier:str,display_str=''):
-        # hyperlink in Excel does not work with long URLs, 
-        display_str = display_str if display_str else identifier
-        identif = identifier.replace('-','').replace('_','')
-        url = 'https://www.sciencedirect.com/science/article/pii/'
-        return '=HYPERLINK("'+url+identif+'",\"{}\")'.format(display_str)
+  # hyperlink in Excel does not work with long URLs, 
+  display_str = display_str if display_str else identifier
+  identif = identifier.replace('-','').replace('_','')
+  url = 'https://www.sciencedirect.com/science/article/pii/'
+  return '=HYPERLINK("'+url+identif+'",\"{}\")'.format(display_str)
+
 
 def doi_hyperlink(identifier:str,display_str=''):
-        # hyperlink in Excel does not work with long URLs, 
-        display_str = display_str if display_str else identifier
-        url = 'http://doi.org/'
-        return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
+  # hyperlink in Excel does not work with long URLs, 
+  display_str = display_str if display_str else identifier
+  url = 'http://doi.org/'
+  return '=HYPERLINK("'+url+identifier+'",\"{}\")'.format(display_str)
 
 
 class Reference(dict):
@@ -482,7 +534,7 @@ class Reference(dict):
                 if t == 'PMID':
                     identifier = pubmed_hyperlink([identifier])
                 elif t == 'DOI':
-                    identifier = make_hyperlink(identifier,'http://dx.doi.org/')
+                    identifier = doi_hyperlink(identifier)
                 elif t == 'PMC':
                     identifier = pmc_hyperlink([identifier])
                 elif t == PATENT_APP_NUM:
@@ -557,10 +609,18 @@ class Reference(dict):
       
   
   def pmid(self):
-      try:
-          return self.Identifiers['PMID']
-      except KeyError:
-          return ''
+      if 'PMID' in self.Identifiers:
+        return self.Identifiers['PMID']  
+      else:
+        return ''
+  
+
+  def pubmed_link(self):
+    if 'PMID' in self.Identifiers:
+      pmid = self.Identifiers['PMID']
+      return pubmed_hyperlink([pmid],pmid)
+    else:
+      return ''
 
 
   def doi(self):
@@ -568,6 +628,14 @@ class Reference(dict):
           return self.Identifiers['DOI']
       except KeyError:
           return ''
+
+  
+  def doi_link(self):
+    if 'DOI' in self.Identifiers:
+      doi = self.Identifiers['DOI']
+      return doi_hyperlink(doi,doi)
+    else:
+      return ''
 
 
   def number_of_snippets(self):
@@ -610,9 +678,7 @@ class Reference(dict):
       sorted list of authors from self[AUTHORS]
     '''
     if AUTHORS in self:
-      individual_authors = set()
-      [individual_authors.update(str(au_list).split(';')) for au_list in self[AUTHORS]]
-      individual_authors = list(filter(None,individual_authors))
+      individual_authors = list({au for au_list in self[AUTHORS] for au in str(au_list).split(';') if au})
       individual_authors.sort()
       self[AUTHORS] = individual_authors
       return individual_authors

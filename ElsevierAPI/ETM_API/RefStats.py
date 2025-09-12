@@ -221,10 +221,6 @@ class RefStats:
       return
   
 
- # def search_url(self,total_hits):
- #   return str(total_hits)
-
-
   def _2hyperlink(self,references:list[Reference],total_hits:int,default_url='') -> str:
     references.sort(key=lambda x:float(x[RELEVANCE][0]),reverse=True)
     my_limit = self._limit()
@@ -320,20 +316,24 @@ class SBSstats(RefStats):
       super().__init__(APIconfig, **kwargs)
       self.SBSsearch = SBSapi(self.APIconfig)
 
- # @staticmethod
- # def search_url(entity:str,and_concepts:list[str]):
- # return f'https://psgscibitesearch.lifesciencepsg.com/documents?document_schema=journal&ssql=%5Bsptbn1%5D%28GENETREE%24GENETREE_6711%29%20%5BAND%5D%28AND%29%20%5Bdopamine%5D%28GENETREE%24GENETREE_1003345%29'
 
   def reflinks(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
-               add2query:list[str]=[],multithread=False):
+               add2query:list[str]=[],multithread=False,expand=True)->dict[str,str]:
     '''
     output:
       {name in to_df[between_names_in_col]:sentence_coocurence hyperlinked to top 10 references in pubmed}
     '''
     start_time = time.time()
     names = to_df[between_names_in_col].to_list()
-    names = [x for x in names if ':' not in x] # ':' is invalid character in URL parameter
-    name2refs = self.SBSsearch.sentcooc4list(names,and_concepts,add2query,multithread)
+    if expand:
+      names = [x+'+' for x in names if ':' not in x]
+      self.SBSsearch.multithread = multithread 
+      name2refsX = self.SBSsearch.sentcooc4list(names,and_concepts,add2query)
+      name2refs = {k[:-1]:v for k,v in name2refsX.items()}
+    else:
+      names = [x for x in names if ':' not in x] # ':' is invalid character in URL parameter
+      name2refs = self.SBSsearch.sentcooc4list(names,and_concepts,add2query,multithread)
+    
     names2hyperlinks = dict()
     for name, (search_url,count, refs) in name2refs.items():
       names2hyperlinks[name] = self._2hyperlink(refs,count,search_url)
@@ -342,12 +342,12 @@ class SBSstats(RefStats):
     return names2hyperlinks
   
 
-  def add_reflinks(self,names2hyperlinks:dict[str,str], _2col:str,in_df:df, map2col:str):
+  def add_reflinks(self,names2hyperlinks:dict[str,str], _2col:str,in_df:df, map2col:str)->df:
     '''
     input:
       names2hyperlinks - {name in to_df[map_col]:sentence_coocurence hyperlinked to top 10 references in pubmed}
-      _2col - new column name in to_df with hyperlinks
-      map_col - column name in to_df used for mapping
+      _2col - new column name in in_df with hyperlinks
+      map_col - column name in in_df used for mapping
     '''
     if not names2hyperlinks: return in_df
 
@@ -362,11 +362,13 @@ class SBSstats(RefStats):
                    multithread=False)->tuple[dict[str,int],dict[str,float]]:
     '''
     output:
-      name2abscooc, name2relevance
+    {name:abs_coocurence},{name:relevance},
+      where name is cell value from "between_names_in_col" column
     '''
     names = to_df[between_names_in_col].to_list()
     names = [n for n in names if ':' not in n]
-    name2abs_cooc = self.SBSsearch.abscooc4list(names,and_concepts,multithread)
+    self.SBSsearch.multithread = multithread
+    name2abs_cooc = self.SBSsearch.abscooc4list(names,and_concepts)
     name2relevance = dict()
     name2abscooc = dict()
     for name, (cooc, relevance) in name2abs_cooc.items():
@@ -375,57 +377,22 @@ class SBSstats(RefStats):
     return name2abscooc, name2relevance
 
 
+  def search_docs(self,query:str):
+    refs = self.SBSsearch.search_docs(query)
+    pmc_ids = [ref.Identifiers['PMC'] for ref in refs if 'PMC' in ref.Identifiers]
+    pmc2pmid = docid2pmid(pmc_ids)
+    for r in refs:
+      if 'PMC' in r.Identifiers:
+        pmc_id = r.Identifiers['PMC'].upper()
+        if pmc_id in pmc2pmid:
+          r.Identifiers['PMID'] = str(pmc2pmid[pmc_id])
+    return refs
 
-  def add_abs_cooc(self,to_df:df,between_names_in_col:str,and_concepts:list[str],
-                   multithread=False,skip1strow=False):
-    '''
-    output:
-      adds column 'AbsCooccur' to_df
-    '''
-    print(f'obtaining abstract coocurence from SBS for {to_df._name_} worksheet with {len(to_df)} rows')
-    name2relevance = dict()
-    name2abscooc = dict()
-    if skip1strow:
-      my_df = to_df.dfcopy()
-      df_name = my_df._name_ # may not be the same as to_df_named
-      weights = my_df.iloc[[0]].copy()
-      df_no_weights = df.from_pd(my_df.drop(0, axis=0,inplace=False), df_name)
-      df_no_weights.copy_format(to_df)
-      if df_no_weights.empty: return my_df  
-
-      names = df_no_weights[between_names_in_col].to_list()
-      name2abs_cooc = self.SBSsearch.abscooc4list(names,and_concepts,multithread)
-      if name2abs_cooc:
-        for name, (cooc, relevance) in name2abs_cooc.items():
-          name2abscooc[name] = cooc
-          name2relevance[name] = relevance
-        df_no_weights['AbsCooccur'] = df_no_weights[between_names_in_col].map(name2relevance)
-        df_no_weights['AbsCooccur'] = df_no_weights['AbsCooccur'].fillna(0)
-        print(f'Added column "AbsCooccur" with {len(name2relevance)} non-empty rows to worksheet with {len(df_no_weights)} entities')
-        pd_withcooc = pd.concat([weights, df_no_weights]).reset_index(drop=True)
-        my_df = df.from_pd(pd_withcooc,df_name)     
-        my_df.copy_format(df_no_weights)
-        return my_df,name2abscooc
-      else:
-        return to_df, dict()
-    else:
-      names = to_df[between_names_in_col].to_list()
-      name2abs_cooc = self.SBSsearch.abscooc4list(names,and_concepts,multithread)
-      for name, (cooc, relevance) in name2abs_cooc.items():
-        name2abscooc[name] = cooc
-        name2relevance[name] = relevance
-      to_df['AbsCooccur'] = to_df['Name'].map(name2relevance)
-      to_df['AbsCooccur'] = to_df['AbsCooccur'].fillna(0)
-      return to_df,name2abscooc
-
-
+##################  DEPRICATED ###################### DEPRICATED #################### DEPRICATED ##############
 class ETMStats(RefStats):
   def __init__(self, APIconfig, **kwargs):
     super().__init__(APIconfig, **kwargs)
     self.ETMsearch = ETMsearch(self.APIconfig,**kwargs)
-
-  #else:
-  #  annotated_df = self.add_refs_etm(to_df,between_names_in_col,and_concepts,use_query,add2query,max_row)
 
   def __etm42columns(self,in_df:df,between_col:str,and_col:str,my_query,add2query=[]):
       my_df = in_df.dfcopy()
@@ -804,44 +771,43 @@ class ETMcache (RefStats):
 
 
     def to_excel(self, stat_props:list,_4affiliations:set={}):
-        if self.scopusid2name:
-            replaceid4name = dict()
-            scopus_stats = dict(self.statistics[SCOPUS_AUTHORIDS])
-            for k,v in scopus_stats.items():
-                au_name = self.scopusid2name[k]
-                replaceid4name[au_name] = v
-            
-            self.statistics[SCOPUS_AUTHORIDS] = replaceid4name
-        
-        excel_file = os.path.join(self.etm_stat_dir,self.search_name+'_ETMstats.xlsx')
-        writer = pd.ExcelWriter(excel_file, engine='xlsxwriter')
-        print(f'Writing ETM statistics into {excel_file} file')
-        for p in stat_props:
-            try:
-                dic = dict(self.statistics[p])
-                by_key = True if p == PUBYEAR else False
-                #prop_stat = self._org2address_stats() if p == INSTITUTIONS else self._sort_dict(dic,sort_by_value)
-                prop_stat = sortdict(dic,by_key)
-                stat_df = df.from_dict2(prop_stat,p,'#References')
-                if p == JOURNAL:
-                    oa_stats = self.count_oa_stats()
-                    stat_df = stat_df.merge_dict(oa_stats,'Articles in open access',JOURNAL)
+      if self.scopusid2name:
+        replaceid4name = dict()
+        scopus_stats = dict(self.statistics[SCOPUS_AUTHORIDS])
+        for k,v in scopus_stats.items():
+          au_name = self.scopusid2name[k]
+          replaceid4name[au_name] = v
+        self.statistics[SCOPUS_AUTHORIDS] = replaceid4name
+      
+      excel_file = os.path.join(self.etm_stat_dir,self.search_name+'_ETMstats.xlsx')
+      writer = pd.ExcelWriter(excel_file, engine='xlsxwriter')
+      print(f'Writing ETM statistics into {excel_file} file')
+      for p in stat_props:
+          try:
+              dic = dict(self.statistics[p])
+              by_key = True if p == PUBYEAR else False
+              #prop_stat = self._org2address_stats() if p == INSTITUTIONS else self._sort_dict(dic,sort_by_value)
+              prop_stat = sortdict(dic,by_key)
+              stat_df = df.from_dict2(prop_stat,p,'#References')
+              if p == JOURNAL:
+                  oa_stats = self.count_oa_stats()
+                  stat_df = stat_df.merge_dict(oa_stats,'Articles in open access',JOURNAL)
 
-                    if _4affiliations:
-                        aff_stats = self.count_affiliations(_4affiliations)
-                        stat_df = stat_df.merge_dict(aff_stats,'Affiliation count',JOURNAL)
-                    
-                    citescore_dict = {v[0]:v[2] for k,v in self.AuthorSearch.JournalInfo.items()}
-                    stat_df = stat_df.merge_dict(citescore_dict,SCOPUS_CITESCORE,JOURNAL)
-                    sjr_dict = {v[0]:v[3] for k,v in self.AuthorSearch.JournalInfo.items()}
-                    stat_df = stat_df.merge_dict(sjr_dict,SCOPUS_SJR,JOURNAL)
-                    csnip_dict = {v[0]:v[4] for k,v in self.AuthorSearch.JournalInfo.items()}
-                    stat_df = stat_df.merge_dict(csnip_dict,SCOPUS_SNIP,JOURNAL)
-                    publ_dict = {v[0]:v[1] for k,v in self.AuthorSearch.JournalInfo.items()}
-                    stat_df = stat_df.merge_dict(publ_dict,PUBLISHER,JOURNAL)
-                stat_df.df2excel(writer,p)
-            except KeyError: continue
+                  if _4affiliations:
+                      aff_stats = self.count_affiliations(_4affiliations)
+                      stat_df = stat_df.merge_dict(aff_stats,'Affiliation count',JOURNAL)
+                  
+                  citescore_dict = {v[0]:v[2] for k,v in self.AuthorSearch.JournalInfo.items()}
+                  stat_df = stat_df.merge_dict(citescore_dict,SCOPUS_CITESCORE,JOURNAL)
+                  sjr_dict = {v[0]:v[3] for k,v in self.AuthorSearch.JournalInfo.items()}
+                  stat_df = stat_df.merge_dict(sjr_dict,SCOPUS_SJR,JOURNAL)
+                  csnip_dict = {v[0]:v[4] for k,v in self.AuthorSearch.JournalInfo.items()}
+                  stat_df = stat_df.merge_dict(csnip_dict,SCOPUS_SNIP,JOURNAL)
+                  publ_dict = {v[0]:v[1] for k,v in self.AuthorSearch.JournalInfo.items()}
+                  stat_df = stat_df.merge_dict(publ_dict,PUBLISHER,JOURNAL)
+              stat_df.df2excel(writer,p)
+          except KeyError: continue
 
-        ref_df = self.counter2df()
-        ref_df.df2excel(writer,'References')
-        writer.close()
+      ref_df = self.counter2df()
+      ref_df.df2excel(writer,'References')
+      writer.close()
