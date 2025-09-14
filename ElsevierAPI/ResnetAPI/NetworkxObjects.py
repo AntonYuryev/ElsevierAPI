@@ -117,6 +117,10 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
       return self.urn() == other.urn()
 
 
+  def __repr__(self):
+    return f"PSObject({self})"
+
+
   def uid(self)->int:
       return self.__hash__()
   
@@ -188,7 +192,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
           self[prop_id].append(new_value)
 
 
-  def update_with_list(self, prop_id:str, new_values):
+  def update_with_list(self, prop_id:str, new_values:list|set):
       [self[prop_id].append(x) for x in new_values if x not in self[prop_id]]
 
 
@@ -432,8 +436,8 @@ class PSRelation(PSObject):
       self.Nodes - {"Regulators':[PSObject], "Targets':[PSObject]}
       '''
       super().__init__(dic)
-      self.PropSetToProps = defaultdict(dict)  # {PropSetID:{PropID:[values]}}
-      self.Nodes = defaultdict(list)  # {"Regulators':[(entityID, Dir, effect)], "Targets':[(entityID, Dir, effect)]}
+      self.PropSetToProps = defaultdict(lambda: defaultdict(list))  # {PropSetID:{PropID:[values]}}
+      self.Nodes = defaultdict(list)  # {"Regulators':[PSObject], "Targets':[PSObject]}
       self.references = list() # has to be list for sorting
 
 
@@ -837,33 +841,32 @@ class PSRelation(PSObject):
               ref._merge(existref)
             del existing_ref[1:] # deleting duplicate refs to save memory
         else: #propSet is not valid reference - trying to create one using Title or TexRef
-            try:
-              # trying id reference by title as a last resort since it does not have valid identifiers
-              propset_title = propSet['Title'][0]
-              refs_with_same_title = [r for r in self.references if r.title() == propset_title]
-              if refs_with_same_title:
-                  ref = ref[0]
-              else:
-                  ref = Reference('Title', propset_title)
-                  self.references.append(ref)
-            except KeyError: # no title :(
-              try:
-                  txtref = propSet['TextRef'][0]
-                  if txtref not in ['Admin imported','Customer imported']:
-                      ref = Reference.from_textref(txtref)
-                      self.references.append(ref)
-                  else: continue #'Admin imported' references have no identifiers and ignored 
-              except KeyError: continue
+          if 'Title' in propSet: # trying id reference by title as a last resort since it does not have valid identifiers
+            propset_title = propSet['Title'][0]
+            refs_with_same_title = [r for r in self.references if r.title() == propset_title]
+            if refs_with_same_title:
+              ref = refs_with_same_title[0]
+            else:
+              ref = Reference('Title', propset_title)
+              self.references.append(ref)
+          else: # no title :(
+            if 'TextRef' in propSet:
+              txtref = propSet['TextRef'][0]
+              if txtref not in ['Admin imported','Customer imported']:
+                ref = Reference.from_textref(txtref)
+                self.references.append(ref)
+              else: continue #'Admin imported' references have no identifiers and ignored 
+            else: continue
 
         # adding all other valid properties to ref
-        try:
+        if 'TextRef' in propSet:
           textref = propSet['TextRef'][0]
           if textref[4:10] == 'hash::': # references from older Resnet versions can start with 'urn:hash::'
             textref = ref._make_textref()
           elif textref in ['Admin imported','Customer imported','']: 
             print('Reference has no TextRef property and will be ignored!!!')
             continue # ignore and move to the next PropSet
-        except KeyError:
+        else:
           textref = ref._make_textref()
           
         for propId, propValues in propSet.items():  
@@ -872,15 +875,15 @@ class PSRelation(PSObject):
           elif propId in SENTENCE_PROPS:
             ref.add_sentence_props(textref,propId, propValues)
           elif propId == 'msrc':
-            ref.add_sentence_props(SENTENCE, propValues)
+            ref.add_sentence_props(textref,SENTENCE, propValues)
 
         if MEDLINETA in ref:
           ref[JOURNAL] = ref.pop(MEDLINETA)
 
-        if AUTHORS not in ref and _AUTHORS_ in ref:
+        if AUTHORS not in ref and _AUTHORS_ in ref: # converting _AUTHORS_ to AUTHORS
           ref[AUTHORS] = [x.tostr() for x in ref[_AUTHORS_]]
     
-    [x.toAuthors() for x in self.references]
+    [x.toAuthors() for x in self.references] #converting AUTHORS to _AUTHORS_
     self.references.sort(key=lambda r: r._sort_key(by_property=PUBYEAR), reverse=True)
     return self.references[:ref_limit] if ref_limit else self.references
 
