@@ -173,7 +173,7 @@ class Reference(dict):
   def __init__(self, idType:str, ID:str):
     super().__init__(dict()) # self{BIBLIO_PROPS[i]:[values]};
     self.Identifiers = {idType:ID} #from REF_ID_TYPES
-    self.snippets = dict() # {TextRef:{PropID:{Values}}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP           
+    self.snippets = defaultdict(lambda: defaultdict(set)) # {TextRef:{PropID:{Values}}} PropID is from SENTENCE_PROPS contains sentences marked up by NLP
     # PropID:{Values} = defaultdict(set)
 
   def copy_ref(self):
@@ -317,12 +317,9 @@ class Reference(dict):
   def add_sentence_prop(self, text_ref:str, propID:str, prop_value:str):
     if propID == SENTENCE:
       prop_value = prop_value.strip(' .')
-    try:
-      self.snippets[text_ref][propID].add(prop_value)
-    except KeyError:
-      snippet_props = defaultdict(set)
-      snippet_props[propID].add(prop_value)
-      self.snippets[text_ref] = snippet_props
+
+    self.snippets[text_ref][propID].add(prop_value)
+
 
 
   def number_of_sentences(self):
@@ -341,11 +338,10 @@ class Reference(dict):
   
     
   def get_sentence(self,textref:str):
-    try:
-      snippets = self.snippets[textref]  
-      return next(iter(snippets[SENTENCE])) if SENTENCE in snippets else ''          
-    except KeyError:
-        return ''
+    if textref in self.snippets:
+      snippets = self.snippets[textref]
+      return next(iter(snippets[SENTENCE])) if SENTENCE in snippets else ''
+    return ''
 
 
   def __is_new(self,sentence:str):
@@ -366,12 +362,7 @@ class Reference(dict):
       prop_values = list(filter(None,[self.__is_new(x) for x in prop_values if x]))
                
     if prop_values:
-      try:
-        self.snippets[text_ref][propID].update(prop_values)
-      except KeyError:
-        snippet_props = defaultdict(set)
-        snippet_props[propID].update(prop_values)
-        self.snippets[text_ref] = snippet_props
+      self.snippets[text_ref][propID].update(prop_values)
 
 
   def has_property(self, prop_name:str):
@@ -566,8 +557,7 @@ class Reference(dict):
   def toAuthors(self):
     if _AUTHORS_ not in self:
       author_strs = list(filter(None,self.author_list()))
-      if author_strs:
-        self[_AUTHORS_] = list(map(Author.fromStr,author_strs))
+      self[_AUTHORS_] = list(map(Author.fromStr,author_strs))
     return
     
 
@@ -886,8 +876,8 @@ class Reference(dict):
     dic.update({k:[v] for k,v in self.Identifiers.items()})
 
     add2snippet = relname+'\n' if relname else ''
-    self.snippets = sortdict(self.snippets)
-    for i, textref2props in enumerate(self.snippets.items()):
+    my_snippets = sortdict(dict(self.snippets))
+    for i, textref2props in enumerate(my_snippets.items()):
         textref = textref2props[0]
         props = textref2props[1]
         props_str = str()
