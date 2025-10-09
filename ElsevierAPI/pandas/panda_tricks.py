@@ -52,52 +52,82 @@ class df(pd.DataFrame):
       return new_df
 
 
+  def __formats__(self)->dict[str,dict]:
+    formats = self.__ws_formats__()
+    formats.update(self.__col_formats__())
+    return formats
+  
+  def __ws_formats__(self):
+    return {
+      'header_format': self.header_format,
+      'conditional_frmt': self.conditional_frmt,
+      'tab_format': self.tab_format
+      }
+  
+  def __col_formats__(self):
+    return {
+      'column2format': self.column2format,
+      'col2rank': self.col2rank
+      }
+
+
+  '''def __attrs__(self)->dict[str,dict]:
+    attrs = self.__formats__()
+    attrs['name'] = self._name_
+    return attrs'''
+
+
   def copy_format(self, from_df:'df'):
-      self.header_format = from_df.header_format.copy()
-      self.column2format = from_df.column2format.copy()
-      self.conditional_frmt = from_df.conditional_frmt.copy()
-      self.tab_format = from_df.tab_format.copy()
-      self.col2rank = from_df.col2rank.copy()
+    [setattr(self, n, a.copy()) for n,a in from_df.__formats__().items()]
 
 
   def __copy_attrs(self,from_df:'df'):
-      self._name_ = from_df._name_
-      self.copy_format(from_df)
+    '''
+    copies format and _name_ except data
+    '''
+    [setattr(self, n, a.copy()) for n,a in from_df.__formats__().items()]
+    self._name_ = from_df._name_
+    return
 
 
-  def max_colrank(self):
+  def max_colrank(self)->int:
     return max(self.col2rank.values()) if self.col2rank else 0
 
 
-  def dfcopy(self,only_columns:list=[], rename2:dict=dict(),deep=True) ->'df':
-      '''
-      input:
-        rename2 - map of column names to rename {old_name:new_name}
-      '''
-      # re-writing parent pd.DataFrame function is a BAD idea. Use other names
-      newpd = super().copy(deep)
-      missing_columns = list()
-      my_columns = list()
-      if only_columns:
-        [(missing_columns,my_columns)[c in self.columns].append(c) for c in only_columns]
-        if len(my_columns) < len(only_columns):
-          print(f'Worksheet {self._name_} is missing {missing_columns} columns')
-        newpd = newpd[my_columns]
+  def dfcopy(self, only_columns:list = None, rename2:dict = None, deep:bool = True) -> 'df':
+    """
+    Creates a filtered and/or renamed copy of the DataFrame and its formats.
+    Args:
+        only_columns: Optional list of columns to include in the copy.
+        rename2: Optional dictionary to map {old_name: new_name} for columns.
+        deep: If True, creates a deep copy of the underlying data.
+    """
+    if only_columns is None:
+      only_columns = self.columns.to_list()
+    if rename2 is None:
+      rename2 = dict()
 
-      if rename2:
-        newpd = newpd.rename(columns=rename2)
-      newpd = newpd.reindex()
+    self_cols = set(self.columns)
+    missing_cols = set(only_columns) - self_cols
+    if missing_cols:
+      print(f'Worksheet {self._name_} is missing columns: {list(missing_cols)}')
 
-      newdf = df.from_pd(newpd,self._name_)
-      newdf.copy_format(self)
-      column2format = newdf.column2format
-      col2rank = newdf.col2rank
-      for old_name, new_name in rename2.items():
-        if old_name in newdf.column2format:
-          column2format[new_name] = column2format.get(old_name)
-        if old_name in newdf.col2rank:
-          col2rank[new_name] = column2format.get(old_name)
-      return newdf
+    newpd = super().copy(deep)[[c for c in only_columns if c in self_cols]]
+    newpd.rename(columns=rename2, inplace=True)
+    newdf = df.from_pd(newpd, self._name_)
+    for attr_name, attr in self.__ws_formats__().items():
+      setattr(newdf, attr_name, attr)
+  
+    inverted_rename = {v:k for k,v in rename2.items()}
+    for attr_name,self_attr in self.__col_formats__().items():
+      new_attr = dict()
+      for col in newdf.columns:
+        original_col = inverted_rename.get(col, col)
+        if original_col in self_attr:
+          new_attr[col] = self_attr[original_col]
+      setattr(newdf, attr_name, new_attr)
+      
+    return newdf
 
 
   @staticmethod
@@ -251,14 +281,16 @@ class df(pd.DataFrame):
 
 
   @classmethod 
-  def from_rows(cls,rows:list[list],header:list[str],index=-1,dfname=''):
-      '''
-      rows - list/set of lists/tuples
-      '''
-      _2return = pd.DataFrame(rows,columns=header)
-      if index >= 0:
-          _2return.set_index(header[index], inplace=True)
-      return df.from_pd(_2return,dfname)
+  def from_rows(cls,rows:list[list],header:list[str],index=-1,dfname='')->'df':
+    '''
+    rows - list/set of lists/tuples
+    '''
+    _2return = pd.DataFrame(rows,columns=header)
+
+    if index >= 0:
+      _2return.set_index(header[index], inplace=True)
+        
+    return df.from_pd(_2return,dfname)
   
 
   @classmethod
@@ -289,9 +321,10 @@ class df(pd.DataFrame):
       how = 'outer' if add_all else 'left'
       merged_df = in2df.merge_df(pd2merge,how=how, on=mapping_column)
       merged_df[new_col] = merged_df[new_col].fillna(default_val)
-      if not case_sensitive_match:
-        my_cols = self.columns.to_list() + [new_col]
-        merged_df = merged_df.dfcopy(my_cols)
+
+      if not case_sensitive_match: #removing lowercased mapping_column
+        merged_df = merged_df.dfcopy(self.columns.to_list() + [new_col])
+
       return merged_df
 
 
@@ -534,15 +567,25 @@ class df(pd.DataFrame):
 
 
   def greater_than(self, value:float, in_column:str):
-      old_len = len(self)
-      new_pd = self[self[in_column] > value]
-      removed_rows = old_len - len(new_pd)
-      print(f'{removed_rows} rows were removed from {self._name_} because "{in_column}" value was smaller than {value}')
-      return df.from_pd(new_pd)
+    '''removes rows with in_column value <= value'''
+    old_len = len(self)
+    new_pd = self[self[in_column] > value]
+    removed_rows = old_len - len(new_pd)
+    print(f'{removed_rows} rows were removed from {self._name_} because "{in_column}" value was smaller than {value}')
+    new_df = df.from_pd(new_pd)
+    new_df.__copy_attrs(self) 
+    return new_df
   
   
   def smaller_than(self, value:float, in_column:str):
-      return df.from_pd(self[self[in_column] < value])
+    '''removes rows with in_column value >= value'''
+    old_len = len(self)
+    new_pd = self[self[in_column] < value]
+    removed_rows = old_len - len(new_pd)
+    print(f'{removed_rows} rows were removed from {self._name_} because "{in_column}" value was greater than {value}')
+    new_df = df.from_pd(new_pd)
+    new_df.__copy_attrs(self)
+    return new_df
 
 
   def drop_empty_columns(self, max_abs=0.00000000000000001, subset=list()):
@@ -893,8 +936,10 @@ class df(pd.DataFrame):
     key - function to be called on each column before sorting, default is None (no key function)\n
     '''
     skip_rows = kwargs.pop('skip_rows',0)
+    my_kwargs = {'key':lambda x: pd.to_numeric(x, errors='coerce')}
     if skip_rows:
       if len(self) > skip_rows:
+        my_kwargs.update(kwargs)
         top_rows = self.iloc[:skip_rows]
         remaining_rows = self.iloc[skip_rows:].sort_values(**kwargs)
         sorted_df = df.from_pd(pd.concat([top_rows, remaining_rows], ignore_index=True),dfname=self._name_)
@@ -903,16 +948,39 @@ class df(pd.DataFrame):
       else:
         return self
     else:
-      my_kwargs = {'ascending':False}
+      my_kwargs.update({'ascending':False, 'inplace':False})
       my_kwargs.update(kwargs)
-      my_kwargs['inplace'] = False
-      sorted_df = pd.DataFrame(self.sort_values(**my_kwargs))
-      sorted_df = df.from_pd(sorted_df,self._name_)
+      sorted_pd = self.sort_values(**my_kwargs)
+      sorted_df = df.from_pd(sorted_pd,self._name_)
       sorted_df.copy_format(self)
     return sorted_df
-    
+  
+
+  def column_stats(self,column:str,sep=''):
+    column2stat = self[column].dropna().loc[lambda s: s != '']
+    if column in self.columns:
+      if sep:
+        all_values = column2stat.str.split(',')
+        exploded_values = all_values.explode()
+        cleaned_values = exploded_values.str.strip()
+        stat_pd = cleaned_values.value_counts().reset_index()
+      else:
+        if isinstance(column2stat.iloc[0], list):
+          stat_pd = df.from_pd(column2stat.explode().value_counts().reset_index())
+        else:
+          stat_pd = df.from_pd(column2stat.value_counts().reset_index())
+          
+      stat_pd.columns = [f'values in {column}', 'Count']
+      stat_df = df.from_pd(stat_pd,f'{column}_stats')
+      stat_df.make_header_horizontal()
+      return stat_df
+    else:
+      print(f'Column {column} is not in dataframe {self._name_}')
+      return df()
+
 
   @staticmethod
   def info_df()->"df":
     rows = [['Number of worksheets in this file:','=INFO("numfile")']]
     return df.from_rows(rows,['Info','Counts'],dfname='info')
+
