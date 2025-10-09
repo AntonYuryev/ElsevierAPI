@@ -2221,17 +2221,18 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
   def remove_undirected_duplicates(self)->"ResnetGraph":
-      relset = set()
-      to_return = self.copy()
-      for r,t,rel in self.edges.data('relation'):
-         # assert(isinstance(rel,PSRelation))
-          if rel in relset:
-              to_return.remove_edge(r,t,rel.urn())
-          else:
-              relset.add(rel)
+    print(f'Removing undirected duplicate relations from graph "{self.name}" with {self.number_of_edges()} edges')
+    relset = set()
+    to_return = self.copy()
+    for ruid,tuid,rel in self.edges.data('relation'):
+      if rel in relset:
+        to_return.remove_edge(ruid,tuid,rel.urn())
+      else:
+        relset.add(rel)
 
-      return to_return
-      
+    print(f'Total number of relations after removing duplicates: {to_return.number_of_edges()}')
+    return to_return
+  
 
   def dump2rnef(self,fname='',ent_prop2print:list=['Name'],rel_prop2print:list=[],add_rel_props:dict={},with_section_size=0,delete_nodes=False):
     '''
@@ -2253,16 +2254,16 @@ class ResnetGraph (nx.MultiDiGraph):
     # copying graph to enable using the function in multithreaded file writing
     
     if with_section_size:
-        with et.xmlfile(rnef_fname,encoding='utf-8',buffered=False) as xf:  
+        with et.xmlfile(rnef_fname,encoding='utf-8',buffered=False) as xf:
             print(message + f' in resnet section of size {with_section_size}')
-            xf.write(et.Comment(RNEF_DISCLAIMER),pretty_print=True) 
+            xf.write(et.Comment(RNEF_DISCLAIMER),pretty_print=True)
             with xf.element('batch'):
                 graph_copy.__2rnef_secs(xf,ent_prop2print,rel_prop2print,add_rel_props,with_section_size,delete_nodes)
     else:
         print(message + f' in one resnet section')
         graph_copy.__2rnef(rnef_fname,ent_prop2print,rel_prop2print,add_rel_props,delete_nodes=delete_nodes)
 
-    print(f'Graph "{self.name}" with {self.number_of_nodes()} nodes and {self.number_of_edges()} edges dumped to {rnef_fname} file')
+    print(f'Graph "{self.name}" with {graph_copy.number_of_nodes()} nodes and {graph_copy.number_of_edges()} edges dumped to {rnef_fname} file')
     return
 
 
@@ -2771,7 +2772,7 @@ class ResnetGraph (nx.MultiDiGraph):
       return self.get_subgraph(list(_4psobs),list(neighbors),only_reltypes,with_effects,in_direction)
 
   
-  def subtract(self, other: "ResnetGraph"):
+  def subtract(self, other: "ResnetGraph")->"ResnetGraph":
       '''
       only self graph is analyzed, works faster if other graph is bigger than self
       '''
@@ -3613,27 +3614,27 @@ class ResnetGraph (nx.MultiDiGraph):
       unmapped_nodes = set()
       remapped_nodes = set()
       for graph_node in self._get_nodes():
-          node_props = graph_node.get_props(map_by_props)
-          node_props = list(map(lambda x:tokenize(x),node_props))
-          if case_insensitive:
-              node_props = list(map(lambda x:make_lower(x),node_props))
+        node_props = unpack([graph_node.get_props(p) for p in map_by_props])
+        node_props = list(map(lambda x:tokenize(x),node_props))
+        if case_insensitive:
+          node_props = list(map(lambda x:make_lower(x),node_props))
 
-          mapped_new_nodes = set()
-          for normalized_node_prop in node_props:
-              try:
-                  mapped_new_nodes.update(my_props2newobjs[normalized_node_prop])
-              except KeyError:
-                  continue
+        mapped_new_nodes = set()
+        for normalized_node_prop in node_props:
+          try:
+            mapped_new_nodes.update(my_props2newobjs[normalized_node_prop])
+          except KeyError:
+            continue
 
-          if mapped_new_nodes:
-              if len(mapped_new_nodes) > 1: #make sure that mapping is done between objects with same object type
-                  mapped_new_nodes = [n for n in mapped_new_nodes if n.objtype() == graph_node.objtype()]
+        if mapped_new_nodes:
+          if len(mapped_new_nodes) > 1: #make sure that mapping is done between objects with same object type
+            mapped_new_nodes = [n for n in mapped_new_nodes if n.objtype() == graph_node.objtype()]
 
-              new_nodes = [graph_node.copy().merge_obj(n,replace_identity=True) for n in mapped_new_nodes]
-              uid_remap[graph_node.uid()] = ResnetGraph.uids(new_nodes)
-              remapped_nodes.update(new_nodes)
-          else:
-              unmapped_nodes.add(graph_node)
+          new_nodes = [graph_node.copy().merge_obj(n,replace_identity=True) for n in mapped_new_nodes]
+          uid_remap[graph_node.uid()] = ResnetGraph.uids(new_nodes)
+          remapped_nodes.update(new_nodes)
+        else:
+          unmapped_nodes.add(graph_node)
 
       mapped_graph = ResnetGraph()
       mapped_graph.add_psobjs(remapped_nodes|unmapped_nodes,merge=False)

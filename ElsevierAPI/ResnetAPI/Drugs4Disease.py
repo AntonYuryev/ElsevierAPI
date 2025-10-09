@@ -1,6 +1,6 @@
 from .DiseaseTargets import DiseaseTargets
 from .DiseaseTargets import ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS,REFERENCE_IDENTIFIERS,UNKNOWN_TARGETS_WS
-from .ResnetGraph import ResnetGraph,PSObject,PSRelation,OBJECT_TYPE,EFFECT,PROTEIN_TYPES
+from .ResnetGraph import ResnetGraph,PSObject,OBJECT_TYPE,EFFECT,PROTEIN_TYPES
 from .SemanticSearch import RANK,time,PHENOTYPE_WORKSHEET
 from .ResnetAPISession import APISession,OQL,NO_REL_PROPERTIES,BIBLIO_PROPERTIES,ALL_CHILDS
 from ..pandas.panda_tricks import df,np
@@ -9,7 +9,7 @@ from ..ReaxysAPI.Reaxys_API import drugs2props
 from numpy import nan_to_num
 import networkx as nx
 from .DrugTargetConfidence import DrugTargetConsistency
-from ..utils import run_tasks,execution_time
+from ..utils import run_tasks,execution_time,os,DEFAULT_CONFIG_DIR
 
 DRUG2TARGET_REGULATOR_SCORE = 'Regulator score'
 PHARMAPENDIUM_ID = 'Marketed Drugs'
@@ -34,22 +34,23 @@ class Drugs4Targets(DiseaseTargets):
       connect2server - default True
     """
     my_kwargs = {
-            'disease':[],
+            #'disease':[],
             'what2retrieve':BIBLIO_PROPERTIES,
             'strict_mode':True,
             'data_dir':'',
             'add_bibliography' : False,
             'target_types' : ['Protein'],
-            'pathway_folders':[],
-            'pathways': [],
+           # 'pathway_folders':[],
+            #'pathways': [],
             'consistency_correction4target_rank':False,
             'DTfromDB' : False, # set to True to load drug-targets relations from database 
             # instead of using drug2targets cache. Use it if drug-target relations were edited in Pathway Studio
-            'add_inhibitors4':[], # list of tuples (reltype, [target_names])
+            #'add_inhibitors4':[], # list of tuples (reltype, [target_names])
             "max_childs" : 11,
-            'drug_groups':[],
+            #'drug_groups':[],
             'use_in_children':False,
             'BBBP':False, # add Blood-Brain Barrier Permeability estimation to drugs
+            'ontology_file' : os.path.join(os.getcwd(),DEFAULT_CONFIG_DIR,'ResnetAPI/ontology/Drugs MoAs.txt')
             }
     
     my_kwargs.update(kwargs)
@@ -58,8 +59,7 @@ class Drugs4Targets(DiseaseTargets):
     self.direct_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
     self.indirect_target2drugs = PSObject() # used for annotation of ANTAGONIST_TARGETS_WS,AGONIST_TARGETS_WS with drugs
     self.add_targets2drugs_ws = True
-
-
+    
   def load_dt(self,**kwargs):
     self.dt_consist = DrugTargetConsistency(self.APIconfig,**kwargs)
     return self.dt_consist
@@ -315,6 +315,13 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       count = len(clean_drugs)
       clean_drugs = [d for d in clean_drugs if d not in self.disease_inducers]
       clean_drugs = [d for d in clean_drugs if "'" not in d.urn()] # drugs with "'" in URN are not searchable in PS
+
+      oql4pains = "SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = 'PAINS compounds')"
+      new_session = self._clone_session(what2retrieve=NO_REL_PROPERTIES)
+      PAINScompounds = set(new_session.process_oql(oql4pains,'Select PAINS compounds')._get_nodes())
+      clean_drugs = [d for d in clean_drugs if d not in PAINScompounds]
+      new_session.close_connection()
+      
       removed_count = count-len(clean_drugs)
       print(f'{removed_count} drugs were removed because they are known to induce {self._disease2str()}')
 
@@ -434,7 +441,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
     if concepts:
       phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
 
-    kwargs.pop('with_effects')
+    kwargs.pop('with_effects','')
     kwargs['column_name'] = 'Clinical parameters for '+ self._disease2str()
     drug_df,concepts = self.score_concept('clinical_parameters',drug_df,**kwargs)[2:4]
     if concepts:
@@ -447,6 +454,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       kwargs['with_effects'] = ['positive']
       aggravate_symptoms_col = 'aggravate symptoms for '+ self._disease2str()
       kwargs['column_name'] = aggravate_symptoms_col
+      kwargs['column_rank'] = drug_df.max_colrank()
       drug_df = self.score_concept('symptoms',drug_df,**kwargs)[2]
       drug_df = drug_df.dfcopy(rename2={'Relevant symptoms':'Aggravated symptoms'})
 
@@ -454,6 +462,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       colname = 'inhibit symptoms for '+ self._disease2str()
       kwargs['column_name'] = colname
       kwargs['with_effects'] = ['negative']
+      #kwargs['column_rank'] = 1
       drug_df,concepts = self.score_concept('symptoms',drug_df,**kwargs)[2:4]
       if concepts:
         phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
@@ -462,6 +471,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       kwargs['with_effects'] = ['unknown']
       colname = 'symptoms for '+ self._disease2str()
       kwargs['column_name'] = colname
+      #kwargs['column_rank'] = 2
       drug_df,concepts = self.score_concept('symptoms',drug_df,**kwargs)[2:4]
       if concepts:
         phenotypedf_rows += concepts2rows(concepts,kwargs['column_name'])
@@ -469,15 +479,17 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
 
       aggravated_symptoms_refcount_col = self._refcount_colname(aggravate_symptoms_col)
       for col in symptoms_columns:
-        drug_df[col] -= drug_df[aggravated_symptoms_refcount_col]
-        drug_df = drug_df.greater_than(-1,col) # removing drugs that aggravate symptoms more than inhibit them
+        refcount_symptom_col = self._refcount_colname(col)
+        drug_df[refcount_symptom_col] -= drug_df[aggravated_symptoms_refcount_col]
+        # removing drugs that aggravate symptoms more than inhibit them:
+        drug_df = drug_df.greater_than(-1,refcount_symptom_col)
       
-      #dropping aggravated_symptoms_refcount_col:
-      my_cols = [c for c in drug_df.columns if c != aggravated_symptoms_refcount_col]
+      #dropping temporary aggravated_symptoms columns:
+      aggravated_symptoms_cols = self._refcount_columns(aggravate_symptoms_col)
+      my_cols = drug_df.columns.drop(aggravated_symptoms_cols).to_list()
       drug_df = drug_df.dfcopy(my_cols)
-      
+      kwargs.pop('with_effects','')
 
-    kwargs.pop('with_effects')
     kwargs['column_name'] = 'regulation of diseases similar to '+ self._disease2str()
     drug_df,concepts = self.score_concept('similar_diseases',drug_df,**kwargs)[2:4]
     if concepts:
@@ -494,7 +506,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
     rank_col = 'Concept rank'
     children_col = '# children'
     concepts_df = df.from_rows(phenotypedf_rows,['Type',rank_col,'Name',children_col,'weight','# linked drugs (includes links to concept ontology children)'])
-    concepts_df = concepts_df.sortrows([rank_col,'Type','weight',children_col],[True,True,False,False])
+    concepts_df = concepts_df.sortrows(by=[rank_col,'Type','weight',children_col],ascending=[True,True,False,False])
     concepts_df._name_ = PHENOTYPE_WORKSHEET
 
     if self.params.get('BBBP',False):
@@ -805,8 +817,10 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
     self.report_pandas[AGONIST_TARGETS_WS] = self.report_pandas[AGONIST_TARGETS_WS].merge_psobject(self.indirect_target2drugs,'Indirectly Activated by','Name',values21cell=True)
 
     drug_groups = self.params.get('drug_groups',[])
-    if drug_groups:
-        self.add_groups(self.report_pandas['Drugs'],drug_groups)
+    self.add_groups(self.report_pandas['Drugs'],drug_groups)
+
+    #best_drugs = self.report_pandas['Drugs'].smaller_than(0.05,RANK + ' expopvalue')
+    self.add2report(self.report_pandas['Drugs'].column_stats('Groups',sep=','))
     return
 
 

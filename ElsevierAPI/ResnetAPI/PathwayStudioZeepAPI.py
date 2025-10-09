@@ -249,7 +249,7 @@ out of {max_iter} attempt at GOQL query with length {len(OQLquery)}:\n{OQLquery[
             try:
                 result = self.SOAPclient.service.ResultGetData(result_param)
                 return result
-            except (zeep_exceptions.Fault,req_exceptions.ChunkedEncodingError,http.client.RemoteDisconnected,req_exceptions.ConnectionError) as err:
+            except Exception as err:
                 print(f'{err} error while retrieving results {result_param.ResultRef}')
                 attempt_timeout = CONNECTION_TIMEOUT*attempt
                 print(f'Attempt {attempt+1} to reconnect will be in {attempt_timeout} sec\n',flush=True)

@@ -8,11 +8,11 @@ from collections import defaultdict
 from .ZeepToNetworkx import PSNetworx, len
 from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,OBJECT_TYPE
 from .NetworkxObjects import RELATION_PROPS,ALL_PSREL_PROPS
-from .PathwayStudioGOQL import OQL,PERCNT
+from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES
-from ..ScopusAPI.scopus import loadCI, SCOPUS_CI
-from ..utils import unpack,execution_time,execution_time2,load_api_config,pretty_xml,list2chunks_generator
+from ..ScopusAPI.scopus import loadCI
+from ..utils import unpack,execution_time,execution_time2,load_api_config,pretty_xml,list2chunks_generator,multithread
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
@@ -124,7 +124,11 @@ class APISession(PSNetworx):
         if isinstance(what2retrieve,int):
             retrieve_props = self._what2retrieve(what2retrieve)
             if retrieve_props:
-                self.relProps = retrieve_props
+                self.relProps = retrieve_props # overides self.relProps
+                if what2retrieve in [SNIPPET_PROPERTIES,ALL_PROPERTIES]:
+                  ms = 5
+                  print(f'{type(self).__name__} sets multithreading to {ms} to retreive sentence properties')
+                  self.max_sessions = ms # to avoid "table is locked" error
             else:
                 return # do nothing, keep CURRENT_SPECS
         else:
@@ -214,9 +218,8 @@ class APISession(PSNetworx):
         if my_sent_props:
             ms = 5
             if self.max_sessions > ms:
-                print(f'{type(self).__name__} decreases multithreading to {ms} \
-to retreive {my_sent_props} properties')
-                self.max_sessions = ms
+              print(f'{type(self).__name__} decreases multithreading to {ms} to retreive sentence properties')
+              self.max_sessions = ms
             if 'TextRef' not in self.relProps:
                 self.relProps.append('TextRef')
             
@@ -886,19 +889,24 @@ to retreive {my_sent_props} properties')
         return graph2return
     
 
-    def add_group_annotation(self,group_names:list,_2graph=ResnetGraph()):
-        urns2values = PSObject()
-        for group_name in group_names:
-            group_graph = self.get_group_members([group_name])
-            if isinstance(group_graph,ResnetGraph):
-                group_members = group_graph._get_nodes()
-                [urns2values[o.urn()].append(group_name) for o in group_members]
+    def add_group_annotation(self,group_names:list,_2graph=ResnetGraph(),_4groups=True):
+      urns2values = defaultdict(list)
+      parent_names = [[g] for g in group_names]
+      kwargs = {'max_workers':self.max_sessions}
+      if _4groups:
+        group_graphs = multithread(parent_names,self.get_group_members,**kwargs)
+      elif group_names:
+        kwargs.update({'search_by_properties':['Name'], 'include_parents':False})
+        group_graphs = multithread(parent_names,self.child_graph,**kwargs)
 
-        if _2graph: # my_graph = _2graph if _2graph else self.Graph does not work here
-            _2graph.set_node_annotation(urns2values,BELONGS2GROUPS)
-        else:
-            self.Graph.set_node_annotation(urns2values,BELONGS2GROUPS)
-        return
+      for i,group_graph in enumerate(group_graphs):
+        assert(isinstance(group_graph,ResnetGraph))
+        group_members = group_graph._get_nodes()
+        [urns2values[o.urn()].append(group_names[i]) for o in group_members]
+
+      my_graph = _2graph if _2graph else self.Graph
+      my_graph.set_node_annotation(dict(urns2values),BELONGS2GROUPS)
+      return
 
 
     def map_props2objs(self,using_values:list,in_properties:list[str],
@@ -1063,13 +1071,17 @@ to retreive {my_sent_props} properties')
     
 
     def child_graph(self, propValues:list, search_by_properties=[],include_parents=True):
+        '''
+        output:
+          only nodes ResnetGraph with ontology children of parents found by propValues in search_by_properties
+        '''
         if not search_by_properties: search_by_properties = ['Name','Alias']
         oql_query = OQL.get_childs(propValues,search_by_properties,include_parents=include_parents)
         prop_val_str = ','.join(propValues)
         request_name = f'Find ontology children for {prop_val_str}'
         ontology_graph = self.process_oql(oql_query,request_name)
         if isinstance(ontology_graph, ResnetGraph):
-            print('Found %d ontology children' % len(ontology_graph))
+          print('Found %d ontology children' % len(ontology_graph))
         return ontology_graph
 
    
@@ -1730,17 +1742,17 @@ to retreive {my_sent_props} properties')
 
 
     def __dbid4prop(self,prop:str,psobjs:list[PSObject])->tuple[set[PSObject],set[PSObject]]:
-      prop_values = unpack([list(o.get_props([prop])) for o in psobjs])
+      prop_values = unpack([list(o.get_props(prop)) for o in psobjs])
       prop2objs,_ = self.map_props2objs(prop_values,[prop])
       mapped_objs = set()
       notmapped_objs = set()
       new_props = [DBID]+self.entProps
       for psobj in psobjs:
         mapped = False
-        for propval in psobj.get_props([prop]):
+        for propval in psobj.get_props(prop):
           if propval in prop2objs:
             for mapped_obj in prop2objs[propval]:
-              [psobj.update_with_list(p,mapped_obj.get_props([p]))  for p in new_props]
+              [psobj.update_with_list(p,mapped_obj.get_props(p))  for p in new_props]
               mapped_objs.add(psobj)
               mapped = True
         if not mapped:

@@ -224,17 +224,17 @@ class OQL:
 
     @staticmethod
     def get_objects(by_dbids:list):
-        return "SELECT Entity WHERE id = (" + OQL.id2str(by_dbids) + ")"
+      return "SELECT Entity WHERE id = (" + OQL.id2str(by_dbids) + ")"
 
 
     @staticmethod
     def select_drugs():
-        return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = (drugs,'plant medicinal product'))"
+      return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = (drugs,'plant medicinal product')) AND NOT MemberOf(SELECT Group WHERE Name = 'PAINS compounds')"
 
 
     @staticmethod
     def select_metabolites():
-        return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = ('mammal endogenous compounds and their derivatives'))"
+      return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = ('mammal endogenous compounds and their derivatives'))"
 
 
     @staticmethod

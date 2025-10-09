@@ -127,31 +127,27 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
 
   def propvalues(self,prop_name:str):
       '''
-      Return
-      ------
-      returns set of all values of prop_names
+      output:
+        returns set of all values of prop_names
       '''
       return list(self[prop_name])  if prop_name in self.keys() else []
   
 
-  def get_props(self,prop_names:list):
+  def get_props(self,prop_name:str)->list:
       '''
-      Return
-      ------
-      returns set of all values of prop_names
+      output:
+        list of all values of prop_names
       '''
-      my_props = set()
-      for prop_name in prop_names:
-          if prop_name in self.keys():
-              my_props.update(self[prop_name])
-
-      return my_props
+      assert(isinstance(prop_name,str)), 'get_props takes single property name as input'
+      if prop_name in self:
+         return self[prop_name]
+      return []
   
 
   def dbid(self)->int:
       '''
       output:
-          0 if missing
+        0 if missing
       '''
       return self.get_prop(DBID,if_missing_return=0)
 
@@ -275,35 +271,38 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
 
   def is_annotated(self,with_prop:str,having_values:list=[],case_sensitive=False):
       '''
-      Input
-      -----
-      if "having_values" is empty will return True if self has any value in "with_prop"
+      input:
+        with_prop - property name to search in self
+        having_values - list of values to search for in self[with_prop]
+        case_sensitive - if False (default) search is case insensitive
+      output:
+        True if self has any value in "with_prop" that is also in "having_values"
+        if "having_values" is empty will return True if self has any value in "with_prop"
       '''
-      search_in = self.get_props([with_prop])
+      search_in = self.get_props(with_prop)
       if search_in:
-          if having_values:
-              if case_sensitive or with_prop in {DBID,REFCOUNT}:
-                  search_set = set(having_values)   
-              else:
-                  search_in  = set(map(lambda x: x.lower(),search_in))
-                  search_set = set(map(lambda x: x.lower(),having_values))      
-              return not search_set.isdisjoint(search_in)
+        if having_values:
+          if case_sensitive or with_prop in {DBID,REFCOUNT}:
+            search_set = set(having_values)   
           else:
-              return True
+            search_in  = set(map(lambda x: x.lower(),search_in))
+            search_set = set(map(lambda x: x.lower(),having_values))      
+          return not search_set.isdisjoint(search_in)
+        else:
+            return True
       else: 
           return False
 
 
-  def has_value_in(self,prop2values:dict,case_sensitive=False):
-      """
-      Input
-      -----
+  def has_value_in(self,prop2values:dict[str,list],case_sensitive=False):
+    """
+    input:
       prop2values = {propName:[values]}
-      """
-      for prop_name, prop_values in prop2values.items():
-          if self.is_annotated(prop_name,prop_values,case_sensitive): 
-              return True
-      return False
+    """
+    for prop_name, prop_values in prop2values.items():
+      if self.is_annotated(prop_name,prop_values,case_sensitive): 
+        return True
+    return False
 
 
   def prop_values2str(self, prop_name:str, sep=','):
@@ -367,7 +366,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
     '''
     for prop in map_by:
       try:
-        provals = self.get_props([prop])
+        provals = self.get_props(prop)
         for val in provals:
           v = val.lower()
           try:

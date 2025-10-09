@@ -1,14 +1,14 @@
-import time,os,math
+import time,math
 import pandas as pd
 import numpy as np
 from .PathwayStudioGOQL import OQL
 from ..ETM_API.references import Reference
 from ..pandas.panda_tricks import df,MAX_TAB_LENGTH
-from .ResnetGraph import ResnetGraph,PSObject,EFFECT
+from .ResnetGraph import ResnetGraph,PSObject,EFFECT,defaultdict
 from .ResnetAPISession import APISession,len
 from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
 from ..ETM_API.RefStats import SBSstats
-from ..utils import execution_time,sortdict
+from ..utils import execution_time,sortdict,ThreadPoolExecutor
 
 
 COUNTS = 'counts'
@@ -26,6 +26,7 @@ REFCOUNT_COLUMN = '#sentences with co-occurrence. Link opens most relevant artic
 INFO_WORKSHEET = 'info'
 INPUT_WOKSHEET = 'Input'
 PHENOTYPE_WORKSHEET = 'Phenotype'
+
 
 class SemanticSearch (APISession):
   __refCache__='reference_cache.tsv'
@@ -45,7 +46,6 @@ class SemanticSearch (APISession):
   __colname4GV__  = ''
   #TMsearch = 'ETMbasicSearch'
   TMsearch = 'SBSsearch'
-  DOfile = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt')
 
   
   def __init__(self,*args,**kwargs):
@@ -92,6 +92,12 @@ class SemanticSearch (APISession):
 
       self.report_pandas=dict() # stores pandas used to generate report file
       self.raw_data = dict() # stores raw data pandas used for generation pandas in self.report_pandas
+      ontology_file = my_kwargs.get('ontology_file','')
+      if ontology_file:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+          self.__ontology_future__ = executor.submit(self.__load_ontology, ontology_file)
+      else:
+        self.__ontology_future__ = None
 
 
   def _clone(self, **kwargs):
@@ -160,6 +166,19 @@ class SemanticSearch (APISession):
   
   def _concept_size_colname(self,concept_name:str):
       return concept_name + ' count'
+  
+  def _refcount_columns(self,concept_name:str):
+      '''
+      output:
+        [self._refcount_colname(concept_name),
+         self._weighted_refcount_colname(concept_name),
+         self._linkedconcepts_colname(concept_name),
+         self._concept_size_colname(concept_name)]
+      '''
+      return [self._refcount_colname(concept_name),
+              self._weighted_refcount_colname(concept_name),
+              self._linkedconcepts_colname(concept_name),
+              self._concept_size_colname(concept_name)]
 
 
   def drop_refcount_columns(self,counts_df=df.from_pd(pd.DataFrame())):
@@ -1193,13 +1212,35 @@ class SemanticSearch (APISession):
 
   def id2paths(self,_4df:df, for_entities_in_column='Name', 
                 map_by_graph_property='Name',ontology_depth=3)->dict[str,str]:
+      '''
+      output:
+          dict{name: 'parent1->parent2->entity'} for each entity in _4df
+      '''
 
       name2child_objs = self.entities(_4df,for_entities_in_column,map_by_graph_property)
       return self.ontopaths2(name2child_objs,ontology_depth)
 
 
-  def add_groups(self,_2df:df,group_names:list,for_entities_in_column='Name',map_by_graph_property='Name'):
-      self.add_group_annotation(group_names)
+  def add_group_annotation(self,group_names:list, _2graph: ResnetGraph = ResnetGraph(),_4groups=True):
+    if group_names:
+      super().add_group_annotation(group_names,_2graph,_4groups)
+    else:
+      if self.__ontology_future__:
+        if self.__ontology_future__.result():
+          urns2values = defaultdict(list)
+          [[urns2values[child.urn()].append(group.name()) for child in group.childs()] for group in self.__Ontology__]
+          self.Graph.set_node_annotation(dict(urns2values),BELONGS2GROUPS)
+      else:
+         print('No ontology file was specified !!!')
+
+
+  def add_groups(self,_2df:df,group_names:list,
+      for_entities_in_column='Name',map_by_graph_property='Name',_4groups=True):
+      '''
+      output:
+          copy of _2df with added column 'Groups' containing groups from group_names to which entity belongs
+      '''
+      self.add_group_annotation(group_names,_4groups=_4groups)
       prop2objs = self.entities(_2df,for_entities_in_column,map_by_graph_property)
       prop2groups = dict()
       for prop, psobjs in prop2objs.items():
@@ -1207,14 +1248,22 @@ class SemanticSearch (APISession):
         for psobj in psobjs:
           obj_groups = psobj.propvalues(BELONGS2GROUPS)
           if obj_groups:
-              prop_groups.update(obj_groups)
+            prop_groups.update(obj_groups)
         prop2groups[prop] = ',\n'.join(prop_groups)
 
       new_df = _2df.dfcopy()
-      new_df = new_df.merge_dict(prop2groups,'Groups',for_entities_in_column)
+      new_df['Groups'] = new_df[for_entities_in_column].map(prop2groups)
+   #   new_df['Groups'] = new_df['Groups'].fillna('')
       self.add2report(new_df)
       return new_df
   
+
+  def add_groups_from_file(self,_2df:df,group_file:str,
+    for_entities_in_column='Name',map_by_graph_property='Name',_4groups=False):
+    with open(group_file, 'r') as f:
+      group_names = [line.strip() for line in f.readlines()]
+    return self.add_groups(_2df, group_names, for_entities_in_column, map_by_graph_property,_4groups)
+    
 
   def add_entity_annotation(self,_2column:str,in_df:df,from_node_property='', for_entities_in_column='Name',map_by_graph_property='Name'):
       node_property = from_node_property if from_node_property else _2column
@@ -1238,24 +1287,20 @@ class SemanticSearch (APISession):
       return new_df
 
 
-  def __load_ontology(self):
-    if not self.__Ontology__:
-      disease_ontology_groups = [x.strip() for x in open(self.DOfile, 'r').readlines()]
-
-      query_node = OQL.get_entities_by_props(disease_ontology_groups, ['Name'])
+  def __load_ontology(self, ontology_file=''):
+    if not self.__Ontology__ and ontology_file:
+      group_names = {x.strip() for x in open(ontology_file, 'r').readlines()}
+      oql = 'SELECT Entity WHERE Name = ({props})'
       new_session = self._clone_session() #to avoid mutating self.Graph in parallel calculations
-      disease_ontology_groups_graph = new_session.process_oql(query_node)
-      if isinstance(disease_ontology_groups_graph,ResnetGraph):
-          disease_ontology_groups = disease_ontology_groups_graph._get_nodes()
-      else:
-          disease_ontology_groups = list()
-      _, ontology = new_session.load_children4(disease_ontology_groups,
-                                                              max_threads=50)
+      request_name = f'Loading ontology {len(group_names)} groups from file {ontology_file}'
+      ontology_graph = new_session.__iterate__(oql,group_names,request_name,step=500)
+      if isinstance(ontology_graph,ResnetGraph):
+        ontology_groups = ontology_graph._get_nodes()
+        _, ontology = new_session.load_children4(ontology_groups, max_threads=50)
+        self.__Ontology__ = ontology 
       new_session.close_connection()
-      self.__Ontology__ = ontology
-    
+           
     return self.__Ontology__
-
 
 
   def add_ontology_df(self,_4df:df,add2report=True):
@@ -1338,33 +1383,21 @@ class SemanticSearch (APISession):
 
 ##################  PRINT ############################## PRINT ##################################
   def add_params2df(self):
-    internal_params  = {"skip","debug",
-                        "consistency_correction4target_rank",
-                        "add_bibliography",
-                        "strict_mode",
-                        "target_types",
-                        "max_ontology_parent",
-                        "init_refstat",
-                        "max_childs",
-                        "add_closeness",
-                        'propagate_target_state_in_model',
-                        'DTfromDB'}
-    input_dict = {k:v for k,v in self.params.items() if k not in internal_params}
-    rows = list()
-    for type, name2weights in input_dict.items():
-      if isinstance(name2weights,list):
-        name2weights = {n:'' for n in name2weights}
-      elif not isinstance(name2weights,dict):
-        name2weights = {f'{name2weights}':''}
-
-      for name,weight in name2weights.items():
-        concept_objs = self.Graph._psobjs_with(name)
-        for concept_obj in concept_objs:
-          concept_childs = concept_obj.childs()
-          for child in concept_childs:
-            rows.append([type,name,child.name(),weight])
-
-    param_df = df.from_rows(rows,['Parameter','Concept','Ontology child','Value'])
+    internal_params  = {"skip","debug", "consistency_correction4target_rank",
+      "add_bibliography","strict_mode", "target_types","max_ontology_parent",
+      "init_refstat","max_childs","add_closeness",'propagate_target_state_in_model',
+      'DTfromDB','BBBP','use_in_children'
+                        }
+    rows = []
+    for type, name2weights in self.params.items():
+      if name2weights:
+        if type not in internal_params:
+          if isinstance(name2weights, dict):
+            [rows.append([type,name,value]) for name,value in name2weights.items()]
+          else:
+            rows.append([type,type,name2weights])
+        
+    param_df = df.from_rows(rows,['Parameter','Concept','Value'])
     param_df = param_df.sortrows(by=['Value','Parameter','Concept'])
     param_df._name_ = INPUT_WOKSHEET
     param_df.tab_format['tab_color'] = 'yellow'
@@ -1411,7 +1444,7 @@ class SemanticSearch (APISession):
         rank_pos += 1
 
     # moves etm_ref_col next to rank columns:
-    if self.params['init_refstat']:
+    if hasattr(self,'RefStats'):
       for c in self.RefStats.refcols:
         if c in clean_df_columns:
           move2[c] = rank_pos

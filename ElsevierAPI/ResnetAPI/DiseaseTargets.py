@@ -5,7 +5,7 @@ from .SemanticSearch import SemanticSearch,len,OQL,RANK,execution_time
 from .ResnetAPISession import NO_REL_PROPERTIES,ONLY_REL_PROPERTIES,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,DBID
 from .FolderContent import FolderContent
 from ..pandas.panda_tricks import df
-from ..utils import unpack
+from ..utils import os
 import time
 
 RANK_KNOWN_TARGETS = True
@@ -30,28 +30,28 @@ class DiseaseTargets(SemanticSearch):
     pass
     def __init__(self,*args,**kwargs):
         """
-        Input
-        -----
-        APIconfig - args[0]
-        self.set_target_disease_state() needs references
+        input:
+          APIconfig - args[0]
+          self.set_target_disease_state() needs references
         """
         my_kwargs = {
-                'disease':[],
+                #'disease':[],
                 'what2retrieve':BIBLIO_PROPERTIES,
                 'ent_props' : ['Name', 'Class'], #'Class' is for target partners retrieval
                 'rel_props' : [EFFECT],
-                'data_dir' : '',
+                #'data_dir' : '',
                 'add_bibliography' : True,
                 'strict_mode' : False,
                 'target_types' : ['Protein'],
-                'pathway_folders' : [],
-                'pathways' : [],
+                #'pathway_folders' : [],
+                #'pathways' : [],
                 "max_childs" : 11,
                 "add_closeness":True, # obsolete
                 'propagate_target_state_in_model':True,
-                'add_regulators4':dict(),
-                'add_targets4':dict(),
-                'skip':False
+                #'add_regulators4':dict(),
+                #'add_targets4':dict(),
+                'skip':False,
+                #'ontology_file' : ''
             }
         
         entprops = kwargs.pop('ent_props',[])
@@ -98,7 +98,7 @@ class DiseaseTargets(SemanticSearch):
         self.ppmet = ResnetGraph() # protein-metabolite regulation network (MolTransport,MolSynthesis,ChemicalReaction) for self.partner2targets
         self.drug_effects = ResnetGraph() # drug-disease regulation network (Regulation) disease_inducers, drugs_link2disease
         self.drugs2targets = ResnetGraph() # for disease_inducers, drugs_link2disease
-    
+        
 
     def clear(self):
         super().clear()
@@ -219,18 +219,22 @@ class DiseaseTargets(SemanticSearch):
     def metabolite2inhibit(self):
       metabolites2inhibit = self.params.get('metabolites2inhibit',[])
       if metabolites2inhibit:
-        metabolites2inhibit = ','.join(self.params['metabolites2inhibit'])
+        metabolites2inhibit = OQL.join_with_quotes(self.params['metabolites2inhibit'])
         select_metabolite = f'SELECT Entity WHERE Name = ({metabolites2inhibit})'
         oql = f'SELECT Relation WHERE NeighborOf ({self.find_disease_oql}) AND NeighborOf ({select_metabolite})'
         my_session = self._clone_session()
         metbolite2diseaseG = my_session.process_oql(oql,'Find metabolites2inhibit')
-        [metbolite2diseaseG.set_edge_annotation(r.uid(),t.uid(),rel.urn(),EFFECT,['positive']) for r,t,rel in metbolite2diseaseG.iterate()]
-        self.Graph.add_graph(metbolite2diseaseG) # to ensure propert targets state in set_target_stae
-        metabolites2inhibit_objs = metbolite2diseaseG._psobjs_with('SmallMol',OBJECT_TYPE)
-        return metabolites2inhibit_objs
+        if metbolite2diseaseG:
+          [metbolite2diseaseG.set_edge_annotation(r.uid(),t.uid(),rel.urn(),EFFECT,['positive']) for r,t,rel in metbolite2diseaseG.iterate()]
+          self.Graph.add_graph(metbolite2diseaseG) # to ensure propert targets state in set_target_stae
+          metabolites2inhibit_objs = metbolite2diseaseG._psobjs_with('SmallMol',OBJECT_TYPE)
+          return metabolites2inhibit_objs
+        else:
+          print(f'Cannot find metabolites {metabolites2inhibit} to inhibit for {self._disease2str()}')
+          return list()
       else:
         return list()
-        
+
 
     def expand_targets(self,reltype2targets:dict[str,list[str]],dir='upstream'):
       '''
@@ -476,17 +480,17 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
       fc.entProps = ['Name','CellType','Tissue','Organ','Organ System']
 
       disease_pathways = list()
-      for folder_name in self.params['pathway_folders']:
+      for folder_name in self.params.get('pathway_folders',[]):
         ps_pathways = fc.folder2pspathways(folder_name,with_layout=False)
         disease_pathways += ps_pathways
 
-      if self.params.get('pathways',''):
-          filtered_pathway_list = list()
-          for ps_pathway in disease_pathways:
-              assert(isinstance(ps_pathway, PSPathway))
-              if ps_pathway.name() in self.params['pathways']:
-                  filtered_pathway_list.append(ps_pathway)
-          disease_pathways = filtered_pathway_list
+      if self.params.get('pathways',[]):
+        filtered_pathway_list = list()
+        for ps_pathway in disease_pathways:
+          assert(isinstance(ps_pathway, PSPathway))
+          if ps_pathway.name() in self.params['pathways']:
+            filtered_pathway_list.append(ps_pathway)
+        disease_pathways = filtered_pathway_list
 
       print('Found %d curated pathways for %s:' %(len(disease_pathways), self._disease2str()))
       [print(p.name()+'\n') for p in disease_pathways]

@@ -5,7 +5,7 @@ from ..ETM_API.references import PS_SENTENCE_PROPS,PS_BIBLIO_PROPS,SENTENCE
 from .PathwayStudioGOQL import OQL
 from .FolderContent import FolderContent,PSPathway
 from concurrent.futures import ThreadPoolExecutor,as_completed
-from ..utils import execution_time
+from ..utils import execution_time,DEFAULT_CONFIG_DIR
 import time,os
 from collections import defaultdict
 
@@ -52,7 +52,8 @@ class Indications4targets(SemanticSearch):
                  'add_bibliography' : True,
                  'what2retrieve':BIBLIO_PROPERTIES, # need biblio props to create PSbibliography
                  'mode_of_action':ANY_MOA,
-                 'max_ontology_parent': 10
+                 'max_ontology_parent': 10,
+                 'ontology_file' : os.path.join(os.getcwd(),DEFAULT_CONFIG_DIR,'ResnetAPI/ontology/disease4ontology_analysis.txt'),
                 }
         my_kwargs.update(kwargs)
 
