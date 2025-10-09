@@ -3,7 +3,7 @@ import regex as re
 import urllib.error as http_error
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor,as_completed
-from ..utils import list2chunks
+from ..utils import multithread
 
 DRUGNAME_FIELDS = ['openfda.brand_name', 'openfda.generic_name','openfda.substance_name']
 DOSAGE_FIELD = 'dosage_and_administration'
@@ -49,19 +49,24 @@ class FDA:
       
     @staticmethod
     def __cache_name(drug_name:str):
+      '''
+      returns drug.name() in lower case for normalization
+      '''
       return drug_name.lower()
 
 
     def __load_drug_label_cache(self,drugs:list[str]):
-      drug2labels = dict()
+      cached_drug2labels = dict()
       for drug in drugs:
         drug_name_in_cache = self.__cache_name(drug)
         cache_file = os.path.join(CACHE_DIR,drug_name_in_cache+'.json')
         if os.path.exists(cache_file):
           with open(cache_file,'r') as f:
-            drug2labels[drug_name_in_cache] = json.load(f)
-      self.drug2labels.update(drug2labels)
-      return drug2labels
+            cached_drug2labels[drug_name_in_cache] = json.load(f)
+
+      self.drug2labels.update(cached_drug2labels)
+      print(f'Found {len(cached_drug2labels)} drug labels in FDA cache')
+      return cached_drug2labels
     
 
     def results(self,field:str, query:str):
@@ -148,11 +153,9 @@ class FDA:
     def child_doses_mt(self,drugs:list[str],max_workers=5):
       drug2childdose = dict()
       print(f'Finding children dosage for {len(drugs)} drugs in {max_workers} threads')
-      chunks = list2chunks(drugs, max_workers)
-      with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='Find child doses') as e:
-        futures = [e.submit(self.child_doses, chunk) for chunk in chunks]
-        [drug2childdose.update(f.result()) for f in as_completed(futures)]
-      
+      chunk_childdoses = multithread(drugs, self.child_doses, max_workers=max_workers)
+      [drug2childdose.update(d) for d in chunk_childdoses if d]
+      print(f'Found {len(drug2childdose)} drugs with known dose in children')
       return drug2childdose
     
 
