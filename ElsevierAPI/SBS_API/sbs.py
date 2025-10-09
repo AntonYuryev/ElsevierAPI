@@ -184,15 +184,34 @@ class SBSRef(DocMine):
     return sbsj
 
 
+  def is_index(self):
+    title_words = self.title().lower().split(' ')
+    try:
+      index_pos = title_words.index('index')
+      if index_pos == 0: return True
+      elif title_words[index_pos-1] in ['subject','cumulative','author','word','organism','compound']:
+        return True
+      else: return False
+    except ValueError:
+      if 'bibliography' in title_words: return True
+      elif title_words[0] in ['contents','references']:
+        return True
+      else:
+        return False
+
+
   def is_valid(self):
     '''
     checks:
-      if self has _AUTHORS_ or valid identifiers: 'NCT ID','EudraCT Number','PMC','PMID','PII','DOI'
+      if self has _AUTHORS_
+      if self is not journal index
+      if self has valid identifiers: 'NCT ID','EudraCT Number','PMC','PMID','PII','DOI'
     '''
-    try:
-      authors = self[_AUTHORS_]
-      return len(authors) > 0
-    except KeyError:
+    if _AUTHORS_ in self:
+      return True
+    elif self.is_index():
+      return False
+    else:
       return any(w in self.Identifiers for w in ['NCT ID', 'EudraCT Number','PMC','PMID','PII','DOI'])
 
 
@@ -248,10 +267,30 @@ class SBSapi():
       print(f'SBS token was refreshed at {datetime.now()}')
   
 
+  def __get_entities(self,search_term:str, in_vocab:str)->dict:
+    options = {"limit": 1,"suggestPrefix":search_term,"includeVocabularies":[in_vocab]}
+    req = requests.get(self.SBSsearch.url + "/api/search/v1/entities", 
+                      params=options, headers=self.SBSsearch.headers,
+                      verify=self.SBSsearch.verify_request)
+    try:
+      return req.json()
+    except json.JSONDecodeError as e:
+      if req:
+        if req.status_code in [401,403]:
+          print(f'Response status: {req.status_code}')
+          self.token_refresh()
+          return self.__get_entities(search_term,in_vocab)
+        else:
+          print(f'Search for {search_term} in {in_vocab} produced invalid response: {e}')
+          return dict()
+      else:
+        return dict()
+    
+
   def get_id(self,search_term:str, in_vocabs:list=['GENETREE','EMTREE'])->str:
     with threading.Lock():
       for vocab in in_vocabs:
-        response = self.SBSsearch.get_entities(suggest_prefix=search_term,include_vocabularies=[vocab],limit=1)
+        response = self.__get_entities(search_term,vocab)
         if 'data' not in response: continue
         data = response['data']
         if not data: continue
@@ -546,7 +585,7 @@ class SBSapi():
     '''
     Entry function for RefStat.add_refs_sbs\n
     output:
-      {entity:(sentence_count,[SBSRef])}, where RELEVANCE is adjusted by number of sentences in every SBSRef
+      {entity:(search_url,sentence_count,[SBSRef])}, where RELEVANCE is adjusted by number of sentences in every SBSRef
     '''
     start = time()
     entity2rfks = dict()
@@ -576,6 +615,8 @@ class SBSapi():
       rows_counter += bool(sentence_count)
       clean_refs = [r for r in refs if r.is_valid()]
       clean_refs.sort(key=lambda x:x.relevance(),reverse=True)
+      if not clean_refs:
+        sentence_count = 0
       e2refs[entity] = (search_url,sentence_count,clean_refs)
 
     print(f'Found sentences in SBS for {rows_counter} rows in {execution_time(start)}')
