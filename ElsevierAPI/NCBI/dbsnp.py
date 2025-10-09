@@ -33,7 +33,7 @@ def cache_path(basename=DBSNP_CACHE_BASE):
 
 
 def gv2SNP(gv:PSObject,rsid2SNP:dict[str,SNP]):
-    my_rsids = [gv.name()]+list(gv.get_props(['Alias']))
+    my_rsids = [gv.name()]+list(gv.get_props('Alias'))
     for rsid in my_rsids:
       if rsid.startswith('rs'):
           return rsid2SNP[rsid]
