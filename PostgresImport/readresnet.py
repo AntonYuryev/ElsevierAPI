@@ -398,7 +398,6 @@ def read_resnet(path2rnef:str):
       xml_str = et.tostring(elem).decode()
       future = executor.submit(precord,xml_str,fname,invalid_rnef_attrs)
       futures.append(future)
-      #control_count, pathway_count = precord(xml_str,fname,invalid_rnef_attrs)
       resnet_counter += 1
       if resnet_counter > 0 and resnet_counter%5000 == 0:
         elapsed_time = datetime.now()-start
@@ -417,6 +416,9 @@ def read_resnet(path2rnef:str):
       if control_counter > 0 and control_counter%5000 == 0:
         elapsed_time = datetime.now()-start
         print(f'Processed {control_counter} controls and {pathway_counter} pathways in {elapsed_time}')
+
+    elapsed_time = datetime.now()-start
+    print(f'Finished processing {control_counter} controls and {pathway_counter} pathways in {elapsed_time}' from {path2rnef} file)
 
   print('Invalid attributes in RNEF:')
   print(invalid_rnef_attrs)
@@ -441,5 +443,5 @@ def main(fname:str = ''):
   read_resnet(fname)
 
 #renin-angiot-system.rnef
-#resnet18_mammal_07152025.rnef
-main('C:/ResnetDump/PostgresTestData/resnet18_mammal_07152025.rnef')
+# main('C:/ResnetDump/PostgresTestData/resnet18_mammal_07152025.rnef')
+main()
