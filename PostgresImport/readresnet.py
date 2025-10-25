@@ -1,12 +1,14 @@
 #!/bin/python3 -u
 
-import logging, sys, re
+import logging, sys, re, os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ElementTree
 from lxml import etree as et
 from timeit import default_timer as timer
+from threading import Lock as lock
 
 from src.cachingwriter import CachingWriter
 from src.logging import start_logging
@@ -359,10 +361,11 @@ def parseResnet(resnet_xml:str):
 
 
 def precord(resnet:str,fname:str='',invalid_rnef_attrs:set={}):
-    """parse record and create db records"""
-    attributes, nodes, controls, references, pathways, invalid_attrs = parseResnet(resnet)
-    invalid_rnef_attrs.update(invalid_attrs)
+  """parse record and create db records"""
+  attributes, nodes, controls, references, pathways, invalid_attrs = parseResnet(resnet)
+  invalid_rnef_attrs.update(invalid_attrs)
 
+  with lock():
     with open(fname+"_control.table", "a",encoding='utf-8') as f:
       [controlcache.write(i, f) for i in controls]
 
@@ -378,32 +381,44 @@ def precord(resnet:str,fname:str='',invalid_rnef_attrs:set={}):
     with open(fname+"_pathway.table", "a",encoding='utf-8') as f:
       [pathcache.write(i, f) for i in pathways]
 
-    return len(controls), len(pathways)
+  return len(controls), len(pathways)
 
 
 def read_resnet(path2rnef:str):
   logging.info(f"reading file {path2rnef}")
   fname = Path(path2rnef).stem
-  invalid_rnef_attrs = set()
-  resnet_counter = 0
-  control_counter = 0
-  pathway_counter  = 0
   start = datetime.now()
-  with open(path2rnef, "rb") as f:
-    context = et.iterparse(f, tag="resnet", recover=True) #huge_tree=True
+  max_workers = min(32,(os.cpu_count() or 1) + 4)
+  with ThreadPoolExecutor(max_workers,thread_name_prefix='ParseRNEF') as executor:
+    futures = []
+    invalid_rnef_attrs = set()
+    resnet_counter = 0
+    context = et.iterparse(path2rnef, tag="resnet", recover=True) #huge_tree=True
     for action, elem in context:
       xml_str = et.tostring(elem).decode()
-      control_count, pathway_count = precord(xml_str,fname,invalid_rnef_attrs)
-      control_counter += control_count
-      pathway_counter += pathway_count
+      future = executor.submit(precord,xml_str,fname,invalid_rnef_attrs)
+      futures.append(future)
+      #control_count, pathway_count = precord(xml_str,fname,invalid_rnef_attrs)
       resnet_counter += 1
       if resnet_counter > 0 and resnet_counter%5000 == 0:
         elapsed_time = datetime.now()-start
-        print(f'Processed {control_counter} controls, {pathway_counter} pathways from {resnet_counter} resnet sections in {elapsed_time}')
+        print(f'Processed {resnet_counter} resnet sections in {elapsed_time}')
       elem.clear()
+      while elem.getprevious() is not None:
+        del elem.getparent()[0]
     del context
 
-  print('Invalid references in RNEF:')
+    control_counter = 0
+    pathway_counter  = 0
+    for f in as_completed(futures):
+      control_count, pathway_count = f.result()
+      control_counter += control_count
+      pathway_counter += pathway_count
+      if control_counter > 0 and control_counter%5000 == 0:
+        elapsed_time = datetime.now()-start
+        print(f'Processed {control_counter} controls and {pathway_counter} pathways in {elapsed_time}')
+
+  print('Invalid attributes in RNEF:')
   print(invalid_rnef_attrs)
   logging.info("completed")
   attrcache.stats()
