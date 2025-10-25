@@ -413,12 +413,9 @@ def read_resnet(path2rnef:str):
       control_count, pathway_count = f.result()
       control_counter += control_count
       pathway_counter += pathway_count
-      if control_counter > 0 and control_counter%5000 == 0:
-        elapsed_time = datetime.now()-start
-        print(f'Processed {control_counter} controls and {pathway_counter} pathways in {elapsed_time}')
 
     elapsed_time = datetime.now()-start
-    print(f'Finished processing {control_counter} controls and {pathway_counter} pathways in {elapsed_time}' from {path2rnef} file)
+    print(f'Finished processing {control_counter} controls and {pathway_counter} pathways in {elapsed_time} from {path2rnef} file')
 
   print('Invalid attributes in RNEF:')
   print(invalid_rnef_attrs)
