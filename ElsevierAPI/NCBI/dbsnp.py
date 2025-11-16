@@ -5,6 +5,7 @@ from ..utils import dir2flist,execution_time,pretty_xml,next_tag,dir2flist,PCT
 from ..ETM_API.references import Reference,TITLE,SENTENCE,AUTHORS,PUBYEAR,JOURNAL
 from ..ResnetAPI.NetworkxObjects import PSRelation,OBJECT_TYPE
 from ..ResnetAPI.ResnetAPIcache import APIcache, PSObject, ResnetGraph
+import pandas as pd
 
 BASE_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
 CACHE_DIR = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__snpcache__/')
@@ -249,3 +250,30 @@ def genotype_frequency(genotype:str, allele2freq:dict)->tuple[float,str,float]:
         genotype_freq = major_freq*major_freq
     
     return genotype_freq, minor_allele, minor_freq
+
+
+def add_frequency_column(to_df:pd.DataFrame,rsid_colname:str,genotype_col:str):
+  rsids = to_df[rsid_colname].to_list()
+  rsids = [x for x in rsids if str(x).startswith('rs')]
+  id2snp = downloadSNP(rsids)
+  #assert isinstance(id2snp,dict[str,SNP])
+
+  for idx in to_df.index:
+    rsid = str(to_df.at[idx,rsid_colname])
+    if rsid.startswith('rs'):
+      genotype = to_df.at[idx,genotype_col]
+      if len(genotype) == 2:
+        if rsid in id2snp:
+          snp = id2snp[rsid]
+          assert isinstance(snp,SNP), 'Expect SNP object in id2snp dictionary'
+          if snp.MAFs:
+            genotype_freq, minor_allele, minor_freq = genotype_frequency(genotype,snp.MAFs)
+            to_df.loc[idx,'Minor allele'] = minor_allele 
+            to_df.loc[idx,'Minor allele frequency'] = float(minor_freq)
+            to_df.loc[idx,'Genotype frequency'] = genotype_freq
+          to_df.loc[idx,'Functional impact'] = ','.join(snp.get_props(['Functional impact']))
+          genes = snp.get_props(['Genes'])
+          gene_names = [g[0] for g in genes]
+          to_df.loc[idx,'Genes'] = ','.join(gene_names)
+
+  return to_df

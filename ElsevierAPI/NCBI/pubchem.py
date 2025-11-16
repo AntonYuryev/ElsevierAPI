@@ -1,12 +1,8 @@
 
 #C:Windows> py -m pip install entrezpy --user
-import urllib.request, urllib.parse, json, datetime,os
+import urllib.request, json, os
 import xml.etree.ElementTree as ET
-from .pubmed import NCBIeutils
-from time import sleep
-from collections import defaultdict
-from titlecase import titlecase
-from ..utils import atempt_request4,remove_duplicates
+from .NCBIutils import NCBIeutils
 
 NCBI_CACHE = os.path.join(os.getcwd(),'ENTELLECT_API/ElsevierAPI/NCBI/__ncbipubchemcache__/')
 
