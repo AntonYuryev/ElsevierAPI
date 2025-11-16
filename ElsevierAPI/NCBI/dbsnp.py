@@ -4,7 +4,7 @@ from urllib.error import HTTPError
 from ..utils import dir2flist,execution_time,pretty_xml,next_tag,dir2flist,PCT
 from ..ETM_API.references import Reference,TITLE,SENTENCE,AUTHORS,PUBYEAR,JOURNAL
 from ..ResnetAPI.NetworkxObjects import PSRelation,OBJECT_TYPE
-from ..ResnetAPI.ResnetAPIcache import APIcache, PSObject, ResnetGraph
+from ..ResnetAPI.ResnetAPIcache import PSObject, ResnetGraph
 import pandas as pd
 
 BASE_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
@@ -253,6 +253,9 @@ def genotype_frequency(genotype:str, allele2freq:dict)->tuple[float,str,float]:
 
 
 def add_frequency_column(to_df:pd.DataFrame,rsid_colname:str,genotype_col:str):
+  '''
+  uses dbSNP API to add columns 'Minor allele','Minor allele frequency','Genotype frequency','Functional impact','Genes' to input dataframe
+  '''
   rsids = to_df[rsid_colname].to_list()
   rsids = [x for x in rsids if str(x).startswith('rs')]
   id2snp = downloadSNP(rsids)
