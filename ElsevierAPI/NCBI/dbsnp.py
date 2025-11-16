@@ -254,7 +254,12 @@ def genotype_frequency(genotype:str, allele2freq:dict)->tuple[float,str,float]:
 
 def add_frequency_column(to_df:pd.DataFrame,rsid_colname:str,genotype_col:str):
   '''
-  uses dbSNP API to add columns 'Minor allele','Minor allele frequency','Genotype frequency','Functional impact','Genes' to input dataframe
+  input:
+    to_df dataframe with columns
+    "rsid_colname" - contains RS identifiers
+    "genotype_col" - contains patient genotype
+  output: 
+    uses dbSNP API to add columns 'Minor allele','Minor allele frequency','Genotype frequency','Functional impact','Genes' to input dataframe
   '''
   rsids = to_df[rsid_colname].to_list()
   rsids = [x for x in rsids if str(x).startswith('rs')]
