@@ -72,6 +72,13 @@ def load_api_config(api_config_file='')->dict[str,str]:# file with your API keys
             return dict()
 
 
+def fname(path2file:str):
+  '''
+    generates file name from path without extension
+  '''
+  return os.path.splitext(os.path.basename(path2file))[0]
+
+
 def dir2flist(path2dir:str,include_subdirs=True,subdirs_only=False,file_ext='',fnames_has:list[str]=[]):
     my_path = os.path.join(path2dir, '')
     my_files = []
@@ -83,6 +90,21 @@ def dir2flist(path2dir:str,include_subdirs=True,subdirs_only=False,file_ext='',f
         # This is because an empty string is considered to be a suffix of any string, including itself.
 
     return [f for f in my_files if any(s in f for s in fnames_has)] if fnames_has else my_files
+
+
+def dirList(path2dir:str,include_subdirs=True,subdirs_only=False,file_ext=''):
+  '''
+  Geerator of: file number,file name tuples
+  '''
+  my_path = os.path.join(path2dir, '')
+  counter = 0
+  for root, dirs, files in os.walk(my_path):
+    if not include_subdirs and root != my_path: continue
+    if subdirs_only and root == my_path: continue
+    for f in files:
+      if f.lower().endswith(file_ext):
+        counter += 1
+        yield counter, os.path.join(root, f)
 
 
 def path2folderlist(path2dir:str, first_folder=''):
@@ -183,15 +205,15 @@ def urn_encode(string:str,prefix:str):
 
 
 def sortdict(indic:dict,by_key=True,reverse=False):
-    i = 0 if by_key else 1
-    return dict(sorted(indic.items(), key=lambda item: item[i],reverse=reverse))
+  i = 0 if by_key else 1
+  return dict(sorted(indic.items(), key=lambda item: item[i],reverse=reverse))
 
 
-def str2str(dic:dict):
-    new_dic = dict()
-    for k,v in dic.items():
-      new_dic[k] = ';'.join(map(str,v))
-    return new_dic
+def list2str(dic:dict):
+  '''
+  converts list values in a dictionary to semicolon separated strings
+  '''
+  return {k:';'.join(map(str,v)) for k,v in dic.items()}
 
 
 GREEK2ENGLISH = {
@@ -313,6 +335,7 @@ def get_auth_token(**kwargs):
     token = str(body['access_token'])
     return {"Authorization": "Bearer " + token}, time.time()
 
+
 def print_error_info(x:Exception,thread_name =''):
   exc_type, exc_value, exc_traceback = sys.exc_info()
   traceback_list = traceback.extract_tb(exc_traceback)
@@ -351,7 +374,7 @@ def multithread(big_list:list, func, **kwargs):
   '''
   input:
     big_list: list of items to be processed
-    func: function to be applied to each item in the list
+    func: function to be applied to each item in big_list
     max_workers: number of threads to use for processing
   output:
     list of results from applying func to each item in big_list
@@ -366,31 +389,10 @@ def multithread(big_list:list, func, **kwargs):
     [results.extend(f.result()) for f in as_completed(futures)]
   return results
 
-'''
-def list2chunks(input_list:list, num_chunks:int=0,chunk_size:int=0):
-  list_length = len(input_list)
-  if chunk_size:
-    num_chunks = list_length // chunk_size
-    if num_chunks*chunk_size < list_length:
-      num_chunks += 1
-  else:
-    assert(num_chunks),"Either num_chunks or chunk_size must be specified"
-    chunk_size = list_length // num_chunks # floor division
-
-  remainder = list_length % num_chunks
-  chunks = []
-  start = 0
-  for i in range(num_chunks):
-    end = start + chunk_size
-    if i < remainder:
-      end += 1  # Distribute the remainder among the first 'remainder' chunks
-    chunks.append(input_list[start:end])
-    start = end
-  return chunks
-'''
 
 def list2chunks_generator(input_list:list, num_chunks:int=0, chunk_size:int=0)->Generator[tuple[int,list],None,None]:
     '''
+      generates tuple(chunk number, chunk) of input_list
       hint: Generator[YieldType, SendType, ReturnType]
     '''
     list_length = len(input_list)
@@ -443,7 +445,7 @@ def bisect(data_list:list, criterion):
     return bisector_index
 
 
-def atempt_request4(url:str,retries=10,backoff_factor=1):
+def attempt_request4(url:str,retries=10,backoff_factor=1):
   retry_strategy = urllib3.Retry(
     total=retries,
     backoff_factor=backoff_factor,
@@ -484,6 +486,68 @@ def most_frequent(data:list,if_data_empty_return=''):
     counts = Counter(data)
     most_common = counts.most_common(1)
     return most_common[0][0]
+
+
+def processRNEF(path2rnef:str,how2process_function,**kwargs):
+  '''
+  Multithreaded processing of "path2rnef" by applying a specified how2process_function to each <resnet> element\n
+  input:
+    how2process_function - function to process each resnet element.\n
+    Must: accept <resnet> element as string as 1st argument and "kwargs" as input, return tuple 
+    (node_count:int, control_count:int, pathway_count:int)\n
+    Hint: use ResnetGraph.from_resnet or ResnetGraph._parse_nodes_controls to process <resnet> element\n
+  '''
+  start = time.time()
+  max_workers = kwargs.pop('max_workers',None)
+  control_counter = 0
+  pathway_counter  = 0
+  node_counter = 0
+  resnet_counter = 0
+  with ThreadPoolExecutor(max_workers,thread_name_prefix='ProcessRNEF') as executor:
+    futures = []
+    max_workers = executor._max_workers
+    print(f'Processing {os.path.basename(path2rnef)} file in {max_workers} threads ...')
+    MAX_IN_FLIGHT_FUTURES = 2*max_workers
+    context = et.iterparse(path2rnef, tag="resnet", recover=True) #huge_tree=True
+    for action, resnet_elem in context:
+      resnet_str = et.tostring(resnet_elem).decode() # for multithreading pass string not element
+      if len(futures) >= MAX_IN_FLIGHT_FUTURES:
+        for f in as_completed(futures):
+          try:
+            node_count, control_count, pathway_count = f.result()
+            node_counter += node_count
+            control_counter += control_count
+            pathway_counter += pathway_count
+          except Exception as e:
+            print_error_info(executor,how2process_function.__name__)
+          futures.remove(f) # Remove the completed future
+          break # Break from the as_completed loop to add the new task
+      future = executor.submit(how2process_function,resnet_str,**kwargs)
+      futures.append(future)
+      resnet_counter += 1
+      if resnet_counter > 0 and resnet_counter%5000 == 0:
+        elapsed_time = execution_time(start)
+        print(f'Read {resnet_counter} resnet sections in {elapsed_time}')
+        print(f'Processed {node_counter} nodes, {control_counter} controls, {pathway_counter} pathways')
+      resnet_elem.clear()
+      while resnet_elem.getprevious() is not None:
+        del resnet_elem.getparent()[0]
+    del context
+    elapsed_time = execution_time(start)
+    print(f'In total read {resnet_counter} resnet sections in {elapsed_time}')
+
+    for f in as_completed(futures):
+      try:
+        node_count, control_count, pathway_count = f.result()
+        node_counter += node_count
+        control_counter += control_count
+        pathway_counter += pathway_count
+      except Exception as e:
+        print_error_info(executor,how2process_function.__name__)
+      
+    elapsed_time = execution_time(start)
+    print(f'Finished processing {node_counter} nodes, {control_counter} controls, {pathway_counter} pathways from "{path2rnef}" in {elapsed_time}')
+
 
 
 class Tee(object):
