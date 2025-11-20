@@ -1,7 +1,6 @@
-import urllib.request,urllib.parse,os,time
+import urllib.parse,os,time
 from lxml import etree as ET
-from urllib.error import HTTPError
-from ..utils import dir2flist,execution_time,pretty_xml,next_tag,dir2flist,PCT
+from ..utils import dir2flist,execution_time,pretty_xml,next_tag,dir2flist,PCT,attempt_request4
 from ..ETM_API.references import Reference,TITLE,SENTENCE,AUTHORS,PUBYEAR,JOURNAL
 from ..ResnetAPI.NetworkxObjects import PSRelation,OBJECT_TYPE
 from ..ResnetAPI.ResnetAPIcache import PSObject, ResnetGraph
@@ -24,8 +23,10 @@ class SNP(PSObject):
     psobj = PSObject(self)
     [psobj.set_property(db+' ID',id) for db,id in self.Idendifires.items()]
     alleles = str()
-    for allele, allele_count,pop_size in self.MAFs.items():
-      alleles += allele + f'({round(float(allele_count/pop_size),2)}'+PCT+')'
+    for allele, allele_frequency in self.MAFs.items():
+      alleles += allele + f'({round(float(allele_frequency),2)}'+PCT+')'
+    psobj[OBJECT_TYPE] = ['GeneticVariant']
+    return psobj
 
 
 def cache_path(basename=DBSNP_CACHE_BASE):
@@ -37,6 +38,7 @@ def gv2SNP(gv:PSObject,rsid2SNP:dict[str,SNP]):
     my_rsids = [gv.name()]+list(gv.get_props('Alias'))
     for rsid in my_rsids:
       if rsid.startswith('rs'):
+        if rsid in rsid2SNP:
           return rsid2SNP[rsid]
     return SNP()
 
@@ -63,17 +65,9 @@ def downloadSNP(rsids:list,mapdic:dict[str, dict[str, dict[str, PSObject]]])->tu
                 ids = ','.join(s[2:] for s in rsids2download[i:i+stepSize])
                 
                 params.update({'id':ids})
-                req = urllib.request.Request(url=BASE_URL+'efetch.fcgi?'+urllib.parse.urlencode(params))
-                for attempt in range(1,11):
-                    try:
-                        response = urllib.request.urlopen(req).read()
-                        break
-                    except HTTPError as e:
-                        print(f'Fetch EUtils attempt {attempt} failed with error {e}.  Will try again in 5 seconds')
-                        time.sleep(5)
-                        continue
-
-                snps = ET.fromstring('<documents>'+response.decode().strip()+'</documents>')
+                url=BASE_URL+'efetch.fcgi?'+urllib.parse.urlencode(params)
+                response = attempt_request4(url)
+                snps = ET.fromstring('<documents>'+response.data.decode().strip()+'</documents>')
                 f.write(pretty_xml(ET.tostring(snps),True))
                 id2snps, gvs2genes_rels = xml2SNP(snps,mapdic)
                 id2snp.update(id2snps)
@@ -99,10 +93,10 @@ def dbsnp_hyperlink(rs_ids:list, as_count=True):
         return '=HYPERLINK("'+base_url+data+'",\"{}\")'.format( ','.join(rs_ids))
     
 
-def parseMAF(snp_record:ET._Element):
+def parseMAF(snp_record:ET._Element)->dict[str:float]:
     '''
     output:
-      {allele:(allele_count, pop_size)}
+      {allele:(total_population_frequency)}
     '''
     alleles = dict() # {allele:(allele_count, pop_size)}
     for maf in snp_record.findall('./GLOBAL_MAFS/MAF'):
@@ -114,10 +108,10 @@ def parseMAF(snp_record:ET._Element):
         population_size = int(allele_freq_pop[slash_pos+1:])
         freq = float(allele_freq_pop[eq_pos+1:slash_pos])
         try:
-            allele_count, pop_size = alleles[allele]
-            alleles[allele] = (allele_count+freq*population_size, pop_size+population_size)
+          allele_count, pop_size = alleles[allele]
+          alleles[allele] = (allele_count+freq*population_size, pop_size+population_size)
         except KeyError:
-            alleles[allele] = (freq*population_size,population_size)
+          alleles[allele] = (freq*population_size,population_size)
 
     to_return = dict()
     for a,f in alleles.items():
@@ -168,7 +162,7 @@ def parseSNP(snpdocsum:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject]]]
     gv_psobj = snp.to_psobj()
     snp.update_with_list('Genes',genes)
     for gene_name,geneid in genes:
-      gene = PSObject({'URN':'urn:agi-llid:'+geneid,'Name':gene_name})
+      gene = PSObject({'URN':'urn:agi-llid:'+geneid,'Name':[gene_name],OBJECT_TYPE:['Protein']})
       ref = Reference('PMID','11125122')
       ref[TITLE] = ['dbSNP: the NCBI database of genetic variation']
       ref[AUTHORS] = ['Sherry,S.T.;Ward,M.H.;Kholodov,M.;Baker,J.;Phan,L.;Smigielski,E.M.;Sirotkin,K']
@@ -178,7 +172,7 @@ def parseSNP(snpdocsum:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject]]]
       if fxns:
         sentence = ','.join(fxns)+' '+sentence
   
-      ref.add_sentence_prop(ref._make_textref,SENTENCE,sentence)
+      ref.add_sentence_prop(ref._make_textref(),SENTENCE,sentence)
       gv2gene = PSRelation.make_rel(gv_psobj,gene,{OBJECT_TYPE:'GeneticChange'},[ref])
       gv2genes.append(gv2gene)
 

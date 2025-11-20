@@ -1,8 +1,7 @@
-import urllib.request, urllib.parse, os, time
+import urllib.parse, os, time
 from lxml import etree as ET
-from urllib.error import HTTPError
 from time import sleep
-from ..utils import dir2flist, execution_time,pretty_xml,next_tag,dir2flist,replace_non_unicode,urn_encode
+from ..utils import dir2flist, execution_time,pretty_xml,next_tag,dir2flist,replace_non_unicode,urn_encode,attempt_request4
 from ..ResnetAPI.NetworkxObjects import PSObject,PSRelation,AUTHORS,JOURNAL,PUBYEAR
 from ..ResnetAPI.ResnetGraph import ResnetGraph,Reference,TITLE,SENTENCE,OBJECT_TYPE
 from ..ETM_API.references import CLINVAR_ID,CLINVAR_ACC
@@ -51,27 +50,18 @@ def rs2rcv(rsids:list):
   for i in range(0, rsids_len, stepSize):
     rsids_chunk = ','.join(s[2:] for s in rsids[i:i+stepSize])
     elink_params = {'id':rsids_chunk,'dbfrom':'snp','db':'clinvar'}
-    req_l = urllib.request.Request(url=BASE_URL+'elink.fcgi?'+urllib.parse.urlencode(elink_params))
+    req_l = BASE_URL+'elink.fcgi?'+urllib.parse.urlencode(elink_params)
     # https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?&db=clinvar&dbfrom=snp&id=
-    response_l = urllib.request.urlopen(req_l).read()
-    link2cv = ET.fromstring(response_l.strip())
+    response_l = attempt_request4(req_l)
+    link2cv = ET.fromstring(response_l.data)
     cvids = [e.text for e in link2cv.findall('LinkSet/LinkSetDb/Link/Id')]
     
   for i in range(0, len(cvids), stepSize):
     cvids_chunk = ','.join(s for s in cvids[i:i+stepSize])
     efecth_params = {'db':'clinvar','id':cvids_chunk}
-    req = urllib.request.Request(url=BASE_URL+'esummary.fcgi?'+urllib.parse.urlencode(efecth_params))
-    # https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?&db=clinvar&id=
-    for attempt in range(1,11):
-      try:
-          response = urllib.request.urlopen(req).read()
-          break
-      except HTTPError as e:
-          print(f'Fetch EUtils attempt {attempt} failed with error {e}.  Will try again in 5 seconds')
-          sleep(5)
-          continue
-
-    cvs = ET.fromstring(response.strip())
+    url = BASE_URL+'esummary.fcgi?'+urllib.parse.urlencode(efecth_params)
+    response = attempt_request4(url) # https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?&db=clinvar&id=
+    cvs = ET.fromstring(response.data)
     rcvs = [e.text for e in cvs.findall('DocumentSummarySet/DocumentSummary/supporting_submissions/rcv/string')]
     rcv_ids.update(rcvs)
     print(f'Downloaded {i+stepSize} SNPs out of {len(cvids)}')
@@ -252,6 +242,7 @@ def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject
     only4rsids - filter by dbSNP rs identifiers
     mapdic - {OBJECT_TYPE:{propname:{provalue:PSObject}}}
   output:
+    gv: PSObject
     rel_fa:PSRelation = GV-FunctionalAssociation-Disease
     rel_gc:PSRelation = GV-GeneticChange-Gene
     where GV, Disease, Gene are mapped by mapdic
@@ -389,14 +380,13 @@ def rcv2psrels(ClinVarSet:ET._Element,mapdic:dict[str,dict[str,dict[str,PSObject
 def rcv2rn(ClinVarResultSet:ET._Element, mapdic:dict[str,dict[str,dict[str,PSObject]]], only4rsids:list,include_benign=False):
   all_rels = list()
   for ClinVarSet in ClinVarResultSet.findall('ClinVarSet'):
-    rel_fa,rel_gc = rcv2psrels(ClinVarSet,mapdic,only4rsids,include_benign)
+    gv,rel_fa,rel_gc = rcv2psrels(ClinVarSet,mapdic,only4rsids)
     if rel_fa:
       all_rels.append(rel_fa)
       if rel_gc:
         all_rels.append(rel_gc)
 
-  clinvar_graph = ResnetGraph()
-  clinvar_graph.add_psrels(all_rels)
+  clinvar_graph = ResnetGraph.from_rels(all_rels)
   return clinvar_graph
 
 
@@ -439,18 +429,10 @@ def downloadCV(_4rsids:list,mapdic:dict[str, dict[str, dict[str, PSObject]]],inc
           for i in range(0, len(rcv_ids), stepSize):
             ids = ','.join(rcv_ids[i:i+stepSize])
             params.update({'id':ids})
-            req = urllib.request.Request(url=BASE_URL+'efetch.fcgi?'+urllib.parse.urlencode(params))
+            url=BASE_URL+'efetch.fcgi?'+urllib.parse.urlencode(params)
             # url = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=clinvar&rettype=clinvarset&id=ids'
-            for attempt in range(1,11):
-              try:
-                response = urllib.request.urlopen(req).read()
-                break
-              except HTTPError as e:
-                print(f'Fetch EUtils attempt {attempt} failed with error {e}.  Will try again in 5 seconds')
-                sleep(5)
-                continue
-              
-            cvs = ET.fromstring(response.strip())
+            response = attempt_request4(url)           
+            cvs = ET.fromstring(response.data)
             f.write(pretty_xml(ET.tostring(cvs),True))
             chunk_G = rcv2rn(cvs,mapdic,rsids2download,include_benign)
             gene2gv2dis.add_graph(chunk_G)
