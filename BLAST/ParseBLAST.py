@@ -1,11 +1,11 @@
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from ..pandas.panda_tricks import df
+import pandas as pd
 
-# Define a dataclass to hold alignment block information, similar to the C++ class.
 END_OF_QUERY = ("Effective search",">") #,"S2:", "BLAST", "TBLASTN")
 
+# Define a dataclass to hold alignment block information, similar to the C++ class.
 @dataclass
 class AlignmentBlock:
     """Represents a single alignment block in a BLAST hit."""
@@ -466,14 +466,13 @@ def blast_reciprocal_map(blast_results_path:str, out_path:str,align_score_cutoff
     df_header = ["Query","Hit","Average alignment Score","Best Eval",
                  "Query alignment length","Query Length","Query alignment Score",
                  "Hit alignment length","Hit Length","Hit alignment Score"]
-    BRHmap = df.from_rows(rows, df_header)
+    BRHmap = pd.DataFrame(rows,columns=df_header)
 
     for c in ['Average alignment Score','Best Eval']: 
        BRHmap[c] = BRHmap[c].astype(float)
     for c in ['Query alignment Score','Hit alignment Score','Query alignment length','Query Length','Hit alignment length','Hit Length']: 
        BRHmap[c] = BRHmap[c].astype(int)
 
-    BRHmap = BRHmap.sortrows(by=["Average alignment Score","Best Eval"], ascending=[False, True])
+    BRHmap  = BRHmap.sort_values(by=["Average alignment Score","Best Eval"], ascending=[False, True])
     BRHmap.to_csv(out_path,sep='\t', index=False)
-
     return best_unique_pairs
