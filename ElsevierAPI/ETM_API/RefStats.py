@@ -1,6 +1,7 @@
 from ..pandas.panda_tricks import df,pd
 from ..utils import execution_time,sortdict,load_api_config
-from ..NCBI.pubmed import medlineTA2issn,docid2pmid
+from ..NCBI.pubmed import medlineTA2issn
+from ..NCBI.PMC import docid2pmid
 from ..SBS_API.sbs import SBSapi
 from .etm import ETMsearch
 from ..ScopusAPI.scopus import Scopus,AuthorSearch
@@ -202,6 +203,14 @@ class RefStats:
       self.__normalize_journal(ref)
       self.Scopus.scopus_stats4(ref)
       return
+  
+
+  def citation_index(self,ref:Reference)->Reference:
+    '''
+    returns citation index for ref from Scopus
+    '''
+    self.Scopus.scopus_stats4(ref)
+    return ref
 
 
   @staticmethod

@@ -4,8 +4,9 @@ import xlsxwriter,re,time,json,unicodedata
 from datetime import timedelta
 from urllib.parse import urlencode,quote
 from titlecase import titlecase
-from ..utils import str2str,sortdict
+from ..utils import list2str,sortdict
 from collections import defaultdict
+from typing import Generator
 
 
 AUTHORS = 'Authors'
@@ -16,7 +17,7 @@ MEDLINETA = 'MedlineTA'
 PUBYEAR = 'PubYear'
 PUBMONTH = 'PubMonth'
 PUBDAY = 'PubDay'
-SENTENCE = 'Sentence'
+SENTENCE = 'msrc'
 TITLE = 'Title'
 ABSTRACT = 'Abstract'
 CLAIMS = 'Claims'
@@ -42,7 +43,7 @@ CLINVAR_ACC = 'Clinvar RCV Accession'
 INT_PROPS = {PS_CITATION_INDEX,PUBYEAR,ETM_CITATION_INDEX,SBS_CITATION_INDEX}
 FLOAT_PROPS = {RELEVANCE}
 ARTICLE_ID_TYPES = ['PMID', 'DOI', 'PII', 'PUI', 'EMBASE']
-CLINVAR_ID_TYPES = ['Clinvar',CLINVAR_ACC,CLINVAR_ID]
+CLINVAR_ID_TYPES = ['CLINVAR','Clinvar',CLINVAR_ACC,CLINVAR_ID]
 PS_REFIID_TYPES = ARTICLE_ID_TYPES + ['NCT ID','NCTID'] + CLINVAR_ID_TYPES
 #keep PS_ID_TYPES as list for efficient identifier sort.  ID types are ordered by frequency in Resnet
 ETM_ID_TYPES = ['ELSEVIER','PMC','REPORTER','GRANTNUMREPORTER']
@@ -51,7 +52,7 @@ CLINTRIAL_PROPS = {'TrialStatus','Phase','StudyType','Start','Intervention','Con
 
 JOURNAL_PROPS = {JOURNAL,'ISSN','ESSN',MEDLINETA}
 PS_BIBLIO_PROPS_ALL = {PUBYEAR,AUTHORS,TITLE,'PubMonth','PubDay','PubTypes','Start'}|JOURNAL_PROPS # 'Start' = 'PubYear'
-PS_BIBLIO_PROPS = {TITLE, PUBYEAR, AUTHORS, JOURNAL, MEDLINETA,'Start'} # contains only props necessary for reference::__biblio_tuple
+PS_BIBLIO_PROPS = {TITLE, PUBYEAR, AUTHORS, JOURNAL, MEDLINETA,'Start','ISSN'} # contains only props necessary for reference::__biblio_tuple
 
 BIBLIO_PROPS = PS_BIBLIO_PROPS | {INSTITUTIONS,RELEVANCE}
 REF_ID_TYPES = PS_REFIID_TYPES+ETM_ID_TYPES+PATENT_ID_TYPES
@@ -196,27 +197,32 @@ class Reference(dict):
   
 
   @staticmethod
-  def __parse_textref(textref:str):
-      #TexRef example: 'info:doi/10.1016/j.gendis.2015.05.001#body:49'
-      prefix = textref[:textref.find(':')]
-      if prefix == 'info':
-          tr = textref[5:]
-          slash_pos = tr.find('/')
-          if slash_pos > 0:
-              id_type = tr[:slash_pos]
-              identifier_start = slash_pos+1
-              identifier_end = tr.rfind('#',identifier_start)
-              if identifier_end < 0: identifier_end = len(tr)
-              identifier = tr[identifier_start:identifier_end]
-              return id_type.upper(),identifier
-          else:
-              return 'TextRef', textref
+  def _textref2id(textref:str)->tuple[str,str]:
+    '''
+    output:
+      (idtype,id) if textref valid else ('TextRef', textref)
+    '''
+    #TexRef example: 'info:doi/10.1016/j.gendis.2015.05.001#body:49'
+    prefix = textref[:textref.find(':')]
+    if prefix == 'info':
+      tr = textref[5:]
+      slash_pos = tr.find('/')
+      if slash_pos > 0:
+        id_type = tr[:slash_pos]
+        identifier_start = slash_pos+1
+        identifier_end = tr.rfind('#',identifier_start)
+        if identifier_end < 0: identifier_end = len(tr)
+        identifier = tr[identifier_start:identifier_end]
+        return id_type.upper(),identifier
       else:
-          return 'TextRef', textref
+        return 'TextRef', textref
+    else:
+      return 'TextRef', textref
+
 
   @classmethod
   def from_textref(cls, textref:str):
-      id_type, identifier = cls.__parse_textref(textref)
+      id_type, identifier = cls._textref2id(textref)
       return cls(id_type,identifier)
   
   
@@ -239,7 +245,7 @@ class Reference(dict):
           except KeyError: continue
       
       try: return self.Identifiers['TextRef']
-      #if reference has non-canonical TextRef that cannot be parsed by __parse_textref
+      #if reference has non-canonical TextRef that cannot be parsed by _textref2id
       # self.Identifiers has ['TextRef'] value
       except KeyError: return NotImplemented
 
@@ -357,12 +363,12 @@ class Reference(dict):
     return clean_sent
 
 
-  def add_sentence_props(self, text_ref:str, propID:str, prop_values:list):
+  def add_sentence_props(self, TextRef:str, propID:str, prop_values:list):
     if propID == SENTENCE:
       prop_values = list(filter(None,[self.__is_new(x) for x in prop_values if x]))
                
     if prop_values:
-      self.snippets[text_ref][propID].update(prop_values)
+      self.snippets[TextRef][propID].update(prop_values)
 
 
   def has_property(self, prop_name:str):
@@ -450,20 +456,27 @@ class Reference(dict):
 
       return was_renamed
   
+
   def get_doc_id(self):
       '''
-      Return
-      ------
-      tuple(id_type, identifier) for the first id type from REF_ID_TYPES\n
-      tuple('','') if reference does not have id_type in REF_ID_TYPES
+      output:
+        tuple(id_type, identifier) for the first id type from REF_ID_TYPES\n
+        tuple('','') if reference does not have id_type in REF_ID_TYPES
       '''
       for id_type in REF_ID_TYPES:
-          try:
-              return id_type, self.Identifiers[id_type]
-          except KeyError: continue
+        if id_type in self.Identifiers:
+          return  id_type, self.Identifiers[id_type]
       return str(),str()
   
 
+  def doi_or_id(self):
+    if 'DOI' in self.Identifiers:
+      return self.Identifiers['DOI']
+    else:
+      id_type, identifier = self.get_doc_id()
+      return id_type  +':'+identifier if id_type  else ''
+
+  
   @staticmethod
   def identifiers_str(id_type:str,identifier:str):
       return id_type + ':' + identifier
@@ -471,18 +484,15 @@ class Reference(dict):
 
   def _identifiers_str(self,id_type=''):
       '''
-      Return
-      ------
-      id_type:id_value
+      output:
+        if id_type provided and exists in self.Identifiers: id_type:id_value\n
+        else: first id_type:id_value from REF_ID_TYPES
       '''
-      if id_type:
-          try:
-            return id_type+':'+self.Identifiers[id_type]
-          except KeyError:
-            raise KeyError
+      if id_type in self.Identifiers:
+        return id_type+':'+self.Identifiers[id_type]
       else:
-        id_type, identifier = self.get_doc_id()
-        return id_type  +':'+identifier
+        id_type, identifier = self.get_doc_id() 
+        return id_type  +':'+identifier if id_type  else ''
   
 
   def identifier(self,identifier_type):
@@ -555,6 +565,9 @@ class Reference(dict):
   
 
   def toAuthors(self):
+    """
+      creates self[_AUTHORS_] from self[AUTHORS]
+    """
     if _AUTHORS_ not in self:
       author_strs = list(filter(None,self.author_list()))
       self[_AUTHORS_] = list(map(Author.fromStr,author_strs))
@@ -562,47 +575,41 @@ class Reference(dict):
     
 
   def to_str(self,id_types=list(),col_sep='\t',print_snippets=False,biblio_props=[],other_props=[],with_hyperlinks=False):
-      '''
-      Return
-      ------
-      order of properties in return list: other_props, id_types, biblio_props, snippets\n
-      reference identifiers for PMID and DOI are hyperlinked if with_hyperlinks is True
-      snippets are printed as json dump in one column
-      '''
-      row = self.to_list(id_types,print_snippets,biblio_props,other_props,with_hyperlinks)
-      return col_sep.join(row)
+    '''
+    Return
+    ------
+    order of properties in return list: other_props, id_types, biblio_props, snippets\n
+    reference identifiers for PMID and DOI are hyperlinked if with_hyperlinks is True
+    snippets are printed as json dump in one column
+    '''
+    row = self.to_list(id_types,print_snippets,biblio_props,other_props,with_hyperlinks)
+    return col_sep.join(row)
   
 
   def pubyear(self):
-      try:
-          return int(self[PUBYEAR][0])
-      except KeyError:
-          try:
-              year = str(self['Start'][0]) # Clinical trials case
-              if year[-4:].isdigit(): # format: 20-Apr-2020; August 2004 
-                  return int(year[-4:])
-              elif year[-2:].isdigit():
-                  return int('20'+year[-2:]) # format: 20-Apr-20
-              elif year[:2].isdigit(): 
-                  return int('20'+year[:2]) # format 20-May
-              else:
-                  print(f'Unknown Clinical trial "Start" format: {year}')
-                  return 1812
-          except KeyError: return 1812 # No PubYear case
+      if PUBYEAR in self:
+        return int(self[PUBYEAR][0])
+      else:
+        if 'Start' in self: # Clinical trials case
+          year = str(self['Start'][0]) 
+          if len(year) >= 4 and year[-4:].isdigit(): # format: 20-Apr-2020; August 2004 
+              return int(year[-4:])
+          elif year[-2:].isdigit():
+              return int('20'+year[-2:]) # format: 20-Apr-20
+          elif year[:2].isdigit(): 
+              return int('20'+year[:2]) # format 20-May
+          else:
+              print(f'Unknown Clinical trial "Start" format: {year}')
+              return 1812
+        else: return 1812 # No PubYear case
 
 
-  def title(self): 
-      try:
-          return self['Title'][0]
-      except KeyError:
-          return ''
-      
+  def title(self):
+    return self.get(TITLE,[''])[0]
+
   
   def pmid(self):
-      if 'PMID' in self.Identifiers:
-        return self.Identifiers['PMID']  
-      else:
-        return ''
+    return self.Identifiers.get('PMID','')
   
 
   def pubmed_link(self):
@@ -614,10 +621,7 @@ class Reference(dict):
 
 
   def doi(self):
-      try:
-          return self.Identifiers['DOI']
-      except KeyError:
-          return ''
+    return self.Identifiers.get('DOI','')
 
   
   def doi_link(self):
@@ -637,15 +641,7 @@ class Reference(dict):
 
 
   def journal(self): 
-      '''
-      Return
-      ------
-      self[JOURNAL][0] 
-      '''
-      try:
-          return self[JOURNAL][0]
-      except KeyError:
-          return str('No journal name')
+    return self.get(JOURNAL,['No journal name'])[0]
                 
       
   def relevance(self,score_name:str=RELEVANCE):
@@ -801,9 +797,16 @@ class Reference(dict):
               return 0.0 if is_numerical else '0'
 
 
+  def sentences(self)->Generator[tuple[str,str], None, None]:
+    for textref, snippet in self.snippets.items():
+      sentences = snippet.get(SENTENCE,{''})
+      for sentence in sentences:
+        yield textref,sentence
+
+
   def _snippets(self):
     for textref, snippet in self.snippets.items():
-      sentences = snippet.get(SENTENCE,set()) 
+      sentences = snippet.get(SENTENCE,set())
       if len(sentences) > 1:
         for i,sentence in enumerate(sentences):
           new_snippet = snippet.copy()
@@ -815,18 +818,13 @@ class Reference(dict):
 
   def get_snippet_prop(self,prop_name:str):
       """
-      Returns
-      -------
-      {textref:[prop_vals]}
+      output:
+        {textref:[prop_vals]}
       """
       prop_values = dict()
       for textref, sentence_props in self.snippets.items():
-          try:
-              prop_vals = sentence_props[prop_name]
-              prop_values[textref] = prop_vals
-          except KeyError:
-              continue
-
+        if prop_name in sentence_props:
+          prop_values[textref] = sentence_props[prop_name]
       return prop_values
   
 
@@ -835,41 +833,37 @@ class Reference(dict):
     input:
         prop_name can be either in self.snippet or self.Identifiers or self
     '''
-    try:
-      return list(self[prop_name])
-    except KeyError:
-      try:
-        return [self.Identifiers[prop_name]]
-      except KeyError:
-        snippet_prop_dic = self.get_snippet_prop(prop_name)
-        props = set()
-        for text_ref, prop_vals in snippet_prop_dic.items():
-          props.update(prop_vals)
-        props = list(props)
-        props.sort()
-        return props
+    value = self.get(prop_name, None)
+    if value is not None:
+      return list(value)
+
+    # First check failed, try .Identifiers
+    value = self.Identifiers.get(prop_name,None)
+    if value is not None:
+      return [value]
+
+    # Both checks failed, run the fallback logic
+    snippet_prop_dic = self.get_snippet_prop(prop_name)
+    props = set()
+    [props.update(prop_vals) for prop_vals in snippet_prop_dic.values()]
+    props = list(props)
+    props.sort()
+    return props
 
 
   def get_prop(self,prop_name:str,value_index=0,if_missing_return='')->str|int|bool:
-      '''
-      input:
-          prop_name can be either in self.snippet or self.Identifiers or self
-      '''
-      my_props = self.get_props(prop_name)
-      if my_props:
-          try:
-              return my_props[value_index]
-          except ValueError:
-              return if_missing_return
-      return if_missing_return
+    '''
+    input:
+        prop_name can be either in self.snippet or self.Identifiers or self
+    '''
+    my_props = self.get_props(prop_name)
+    if my_props:
+      try:
+        return my_props[value_index]
+      except IndexError:
+        return if_missing_return
+    return if_missing_return
   
-
-  def doi_id(self):
-    try:
-      return self['DOI'][0]
-    except KeyError:
-      return self._identifiers_str()
-
 
   def todict(self,as_str2str=False,relname='')->tuple[str,dict[str,list]]:
     dic = dict(self)
@@ -886,7 +880,7 @@ class Reference(dict):
           props_str += prop +': '+ values_str + '. '
         dic[f'[{i+1}]Snippet'] = [add2snippet+textref+': '+props_str.strip()]
 
-    return self.doi_id(), str2str(dic) if as_str2str else self.doi_id(), dic
+    return self.doi_or_id(), list2str(dic) if as_str2str else self.doi_or_id(), dic
 
 
 class ReferenceEncoder(json.JSONEncoder):
@@ -1092,7 +1086,7 @@ class DocMine (Reference):
         
 
     def organizations(self):
-        return {a.organization for a in self.authors for i in a.organization}
+        return {a.organization for a in self[_AUTHORS_] for i in a.organization}
     
     
     def count_property(self,counter:dict, prop_name:str):
