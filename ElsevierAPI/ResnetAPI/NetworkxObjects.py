@@ -4,8 +4,9 @@ from collections import defaultdict
 
 from ..utils import normalize
 from ..ETM_API.references import Reference, len, reflist2dict,pubmed_hyperlink,make_hyperlink,pmc_hyperlink
-from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS_ALL,SENTENCE_PROPS,CLINTRIAL_PROPS
+from ..ETM_API.references import JOURNAL,PS_REFIID_TYPES,NOT_ALLOWED_IN_SENTENCE,PS_BIBLIO_PROPS_ALL,PS_SENTENCE_PROPS,CLINTRIAL_PROPS
 from ..ETM_API.references import MEDLINETA,PUBYEAR,SENTENCE,TITLE,AUTHORS,_AUTHORS_,PS_REFERENCE_PROPS
+#from ..Embio.PSnx2Neo4j import RELATIONID
 
 OBJECT_TYPE = 'ObjTypeName'
 PROTEIN_TYPES = ['Protein','FunctionalClass','Complex']
@@ -15,6 +16,7 @@ REFCOUNT = 'RelationNumberOfReferences'
 CHILDS = 'Childs'
 EFFECT = 'Effect'
 MECHANISM = 'Mechanism'
+CONNECTIVITY = 'Connectivity'
 RELATION_PROPS = [EFFECT,MECHANISM]
 ALL_PSREL_PROPS = RELATION_PROPS+PS_REFERENCE_PROPS
 #enums for objectypes to avoid misspeling
@@ -30,6 +32,9 @@ CHEMICAL_PROPS = ["CAS ID","HMDB ID","IUPAC Name","InChIKey","LMSD ID","Alias",
 
 DIRECT_RELTYPES = {'DirectRegulation','Binding','ChemicalReaction','ProtModification','PromoterBinding'}
 NONDIRECTIONAL_RELTYPES = {'Binding','CellExpression',FUNC_ASSOC,'Metabolization','Paralog'}
+
+SENTENCE_PROPSET = set(PS_SENTENCE_PROPS + ['Evidence','msrc','Similarity'])
+IGNORE_TEXTREFS = {'Admin imported', 'Customer imported', ''}
 
 STATE = "state"
 ACTIVATED = 1
@@ -70,14 +75,14 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
       if prop_name in self:
         return self[prop_name][value_index] if value_index < len(self[prop_name]) else if_missing_return
       else:
-         return if_missing_return
+        return if_missing_return
 
 
   def urn(self):
-      '''
+    '''
       returns empty string if URN property does not exist
-      '''
-      return self.get_prop('URN')
+    '''
+    return self.get_prop('URN')
       
   
   def active_urn(self):
@@ -152,7 +157,7 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
       return self.get_prop(DBID,if_missing_return=0)
 
 
-  def set_property(self, PropId, PropValue: str):
+  def set_property(self, PropId:str, PropValue):
       self[PropId] = [PropValue]
 
 
@@ -184,8 +189,8 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
 
 
   def update_with_value(self, prop_id:str, new_value):
-      if new_value not in self[prop_id]:
-          self[prop_id].append(new_value)
+    if new_value not in self[prop_id]:
+      self[prop_id].append(new_value)
 
 
   def update_with_list(self, prop_id:str, new_values:list|set):
@@ -515,17 +520,15 @@ class PSRelation(PSObject):
     Creates URN for rel if it does not exist
     '''
     if refresh:
-      regulators = self.regulators()
-      targets = self.targets()
-      return self.__make_urn(regulators, targets)
+      return self.__make_urn(self.regulators(), self.targets())
     else:
-      urn = super().urn()
-      if urn:
-          return urn
-      else:
-          regulators = self.regulators()
-          targets = self.targets()
-          return self.__make_urn(regulators, targets)
+      # Try to return the existing URN.
+      # Case 1: super().urn() returns a "truthy" value (e.g., a non-empty string). 
+      #   The or operator "short-circuits" and immediately returns this value. It does not execute the __make_urn() part.
+      # Case 2: super().urn() returns a "falsy" value (e.g., None or ""). 
+      #   The or operator sees the False value and moves on to evaluate the expression on its right-hand side. 
+      #   It then executes self.__make_urn(...) and returns its result.
+      return super().urn() or self.__make_urn(self.regulators(), self.targets())
           
 
   def has_properties(self,prop_names:set):
@@ -552,24 +555,25 @@ class PSRelation(PSObject):
   def __make_urn(self,regulators:list[PSObject],targets:list[PSObject]):
       '''
       sets:
-          URN property to self
+        URN property to self
       output:
-          calculated URN
+        calculated URN
       '''
       reg_urns = sorted([r.urn() for r in regulators])
       tar_urns = sorted([r.urn() for r in targets])
-      rel_urn = 'urn:agi-'+self.objtype()+':'
+      urn_parts = ['urn:agi-'+self.objtype()+':']
       if tar_urns:
-          rel_urn += 'out:'+'out:'.join(tar_urns) # out:urn:out:
-          rel_urn += ':in-out:'+'in-out:'.join(reg_urns)
-          effect = self.effect()
-          if effect in ['positive','negative']:
-              rel_urn += ':'+ effect
-          if MECHANISM in self:
-              rel_urn += ':'+self[MECHANISM][0]
+        urn_parts.append('out:'+'out:'.join(tar_urns)) # out:urn:out:
+        urn_parts.append('in-out:'+'in-out:'.join(reg_urns))
+        effect = self.effect()
+        if effect in ['positive','negative']:
+          urn_parts.append( effect)
+        if MECHANISM in self:
+          urn_parts.append(self[MECHANISM][0])
       else:
-          rel_urn += 'in-out:'+':in-out:'.join([u for u in reg_urns])
+        urn_parts.append('in-out:'+':in-out:'.join([u for u in reg_urns]))
 
+      rel_urn = ':'.join(urn_parts)
       self.set_property('URN', rel_urn)
       return str(rel_urn)
   
@@ -585,13 +589,15 @@ class PSRelation(PSObject):
     return
    
 
-  def _add_refs(self, references:list[Reference])->list[Reference]:
+  def _add_refs(self, references:list[Reference])->int:
     '''
+    merges refs from input to existing refs in self.reference
     output:
-      new self.refernces\nmerges refs from input to existing refs in self.reference
+      number of added references
     '''
-    self.refs()
-    if len(self.references) > len(references):
+    if not references: return 0
+    old_refcount = len(self.refs())
+    if old_refcount > len(references):
       larger_list = self.references
       smaller_list = references
     else:
@@ -618,7 +624,7 @@ class PSRelation(PSObject):
         ref_dict.update({ref.identifiers_str(k,v):ref for k,v in ref.Identifiers.items()})
         
     self.references = list(set(ref_dict.values()))
-    return self.references
+    return len(self.references) - old_refcount
 
 
   def replace_refs(self, newrefs:list):
@@ -664,9 +670,8 @@ class PSRelation(PSObject):
 
   def cr(self):
       '''
-      Return
-      -------
-      Relation citation ratio
+      Output:
+        Relation citation ratio
       '''
       my_refs = self.refs()
       return float(len(my_refs))/float(self.pubage()+1)
@@ -680,8 +685,8 @@ class PSRelation(PSObject):
       '''
       b = math.sqrt(3)/3
       cr = self.cr()
-      cw = b*cr/math.sqrt(b*b*cr*cr +1)
-      return cw
+      return b*cr/math.sqrt(b*b*cr*cr +1)
+
   
 
   def merge_rel(self, other:'PSRelation'):
@@ -797,95 +802,106 @@ class PSRelation(PSObject):
   
 
   def props2list(self, propID, cell_sep=';'):
-      try:
-          return self[propID]
-      except (IndexError,KeyError):
-          to_return = list()
-          for prop in self.PropSetToProps.values():
-              prop_set_val = str()
-              for prop_id, values in prop.items():
-                  if prop_id == propID:
-                      prop_set_val = cell_sep.join(values)
-                      break
-              to_return.append(prop_set_val)
-          return to_return
+    try:
+      return self[propID]
+    except (IndexError,KeyError):
+      to_return = list()
+      for prop in self.PropSetToProps.values():
+        prop_set_val = str()
+        for prop_id, values in prop.items():
+          if prop_id == propID:
+            prop_set_val = cell_sep.join(values)
+            break
+        to_return.append(prop_set_val)
+      return to_return
 
 
-  def refs(self,refresh=False,ref_limit=0)->list[Reference]:
+  def refs(self,refresh=False,ref_limit=0,relid2refs:dict[str,list[Reference]]=dict())->list[Reference]:
     '''
     output:
       self.references sorted by PUBYEAR
     '''
-    if not self.references or refresh: # making self.references from self.PropSetToProps:
-      for propSet in self.PropSetToProps.values():
-        my_reference_tuples = list()
-        for ref_id_type in PS_REFIID_TYPES:
-          if ref_id_type in propSet:
-            ref_id = propSet[ref_id_type][0]
-            my_reference_tuples.append((ref_id_type, ref_id))
+    if refresh: self.references.clear()     
+    if not self.references: # making self.references from self.PropSetToProps:
+      if relid2refs:
+        self.references = relid2refs[int(self['RelationID'][0])]
+      else:
+        refdict4self = dict() # {(idtype,id):ref} # holds reference dictionary to check for duplicates
+        def find_ref(propSet_ids:list[tuple[str,str]])->Reference:
+          for t in propSet_ids:
+            if t in refdict4self:
+              return refdict4self[t]
+          return None
+        
+        def create_newref(propSetids: list[tuple[str,str]]):
+          newref = Reference(*propSetids[0])
+          newref.Identifiers.update(dict(propSetids[1:]))
+          self.references.append(newref)
+          newrefid_dict = {t:newref for t in propSetids}
+          refdict4self.update(newrefid_dict)
+          return newref
 
-        if my_reference_tuples: # propSet is valid reference - resolving duplicates 
-            # case when reference have valid identifiers
-          article_identifiers = {t[1] for t in my_reference_tuples}
-          existing_ref = [r for r in self.references if not article_identifiers.isdisjoint(r.Identifiers.keys())]
-          if not existing_ref:  # case when reference is new
-            first_tuple =  my_reference_tuples[0]
-            ref = Reference(first_tuple[0], first_tuple[1])
-            ref.Identifiers.update({t[0]:t[1] for t in my_reference_tuples[1:]})
-            self.references.append(ref)
-          else: # duplicate ref exists !
-            ref = existing_ref[0]
-            for i in range(1, len(existing_ref)):
-              existref = existing_ref[i]
-              ref._merge(existref)
-            del existing_ref[1:] # deleting duplicate refs to save memory
-        else: #propSet is not valid reference - trying to create one using Title or TexRef
-          if 'Title' in propSet: # trying id reference by title as a last resort since it does not have valid identifiers
-            propset_title = propSet['Title'][0]
-            refs_with_same_title = [r for r in self.references if r.title() == propset_title]
-            if refs_with_same_title:
-              ref = refs_with_same_title[0]
-            else:
-              ref = Reference('Title', propset_title)
-              self.references.append(ref)
-          else: # no title :(
-            if 'TextRef' in propSet:
-              txtref = propSet['TextRef'][0]
-              if txtref not in ['Admin imported','Customer imported']:
-                ref = Reference.from_textref(txtref)
-                self.references.append(ref)
-              else: continue #'Admin imported' references have no identifiers and ignored 
-            else: continue
-
-        # adding all other valid properties to ref
-        if 'TextRef' in propSet:
-          textref = propSet['TextRef'][0]
-          if textref[4:10] == 'hash::': # references from older Resnet versions can start with 'urn:hash::'
-            textref = ref._make_textref()
-          elif textref in ['Admin imported','Customer imported','']: 
-            print('Reference has no TextRef property and will be ignored!!!')
+        for propSet in self.PropSetToProps.values():
+          # creating list of (id_type,id) tuples propSet to inspect for duplicates
+          propSet_ids = [ (idtype, propSet[idtype][0])for idtype in PS_REFIID_TYPES if idtype in propSet]
+          propset_title_key = (TITLE,propSet[TITLE][0].lower()) if TITLE in propSet else None
+          propset_textref = propSet['TextRef'][0] if 'TextRef' in propSet else None
+          if propset_textref in IGNORE_TEXTREFS: 
+            #print('Reference has no TextRef property and will be ignored!!!')
             continue # ignore and move to the next PropSet
-        else:
-          textref = ref._make_textref()
-          
-        for propId, propValues in propSet.items():  
-          if propId in PS_BIBLIO_PROPS_ALL or propId in CLINTRIAL_PROPS:
-            ref.update_with_list(propId, propValues)
-          elif propId in SENTENCE_PROPS:
-            ref.add_sentence_props(textref,propId, propValues)
-          elif propId == 'msrc':
-            ref.add_sentence_props(textref,SENTENCE, propValues)
+        
+          if propSet_ids: # propSet is valid reference with identifiers - resolving duplicates:
+            duplicate_ref = find_ref(propSet_ids)
+            if duplicate_ref is None:  # case when reference is new
+              if propset_title_key:
+                propSet_ids.append(propset_title_key)
+              propSet_ref = create_newref(propSet_ids)
+            else: # duplicate ref exists!
+              propSet_ref = duplicate_ref
+              propSet_ref.Identifiers.update(dict(propSet_ids))
+              [refdict4self.update({t:propSet_ref}) for t in propSet_ids]
+              if propset_title_key:
+                refdict4self[propset_title_key] = propSet_ref
+          else: # no propSet_ids => propSet is not valid reference 
+            # therefore will try to create valid one using Title or TextRef:
+            if propset_title_key:
+              if propset_title_key in refdict4self:
+                propSet_ref = refdict4self[propset_title_key]
+              else:
+                propSet_ref = create_newref([propset_title_key])
+            elif propset_textref: # propSet has no title, no propSet_ids, but has textref:
+                propSetidtuple = Reference._textref2id(propset_textref)
+                if propSetidtuple in refdict4self:
+                  propSet_ref = refdict4self[propSetidtuple]
+                else:
+                  propSet_ref = create_newref([propSetidtuple])
+            else:
+              # PropSet is not valid: no Ids, no title, no textref
+              continue # ignore and move to the next propSet 
 
-        if MEDLINETA in ref:
-          ref[JOURNAL] = ref.pop(MEDLINETA)
+          # reparing TextRef, TexRef from older Resnet versions can start with 'urn:hash::'
+          if not propset_textref or propset_textref[4:10] == 'hash::': 
+            propset_textref = propSet_ref._make_textref()
+            
+          # adding all other valid properties to propSet_ref
+          for propId, propValues in propSet.items():
+            if propId in PS_BIBLIO_PROPS_ALL or propId in CLINTRIAL_PROPS:
+              propSet_ref.update_with_list(propId, propValues)
+            elif propId in SENTENCE_PROPSET:
+              propSet_ref.add_sentence_props(propset_textref,propId, propValues)
 
-        if AUTHORS not in ref and _AUTHORS_ in ref: # converting _AUTHORS_ to AUTHORS
-          ref[AUTHORS] = [x.tostr() for x in ref[_AUTHORS_]]
+          if MEDLINETA in propSet_ref:
+            propSet_ref[JOURNAL] = propSet_ref.pop(MEDLINETA)
+
+          if AUTHORS not in propSet_ref:
+            if _AUTHORS_ in propSet_ref: # converting _AUTHORS_ to AUTHORS
+              propSet_ref[AUTHORS] = [x.tostr() for x in propSet_ref[_AUTHORS_]]
+          else:
+            [x.toAuthors() for x in self.references] #converting AUTHORS to _AUTHORS_
     
-    [x.toAuthors() for x in self.references] #converting AUTHORS to _AUTHORS_
     self.references.sort(key=lambda r: r._sort_key(by_property=PUBYEAR), reverse=True)
     return self.references[:ref_limit] if ref_limit else self.references
-
+  
   
   def filter_references(self, keep_prop2values:dict,in_place=True):
       '''
@@ -1074,40 +1090,43 @@ class PSRelation(PSObject):
 
 
   def regulators(self)->list[PSObject]:
-    return self.Nodes[REGULATORS] if REGULATORS in self.Nodes.keys() else []
+    return self.Nodes[REGULATORS] if REGULATORS in self.Nodes else []
       
   def targets(self)->list[PSObject]:
-    return self.Nodes[TARGETS] if TARGETS in self.Nodes.keys() else []
+    return self.Nodes[TARGETS] if TARGETS in self.Nodes else []
       
 
-  def get_regulators_targets(self)->list[tuple[int,int]]:
+  def get_regulators_targets(self,reverse4undirected=True)->list[tuple[int,int]]:
       """
-      Returns
-      -------
-      [(regulator_uid,target_uid)] pairs for directional self
-      all possible pairwise combinations for non-directional self
+      output:
+        [(regulator_uid,target_uid)] pairs for directional self
+        all possible pairwise combinations for non-directional self
       """
       if self.is_directional():
-          return [(r.uid(),t.uid()) for r in self.Nodes[REGULATORS] for t in self.Nodes[TARGETS]]
+        return [(r.uid(),t.uid()) for r in self.Nodes[REGULATORS] for t in self.Nodes[TARGETS]]
       else:
-          # for non-directions relations
-          assert(len(self.Nodes) == 1)
-          if REGULATORS in self.Nodes:
-              uIdList = [x.uid() for x in self.Nodes[REGULATORS]]
+        # for non-directions relations
+        assert(len(self.Nodes) == 1), "Non-directional relation must have only one REGULATORS in Nodes"
+        if REGULATORS in self.Nodes:
+          uIdList = [x.uid() for x in self.Nodes[REGULATORS]]
+        else:
+          uIdList = [x.uid() for x in self.Nodes[TARGETS]]
+
+        pairs = list(itertools.combinations(uIdList, 2))
+        if pairs:
+          if reverse4undirected:
+            # non-directional relations are added in both directions into MultiDiGraph to allow proper traversal
+            reverse_pairs = [(p[1],p[0]) for p in pairs] 
+            return pairs + reverse_pairs
           else:
-              uIdList = [x.uid() for x in self.Nodes[TARGETS]]
-  
-          pairs = list(itertools.combinations(uIdList, 2))
-          if pairs:
-              plus_reverse = list(pairs)
-              [plus_reverse.append((p[1],p[0])) for p in pairs] 
-              # non-directional relations are added in both direction into MultiDiGraph
-              return plus_reverse
+            return pairs
+        else:
+          if len(uIdList) > 1:
+            return [(uIdList[0],uIdList[1])] # relation is self-loop,
           else:
-              if len(uIdList) > 1: # case of self-loop
-                  return [(uIdList[0],uIdList[1])]
-              else:
-                  return list()
+            print(f'Warning: relation {self.urn()} has only 1 entity in Nodes!')
+            return []
+
 
 
   def to_json(self):

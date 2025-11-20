@@ -86,9 +86,7 @@ class SemanticSearch (APISession):
       self.max_ontology_parent = self.params.get('max_ontology_parent',10)
 
       search_kwargs = {'limit':10,'min_relevance':self.min_etm_relevance}
-      if my_kwargs.get('add_bibliography',True):
-        if my_kwargs['init_refstat']:
-          self.RefStats = SBSstats(self.APIconfig,**search_kwargs)
+      self.RefStats = SBSstats(self.APIconfig,**search_kwargs)
 
       self.report_pandas=dict() # stores pandas used to generate report file
       self.raw_data = dict() # stores raw data pandas used for generation pandas in self.report_pandas
@@ -632,7 +630,7 @@ class SemanticSearch (APISession):
     start_time  = time.time()
     connection_graph = self.connect(my_df,concepts, how2connect)
 
-    if connection_graph.size() > 0:
+    if connection_graph.number_of_edges()>0:
       self.__annotate_rels(connection_graph, ConceptName)
       ref_sum = set()
       for idx in my_df.index:
@@ -649,14 +647,15 @@ class SemanticSearch (APISession):
                                         self.__connect_by_rels__,self.__rel_effect__,[],True)
 
         if not row_has_connection:
-            continue
+          continue
 
         row_subgraph = connection_graph.get_subgraph(idx_entities, concepts)
         connected_concepts_uids = [c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in concepts_uids]
         my_df.at[idx,linked_count_column] = len(connected_concepts_uids) # used to calculate concept incidence at normalization step
         #it measures the occurence of concepts linked to row entities among all input concepts
-        
         references = list(row_subgraph.load_references(self.relpval2weight))
+        # placeholder for possible future use of Scopus citation index:
+        # references = [self.RefStats.citation_index(r) for r in references]
         ref_weights = [1.0]*len(references)
 
         if self.nodeweight_prop:
@@ -1046,9 +1045,15 @@ class SemanticSearch (APISession):
     if concepts:
       colname = kwargs.pop('column_name','Concepts')
       clone2retrieve = kwargs.pop('clone2retrieve',DO_NOT_CLONE)
+      my_step = kwargs.get('step',500) # saving old step size
+      if len(concepts) > 500:
+        print('reducing step to 250 for large number of concepts (%d)' % len(concepts))
+        # to avoid table lock in Oracle:
+        kwargs['step'] = 250
       how2connect = self.set_how2connect(**kwargs)
       linked_rows,linked_entities,scored_df = self.link2concept(colname,concepts,df2score,how2connect,clone2retrieve)
       print(f'{linked_rows} rows linked to column {colname}')
+      kwargs['step'] = my_step
       if linked_rows:
         rank = kwargs.pop('column_rank',0)
         if rank >= 0:
@@ -1386,7 +1391,7 @@ class SemanticSearch (APISession):
     internal_params  = {"skip","debug", "consistency_correction4target_rank",
       "add_bibliography","strict_mode", "target_types","max_ontology_parent",
       "init_refstat","max_childs","add_closeness",'propagate_target_state_in_model',
-      'DTfromDB','BBBP','use_in_children'
+      'DTfromDB','BBBP','use_in_children','ontology_file'
                         }
     rows = []
     for type, name2weights in self.params.items():

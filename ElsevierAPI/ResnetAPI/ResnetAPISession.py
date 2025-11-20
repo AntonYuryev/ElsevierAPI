@@ -13,6 +13,7 @@ from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES
 from ..ScopusAPI.scopus import loadCI
 from ..utils import unpack,execution_time,execution_time2,load_api_config,pretty_xml,list2chunks_generator,multithread
+from ..Embio.PSnx2Neo4j import nx2neo4j
 
 TO_RETRIEVE = 'to_retrieve'
 BELONGS2GROUPS = 'belongs2groups'
@@ -31,7 +32,7 @@ ALL_PROPERTIES = 10
 NO_RNEF_REL_PROPS={'RelationNumberOfReferences','Name','URN'}
 
 APISESSION_KWARGS = {'what2retrieve','connect2server','no_mess','data_dir',TO_RETRIEVE,
-                  'use_cache','load_model','ent_props','rel_props'}
+                  'use_cache','load_model','ent_props','rel_props','useNeo4j'}
 MAX_SESSIONS = 25 # by default sessions_max=200 in Oracle 
 MAX_PAGE_THREADS = 80
 MAX_OQLSTR_LEN = 65000 # string properties can form long oql queries exceeding 65000 chars limit
@@ -56,6 +57,10 @@ class APISession(PSNetworx):
     max_threads4ontology = 50
 
 ######################################  CONFIGURATION  ######################################
+    def useNeo4j(self):
+      return hasattr(self,'neo4j')
+    
+
     def __init__(self,*args,**kwargs):
         '''
         Input
@@ -76,7 +81,8 @@ class APISession(PSNetworx):
                             'use_cache' : False,
                             'oql_queries' : [],
                             'add2self':True,
-                            'connect2server':True
+                            'connect2server':True,
+                            'useNeo4j' : False
                             }
 
         ent_props = kwargs.pop('ent_props',[])
@@ -100,6 +106,8 @@ class APISession(PSNetworx):
         self.ResultPos = int()
         self.ResultSize = int()
         self.ontology_cache = dict() # {urn:[urns]}
+        if my_kwargs.pop('useNeo4j',False):
+          self.neo4j = nx2neo4j()
 
     @staticmethod
     def _what2retrieve(what2retrieve:int):
@@ -118,6 +126,9 @@ class APISession(PSNetworx):
         elif what2retrieve == ALL_PROPERTIES:
             return ['URN']+list(ALL_PSREL_PROPS)
         return []
+    
+
+
 
 
     def __retrieve(self,what2retrieve=CURRENT_SPECS):
@@ -179,6 +190,9 @@ class APISession(PSNetworx):
         if copy_graph:
             new_session.Graph = self.Graph
             new_session.dbid2relation = dict(self.dbid2relation)
+
+        if self.useNeo4j():
+          new_session.neo4j = self.neo4j
 
         return new_session
 
@@ -294,30 +308,30 @@ class APISession(PSNetworx):
 
 
     def __thread__(self,pages:int,process_name='oql_results'):
-        max_workers = pages if pages < MAX_PAGE_THREADS else MAX_PAGE_THREADS
-        if not self.no_mess:
-            print(f'Retrieval starts from {self.ResultPos} result')
-            remaining_retrieval = self.ResultSize - self.ResultPos
-            next_download_size = min(pages*self.PageSize, remaining_retrieval)
-            print(f'Begin retrieving next {next_download_size} results in {max_workers} threads',flush=True)
+      max_workers = pages if pages < MAX_PAGE_THREADS else MAX_PAGE_THREADS
+      if not self.no_mess:
+        print(f'Retrieval starts from {self.ResultPos} result')
+        remaining_retrieval = self.ResultSize - self.ResultPos
+        next_download_size = min(pages*self.PageSize, remaining_retrieval)
+        print(f'Begin retrieving next {next_download_size} results in {max_workers} threads',flush=True)
+    
+      entire_graph = ResnetGraph()
+      result_pos = self.ResultPos
+      with ThreadPoolExecutor(max_workers, thread_name_prefix=process_name) as e:
+        futures = list()
+        for i in range(0,pages):
+            futures.append(e.submit(self.__nextpage__,result_pos))
+            result_pos += self.PageSize
         
-        entire_graph = ResnetGraph()
-        result_pos = self.ResultPos
-        with ThreadPoolExecutor(max_workers, thread_name_prefix=process_name) as e:
-            futures = list()
-            for i in range(0,pages):
-                futures.append(e.submit(self.__nextpage__,result_pos))
-                result_pos += self.PageSize
-            
-            for future in as_completed(futures):
-                try:
-                    entire_graph = entire_graph.compose(future.result())
-                except exceptions.TransportError:
-                    raise exceptions.TransportError
-            e.shutdown()
-        
-        self.ResultPos = result_pos
-        return entire_graph
+        for future in as_completed(futures):
+            try:
+                entire_graph = entire_graph.compose(future.result())
+            except exceptions.TransportError:
+                raise exceptions.TransportError
+        e.shutdown()
+      
+      self.ResultPos = result_pos
+      return entire_graph
 
 
     def process_oql(self,oql_query:str,request_name='',max_result=0, debug=False) -> ResnetGraph|int:
@@ -596,7 +610,7 @@ class APISession(PSNetworx):
         return dbidonly_graph
 
  
-    def iterate_oql(self,oql_query:str,search_values:set[str]|set[int],use_cache=True,request_name='',step=1000):
+    def iterate_oql(self,oql_query:str,search_values:set[str]|set[int],use_cache=True,request_name='',step=1000)->ResnetGraph:
         """
         # oql_query MUST contain string placeholder called {ids} if iterable id_set contains dbids\n
         # oql_query MUST contain string placeholder called {props} if iterable id_set contain property values other than database id
@@ -1071,18 +1085,18 @@ class APISession(PSNetworx):
     
 
     def child_graph(self, propValues:list, search_by_properties=[],include_parents=True):
-        '''
-        output:
-          only nodes ResnetGraph with ontology children of parents found by propValues in search_by_properties
-        '''
-        if not search_by_properties: search_by_properties = ['Name','Alias']
-        oql_query = OQL.get_childs(propValues,search_by_properties,include_parents=include_parents)
-        prop_val_str = ','.join(propValues)
-        request_name = f'Find ontology children for {prop_val_str}'
-        ontology_graph = self.process_oql(oql_query,request_name)
-        if isinstance(ontology_graph, ResnetGraph):
-          print('Found %d ontology children' % len(ontology_graph))
-        return ontology_graph
+      '''
+      output:
+        ResnetGraph with PSObjects found by propValues in search_by_properties that have ontology children 
+      '''
+      if not search_by_properties: search_by_properties = ['Name','Alias']
+      oql_query = OQL.get_childs(propValues,search_by_properties,include_parents=include_parents)
+      prop_val_str = ','.join(propValues)
+      request_name = f'Find ontology children for {prop_val_str}'
+      ontology_graph = self.process_oql(oql_query,request_name)
+      if isinstance(ontology_graph, ResnetGraph):
+        print('Found %d ontology children' % len(ontology_graph))
+      return ontology_graph
 
    
     def __ontology_graph(self,for_childs=[],depth=1):

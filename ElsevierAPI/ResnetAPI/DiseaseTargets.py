@@ -1,11 +1,12 @@
-from .ResnetGraph import PROTEIN_TYPES,EFFECT,PHYSICAL_INTERACTIONS,ResnetGraph,PSRelation,PSObject
+from .ResnetGraph import PROTEIN_TYPES,PHYSICAL_INTERACTIONS,ResnetGraph
 from .PSPathway import PSPathway
-from .NetworkxObjects import ACTIVATED,REPRESSED,UNKNOWN_STATE,OBJECT_TYPE,MECHANISM
+from .FolderContent import FolderContent
+from .NetworkxObjects import ACTIVATED,REPRESSED,UNKNOWN_STATE,OBJECT_TYPE,CONNECTIVITY,EFFECT,PSRelation,PSObject
 from .SemanticSearch import SemanticSearch,len,OQL,RANK,execution_time
 from .ResnetAPISession import NO_REL_PROPERTIES,ONLY_REL_PROPERTIES,REFERENCE_IDENTIFIERS,BIBLIO_PROPERTIES,DBID
-from .FolderContent import FolderContent
+from ..Embio.PSnx2Neo4j import Cypher
 from ..pandas.panda_tricks import df
-from ..utils import os
+
 import time
 
 RANK_KNOWN_TARGETS = True
@@ -106,18 +107,6 @@ class DiseaseTargets(SemanticSearch):
         self.gv2diseases.clear_resnetgraph()
         self.partner2targets.clear_resnetgraph()
         self.disease_pathways.clear()
-        
-
-    def set_input(self):
-        my_session = self._clone_session()
-        my_session.add_ent_props(['Connectivity']) # Connectivity is needed for make_disease_df()
-        ontology_graph = my_session.child_graph(self.params['disease'],['Name','Alias'])
-        if isinstance(ontology_graph, ResnetGraph):
-            self.input_diseases = ontology_graph._psobjs_with('Disease','ObjTypeName')
-            # filter by Disease is necessary because some proteins in monogenic disorders may have the same name as disease
-            input_diseases_dbids = ResnetGraph.dbids(self.input_diseases)
-            self.find_disease_oql = OQL.get_objects(input_diseases_dbids)
-        return
 
 
     def input_disease_names(self)->list[str]:
@@ -130,6 +119,14 @@ class DiseaseTargets(SemanticSearch):
           return [self.params['sample']+' in '+ self.params['experiment']]
         except KeyError:
           return ['Drugs']
+        
+    
+    def input_disease(self,propName:str):
+      '''
+      output:
+        list of first values for each disease in self.input_diseases. Use it to return disease Name, URN, Connectivity etc..
+      '''
+      return [p.get_prop(propName) for p in self.input_diseases]
             
 
     def names4tmsearch(self):
@@ -170,72 +167,115 @@ class DiseaseTargets(SemanticSearch):
         return ResnetGraph.dbids(list(self._targets()))
 
     def __target_types_str(self):
-        tar_types_str = ','.join(self.params['target_types'])
-        return tar_types_str
-        
-    def __GVtargets(self):
-        disease_names = self._disease2str()
-
-        oql_query = f'SELECT Relation WHERE objectType = FunctionalAssociation \
-            AND NeighborOf ({self.find_disease_oql}) AND NeighborOf (SELECT Entity WHERE objectType = GeneticVariant)'
-        #oql_query = oql_query.format()
-        request_name = f'Select GeneticVariants for {disease_names}'
-        self.gv2diseases = self.process_oql(oql_query,request_name)
-        assert isinstance(self.gv2diseases,ResnetGraph)
-        self.GVs = self.gv2diseases.psobjs_with(only_with_values=['GeneticVariant'])
+        '''
+          output: 
+            ','.join(self.params['target_types'])
+        '''
+        return ','.join(self.params['target_types'])
     
-        GVdbids = ResnetGraph.dbids(self.GVs)
-        target_withGVs = list()
 
-        if GVdbids:
-            oql_query = f'SELECT Relation WHERE objectType = GeneticChange AND \
-                NeighborOf (SELECT Entity WHERE objectType = ({self.__target_types_str()})) AND NeighborOf ({OQL.get_objects(GVdbids)})'
-            request_name = f'Find targets with genetic variants linked to {disease_names}'
+    def postgres(self):
+      return self.neo4j.postgres if self.useNeo4j() else None
+      
+    
+    # STEP 1 in make_report:
+    def set_input(self):
+      if self.useNeo4j():
+        self.input_diseases = self.neo4j.get_nodes(objtype='Disease',propName='Name',
+                              propVals=self.params['disease'],with_childs=True,with_connectivity=True)
+      else:
+        my_session = self._clone_session()
+        my_session.add_ent_props([CONNECTIVITY]) # Connectivity is needed for make_disease_df()
+        ontology_graph = my_session.child_graph(self.params['disease'],['Name','Alias'])
+        if isinstance(ontology_graph, ResnetGraph):
+          self.input_diseases = ontology_graph._psobjs_with('Disease','ObjTypeName')
+          # filter by Disease is necessary because some proteins in monogenic disorders may have the same name as disease
+          input_diseases_dbids = ResnetGraph.dbids(self.input_diseases)
+          self.find_disease_oql = OQL.get_objects(input_diseases_dbids)
+      return
 
-            # avoid adding GeneticChange to self.Graph
-            new_session = self._clone(to_retrieve=NO_REL_PROPERTIES,init_refstat=False)
-            gv2target = new_session.process_oql(oql_query,request_name)
-            assert isinstance(gv2target, ResnetGraph)
-            self.gv2diseases = self.gv2diseases.compose(gv2target)
-            target_withGVs = gv2target.psobjs_with(only_with_values=PROTEIN_TYPES)
-            gv2dis_refs = self.gv2diseases.load_references()
-            print('Found %d targets with %d GeneticVariants for %s supported by %d references' % 
-                (len(target_withGVs), len(self.GVs), disease_names, len(gv2dis_refs)))
-            return target_withGVs
-        else:
-            return ResnetGraph()
-
- 
-    def targets_from_db(self):
+    # STEP 2.1 in make_report()->find_targets()
+    def targets_from_db(self): 
+      if self.useNeo4j():
+        disease_urns = ResnetGraph.urns(self.input_diseases)
+        target_disease_graph = self.neo4j._neighborhood_(disease_urns,self.target_types(),'URN')
+      else:
         req_name = f'Find targets linked to {self._disease2str()}'
         select_targets = f'SELECT Entity WHERE objectType = ({self.__target_types_str()})'
         OQLquery = f'SELECT Relation WHERE NeighborOf ({select_targets}) AND NeighborOf ({self.find_disease_oql})'      
         target_disease_graph = self.process_oql(OQLquery,req_name)
         assert(isinstance(target_disease_graph,ResnetGraph))
 
-        return target_disease_graph
-        
+      return target_disease_graph
     
+    # STEP 2.2 in make_report()->find_targets()
+    def __GVtargets(self)->list[PSObject]:
+      disease_names = self._disease2str()
+      if self.useNeo4j():
+        disease_urns = ResnetGraph.urns(self.input_diseases)
+        self.gv2diseases = self.neo4j._connect_(['Disease'],disease_urns,'URN',['GeneticVariant'],[],'')
+      else:
+        oql_query = f'SELECT Relation WHERE objectType = FunctionalAssociation \
+            AND NeighborOf ({self.find_disease_oql}) AND NeighborOf (SELECT Entity WHERE objectType = GeneticVariant)'
+        #oql_query = oql_query.format()
+        request_name = f'Select GeneticVariants for {disease_names}'
+        self.gv2diseases = self.process_oql(oql_query,request_name)
+        assert isinstance(self.gv2diseases,ResnetGraph)
+
+      self.GVs = self.gv2diseases.psobjs_with(only_with_values=['GeneticVariant'])
+      target_withGVs = []
+      if self.GVs:
+        if self.useNeo4j():
+          gv_urns = ResnetGraph.urns(self.GVs)
+          cypher, params = Cypher.connect(['GeneticVariant'],gv_urns,'URN',self.target_types(),[],'',['GeneticChange'])
+          gv2target = self.neo4j.fetch_graph(cypher,params)
+        else:
+          GVdbids = ResnetGraph.dbids(self.GVs)
+          oql_query = f'SELECT Relation WHERE objectType = GeneticChange AND \
+              NeighborOf (SELECT Entity WHERE objectType = ({self.__target_types_str()})) AND NeighborOf ({OQL.get_objects(GVdbids)})'
+          request_name = f'Find targets with genetic variants linked to {disease_names}'
+          # avoid adding GeneticChange to self.Graph
+          new_session = self._clone(to_retrieve=NO_REL_PROPERTIES,init_refstat=False)
+          gv2target = new_session.process_oql(oql_query,request_name)
+          assert isinstance(gv2target, ResnetGraph)
+
+        self.gv2diseases = self.gv2diseases.compose(gv2target)
+        target_withGVs = gv2target.psobjs_with(only_with_values=PROTEIN_TYPES)
+        gv2dis_refs = self.gv2diseases.load_references(postgres=self.postgres())
+
+        print('Found %d targets with %d GeneticVariants for %s supported by %d references' % 
+            (len(target_withGVs), len(self.GVs), disease_names, len(gv2dis_refs)))
+          
+      return target_withGVs
+
+    # STEP #2.3 in make_report()->find_targets()
     def metabolite2inhibit(self):
       metabolites2inhibit = self.params.get('metabolites2inhibit',[])
       if metabolites2inhibit:
-        metabolites2inhibit = OQL.join_with_quotes(self.params['metabolites2inhibit'])
-        select_metabolite = f'SELECT Entity WHERE Name = ({metabolites2inhibit})'
-        oql = f'SELECT Relation WHERE NeighborOf ({self.find_disease_oql}) AND NeighborOf ({select_metabolite})'
-        my_session = self._clone_session()
-        metbolite2diseaseG = my_session.process_oql(oql,'Find metabolites2inhibit')
-        if metbolite2diseaseG:
+        if self.useNeo4j():
+          disease_urns = self.input_disease('URN')
+          metbolite2diseaseG = self.neo4j._connect_(['SmallMol'],self.params['metabolites2inhibit'],'Name',
+                                               ['Disease'],disease_urns,'URN')
+        else:
+          metabolites2inhibit = OQL.join_with_quotes(self.params['metabolites2inhibit'])
+          select_metabolite = f'SELECT Entity WHERE Name = ({metabolites2inhibit})'
+          oql = f'SELECT Relation WHERE NeighborOf ({self.find_disease_oql}) AND NeighborOf ({select_metabolite})'
+          my_session = self._clone_session()
+          metbolite2diseaseG = my_session.process_oql(oql,'Find metabolites2inhibit')
+        
+        if metbolite2diseaseG: # force EFFECT since metabolite must be inhibited
+          # to ensure proper targets state in set_target_state:
           [metbolite2diseaseG.set_edge_annotation(r.uid(),t.uid(),rel.urn(),EFFECT,['positive']) for r,t,rel in metbolite2diseaseG.iterate()]
-          self.Graph.add_graph(metbolite2diseaseG) # to ensure propert targets state in set_target_stae
+          self.Graph.add_graph(metbolite2diseaseG) 
           metabolites2inhibit_objs = metbolite2diseaseG._psobjs_with('SmallMol',OBJECT_TYPE)
           return metabolites2inhibit_objs
         else:
           print(f'Cannot find metabolites {metabolites2inhibit} to inhibit for {self._disease2str()}')
-          return list()
+          return []
       else:
-        return list()
+        return []
 
-
+    # STEP 2.5 in make_report()->find_targets()
     def expand_targets(self,reltype2targets:dict[str,list[str]],dir='upstream'):
       '''
       input:
@@ -245,21 +285,39 @@ class DiseaseTargets(SemanticSearch):
         updated self.expanded_targets
       '''
       expansion = 'regulators' if dir=='upstream' else 'targets'
-      for reltype,t_names in reltype2targets.items():
-        targets2expand = [n for n in self.__targets__ if n.name() in t_names]
+      for reltype,target_names in reltype2targets.items():
+        targets2expand = [n for n in self.__targets__ if n.name() in target_names]
         neighbs = 'regulators' if dir == 'upstream' else 'targets'
-        t_dbids = ResnetGraph.dbids(targets2expand)
-        oql_query = OQL.expand_entity(t_dbids,['Id'],[reltype],PROTEIN_TYPES,dir) 
-        if reltype == 'ProtModification': # ProtModification with Mechanism = cleavage is Expression regulation
-          oql_query += ' AND NOT (Mechanism = cleavage)'
-        reqname = f'Find {reltype} {neighbs} 4 {t_names}'
-        expanded_targetsG = self.process_oql(oql_query,reqname)
+        if self.useNeo4j():
+          t_urns = ResnetGraph.urns(targets2expand)
+          if reltype != 'ProtModification':
+            expanded_targetsG = self.neo4j._neighborhood_(t_urns,PROTEIN_TYPES,'URN',[reltype])
+          else: # excluding ProtModification with Mechanism=cleavage. It will be added as Expression
+            not_cleavage = "\nWHERE r.mechanism IS NULL OR r.mechanism <> 'cleavage'"
+            cypherUp,paramUp = Cypher.upstream_expand(t_urns,PROTEIN_TYPES,'URN',[reltype])
+            cypherUp += not_cleavage
+            upstreamG = self.neo4j.fetch_graph(cypherUp,paramUp)
+            cypherDown,paramDown = Cypher.downstream_expand(t_urns,PROTEIN_TYPES,'URN',[reltype])
+            cypherDown += not_cleavage
+            expanded_targetsG = upstreamG.compose(self.neo4j.fetch_graph(cypherDown,paramDown))
+        else:
+          t_dbids = ResnetGraph.dbids(targets2expand)
+          oql_query = OQL.expand_entity(t_dbids,['Id'],[reltype],PROTEIN_TYPES,dir) 
+          if reltype == 'ProtModification': # ProtModification with Mechanism = cleavage is Expression regulation
+            oql_query += ' AND NOT (Mechanism = cleavage)'
+          reqname = f'Find {reltype} {neighbs} 4 {target_names}'
+          expanded_targetsG = self.process_oql(oql_query,reqname)
+
         if reltype == 'Expression': # ProtModification with Mechanism = cleavage is Expression regulation with Effect negative
-          oql_query = OQL.expand_entity(t_dbids,['Id'],['ProtModification'],PROTEIN_TYPES,dir) 
-          oql_query += ' AND Mechanism = cleavage'
-          reqname = f'Find {reltype} {neighbs} 4 {t_names}'
-          new_session = self._clone_session()
-          proteasesG = new_session.process_oql(oql_query,reqname)
+          if self.useNeo4j():
+            pass
+          else:
+            oql_query = OQL.expand_entity(t_dbids,['Id'],['ProtModification'],PROTEIN_TYPES,dir) 
+            oql_query += ' AND Mechanism = cleavage'
+            reqname = f'Find {reltype} {neighbs} 4 {target_names}'
+            new_session = self._clone_session()
+            proteasesG = new_session.process_oql(oql_query,reqname)
+          
           if proteasesG:
             proteasesGrels = proteasesG._psrels()
             for rel in proteasesGrels:
@@ -269,7 +327,7 @@ class DiseaseTargets(SemanticSearch):
             expanded_targetsG = expanded_targetsG.compose(ResnetGraph.from_rels(proteasesGrels))
 
         if expanded_targetsG:
-          expansion_descr = f'{reltype} {expansion} of {t_names}'
+          expansion_descr = f'{reltype} {expansion} of {target_names}'
           expanded_targetsG.name = expansion_descr
           rel_rank = ['DirectRegulation','Binding','ProtModification','MolTransport','Regulation','PromoterBinding','Expression']
           # assume that Regulation means post-translational regulation
@@ -282,12 +340,14 @@ class DiseaseTargets(SemanticSearch):
           print(f'Added {len(neigh2target)} {expansion_descr}')
           self.Graph = self.Graph.compose(expanded_targetsG)
 
-
+    # STEP 2 in make_report()
     def find_targets(self):
-      target_disease_graph = self.targets_from_db()
+      target_disease_graph = self.targets_from_db() # STEP 2.1
+
       if isinstance(target_disease_graph,ResnetGraph):
         self.__targets__ = set(target_disease_graph.psobjs_with(only_with_values=self.target_types()))
-        target_refcount = target_disease_graph.load_references()
+        target_refcount = target_disease_graph.load_references(postgres=self.postgres())
+          
         print('Found %d targets linked to %s supported by %d references in database' 
                     % (len(self.__targets__),self._disease2str(), len(target_refcount)))
         
@@ -303,12 +363,12 @@ class DiseaseTargets(SemanticSearch):
         disease_pathways = self.load_pathways()
         disease_model_components = set()
         if disease_pathways:
-            all_pathways = [p for p in disease_pathways.values()]
-            [disease_model_components.update(p.get_members(self.target_types())) for p in all_pathways]
-            self.__targets__.update(disease_model_components)
-            before_add = self.Graph.number_of_nodes()
-            self.Graph.add_psobjs(set(disease_model_components))
-            print('Added %d targets from disease model' % (self.Graph.number_of_nodes()-before_add))
+          all_pathways = [p for p in disease_pathways.values()]
+          [disease_model_components.update(p.get_members(self.target_types())) for p in all_pathways]
+          self.__targets__.update(disease_model_components)
+          before_add = self.Graph.number_of_nodes()
+          self.Graph.add_psobjs(set(disease_model_components))
+          print('Added %d targets from disease model' % (self.Graph.number_of_nodes()-before_add))
 
         if self.params['strict_mode']:
             regulators2disease_graph = target_disease_graph.subgraph_by_relprops(['Regulation'])
@@ -959,12 +1019,12 @@ NeighborOf upstream (SELECT Entity WHERE objectType = SmallMol) AND RelationNumb
             d_childs = d.childs()
             child_names = [c.name() for c in d_childs]
             child_names_str = ','.join(child_names)
-            rows.append((d.name(),str(d['Connectivity'][0]),child_names_str,d.urn()))
+            rows.append((d.name(),str(d[CONNECTIVITY][0]),child_names_str,d.urn()))
 
         if len(rows) > 1:
-          input_df = df.from_rows(rows,header=['Name','Connectivity','Children','URN'])
-          input_df['Connectivity'] = input_df['Connectivity'].astype(int)
-          input_df = input_df.sortrows(by='Connectivity')
+          input_df = df.from_rows(rows,header=['Name',CONNECTIVITY,'Children','URN'])
+          input_df[CONNECTIVITY] = input_df[CONNECTIVITY].astype(int)
+          input_df = input_df.sortrows(by=CONNECTIVITY)
           input_df._name_ = 'Disease subtypes'
           return input_df
         else: return df()

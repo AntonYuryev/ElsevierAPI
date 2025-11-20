@@ -11,6 +11,8 @@ import networkx as nx
 from .DrugTargetConfidence import DrugTargetConsistency
 from ..utils import run_tasks,execution_time,os,DEFAULT_CONFIG_DIR
 
+
+
 DRUG2TARGET_REGULATOR_SCORE = 'Regulator score'
 PHARMAPENDIUM_ID = 'Marketed Drugs'
 DRUG_CLASS = 'Drug class' # agonist/antagonist
@@ -316,9 +318,8 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       clean_drugs = [d for d in clean_drugs if d not in self.disease_inducers]
       clean_drugs = [d for d in clean_drugs if "'" not in d.urn()] # drugs with "'" in URN are not searchable in PS
 
-      oql4pains = "SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = 'PAINS compounds')"
       new_session = self._clone_session(what2retrieve=NO_REL_PROPERTIES)
-      PAINScompounds = set(new_session.process_oql(oql4pains,'Select PAINS compounds')._get_nodes())
+      PAINScompounds = set(new_session.process_oql(OQL.selectPAINs(),'Select PAINS compounds')._get_nodes())
       clean_drugs = [d for d in clean_drugs if d not in PAINScompounds]
       new_session.close_connection()
       
@@ -383,19 +384,16 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
       print('Drugs worksheet is empty !!!!')
       return in_drugdf
 
-    if self.__temp_id_col__ not in in_drugdf.columns:
-    # case when drug_df was loaded from cache RNEF file:
+    if self.__temp_id_col__ not in in_drugdf.columns: # case when drug_df was loaded from cache RNEF file:
     # max_childs_count must be zero (=ALL_CHILDS) to avoid removal of drugs with children 
     # and to merge with results of SemanticSearch.bibliography() future
       drug_df = self.add_temp_id(in_drugdf,max_childs=ALL_CHILDS,max_threads=25)
       before_mapping = len(drug_df)
       print(f'{before_mapping - len(drug_df)} rows were deleted because database identifier cannot be found for drug names')
-      
     else:
       drug_df = in_drugdf.dfcopy()
 
     # add functions here for speed debuging.  drug_df has self.__temp_id_col__ column here:
-    
     phenotypedf_rows = list()
     def concepts2rows(concepts:list[PSObject],concept_name:str):
       '''
@@ -529,6 +527,7 @@ Directly inhibited targets',\n'Indirectly inhibited targets',\n'Directly activat
           ranked_df = ranked_df.merge_dict(d2cd,'Children dose',PHARMAPENDIUM_ID)
 
         if self.params.get('add_bibliography',False):
+          # has to follow the same order as in "no debug" mode to have the same results for testing
           names2reflinks = self.RefStats.reflinks(ranked_df,'Name',self.names4tmsearch())
           full_drug_df = self.link2disease_concepts(ranked_df)
           refcount_col = self.tm_refcount_colname('Name',self.names4tmsearch())
