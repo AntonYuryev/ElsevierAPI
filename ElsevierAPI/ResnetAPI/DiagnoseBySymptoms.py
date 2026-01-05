@@ -105,12 +105,12 @@ class Diagnosis(SemanticSearch):
     def scoreGVs(self):
         my_session = self._clone_session()
         reltypes = ['FunctionalAssociation','Regulation']
-        commonGVs_g = my_session.common_neighbors(['GeneticVariant'],list(self._all_dbids()),reltypes,'',
+        commonGVs_g = my_session.common_neighbors(['GeneticVariant'],list(self.temp_ids()),reltypes,'',
                                                ResnetGraph.dbids(list(self.symptoms)),reltypes,'')
         gvlinkcounter = 0
         for i in self.RefCountPandas.index:
             target_dbids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
-            row_indications = self.Graph.psobj_with_dbids(set(target_dbids))
+            row_indications = self.Graph.psobj_with_ids(set(target_dbids))
             indicationGVs = commonGVs_g.get_neighbors(set(row_indications))
                 
             GVscore = 0         
@@ -131,7 +131,7 @@ class Diagnosis(SemanticSearch):
     def add_symptoms(self):
         for i in self.RefCountPandas.index:
             row_dbids = list(self.RefCountPandas.at[i,self.__temp_id_col__])
-            row_indications = self.Graph.psobj_with_dbids(set(row_dbids))
+            row_indications = self.Graph.psobj_with_ids(set(row_dbids))
             row_symptoms = list(self.Graph.get_neighbors(set(row_indications),list(self.symptoms)))
             row_symptoms_names = ResnetGraph.names(row_symptoms)
             row_symptoms_names.sort()

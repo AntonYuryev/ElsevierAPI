@@ -4,7 +4,7 @@ from .ResnetGraph import ResnetGraph,EFFECT,REFCOUNT,PROTEIN_TYPES,PSObject,CONS
 from ..utils import execution_time2,time,execution_time
 from math import log, sqrt
 from collections import defaultdict
-
+from ..Embio.cypher import Cypher
 
 class DrugTargetConsistency(APIcache):
     '''
@@ -19,6 +19,7 @@ class DrugTargetConsistency(APIcache):
     drug_target_confidence = dict()
     debug = False
     predict_effect4 = {'_4enttypes':['SmallMol'],'_4reltypes':['Binding']}
+    
 
 
     def __init__(self,*args,**kwargs):
@@ -60,13 +61,17 @@ class DrugTargetConsistency(APIcache):
     def d2t_from_db(self,for_targets:set[PSObject],limit2drugs:set[PSObject]={}):
         rn = f'Loading drugs for {len(for_targets)} targets from database'
         target_names = {t.name() for t in for_targets}
-        if limit2drugs:
+        if self.useNeo4j():
+          cypher, params = Cypher.select_drug_targets(for_targets,limit2drugs,relProps={EFFECT:['negative','positive']})
+          return self.neo4j.fetch_graph(cypher,params)
+        else:
+          if limit2drugs:
             get_targets = 'SELECT Entity WHERE Name = ({props2})' # works without join to string!!!!
             drug_names = {d.name() for d in limit2drugs}
             get_drugs = 'SELECT Entity WHERE Name = ({props1})'
             oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'
             return self.iterate_oql2(oql_query,drug_names,target_names,request_name=rn)
-        else:
+          else:
             get_targets = 'SELECT Entity WHERE Name = ({props})'
             get_drugs = OQL.select_drugs()
             oql_query = f'SELECT Relation WHERE Effect = (positive,negative) AND NeighborOf downstream ({get_drugs}) AND NeighborOf upstream ({get_targets})'

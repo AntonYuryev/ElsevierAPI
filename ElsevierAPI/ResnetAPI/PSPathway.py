@@ -64,7 +64,7 @@ class PSPathway(PSObject):
 
 
     def member_dbids(self,with_values:list=[],in_properties:list=['ObjTypeName']):
-        return self.graph.dbids4nodes(with_values,in_properties)
+        return self.graph.ids4nodes(with_values,in_properties)
 
     
     def get_members(self,with_values:list=[],in_properties=['ObjTypeName']):

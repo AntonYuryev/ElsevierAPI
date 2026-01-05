@@ -149,6 +149,15 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
       return []
   
 
+  def id(self,id_type:str=DBID)->int:
+      '''
+      output:
+        0 if missing
+      '''
+      if_missing_return = 0 if id_type == DBID else ''
+      return self.get_prop(id_type,if_missing_return=if_missing_return)
+  
+
   def dbid(self)->int:
       '''
       output:
@@ -171,21 +180,34 @@ class PSObject(defaultdict):  # {PropId:[values], PropName:[values]}
       else:
         return False
   
+  
+  def number_of_children(self):
+    '''
+    output:
+    number of children if they were loaded otherwise -1
+    '''
+    return len(self[CHILDS]) if CHILDS in self else -1
+
 
   def childs(self)->list['PSObject']:
-      if CHILDS in self.keys():
-          return self[CHILDS]
-      return []
+    if CHILDS in self.keys():
+      return [c for c in self[CHILDS] if c] # safequard to not return empty chidren loaded for max_childs
+    return []
 
 
   def child_dbids(self):
-      children = self.childs()
-      return [c.dbid() for c in children if c.dbid()]
+    children = self.childs()
+    return [c.dbid() for c in children if c.dbid()]
 
 
   def child_uids(self):
-      children = self.childs()
-      return [c.uid() for c in children]
+    children = self.childs()
+    return [c.uid() for c in children]
+  
+  
+  def child_urns(self):
+    children = self.childs()
+    return [c.urn() for c in children]
 
 
   def update_with_value(self, prop_id:str, new_value):
@@ -520,7 +542,7 @@ class PSRelation(PSObject):
     Creates URN for rel if it does not exist
     '''
     if refresh:
-      return self.__make_urn(self.regulators(), self.targets())
+      return self.__make_urn()
     else:
       # Try to return the existing URN.
       # Case 1: super().urn() returns a "truthy" value (e.g., a non-empty string). 
@@ -528,7 +550,7 @@ class PSRelation(PSObject):
       # Case 2: super().urn() returns a "falsy" value (e.g., None or ""). 
       #   The or operator sees the False value and moves on to evaluate the expression on its right-hand side. 
       #   It then executes self.__make_urn(...) and returns its result.
-      return super().urn() or self.__make_urn(self.regulators(), self.targets())
+      return super().urn() or self.__make_urn()
           
 
   def has_properties(self,prop_names:set):
@@ -552,13 +574,15 @@ class PSRelation(PSObject):
       return has_values
 
 
-  def __make_urn(self,regulators:list[PSObject],targets:list[PSObject]):
+  def __make_urn(self):
       '''
       sets:
         URN property to self
       output:
         calculated URN
       '''
+      regulators = self.regulators()
+      targets = self.targets()
       reg_urns = sorted([r.urn() for r in regulators])
       tar_urns = sorted([r.urn() for r in targets])
       urn_parts = ['urn:agi-'+self.objtype()+':']
@@ -758,7 +782,7 @@ class PSRelation(PSObject):
     if REFCOUNT not in new_rel.keys():
       new_rel[REFCOUNT] = [len(refs)]
     
-    new_rel.__make_urn([regulator],[target])
+    new_rel.__make_urn()
     return new_rel
           
 
@@ -823,10 +847,13 @@ class PSRelation(PSObject):
     '''
     if refresh: self.references.clear()     
     if not self.references: # making self.references from self.PropSetToProps:
-      if relid2refs:
-        self.references = relid2refs[int(self['RelationID'][0])]
+      if relid2refs: # case when graph is loaded from Neo4j
+        relid = int(self['RelationID'][0])
+        if relid in relid2refs:
+          self.references = relid2refs[relid]
       else:
         refdict4self = dict() # {(idtype,id):ref} # holds reference dictionary to check for duplicates
+        
         def find_ref(propSet_ids:list[tuple[str,str]])->Reference:
           for t in propSet_ids:
             if t in refdict4self:
@@ -899,7 +926,7 @@ class PSRelation(PSObject):
           else:
             [x.toAuthors() for x in self.references] #converting AUTHORS to _AUTHORS_
     
-    self.references.sort(key=lambda r: r._sort_key(by_property=PUBYEAR), reverse=True)
+    self.references.sort(key=lambda r: r.pubyear(), reverse=True)
     return self.references[:ref_limit] if ref_limit else self.references
   
   
@@ -946,22 +973,25 @@ class PSRelation(PSObject):
 
 
   def count_refs(self, count_abstracts=False)->int:
-      if self.references:
-        self[REFCOUNT] = [len(self.references)]
-        if count_abstracts:
-          ref_from_abstract = set([x for x in self.references if x.is_from_abstract()])
-          return len(ref_from_abstract)
+    '''
+      This function does nto load self.references. 
+      It only counts them. If no refreencezs were loaded it returns value of REFCOUNT property 
+    '''
+    if self.references:
+      self[REFCOUNT] = [len(self.references)]
+      if count_abstracts:
+        ref_from_abstract = set([x for x in self.references if x.is_from_abstract()])
+        return len(ref_from_abstract)
+    else:
+      refcount = self[REFCOUNT]
+      # case when REFCOUNT was loaded from RNEF dump or from Neo4j as string without references
+      # e.g. for loading network from __pscache__
+      if len(refcount) > 1: # case if refcount has 2 or more values after relation merge
+        refcount2merge = list(map(int,refcount))
+        self[REFCOUNT] = [max(refcount2merge)]
       else:
-          refcount = self[REFCOUNT]
-          # case when REFCOUNT was loaded from RNEF dump as string without references
-          # e.g. for loading network from __pscache__
-          if len(refcount) > 1: # case if refcount has 2 or more values after relation merge
-              refcount2merge = list(map(int,refcount))
-              self[REFCOUNT] = [max(refcount2merge)]
-          else:
-              self[REFCOUNT] = [int(refcount[0])] if refcount else [0]
-      
-      return int(self[REFCOUNT][0])
+        self[REFCOUNT] = [int(refcount[0])] if refcount else [0]
+    return int(self[REFCOUNT][0])
 
 
   def rel_prop_str(self, sep=':'):

@@ -1,14 +1,12 @@
-import time,math
-import pandas as pd
-import numpy as np
+import time,math,os
 from .PathwayStudioGOQL import OQL
-from ..ETM_API.references import Reference
-from ..pandas.panda_tricks import df,MAX_TAB_LENGTH
+from ..ETM_API.references import Reference, NODEWEIGHT, RELWEIGHT
+from ..pandas.panda_tricks import np, pd, df,MAX_TAB_LENGTH
 from .ResnetGraph import ResnetGraph,PSObject,EFFECT,defaultdict
-from .ResnetAPISession import APISession,len
-from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS
+from .ResnetAPISession import APISession,CURRENT_SPECS
+from .ResnetAPISession import DO_NOT_CLONE,BELONGS2GROUPS,NO_REL_PROPERTIES,REFERENCE_IDENTIFIERS,DBID
 from ..ETM_API.RefStats import SBSstats
-from ..utils import execution_time,sortdict,ThreadPoolExecutor
+from ..utils import execution_time,sortdict,ThreadPoolExecutor,unpack
 
 
 COUNTS = 'counts'
@@ -21,11 +19,12 @@ WEIGHTED = 'weighted '
 MAX_CHILDS = 11 # (10 children + 1 top-level concept)
 TOTAL_REFCOUNT = 'Total Semantic refcount'
 RELEVANT_CONCEPTS = 'Relevant concepts'
-#HYPERLINKED_COLUMN = 'Sentence co-occurrence. Link opens most relevant articles in PubMed'
 REFCOUNT_COLUMN = '#sentences with co-occurrence. Link opens most relevant articles in PubMed'
 INFO_WORKSHEET = 'info'
 INPUT_WOKSHEET = 'Input'
 PHENOTYPE_WORKSHEET = 'Phenotype'
+TARGET_WEIGHT = 'target weight' # default name for the target node weight for relation reference count 
+REGULATOR_WEIGHT = 'regulator weight' # default name for the regulator node weight for relation reference count 
 
 
 class SemanticSearch (APISession):
@@ -44,7 +43,6 @@ class SemanticSearch (APISession):
   iteration_step = 1000
   min_etm_relevance = 0.0
   __colname4GV__  = ''
-  #TMsearch = 'ETMbasicSearch'
   TMsearch = 'SBSsearch'
 
   
@@ -72,17 +70,15 @@ class SemanticSearch (APISession):
       self.PageSize = 1000
       self.RefCountPandas = df() # stores result of semantic retreival
       self.RefCountPandas._name_ = COUNTS
-      self.__Ontology__ = list()
+      self.__Ontology__ = set()
 
       self.__only_map2types__ = list()
       self.__connect_by_rels__= list()
       self.__rel_effect__ = list()
-      #self.references = dict() # {identifier:Reference} made by self.Graph.citation_index()
-      self.all_entity_dbids = set()
       self.columns2drop = [self.__temp_id_col__] # columns to drop before printing pandas
       self.__boost_with__ = list()
-      self.relpval2weight = dict() # {propname:{propval:weight}}
-      self.nodeweight_prop = str()
+      self.relprop2weight = dict() # {propname:{propval:weight}}
+      self.ConceptsHaveWeights = False
       self.max_ontology_parent = self.params.get('max_ontology_parent',10)
 
       search_kwargs = {'limit':10,'min_relevance':self.min_etm_relevance}
@@ -92,8 +88,9 @@ class SemanticSearch (APISession):
       self.raw_data = dict() # stores raw data pandas used for generation pandas in self.report_pandas
       ontology_file = my_kwargs.get('ontology_file','')
       if ontology_file:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-          self.__ontology_future__ = executor.submit(self.__load_ontology, ontology_file)
+        self.ontology_loader = ThreadPoolExecutor(thread_name_prefix=f'Loading ontology')
+        print('Submiting future for')
+        self.__ontology_future__ = self.ontology_loader.submit(self._load_ontology, ontology_file)
       else:
         self.__ontology_future__ = None
 
@@ -104,24 +101,26 @@ class SemanticSearch (APISession):
           SemanticSearch object copy of self with copy of self.Graph
       '''
       my_kwargs = dict(kwargs)
-      my_kwargs['copy_graph'] = True # need to copy self.Graph to enable using cache in link2concept
       my_kwargs['init_refstat'] = False # no need for RefStat in cloned session
-      api_session = super()._clone_session(**my_kwargs) 
-      new_session = SemanticSearch(api_session.APIconfig,**my_kwargs)
-      new_session.entProps = api_session.entProps
-      new_session.relProps = api_session.relProps
+      new_session = SemanticSearch(self.APIconfig,**my_kwargs)
+      rel_props = my_kwargs.pop('rel_props',[]) # saving input props to add after __retrieve__
+      new_session.__retrieve__(my_kwargs.get('what2retrieve',CURRENT_SPECS))
+      new_session.add_rel_props(rel_props)
+      new_session.add_ent_props(my_kwargs.pop('ent_props',[]))
       new_session.data_dir = self.data_dir
       new_session.__connect_by_rels__ = self.__connect_by_rels__
       new_session.__rel_effect__ = self.__rel_effect__
       new_session.__rel_dir__ = self.__rel_dir__
       new_session.__boost_with__ = self.__boost_with__
-      new_session.relpval2weight = self.relpval2weight
+      new_session.relprop2weight = self.relprop2weight
       new_session.iteration_step = self.iteration_step
       new_session.TMsearch = self.TMsearch
+      new_session.Graph = self.Graph  # need to copy self.Graph to enable using cache in link2concept
+      new_session.add2self = False # controls whether to add fetched relation to self.Graph 
       if self.__rel_effect__:
-          new_session.add_rel_props([EFFECT])
+        new_session.add_rel_props([EFFECT])
       
-      new_session.add2self = False 
+      new_session.neo4j = self.neo4j
       # cloning is done to avoid adding irrelevant references to self.Graph to avoid in PS_Bibliography worksheet
       # therefore new_session.add2self is set to false
       return new_session
@@ -130,7 +129,7 @@ class SemanticSearch (APISession):
   def reset(self):
       score_columns = [col for col in self.RefCountPandas.columns if self._col_name_prefix in col]
       for col in score_columns:
-              self.RefCountPandas[col] = 0.0
+        self.RefCountPandas[col] = 0.0
       print('DataFrame was reset')
 
 
@@ -139,15 +138,17 @@ class SemanticSearch (APISession):
 
 
   def report_df(self,dfname:str)->df:
-      return self.report_pandas[dfname]
+    return self.report_pandas[dfname]
 
 
   def raw_df(self,dfname:str)->df:
-      return self.raw_data[dfname]
+    return self.raw_data[dfname]
 
+  def idtype(self):
+    return 'URN' if self.useNeo4j() else DBID 
 
   def __concept(self,colname:str):
-      return colname[len(self._col_name_prefix+self._col_name_prefix2):]
+    return colname[len(self._col_name_prefix+self._col_name_prefix2):]
   
   def _refcount_colname(self,concept_name:str):
       '''
@@ -203,25 +204,39 @@ class SemanticSearch (APISession):
     return self.data_dir+self.report_name()+ext
 
 
-  def _all_dbids(self,df2score=None):
-      """
-      Returns
-      -------
+  def add_entities(self, entities:list[PSObject]):
+    self.Entities4df.update(entities)
+    self.explodedEntities4df.update(entities)
+    children = unpack(e.childs() for e in entities)
+    self.explodedEntities4df.update(children)
+    self.Graph.add_psobjs(entities+children)
+    
+
+  '''
+  def df_entities(self,df2score:df=None,include_children = True):
+    """
+    output:
       list of all ids from the tuples in column self.__temp_id_col__].\n
       if df2score is empty returns all ids from self.RefCountPandas
-      """
-      if df2score is None:
-          return self.all_entity_dbids
+    """
+    if df2score is None:
+      if include_children:
+        return self.explodedEntities4df
       else:
-          id_set = set()
-          try:
-              list_of_tuples = list(df2score[self.__temp_id_col__])          
-              [id_set.update(list(lst)) for lst in list_of_tuples]
-          except KeyError:
-              print(f'DataFrame has no {self.__temp_id_col__} column to retreive dbids)')
-              pass
-          return id_set
-
+        return self.Entities4df
+    else:
+      if self.__temp_id_col__ in df2score.columns:
+        list_of_tuples = list(df2score[self.__temp_id_col__])          
+        ids = unpack(list_of_tuples)
+        idtype = self.idtype()
+        if include_children:
+           return set([e for e in self.explodedEntities4df if e.id(idtype) in ids])
+        else:
+          return set([e for e in self.Entities4df if e.id(idtype) in ids])
+      else:
+        print(f'DataFrame has no {self.__temp_id_col__} column)')
+        return []
+      '''
 
   def entities(self,from_df=df(),id_column='Name',map_by_property='Name'):
       '''
@@ -244,13 +259,13 @@ class SemanticSearch (APISession):
       if linked_by:
           oql += f' AND objectType = ({linked_by})'
 
-      my_dbids = self._all_dbids(in_df)
+      my_dbids = ResnetGraph.dbids(in_df.entities())
       reqname = f'Expanding entities with {with_objtypes} linked by {linked_by}'
       expanded_entity_graph = my_session.iterate_oql(oql,my_dbids,request_name=reqname)
 
       def __expand_row(cell):
           row_dbids = set(list(cell)) # row_dbids is a tuple
-          enities2expand = expanded_entity_graph.psobj_with_dbids(row_dbids)
+          enities2expand = expanded_entity_graph.psobj_with_ids(row_dbids)
           enity_neighbors = expanded_entity_graph.get_neighbors(set(enities2expand))
           row_dbids.update(ResnetGraph.dbids(list(enity_neighbors)))
           return tuple(list(row_dbids)), ','.join(ResnetGraph.names(list(enity_neighbors))),len(enity_neighbors)
@@ -285,7 +300,7 @@ class SemanticSearch (APISession):
       if expand2:
           refcount_df = self.expand_entities(refcount_df,expand2,with_rels)
       
-      self.all_entity_dbids.update(self._all_dbids(refcount_df))
+      #self.Entities4df.update(self.df_entities(refcount_df))
       return refcount_df
   
 
@@ -318,11 +333,11 @@ class SemanticSearch (APISession):
 
       graph_psobjects = self.Graph._get_nodes(ResnetGraph.uids(mapped_entities))
       if max_childs:
-        df_psobjects = [o for o in graph_psobjects if len(o.childs()) <= max_childs] 
-        print(f'{len(graph_psobjects)-len(df_psobjects)} entities with > ontology children {max_childs}  were removed from further calculations')
+        parents4df = [o for o in graph_psobjects if o.number_of_children() <= max_childs] 
+        print(f'{len(graph_psobjects)-len(parents4df)} entities with > ontology children {max_childs}  were removed from further calculations')
       else:
-        df_psobjects = graph_psobjects
-      prop2tempids = {o.get_prop(map2column):tuple(o.child_dbids()+[o.dbid()]) for o in df_psobjects}
+        parents4df = graph_psobjects
+      prop2tempids = {o.get_prop(map2column):tuple(o.child_dbids()+[o.dbid()]) for o in parents4df}
       assert(map2column in new_pd.columns)
       new_pd = new_pd.set_index(map2column)
       new_pd[tempid_col] = new_pd[tempid_col].fillna(new_pd.index.to_series().map(prop2tempids))
@@ -335,11 +350,40 @@ class SemanticSearch (APISession):
     if removed_rows:
       names_with_nan = new_pd.loc[new_pd[tempid_col].isna(), 'Name'].tolist()
       print(f'{removed_rows} for {names_with_nan} entities were removed from worksheet because database identifiers cannot be found')
-    self.all_entity_dbids.update(self._all_dbids(clean_df))
+    clean_df.add_entities(parents4df)
     return clean_df
   
 
-  def load_df(self,from_entities:list[PSObject],max_childs=MAX_CHILDS,max_threads=50): 
+  def load_df_neo4j(self,from_entities:list[PSObject]|set[PSObject],max_childs=MAX_CHILDS):
+    assert self.useNeo4j(), 'Neo4j database connection was not specified'
+    entities_with_children = self.neo4j._load_children_(from_entities,max_childs=max_childs)
+
+    children = set()
+    parents4df = []
+    for parent in entities_with_children:
+      if parent.number_of_children() <= max_childs:
+        childs = parent.childs()
+        children.update(childs)
+        parents4df.append(parent)
+
+    for c in children:
+      c[self.__mapped_by__] = 'Name'
+      c[self.__resnet_name__] = c.name()
+
+    self.Graph.add_psobjs(set(parents4df)|children)
+    remove_count = len(from_entities) - len(parents4df)
+    print(f'{remove_count} out of {len(from_entities)} entities with > {max_childs} ontology children were excluded from worksheet')
+
+    urns4tempid = [tuple(o.child_urns()+[o.urn()]) for o in parents4df]
+    names = [o.name() for o in parents4df] # "graph_psobjects" and "from_entities" may not have same 'Name' !!!!
+    urns = [o.urn() for o in parents4df]
+    objtypes = [o.objtype() for o in parents4df]
+    refcount_df = df.from_dict({'Name':names,'ObjType':objtypes,'URN':urns,self.__temp_id_col__:urns4tempid})
+    refcount_df.add_entities(parents4df)
+    return refcount_df
+
+
+  def load_df(self,from_entities:list[PSObject]|set[PSObject],max_childs=MAX_CHILDS,max_threads=50): 
       # do not use self.max_ontology_parent instead of max_childs to avoid problems for session cloning  
       '''
       input:
@@ -354,9 +398,7 @@ class SemanticSearch (APISession):
           self.load_dbids4(from_entities)
 
         # load_children4() adds empty PSObject in CHILDS property if parents has children > max_childs 
-        children,_ = self.load_children4(from_entities,
-                                            max_childs=max_childs,
-                                            max_threads=max_threads)
+        children,_ = self.load_children4(from_entities, max_childs=max_childs, max_threads=max_threads)
         for c in children:
           self.Graph.nodes[c.uid()][self.__mapped_by__] = 'Name'
           self.Graph.nodes[c.uid()][self.__resnet_name__] = c.name()
@@ -364,24 +406,22 @@ class SemanticSearch (APISession):
         # load_children4() adds empty PSObject in CHILDS property if parents has children > max_childs 
         graph_psobjects = self.Graph._get_nodes(ResnetGraph.uids(from_entities))
           # child_dbids() will return empty list if o[CHILDS] has empty PSObject in CHILDS property
-        df_psobjects = [o for o in graph_psobjects if len(o.childs()) <= max_childs]
-        print(f'{len(graph_psobjects)-len(df_psobjects)} entities with > {max_childs} ontology children were removed from further calculations')
+        parents4df = [o for o in graph_psobjects if o.number_of_children() <= max_childs]
+        print(f'{len(graph_psobjects)-len(parents4df)} entities with > {max_childs} ontology children were removed from further calculations')
 
-        # "graph_psobjects" and "from_entities" may not have the same 'Name' !!!!
-        names = [o.name() for o in df_psobjects]
-        urns = [o.urn() for o in df_psobjects]
-        objtypes = [o.objtype() for o in df_psobjects]
-        child_dbids = [tuple(o.child_dbids()+[o.dbid()]) for o in df_psobjects]
+        child_dbids = [tuple(o.child_dbids()+[o.dbid()]) for o in parents4df]
+        names = [o.name() for o in parents4df] # "graph_psobjects" and "from_entities" may not have same 'Name' !!!!
         assert(len(names) == len(child_dbids))
-        refcount_df = df.from_dict({'Name':names,'ObjType':objtypes,'URN':urns,self.__temp_id_col__:child_dbids})        
-        refcount_dbids = self._all_dbids(refcount_df)
-        self.all_entity_dbids.update(refcount_dbids)
+        urns = [o.urn() for o in parents4df]
+        objtypes = [o.objtype() for o in parents4df]
+        refcount_df = df.from_dict({'Name':names,'ObjType':objtypes,'URN':urns,self.__temp_id_col__:child_dbids})
       else:
         names = [o.name() for o in from_entities]
         urns = [o.urn() for o in from_entities]
         objtypes = [o.objtype() for o in from_entities]
         refcount_df = df.from_dict({'Name':names,'ObjType':objtypes,'URN':urns})
           
+      refcount_df.add_entities(parents4df)
       return refcount_df
 
 
@@ -397,12 +437,15 @@ class SemanticSearch (APISession):
       PropName2Prop2psobj = dict()
       RemainToMap = EntityPandas.dfcopy()
       mapped_count = 0
+      all_mapped_objs = set() # {PSObject}
       for propName in EntityPandas.columns:
-          identifiers = list(map(str,list(RemainToMap[propName])))
-          prop2dbid2psobj = self.map_prop2entities(identifiers, propName, map2types, get_childs=True)
-          PropName2Prop2psobj[propName] = prop2dbid2psobj
-          mapped_count = mapped_count + len(prop2dbid2psobj)
-          RemainToMap = RemainToMap[~RemainToMap[propName].isin(list(prop2dbid2psobj.keys()))]
+        identifiers = list(map(str,list(RemainToMap[propName])))
+        prop2dbid2psobj = self.map_prop2entities(identifiers, propName, map2types, get_childs=True)
+        PropName2Prop2psobj[propName] = prop2dbid2psobj
+        mapped_count = mapped_count + len(prop2dbid2psobj)
+        RemainToMap = RemainToMap[~RemainToMap[propName].isin(list(prop2dbid2psobj.keys()))]
+        for dbid2objs in prop2dbid2psobj.values():
+          all_mapped_objs.update(dbid2objs)
       print('%d rows out of %d were mapped to %d entities that have at least one connection in Resnet using %s' % 
             (mapped_count,len(EntityPandas),self.Graph.number_of_nodes(),','.join(EntityPandas.columns)))
 
@@ -425,11 +468,11 @@ class SemanticSearch (APISession):
                                       [self.__resnet_name__,self.__mapped_by__,self.__temp_id_col__])
           MappedEntitiesByProp = df.from_pd(MappedEntitiesByProp[MappedEntitiesByProp[self.__temp_id_col__].notnull()])
           df2return = df2return.append_df(MappedEntitiesByProp)
-
       ex_time = execution_time(start_mapping_time)
       print ('Mapped %d out of %d identifiers to entities in database in %s\n' % 
             (len(df2return), len(EntityPandas.index), ex_time))
       
+      df2return.add_entities(all_mapped_objs)
       return df2return
 
 
@@ -501,60 +544,61 @@ class SemanticSearch (APISession):
       print('%d out of %d %s identifiers were mapped on entities in the database' % 
             (len(prop2psobj), len(propValues), propName))
       return prop2psobj
-
-
-  def __refcount_by_dbids(self,node1dbids:list,node2dbids:list,how2connect) -> "ResnetGraph":
-      '''
-      how2connect - func(node1dbids,node2dbids)\n
-      contains instruction how to connect node1dbids with node1dbids using class parameters
-      '''
-      start_time = time.time()
-      graph_connects = how2connect(node1dbids,node2dbids)
-      assert(isinstance(graph_connects,ResnetGraph))
-      print('%d nodes were linked by %d relations supported by %d references in %s' %
-            (len(graph_connects),graph_connects.number_of_edges(),graph_connects.weight(),execution_time(start_time)))
-      
-      return graph_connects
   
 
-  def connect(self, my_df:df,concepts:list,how2connect) -> ResnetGraph:
-      '''
-      combines relation from database with relation that exist only in self.Graph and not in database
-      such relation can exist in RNEF cache
-      '''
-      concepts_db_ids = ResnetGraph.dbids(concepts)
-      all_df_dbids = list(self._all_dbids(my_df))
-      graph_from_db = self.__refcount_by_dbids(concepts_db_ids, all_df_dbids,how2connect)
-      all_df_entities = self.Graph.psobj_with_dbids(set(all_df_dbids))
-      graph_from_self = self.Graph.get_subgraph(concepts,all_df_entities,self.__connect_by_rels__,self.__rel_effect__,self.__rel_dir__)
-      return graph_from_db.compose(graph_from_self)
-
-
   def set_how2connect(self,**kwargs):
-      '''
-      kwargs:
-          'connect_by_rels' - desired relation types for connection. Defaults to []
-          'with_effects' - desired relation effect for connection [positive,negative]. Deafults to [] (any)
-          'in_dir' allowed values: 
-              '>' - from entities in row to concept in column
-              '<' - from concept in column to entities in row
-              '' - any direction (default)
-          'boost_with_reltypes' - if not empty adds to refcount references from other relation types listed in [boost_with_reltypes] regardless Effect sign and direction.  Equivalent to merging relations for refcount if at least one relation specified by other parameters exist between entities and concept
-          'step' = step for iterate_oql() function. Defaults to 500
-          'nodeweight_prop' - indicates the name of the property holding node weight. Deafaults to '' (no weight property)
-      '''
-      self.__connect_by_rels__ = kwargs.get('connect_by_rels',[])
-      self.__rel_effect__ = kwargs.get('with_effects',[])
-      self.__rel_dir__ = kwargs.get('in_dir','')
-      self.__boost_with__ = kwargs.get('boost_by_reltypes',[])
-      self.iteration_step = kwargs.get('step',500)
-      self.nodeweight_prop = kwargs.get('nodeweight_prop','')
+    '''
+    kwargs:
+        'connect_by_rels' - desired relation types for connection. Defaults to []
+        'with_effects' - desired relation effect for connection [positive,negative]. Deafults to [] (any)
+        'in_dir' allowed values: 
+            '>' - from entities in row to concept in column
+            '<' - from concept in column to entities in row
+            '' - any direction (default)
+        'boost_with_reltypes' - if not empty adds to refcount references from other relation types listed in [boost_with_reltypes] regardless Effect sign and direction.  Equivalent to merging relations for refcount if at least one relation specified by other parameters exist between entities and concept
+        'step' = step for iterate_oql() function. Defaults to 500
+        'nodeweight_prop' - if true concepts must be annotated with NODE_WEIGHT. Defaults to False
+    '''
+    self.__connect_by_rels__ = kwargs.get('connect_by_rels',[])
+    self.__rel_effect__ = kwargs.get('with_effects',[])
+    self.__rel_dir__ = kwargs.get('in_dir','')
+    self.__boost_with__ = kwargs.get('boost_by_reltypes',[])
+    self.iteration_step = kwargs.get('step',500)
+    self.ConceptsHaveWeights = kwargs.get('nodeweight_prop',False)
 
-      connect_by_rels = self.__connect_by_rels__+self.__boost_with__
-      def connect(node1dbids:list, node2dbids:list):
-        return self.connect_nodes(set(node1dbids),set(node2dbids),connect_by_rels,self.__rel_effect__,self.__rel_dir__,step=self.iteration_step)
-      return connect
-          
+    connect_by_rels = self.__connect_by_rels__+self.__boost_with__
+
+    def connect_psapi(nodes1:list[PSObject], nodes2:list[PSObject]):
+      return self.connect_entities(set(nodes1),set(nodes2),connect_by_rels,self.__rel_effect__,self.__rel_dir__,step=self.iteration_step)
+    
+    def connect_neo4j(nodes1:list[PSObject], nodes2:list[PSObject]):
+      return self.connect_entities_neo4j(nodes1,nodes2,connect_by_rels,self.__rel_effect__,self.__rel_dir__)
+    
+    return connect_neo4j if self.useNeo4j() else connect_psapi
+  
+
+  def connect(self,my_df:df,concepts:list[PSObject],how2connect) -> ResnetGraph:
+    '''
+    output:
+      connects all entities in my_df with all concepts in one request.
+      combines relations from database with relations from self.Graph non-existing in database
+      unique to self.Graph relations can come from in RNEF cache or cretaed by metabolite2inhibit
+    '''
+    start_time = time.time()
+    df_entities = my_df.entities()
+    DBconnectionsG = how2connect(concepts,df_entities)
+    print('%d nodes were linked by %d relations from database supported by %d references in %s' %
+        (len(DBconnectionsG),DBconnectionsG.number_of_edges(),DBconnectionsG.weight(),execution_time(start_time)))
+    CacheconnectionsG = self.Graph.get_subgraph(concepts,df_entities,self.__connect_by_rels__,self.__rel_effect__,self.__rel_dir__)
+    if CacheconnectionsG:
+      print('Additional %d nodes were linked by %d relations from cache supported by %d references in %s' %
+          (len(CacheconnectionsG),CacheconnectionsG.number_of_edges(),CacheconnectionsG.weight(),execution_time(start_time)))
+      
+    connectionsG = CacheconnectionsG.compose(DBconnectionsG)
+    if self.useNeo4j():
+      self.load_references(connectionsG)
+    return connectionsG
+  
 
   def __annotate_rels(self, from_graph:ResnetGraph, with_concept_name:str):
       for regulatorID, targetID, rel in from_graph.edges.data('relation'):
@@ -585,7 +629,8 @@ class SemanticSearch (APISession):
       return in_df
 
 
-  def __link2concept(self,ConceptName:str,concepts:list[PSObject],to_entities:df|pd.DataFrame,how2connect):
+  def __link2concept(self,ConceptName:str,concepts:list[PSObject],to_entities:df|pd.DataFrame,
+                     how2connect)->tuple[ResnetGraph,df]:
     """
     input:
       to_entities.columns must have self.__temp_id_col__\n
@@ -626,55 +671,58 @@ class SemanticSearch (APISession):
         pass
 
     linked_row_count = 0
-    linked_entities = set()
+    #linked_entities = set()
     start_time  = time.time()
+    id_type = 'URN' if self.useNeo4j() else DBID
     connection_graph = self.connect(my_df,concepts, how2connect)
-
     if connection_graph.number_of_edges()>0:
       self.__annotate_rels(connection_graph, ConceptName)
-      ref_sum = set()
+      ref_counter = set()
       for idx in my_df.index:
-        entities_dbids = set(my_df.at[idx,self.__temp_id_col__])
-        idx_entities = connection_graph.psobj_with_dbids(entities_dbids)
-        if self.__rel_dir__ =='>':
-          row_has_connection = connection_graph.relation_exist(idx_entities,concepts,
-                                        self.__connect_by_rels__,self.__rel_effect__,[],False)
-        elif self.__rel_dir__ =='<':
-          row_has_connection = connection_graph.relation_exist(concepts,idx_entities,
-                                        self.__connect_by_rels__,self.__rel_effect__,[],False)
-        else:
-          row_has_connection = connection_graph.relation_exist(concepts,idx_entities,
-                                        self.__connect_by_rels__,self.__rel_effect__,[],True)
+        entities_ids = set(my_df.at[idx,self.__temp_id_col__])
+        row_has_connection = False
+        row_entities = connection_graph.psobj_with_ids(entities_ids,id_type)
+        if row_entities:
+          if self.__rel_dir__ =='>':
+            row_has_connection = connection_graph.relation_exist(row_entities,concepts,
+                                          self.__connect_by_rels__,self.__rel_effect__,[],False)
+          elif self.__rel_dir__ =='<':
+            row_has_connection = connection_graph.relation_exist(concepts,row_entities,
+                                          self.__connect_by_rels__,self.__rel_effect__,[],False)
+          else:
+            row_has_connection = connection_graph.relation_exist(concepts,row_entities,
+                                          self.__connect_by_rels__,self.__rel_effect__,[],True)
 
         if not row_has_connection:
           continue
 
-        row_subgraph = connection_graph.get_subgraph(idx_entities, concepts)
+        row_subgraph = connection_graph.get_subgraph(row_entities, concepts)
         connected_concepts_uids = [c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in concepts_uids]
         my_df.at[idx,linked_count_column] = len(connected_concepts_uids) # used to calculate concept incidence at normalization step
         #it measures the occurence of concepts linked to row entities among all input concepts
-        references = list(row_subgraph.load_references(self.relpval2weight))
+        references = list(row_subgraph.load_references(self.relprop2weight,postgres=self.postgres()))
         # placeholder for possible future use of Scopus citation index:
         # references = [self.RefStats.citation_index(r) for r in references]
         ref_weights = [1.0]*len(references)
+        scopus_score = max([x.get('Relation score',[0.0])[0] for x in references])
 
-        if self.nodeweight_prop:
-        # assumes concepts are annotated by 'regulator weight' and/or 'target weight'
+        if self.ConceptsHaveWeights: # add ref_nodeweights to ref_weights
+        # assumes concepts are annotated by REGULATOR_WEIGHT and/or TARGET_WEIGHT
         # currently does not differentiate between regulators and targets because concepts can be upstream and downstream from entities
-          regulatorurn2weight = {o.urn():o.get_prop('regulator weight') for o in concepts}
-          targeturn2weight = {o.urn():o.get_prop('target weight') for o in concepts}
+          regulatorurn2weight = {o.urn():o.get_prop(REGULATOR_WEIGHT) for o in concepts}
+          targeturn2weight = {o.urn():o.get_prop(TARGET_WEIGHT) for o in concepts}
           row_subgraph.add_node_weight2ref(regulatorurn2weight,targeturn2weight)
-          ref_nodeweights = [r.get_weight('nodeweight') for r in references]
-          ref_weights =  [x + y for x, y in zip(ref_weights, ref_nodeweights)]
+          ref_nodeweights = [r.get_weight(NODEWEIGHT) for r in references]       
+          ref_weights = [x + y for x, y in zip(ref_weights, ref_nodeweights)]
         
-        if self.relpval2weight:
-          ref_relweights = [r.get_weight('relweight') for r in references]
+        if self.relprop2weight:# add ref_relweights to ref_weights
+          ref_relweights = [r.get_weight(RELWEIGHT) for r in references]    
           ref_weights =  [x + y for x, y in zip(ref_weights, ref_relweights)]
 
-        row_score = float(sum(ref_weights))
+        row_score = float(sum(ref_weights)) * (1 + scopus_score/100)
 
         number_of_children = len(list(my_df.at[idx,self.__temp_id_col__]))
-        entities_uids = ResnetGraph.uids(idx_entities)
+        entities_uids = ResnetGraph.uids(row_entities)
         connected_entities_count = len([c for c in row_subgraph.nodes() if row_subgraph.degree(c) and c in entities_uids])
         corrected_row_score = row_score * (1+connected_entities_count/number_of_children)  # boost by multiple component connectivity
         corrected_row_score /= math.sqrt(number_of_children) # normalize by number of entity components
@@ -682,27 +730,26 @@ class SemanticSearch (APISession):
         my_df.at[idx,weighted_refcount_column] = corrected_row_score
         my_df.at[idx,refcount_column] = len(references)
         
-        if references:
-          ref_sum.update(references)
-          linked_row_count += 1
-          linked_entities.update(idx_entities)
+        ref_counter.update(references)
+        linked_row_count += 1
 
       effecStr = ','.join(self.__rel_effect__) if len(self.__rel_effect__)>0 else 'all'
       relTypeStr = ','.join(self.__connect_by_rels__) if len(self.__connect_by_rels__)>0 else 'all'
       exec_time = execution_time(start_time)
       if linked_row_count:
         print("Concept \"%s\" is linked to %d entities by %s relations of type \"%s\" supported by %d references with effect \"%s\" in %s" %
-              (ConceptName,linked_row_count, connection_graph.number_of_edges(),relTypeStr,len(ref_sum),effecStr,exec_time))
+              (ConceptName,linked_row_count, connection_graph.number_of_edges(),relTypeStr,len(ref_counter),effecStr,exec_time))
       elif connection_graph:
         print("Concept \"%s\" has no links of type \"%s\" with effect \"%s\" to entities in boosted graph" %
             (ConceptName,relTypeStr,effecStr))
     else:  # connection_graph is empty
         print("Concept \"%s\" has no links to entities" % (ConceptName))
 
-    return linked_row_count, linked_entities, my_df
+    return connection_graph, my_df
 
 
-  def link2concept(self,to_concept_named:str,concepts:list[PSObject],to_entities:df|pd.DataFrame,how2connect,clone2retrieve=DO_NOT_CLONE)->tuple[int,set[PSObject],df]:
+  def link2concept(self,to_concept_named:str,concepts:list[PSObject],to_entities:df|pd.DataFrame,
+                   how2connect,clone2retrieve=DO_NOT_CLONE)->tuple[ResnetGraph,df]:
     """
     input:
       to_entities.columns must have self.__temp_id_col__\n
@@ -719,10 +766,10 @@ class SemanticSearch (APISession):
     """
     if clone2retrieve:
       my_session = self._clone(to_retrieve=clone2retrieve,init_refstat=False) # careful to_retrieve MPSVI ClinicalTrial
-      linked_rows,linked_entities,return_df = my_session.__link2concept(to_concept_named,concepts,to_entities,how2connect)
+      connection_graph,return_df = my_session.__link2concept(to_concept_named,concepts,to_entities,how2connect)
       my_session.close_connection()
-      return linked_rows,linked_entities,return_df
-    else: 
+      return connection_graph,return_df
+    else:
       return self.__link2concept(to_concept_named,concepts,to_entities,how2connect)
 
 
@@ -733,9 +780,9 @@ class SemanticSearch (APISession):
       concepts - [PSObject]
       wrapper for backward compatibility
       '''
-      linked_row_count,linked_entity_ids,self.RefCountPandas = self.link2concept(
-                      to_concept_named,concepts,self.RefCountPandas,how2connect,clone2retrieve)
-
+      connectionG,self.RefCountPandas = self.link2concept(to_concept_named,concepts,
+                                            self.RefCountPandas,how2connect,clone2retrieve)
+      linked_row_count = len(connectionG._get_nodes(ResnetGraph.uids(self.RefCountPandas)))
       return linked_row_count
 
 
@@ -788,17 +835,12 @@ class SemanticSearch (APISession):
       return to_return
   
 
-  def _set_rank(self,in_df:df,_4concept='',my_rank=0,colname=''):
+  def set_rank4(self, concept:str, in_df:df, rank = None):
     '''
-      assigns self._max_rank()+1 to new concept if my_rank == 0\n
-      uses self._weighted_refcount_colname(concept) as column name if not colname
+      assigns in_df.max_colrank()+1 to in_df.col2rank if rank is None
     '''
-    if not my_rank:
-      my_rank = in_df.max_colrank()+1
-    if colname:
-      in_df.col2rank[colname] = my_rank
-    else:
-      in_df.col2rank[self._weighted_refcount_colname(_4concept)] = my_rank
+    column_name = self._weighted_refcount_colname(concept)
+    in_df.set_rank(column_name,rank)
 
 
   def rank2weight(self,col2rank:dict[str,int]):
@@ -1021,13 +1063,13 @@ class SemanticSearch (APISession):
     self.RefCountPandas = df()
 
 
-  def score_concepts(self,*args,**kwargs)->tuple[int,set[PSObject],df]:
+  def score_concepts(self,*args,**kwargs)->tuple[ResnetGraph,df]:
     '''
     input:
       args[0] - [PSObject]
       args[1] - df::df2score will score self.RefCountPandas if len(args) == 1\n
       kwargs:
-          'column_name' - string is used to create column name 'Refcount to column_name'
+          'concept_name' - string is used to create column name 'Refcount to column_name'
           'connect_by_rels' - desired relation types for connection. Defaults to []
           'with_effects' - desired relation effect for connection [positive,negative]. Deafults to [] (any)
           'in_dir' allowed values: 
@@ -1036,40 +1078,86 @@ class SemanticSearch (APISession):
               '' - any direction (default)
           'boost_with_reltypes' - if not empty adds to refcount references from other relation types listed in [boost_with_reltypes] regardless Effect sign and direction.  Equivalent to merging relations for refcount if at least one relation specified by other parameters exist between entities and concept
           'step' = step for iterate_oql() function. Defaults to 500
-          'nodeweight_prop' - indicates the name of the property holding node weight. Deafaults to '' (no weight property
+          'ConceptsHaveWeights' - indicates the name of the property holding node weight. Deafaults to '' (no weight property
           'clone2retrieve' - defaults to DO_NOT_CLONE
           'column_rank' - column rank to calculate combined score. Set column_rank to -1 to skip ranking
     '''
     concepts = args[0]
     df2score = args[1] if len(args) > 1 else self.RefCountPandas
     if concepts:
-      colname = kwargs.pop('column_name','Concepts')
-      clone2retrieve = kwargs.pop('clone2retrieve',DO_NOT_CLONE)
+      concept_name = kwargs.get('concept_name','Concepts')
+      clone2retrieve = kwargs.get('clone2retrieve',DO_NOT_CLONE)
+      self.add2self = kwargs.get('add_relevance_concept_column',False)
       my_step = kwargs.get('step',500) # saving old step size
       if len(concepts) > 500:
-        print('reducing step to 250 for large number of concepts (%d)' % len(concepts))
+        #print('reducing step to 250 for large number of concepts (%d)' % len(concepts))
         # to avoid table lock in Oracle:
         kwargs['step'] = 250
       how2connect = self.set_how2connect(**kwargs)
-      linked_rows,linked_entities,scored_df = self.link2concept(colname,concepts,df2score,how2connect,clone2retrieve)
-      print(f'{linked_rows} rows linked to column {colname}')
+      connectionG,scored_df = self.link2concept(concept_name,concepts,df2score,how2connect,clone2retrieve)
+      linked_row_count = len(connectionG._get_nodes(scored_df.uids()))
+      print(f'{linked_row_count} rows linked to column {concept_name}')
       kwargs['step'] = my_step
-      if linked_rows:
-        rank = kwargs.pop('column_rank',0)
-        if rank >= 0:
-          self._set_rank(scored_df,colname,rank)
-      return linked_rows,linked_entities,scored_df
+      if linked_row_count:
+        # pop ensures next column to have new name assigned explicityly in the upstream function
+        rank = kwargs.get('column_rank',None)
+        self.set_rank4(concept_name, scored_df, rank) 
+        # rank must be set here because different classes use score_concepts or score_concept
+      return connectionG,scored_df
     else:
-      return 0,set(),df2score
+      return ResnetGraph(),df2score
     
+
+  def __explode(self, concepts:list[PSObject], using_concept_params:dict):
+    if isinstance(using_concept_params,dict): # concepts have specific parameters (weight, no_childs)
+      # parameter json must be in written as "inflammation":[1.0,"no_childs"]
+
+      self.ConceptsHaveWeights = True # signal for __link2concept
+      # normalizing concept names for matching:
+      concept_params = {k.lower():v for k,v in using_concept_params.items()} 
+      concepts_need_childs = []
+      for concept in concepts:
+        this_concept_params = concept_params[concept.name().lower()]
+        if len(this_concept_params) == 1: # concept has only weight parameter
+          concepts_need_childs.append(concept)
+        else:
+          assert(this_concept_params[1] == 'no_childs'), 'Second parameter for concept must be "no_childs"'
+
+      _, concepts_with_childs = self._load_childs_(concepts_need_childs)
+
+      # adding all concepts annoated with children into one array:
+      all_concepts = set(concepts_with_childs)
+      [all_concepts.add(c) for c in concepts if c not in concepts_with_childs]
+      # now concepts in all_concepts are annoated with property CHILDS 
+
+      # now assigning nodeweights from input paramters to all concepts and its children 
+      # and collect them for scoring:
+      exploded_concepts = set()
+      for concept in all_concepts:
+        node_weight = concept_params[concept.name().lower()][0]
+        concept.set_property(TARGET_WEIGHT,node_weight)
+        concept.set_property(REGULATOR_WEIGHT,node_weight)
+        exploded_concepts.add(concept)
+        for child in concept.childs():
+          child.set_property(TARGET_WEIGHT,node_weight)
+          child.set_property(REGULATOR_WEIGHT,node_weight)
+          exploded_concepts.add(child)
+    else: # by default all concepts undergo term expansion:
+        children,exploded_concepts = self._load_childs_(concepts)
+        exploded_concepts.update(children)
+    print(f'{len(concepts)} concepts were exploded to {len(exploded_concepts)}')
+    return exploded_concepts
   
-  def score_concept(self,*args,**kwargs)->tuple[int,set[PSObject],df,list[PSObject]]:
+  
+  def score_concept(self,*args,**kwargs)->tuple[ResnetGraph,df,list[PSObject]]:
     '''
+    output:
+      connection graph, df with new column, annotated concepts
     input:
       args[0] - key name in self.params that holds the list of concept names\n
       args[1] - df to score.  Wil use self.RefCountPandas if len(args) < 2\n
       kwargs:
-        'column_name' - string is used to create column name 'Refcount to column_name'
+        'concept_name' - string is used to create column name 'Refcount to column_name'
         'connect_by_rels' - desired relation types for connection. Defaults to []
         'with_effects' - desired relation effect for connection [positive,negative]. Deafults to [] (any)
         'in_dir' allowed values: 
@@ -1078,7 +1166,7 @@ class SemanticSearch (APISession):
             '' - any direction (default)
         'boost_with_reltypes' - if not empty adds to refcount references from other relation types listed in [boost_with_reltypes] regardless Effect sign and direction.  Equivalent to merging relations for refcount if at least one relation specified by other parameters exist between entities and concept
         'step' = step for iterate_oql() function. Defaults to 500
-        'nodeweight_prop' - indicates the name of the property holding node weight. Deafaults to '' (no weight property
+        'ConceptsHaveWeights' - indicates the name of the property holding node weight. Deafaults to '' (no weight property
         'clone2retrieve' - defaults to DO_NOT_CLONE
         'column_rank' - column rank to calculate combined score
     '''
@@ -1086,76 +1174,51 @@ class SemanticSearch (APISession):
     df2score = args[1] if len(args) > 1 else self.RefCountPandas
     concept_params = self.params.get(args[0],[])
     if not concept_params:
-      return 0,set(),df2score,[]
+      return ResnetGraph(),df2score,[]
       
-    if isinstance(concept_params,dict):
-      concept_names = list(concept_params.keys())
-    else:
-      concept_names = concept_params
-
+    concept_names = list(concept_params.keys())  if isinstance(concept_params,dict) else concept_params
     if concept_names:
       concept_name = args[0]
-      print(f'\n\nLinking concepts from "{concept_name}" parameter to {df2score._name_} worksheet with {len(df2score)} rows',flush=True)
-      print(f'Results will be added to column "{kwargs['column_name']}"')
-      request_name = f'Loading "{concept_name}" from script parameters'
-      oql = OQL.get_entities_by_props(concept_names,['Name'])
-      in_concepts = self.process_oql(oql,request_name)._get_nodes()
-      if in_concepts:
-        print(f'Found {len(in_concepts)} {concept_name} in ontology for {len(concept_params)} {concept_name} in parameters')
-        expanded_concepts = set()
-        if isinstance(concept_params,dict): # concepts have specific parameters (weight, no_children)
-          my_params = {k.lower():v for k,v in concept_params.items()}
-          self.nodeweight_prop = 'nodeweight_prop'
-          need_children = in_concepts.copy()
-  
-          name2concept = {c.name().lower():c for c in in_concepts}
-          for name, concept_param in my_params.items():
-            if len(concept_param) > 1:
-              assert(concept_param[1] == 'no_childs')
-              need_children.remove(name2concept[name])
-          children,annotated_concepts = self.load_children4(need_children)
-          [annotated_concepts.add(c) for c in in_concepts if c not in annotated_concepts]
+      print(f'\n\nLinking concepts from "{concept_name}" parameter to "{df2score._name_}" worksheet with {len(df2score)} rows',flush=True)
+      print(f'Results will be added to column "{kwargs['concept_name']}"')
+     
+      if self.useNeo4j():
+        input_concepts = self.neo4j.get_nodes('','Name',concept_names)
+      else:
+        request_name = f'Loading "{concept_name}" from script parameters'
+        oql = OQL.get_entities_by_props(concept_names,['Name'])
+        input_concepts = self.process_oql(oql,request_name)._get_nodes()
 
-          for c in annotated_concepts:
-            node_weight = my_params[c.name().lower()][0]
-            c.set_property('target weight',node_weight)
-            c.set_property('regulator weight',node_weight)
-            expanded_concepts.add(c)
-            for child in c.childs():
-              child.set_property('target weight',node_weight)
-              child.set_property('regulator weight',node_weight)
-              expanded_concepts.add(child)
-        else: # by default all concepts undergo term expansion:
-          children,expanded_concepts = self.load_children4(in_concepts)
-          expanded_concepts.update(children)
-        
-        print(f'{len(in_concepts)} concepts  from "{concept_name}" parameter were expanded to {len(expanded_concepts)} using ontology children')
-        linked_rows,linked_entities,scored_df = self.score_concepts(expanded_concepts,df2score,**kwargs)
-        self.nodeweight_prop = ''
-        if linked_rows:
+      if input_concepts:
+        print(f'Found {len(input_concepts)} {concept_name} in ontology for {len(concept_params)} {concept_name} in parameters')
+        exploded_concepts = self.__explode(input_concepts,concept_params)
+        connectionG,scored_df = self.score_concepts(exploded_concepts,df2score,**kwargs)
+        self.ConceptsHaveWeights = False
+
+        if connectionG:
           if kwargs.get('add_relevance_concept_column',False):
-            scored_df = self.add_relevant_concepts(scored_df,{concept_name:list(expanded_concepts)})
-          scored_column_rank = scored_df.max_colrank()
+            scored_df = self.add_relevant_concepts(scored_df,{concept_name:list(exploded_concepts)},connectionG)
           
-          annotated_inconcepts = [c for c in expanded_concepts if c in in_concepts]
+          annotated_inconcepts = [c for c in exploded_concepts if c in input_concepts]
           for c in annotated_inconcepts:
-            connectivity = self.Graph.connectivity(c,with_children=True)
+            connectivity = connectionG.connectivity(c,with_children=True)
             c.set_property('Local connectivity',connectivity)
-            c.set_property('rank',scored_column_rank)
+            c.set_property('rank',scored_df.max_colrank())
 
-          print(f'Linking {len(expanded_concepts)} concepts expanded from "{concept_name}" to {df2score._name_} worksheet with {len(df2score)} rows was done in {execution_time(start)}',flush=True)
-          return linked_rows,linked_entities,scored_df,annotated_inconcepts
+          print(f'Linked {len(exploded_concepts)} expanded from "{concept_name} to  worksheet "{df2score._name_}" by {connectionG.size()} references')
+          print(f'Linking was done in {execution_time(start)}',flush=True)
+          return connectionG,scored_df,annotated_inconcepts
         else:
           print(f'No entities were linked to {concept_names}')
-          return 0,set(),df2score,[]
+          return ResnetGraph(),df2score,[]
       else:
           print(f'No concepts found for {concept_names}. Check your spelling !!!')
-          self.nodeweight_prop = ''
-          return 0,set(),df2score,[]
+          self.ConceptsHaveWeights = False
+          return ResnetGraph(),df2score,[]
     else:
       print('No concept name was provided!!!!')
-      self.nodeweight_prop = ''
-      return 0,set(),df2score,[]
+      self.ConceptsHaveWeights = False
+      return ResnetGraph(),df2score,[]
 
 
 ##################  ANNOTATE  ############################## ANNOTATE ############################
@@ -1171,7 +1234,7 @@ class SemanticSearch (APISession):
                   add2query=[],add2report=True):
     """
     input:
-      self.report_pandas[to_df_named] must existsnand have column 'Name'
+      self.report_pandas[to_df_named] must exist and have column 'Name'
     output:
         copy of self.report_pandas[to_df_named] with added columns:
           RefStats.refcount_column(between_names_in_col,and_concepts)
@@ -1292,18 +1355,29 @@ class SemanticSearch (APISession):
       return new_df
 
 
-  def __load_ontology(self, ontology_file=''):
+  def _load_ontology(self, ontology_file:dict={}):
+    '''
+    input:
+      ontology_file = {NodeType:path2file_with_groups}
+    '''
     if not self.__Ontology__ and ontology_file:
-      group_names = {x.strip() for x in open(ontology_file, 'r').readlines()}
-      oql = 'SELECT Entity WHERE Name = ({props})'
-      new_session = self._clone_session() #to avoid mutating self.Graph in parallel calculations
-      request_name = f'Loading ontology {len(group_names)} groups from file {ontology_file}'
-      ontology_graph = new_session.__iterate__(oql,group_names,request_name,step=500)
-      if isinstance(ontology_graph,ResnetGraph):
-        ontology_groups = ontology_graph._get_nodes()
-        _, ontology = new_session.load_children4(ontology_groups, max_threads=50)
-        self.__Ontology__ = ontology 
-      new_session.close_connection()
+      assert isinstance(ontology_file,dict), 'Format for ontology file input: {{NodeType:path2file}}'
+      for node_type, fpath in ontology_file.items():
+        group_names = {x.strip() for x in open(fpath, 'r').readlines()}
+        print(f'Loading {len(group_names)} {node_type} groups listed in {fpath}')
+        if self.useNeo4j():
+          parents = self.neo4j.get_nodes(node_type,'Name',list(group_names))
+          self.__Ontology__.update(self.neo4j._load_children_(parents))
+        else:
+          oql = 'SELECT Entity WHERE Name = ({props})'
+          new_session = self._clone_session() #to avoid mutating self.Graph in parallel calculations
+          request_name = f'Loading ontology {len(group_names)} groups from file {ontology_file}'
+          ontology_graph = new_session.__iterate__(oql,group_names,request_name,step=500)
+          if isinstance(ontology_graph,ResnetGraph):
+            ontology_groups = ontology_graph._get_nodes()
+            _, parents_with_children = new_session.load_children4(ontology_groups, max_threads=50)
+            self.__Ontology__.update(parents_with_children)
+          new_session.close_connection()
            
     return self.__Ontology__
 
@@ -1315,7 +1389,7 @@ class SemanticSearch (APISession):
       output:
           Adds worksheet to "report_pandas" containing statistics for ontology groups listed in 'ElsevierAPI/ResnetAPI/ontology/disease4ontology_analysis.txt'
       '''
-      self.__load_ontology()
+      self._load_ontology()
 
       try:
           scored_disease_names = _4df[self.__resnet_name__].to_list()
@@ -1357,30 +1431,39 @@ class SemanticSearch (APISession):
         return_df._name_ = from_df._name_
     return return_df
 
-  def _relevant_concept_colname(self,concept_name:str):
-     return 'Relevant '+concept_name
 
-  def add_relevant_concepts(self,to_df:df,name2concepts:dict[str,list[PSObject]]):
+  def add_relevant_concepts(self,to_df:df,name2concepts:dict[str,list[PSObject]],from_graph:ResnetGraph=None):
     '''
     input:
       name2concepts = {concept_name:[Concepts]}
     output:
       df with new column "Relavant concept_names" containing [Concepts] linked to row_entities in the self.Graph
     '''
+    def _relevant_concept_colname(concept_name:str):
+      return 'Relevant ' + concept_name
+    
+    myG = from_graph if from_graph else self.Graph
     my_df = to_df.dfcopy()
+    idtype = self.idtype()
+
     for name, concepts in name2concepts.items():
-      column = self._relevant_concept_colname(name)
+      column = _relevant_concept_colname(name)
       print(f'Adding {column} column to {to_df._name_}')
       for i in my_df.index:
-        dbids = list(to_df.at[i,self.__temp_id_col__])
-        row_uids = self.Graph.dbid2uid(dbids).values()
+        ids = list(to_df.at[i,self.__temp_id_col__])
+        row_uids = list(myG.dbid2uid(ids,idtype).values())
         strs4cell = []
         for concept in concepts:
-          concep_rels = list(self.Graph.get_rels_between(row_uids, [concept.uid()]))
-          concep_rels.sort(key=lambda x: x.get_prop('regulator weight',if_missing_return=1),reverse=True)
-          e2i_refs = set()
-          [e2i_refs.update(rel.refs()) for rel in concep_rels]
-          if e2i_refs:
+          concep_rels = list(myG.get_rels_between(row_uids, [concept.uid()]))
+          if concep_rels:
+            concep_rels.sort(key=lambda x: 
+                             (
+                              x.get_prop(REGULATOR_WEIGHT,if_missing_return=1),
+                              x.count_refs()
+                              ),
+                              reverse=True)
+            e2i_refs = set()
+            [e2i_refs.update(rel.refs()) for rel in concep_rels]
             strs4cell.append(f'{concept.name()} ({str(len(e2i_refs))})')
         my_df.loc[i,column] = ','.join(strs4cell)
     return my_df
@@ -1418,47 +1501,31 @@ class SemanticSearch (APISession):
     report_df_columns = df2print.columns.to_list()
     my_drop = [c for c in self.columns2drop if c in report_df_columns]
     clean_pd = df2print.drop(columns=my_drop)
-    clean_df = df.from_pd(clean_pd.loc[(clean_pd!=0).any(axis=1)]) # removes rows with all zeros
-
-    # moves RANK columns to front after 'Name' column:
+    clean_df = df.from_pd(clean_pd.loc[(clean_pd!=0).any(axis=1)].fillna('')) # removes rows with all zeros
     clean_df_columns = clean_df.columns.to_list()
-    rank_pos = 1
-    if 'Name' in clean_df_columns:
-      rank_pos = clean_df_columns.index('Name') +1
-      
+
+    stop_index = clean_df_columns.index('Name') + 1 if 'Name' in clean_df_columns else 1
+    new_column_order = clean_df_columns[:stop_index]
+
     hyperlinked_cols = [c for c in clean_df_columns if c.startswith(REFCOUNT_COLUMN)]
-    _1st_columns = hyperlinked_cols+[CHILDREN_COUNT]
-    move2 = dict()
-    for c in _1st_columns:
-      if c in clean_df.columns:
-        #clean_df = clean_df.move_cols({c:rank_pos})
-        move2[c] = rank_pos
-        clean_df.add_column_format(c,'align','center')
-        rank_pos += 1
-
-    # moving main rank column after Name, REFCOUNT_COLUMN, CHILDREN_COUNT
-    for c in clean_df_columns:
-      if 'rank' in c.lower():
-        move2[c] = rank_pos
-        rank_pos += 1
-
-    # moving refcount coulmns after main rank column:
-    for c in clean_df_columns:
-      if c in report_df.col2rank:
-        move2[c] = rank_pos
-        rank_pos += 1
-
-    # moves etm_ref_col next to rank columns:
     if hasattr(self,'RefStats'):
-      for c in self.RefStats.refcols:
-        if c in clean_df_columns:
-          move2[c] = rank_pos
-          rank_pos += 1
-      hyperlinked_cols += list(self.RefStats.refcols)
-
+      [hyperlinked_cols.append(c) for c in self.RefStats.refcols 
+       if c in clean_df_columns and c not in new_column_order]
     clean_df.set_hyperlink_color(hyperlinked_cols)
-    clean_df = clean_df.move_cols(move2)
-    clean_df = df.from_pd(clean_df.fillna('')) # critical for printing WEIGHTS header
+
+    centered_columns = hyperlinked_cols
+    if CHILDREN_COUNT in clean_df_columns: 
+      centered_columns.append(CHILDREN_COUNT)
+    [clean_df.add_column_format(c,'align','center') for c in centered_columns]
+    new_column_order += centered_columns
+
+    ranked_cols = [c for c in clean_df_columns if 'rank' in c.lower() and c not in new_column_order]
+    new_column_order += ranked_cols
+    
+    other_columns = [c for c in clean_df_columns if c not in new_column_order]
+    new_column_order += other_columns
+
+    clean_df = clean_df.dfcopy(new_column_order)
     clean_df.copy_format(report_df)
     
     if any(s in report_df._name_ for s in {'ibliography','nippets','refs','snpt',INPUT_WOKSHEET,PHENOTYPE_WORKSHEET}):

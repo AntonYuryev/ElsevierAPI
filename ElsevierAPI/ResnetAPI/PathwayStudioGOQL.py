@@ -1,5 +1,6 @@
 
 from builtins import len
+from ..ResnetAPI.NetworkxObjects import OBJECT_TYPE
 NEED_QUOTES = {' ','-','/','(',')','[',']','+','#',':','&'}
 PERCNT = '%'
 
@@ -138,60 +139,78 @@ class OQL:
 
 
     @staticmethod
-    def expand_entity_by_id(IDlist: list, expand_by_rel_types=None, expand2neighbors=None, direction=''):
+    def relProps2oql(relProps:dict[str,list[str|int|float]]):
+      expand_by_rel_props_str = ''
+      for prop, values in relProps.items():
+        if isinstance(values[0], str):
+          values_str = OQL.join_with_quotes(values)
+        else: 
+          values_str = ', '.join([str(v) for v in values])
+        prop = OBJECT_TYPE if prop == 'objectType' else prop
+        expand_by_rel_props_str += f' AND {prop} = ({values_str})'
+      return expand_by_rel_props_str
+
+
+    @staticmethod
+    def expand_entity_by_id(IDlist: list, by_relProps:dict[str,list[str|int|float]]={}, expand2neighbors=None, direction=''):
         expand2neighbors = [] if expand2neighbors is None else expand2neighbors
-        expand_by_rel_types = [] if expand_by_rel_types is None else expand_by_rel_types
-        expand_by_rel_types_str = OQL.join_with_quotes(expand_by_rel_types)
+        expand_by_relprops_str = OQL.relProps2oql(by_relProps)
         expand2neighbors_str = OQL.join_with_quotes( expand2neighbors)
 
         values = ','.join([str(i) for i in IDlist])
         expand = 'Select Relation WHERE NeighborOf ' + direction + ' (SELECT Entity WHERE id = (' + values + '))'
         if direction == 'upstream':
-            opposite_direction = 'downstream'
+          opposite_direction = 'downstream'
         elif direction == 'downstream':
-            opposite_direction = 'upstream'
+          opposite_direction = 'upstream'
         else:
-            opposite_direction = ''
+          opposite_direction = ''
 
-        if expand_by_rel_types:
-            if expand2neighbors:
-                expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + opposite_direction
-                expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
-            else:
-                expand += " AND objectType = (" + expand_by_rel_types_str + ")"
+        if expand_by_relprops_str:
+          if expand2neighbors:
+            expand += f" AND {expand_by_relprops_str} AND NeighborOf '{opposite_direction}"
+            expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
+          else:
+            expand += f" AND {expand_by_relprops_str}"
         else:
-            if expand2neighbors:
-                expand += ' AND NeighborOf ' + opposite_direction
-                expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
-
+          if expand2neighbors:
+            expand += ' AND NeighborOf ' + opposite_direction
+            expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
         return expand
 
 
     @staticmethod
     def expand_entity(PropertyValues:list, SearchByProperties:list, 
-        expand_by_rel_types:list=[], expand2neighbors:list=[], direction=''):
+        by_relProps:dict[str,list[str|int|float]]={}, expand2neighbors:list=[], direction=''):
         '''
-        Input
-        -----
+        Input:
+        by_relProps: {propName:[propValue1,propValue2,...]},
         direction - upstream, downstream, ""
         '''
-        expand2neighbors_str = OQL.join_with_quotes(expand2neighbors)
-        expand_by_rel_types_str = OQL.join_with_quotes(expand_by_rel_types)
-
         if SearchByProperties[0] in ('id', 'Id', 'ID'):
-            return OQL.expand_entity_by_id(PropertyValues, expand_by_rel_types, expand2neighbors, direction)
-
+          return OQL.expand_entity_by_id(PropertyValues, by_relProps, expand2neighbors, direction)
+        
+        expand2neighbors_str = OQL.join_with_quotes(expand2neighbors)
+        #expand_by_rel_types_str = OQL.join_with_quotes(expand_by_rel_types)
+        expand_by_rel_props_str = ''
+        for prop, values in by_relProps.items():
+          if isinstance(values[0], str):
+            values_str = OQL.join_with_quotes(values)
+          else: 
+            values_str = ', '.join([str(v) for v in values])
+          expand_by_rel_props_str += f' AND {prop} = ({values_str})'
+          
         property_names, values = OQL.get_search_strings(SearchByProperties, PropertyValues)
         expand = 'Select Relation WHERE NeighborOf ' + direction + ' (SELECT Entity WHERE (' + property_names + ') = (' + values + '))'
 
         oql_dir_hint = 'downstream' if direction == 'upstream' else 'upstream' if direction == 'downstream' else ''
 
-        if expand_by_rel_types:
+        if expand_by_rel_props_str:
             if expand2neighbors:
-                expand += " AND objectType = (" + expand_by_rel_types_str + ') AND NeighborOf ' + oql_dir_hint
+                expand += f" AND {expand_by_rel_props_str} AND NeighborOf {oql_dir_hint}" 
                 expand += ' (SELECT Entity WHERE objectType = (' + expand2neighbors_str + "))"
             else:
-                expand += " AND objectType = (" + expand_by_rel_types_str + ")"
+                expand += f" AND {expand_by_rel_props_str}"
         else:
             if expand2neighbors:
                 expand += ' AND NeighborOf ' + oql_dir_hint + ' (SELECT Entity WHERE objectType = ('
@@ -230,6 +249,11 @@ class OQL:
     @staticmethod
     def select_drugs():
       return "SELECT Entity WHERE InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = (drugs,'plant medicinal product')) AND NOT MemberOf(SELECT Group WHERE Name = 'PAINS compounds')"
+
+
+    @staticmethod
+    def selectPAINs():
+      return "SELECT Entity WHERE MemberOf (SELECT Group WHERE Name = 'PAINS compounds') AND InOntology (SELECT Annotation WHERE Ontology='Pathway Studio Ontology' AND Relationship='is-a') under (SELECT OntologicalNode WHERE Name = (drugs,'plant medicinal product'))"
 
 
     @staticmethod

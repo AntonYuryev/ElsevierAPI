@@ -9,15 +9,16 @@ from lxml import etree as et
 from itertools import product,chain
 from typing import Optional
 from torch_geometric.data import HeteroData
-from collections import defaultdict
+from collections import defaultdict,deque
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from .NetworkxObjects import PSObject,PSRelation,len, DIRECT, INDIRECT, DBID,EFFECT
 from .NetworkxObjects import REGULATORS,TARGETS,CHILDS,REFCOUNT,STATE,DIRECT_RELTYPES,OBJECT_TYPE
 from ..ETM_API.references import Reference, pubmed_hyperlink, make_hyperlink
 from ..ETM_API.references import PUBYEAR,TITLE,REFERENCE_PROPS,JOURNAL,INT_PROPS,PS_CITATION_INDEX,SENTENCE_PROPS,SENTENCE,AUTHORS
 from ..ETM_API.RefStats import RefStats,IDENTIFIER_COLUMN
-from ..utils import execution_time, execution_time2,list2str,unpack,normalize
+from ..utils import execution_time, execution_time2,list2str,unpack,normalize,sortdict
 from ..Embio.postgres import PostgreSQL
+
 
 RESNET = 'resnet'
 PHYSICAL_INTERACTIONS = ['Binding','DirectRegulation','ProtModification','PromoterBinding','ChemicalReaction']
@@ -89,7 +90,9 @@ class ResnetGraph (nx.MultiDiGraph):
     uid_pairs = rel.get_regulators_targets(reverse4undirected=edge_duplication)
     if uid_pairs:
       rel_urn = rel.urn(refresh_urn)
-      [self.add_edge(uids[0],uids[1],relation=rel,weight=rel.count_refs(),key=rel_urn) for uids in uid_pairs]   
+      [self.add_edge(uids[0],uids[1],
+                     relation=rel,weight=rel.count_refs(),key=rel_urn) 
+                     for uids in uid_pairs]   
       self.urn2rel[rel_urn] = rel
 
 
@@ -222,21 +225,24 @@ class ResnetGraph (nx.MultiDiGraph):
       node ids and relation ids in self take precedent.\n
       To merge graphs from database use ResnetGraph.compose()
       '''
-      self.add_psobjs(set(other._get_nodes()),merge)
-      self.__add_psrels(other._psrels(),add_nodes=False,merge=merge)
+      if other:
+        self.add_psobjs(set(other._get_nodes()),merge)
+        self.__add_psrels(other._psrels(),add_nodes=False,merge=merge)
 
       
   def compose(self,other:"ResnetGraph")->"ResnetGraph":
-      '''
-      Returns
-      -------
+    '''
+    output:
       new graph created by nx.compose\n
       other graph attributes take precedent
-      '''
+    '''
+    if other:
       composed_graph = ResnetGraph(nx.operators.binary.compose(self,other))
       composed_graph.urn2rel = dict(self.urn2rel)
       composed_graph.urn2rel.update(other.urn2rel)
       return composed_graph
+    else:
+      return self.copy()
   
 
   def clone_node(self,n:PSObject,replace_with:PSObject,flip_effect=0,set_reltype=''):
@@ -372,16 +378,17 @@ class ResnetGraph (nx.MultiDiGraph):
   def rename_node_property(self, oldPropertyName:str, newPropertyName:str):
     for uid,node_dict in self.nodes.data(oldPropertyName):
       self[uid][newPropertyName] = self[uid].pop(oldPropertyName)
+
 ############################   LABELING LABELS LABELING   ######################################
   def connectivity(self,node:PSObject,with_children=False):
-    try:
-      connectivity = self.degree(node.uid())
+    connectivity = 0
+    if (nuid := node.uid()) in self:
+      connectivity = self.degree(nuid)
       if with_children:
         for child in node.childs():
-          connectivity += self.degree(child.uid())
-      return connectivity
-    except KeyError:
-      return 0
+          if (cuid := child.uid()) in self:
+            connectivity += self.degree(cuid)
+    return connectivity
       
 
   def closeness(self)->dict[int,float]:
@@ -409,8 +416,41 @@ class ResnetGraph (nx.MultiDiGraph):
       return nx.algorithms.centrality.degree_centrality(self)
 
 
-  def rank_regulator(self, regulator:PSObject, target_weights:dict, max_distance=5):
-      '''
+  def rank_regulator(self,regulator:PSObject,target_weights:dict[int,float],max_distance: int = 5) -> float:
+    """
+    Optimized regulator ranking using single-pass BFS.
+    input:
+      target_weights = {node_uid:weight}
+    """
+    reg_uid = regulator.uid()
+    if reg_uid not in self:
+        return 0.0
+
+    regulator_rank = 0.0
+    # BFS Initialization. Queue stores: (current_node_id, current_distance)
+    queue = deque([(reg_uid, 0)])
+    visited = {reg_uid}
+
+    while queue:
+      curr_uid, dist = queue.popleft()
+      if dist >= max_distance:
+          continue
+          
+      next_dist = dist + 1
+      for neighbor in self.adj[curr_uid]:
+        if neighbor not in visited:
+          visited.add(neighbor)
+          if neighbor in target_weights:
+              weight = target_weights[neighbor]
+              regulator_rank += weight / (next_dist * next_dist)
+
+          queue.append((neighbor, next_dist))
+
+    return regulator_rank
+
+  '''
+  def rank_regulatorOLD(self, regulator:PSObject, target_weights:dict, max_distance=5):
+      """
       Input
       -----
       target_weights = {node_id:weight}
@@ -418,7 +458,7 @@ class ResnetGraph (nx.MultiDiGraph):
       Returns
       -------
       regulator rank for regulator_id
-      '''
+      """
       regulator_rank = float(0.0)
       regulator_tree = nx.algorithms.traversal.breadth_first_search.bfs_tree(self, regulator.uid())
 
@@ -432,10 +472,60 @@ class ResnetGraph (nx.MultiDiGraph):
               except KeyError:
                   continue
       return regulator_rank
+  '''
 
+  def rank_regulators(self, node_weights: dict[int, float], add2prop: str, max_distance: int = 5) -> dict:
+    """
+    Optimized regulator ranking using manual BFS to avoid heavy NetworkX object creation.
+    """
+    regulator_ranks = defaultdict(float)
+    upstream_edges = set()
 
-  def rank_regulators(self,node_weights:dict[int,float],add2prop:str,max_distance=5):
-      '''
+    for source_id, source_weight in node_weights.items():
+      if source_id not in self:
+        continue
+          
+      # Manual BFS implementation for speed:
+      # Queue stores: (current_node_id, current_distance)
+      queue = deque([(source_id, 0)])
+      visited_for_this_source = {source_id}
+      while queue:
+        curr_node, dist = queue.popleft()
+        if dist >= max_distance:
+          continue
+            
+        next_dist = dist + 1
+        score_increment = source_weight / (next_dist * next_dist)
+        predecessors = self.pred[curr_node]
+
+        for predecessor in predecessors:
+          upstream_edges.add((curr_node, predecessor))
+
+          if predecessor not in visited_for_this_source:
+            visited_for_this_source.add(predecessor)
+            regulator_ranks[predecessor] += score_increment
+            queue.append((predecessor, next_dist))
+
+    nx.set_node_attributes(self, regulator_ranks, add2prop)
+
+    #network adjustment boosts regulators regulating other regulators on the same level of regulator_trees:
+    for regulator_id, current_rank in list(regulator_ranks.items()):
+        neighborhood_weight = 0.0
+        targets = self.adj[regulator_id]
+        for target_id in targets:
+          if (target_id, regulator_id) not in upstream_edges:
+            neighborhood_weight += regulator_ranks.get(target_id, 0.0)
+
+        if neighborhood_weight > 0:
+          regulator_ranks[regulator_id] = current_rank + (0.5 * neighborhood_weight)
+
+    nx.set_node_attributes(self, regulator_ranks, add2prop)
+    #print(sortdict(regulator_ranks, by_key=False, reverse=True, return_top=25))
+    return dict(regulator_ranks)
+
+  '''
+  def rank_regulatorsOLD(self,node_weights:dict[int,float],add2prop:str,max_distance=5):
+      """
       Input
       -----
       node_weights = {node_id:weight}\n
@@ -444,7 +534,7 @@ class ResnetGraph (nx.MultiDiGraph):
       Returns
       -------
       {regulator_id:rank}
-      '''
+      """
       regulator_ranks = dict()
       regulator_trees = nx.DiGraph()
       for Id in node_weights.keys():
@@ -471,9 +561,8 @@ class ResnetGraph (nx.MultiDiGraph):
           my_target_ids = self.neighbors(regulator_id)
           neighborhood_weight = 0.0
           for target_id in my_target_ids:
-              if regulator_trees.has_edge(target_id,regulator_id):
+              if regulator_trees.has_edge(target_id,regulator_id): # regulator_trees is reversed
                   continue #if edge was visited
-                  # regulator_trees is reversed
               target = self.nodes[target_id]
               try:
                   target_weight = target[add2prop]
@@ -488,8 +577,9 @@ class ResnetGraph (nx.MultiDiGraph):
               regulator_ranks[regulator_id] = 0.5*neighborhood_weight
 
       nx.function.set_node_attributes(self,regulator_ranks,add2prop)
+      print(sortdict(regulator_ranks,by_key=False, reverse=True, return_top=25))
       return regulator_ranks
-
+  '''
 
   def propagate_state(self, seed:PSObject):
       '''
@@ -528,7 +618,35 @@ class ResnetGraph (nx.MultiDiGraph):
 
 
 ################## SET-GET SET-GET SET-GET ###############################
-  def load_references(self,relpval2weight:dict[str,dict[str,float]]=dict(),weight_name='relweight',
+  def load_references(self, 
+                    relpval2weight: dict[str, dict[str, float]] = None, 
+                    weight_name: str = 'relweight',
+                    postgres: PostgreSQL = None) -> set[Reference]:
+    
+    if not relpval2weight:
+      weight_prop = None
+      val2weight = None
+    else:
+      if len(relpval2weight) != 1:
+        raise ValueError("relpval2weight must contain exactly one property key")
+      weight_prop, val2weight = next(iter(relpval2weight.items()))
+
+    graph_references = set()
+    relid2refs = postgres.load_refs() if postgres else {}
+    if val2weight:
+      for _, _, rel in self.edges.data('relation'):
+        graph_references.update(rel.refs(relid2refs=relid2refs))
+        rel.set_weight2ref(weight_prop, val2weight, weight_name)
+    else:
+      # chain.from_iterable lazily flattens the results without building a list.
+      # set.update consumes this iterator at C-speed instead of Python speed in "for" loop.
+      graph_references.update(chain.from_iterable(rel.refs(relid2refs=relid2refs) 
+                                    for _, _, rel in self.edges.data('relation'))
+                              )
+    return graph_references
+
+
+  def load_referencesOLD(self,relpval2weight:dict[str,dict[str,float]]=dict(),weight_name='relweight',
                       postgres:PostgreSQL=None)->set[Reference]:
     """
     input:
@@ -537,15 +655,20 @@ class ResnetGraph (nx.MultiDiGraph):
     output:
         graph references annotated with 'weight_name' property with values specified in 'relpval2weight'
     """
-    my_rels = self._psrels()
     graph_references = set()
     relid2refs = postgres.load_refs() if postgres else dict()
-    [graph_references.update(rel.refs(relid2refs=relid2refs)) for rel in my_rels]
 
     if relpval2weight:
       assert(len(relpval2weight) == 1)
       weight_by_property,using_value2weight = next(iter(relpval2weight.items()))
-      [rel.set_weight2ref(weight_by_property,using_value2weight,weight_name) for rel in my_rels]
+    else:
+      weight_by_property = None
+      using_value2weight = None
+      
+    for r,t,rel in self.iterate():
+      graph_references.update(rel.refs(relid2refs=relid2refs))
+      if using_value2weight:
+        rel.set_weight2ref(weight_by_property,using_value2weight,weight_name)
 
     return graph_references
 
@@ -982,7 +1105,6 @@ class ResnetGraph (nx.MultiDiGraph):
       hint: Generator[YieldType, SendType, ReturnType]
     '''
     for r,t,rel in self.edges.data('relation'):
-      #assert(isinstance(rel,PSRelation))
       yield self._get_node(r), self._get_node(t),rel
 
 
@@ -1004,7 +1126,7 @@ class ResnetGraph (nx.MultiDiGraph):
       return nx.function.get_node_attributes(self,prop_name)
   
 
-  def dbids4nodes(self, with_values=None, in_properties:list=[OBJECT_TYPE]):
+  def ids4nodes(self, with_values=None, in_properties:list=[OBJECT_TYPE],id_type=DBID)->list[int]:
       '''
       Return
       ------
@@ -1015,7 +1137,7 @@ class ResnetGraph (nx.MultiDiGraph):
           for node in self._get_nodes():
               for propName in in_properties:
                   if PSObject(node).is_annotated(propName, list(with_values)):
-                      all_dbids.add(node.dbid())
+                      all_dbids.add(node.id(id_type))
                       break
           return list(all_dbids)
       else:
@@ -1110,21 +1232,20 @@ class ResnetGraph (nx.MultiDiGraph):
       -----
       value - str,int,float
       '''
-      my_uids = [uid for uid,values in self.nodes(data=in_property) if value in values]
-      return self._get_nodes(list(my_uids)) if my_uids else list()
+      my_uids = [uid for uid,values in self.nodes(data=in_property, default=[]) if value in values]
+      return self._get_nodes(list(my_uids)) if my_uids else []
 
 
-  def psobj_with_dbids(self,dbids:set)->list[PSObject]:
-      my_uids = [uid for uid,ndbids in self.nodes(data=DBID) if ndbids[0] in dbids]
-      return self._get_nodes(list(my_uids)) if my_uids else list()
+  def psobj_with_ids(self,ids:set,id_type=DBID)->list[PSObject]:
+    return [PSObject(attrs) for _, attrs in self.nodes(data=True) if (nids := attrs.get(id_type)) and nids[0] in ids]
 
 
-  def psobjs_with(self, with_properties:list=[OBJECT_TYPE], only_with_values:list=[])->list[PSObject]:
-      '''
+  '''
+  def psobjs_withOLD(self, with_properties:list=[OBJECT_TYPE], only_with_values:list=[])->list[PSObject]:
+
       finds objects by Name,Alias,ObjTypeName or other list of properties\n
       ouput:
           [PSObject], if "only_with_values" is empty returns all nodes annotated "with_properties"
-      '''
       return_node_uids = set()
       if only_with_values:
           my_values = set(only_with_values)
@@ -1139,6 +1260,20 @@ class ResnetGraph (nx.MultiDiGraph):
       
       #_get_nodes return all nodes if return_node_uids but we need to return empty list here
       return self._get_nodes(list(return_node_uids)) if return_node_uids else list()
+    '''
+
+  def psobjs_with(self, with_properties: list = [OBJECT_TYPE], only_with_values: list = []) -> list[PSObject]:
+    """
+    Finds objects by Name, Alias, ObjTypeName or other list of properties.
+    """
+    target_values = set(only_with_values)
+    if target_values:
+      matching_uids = [uid for uid,attrs in self.nodes(data=True)
+      if any((v := attrs.get(p)) is not None and not target_values.isdisjoint(v) for p in with_properties)]
+    else:
+      matching_uids = [uid for uid,attrs in self.nodes(data=True) if any(p in attrs for p in with_properties)]
+
+    return self._get_nodes(matching_uids) if matching_uids else []
 
 
   def __node_stats(self):
@@ -1777,6 +1912,7 @@ class ResnetGraph (nx.MultiDiGraph):
       return {PSObject(n) for u,n in self.nodes(data=True)}
 
 
+
   @staticmethod
   def uids(nodes:list[PSObject])->list[int]:
       return [n.uid() for n in nodes]
@@ -1790,6 +1926,14 @@ class ResnetGraph (nx.MultiDiGraph):
   @staticmethod
   def dbids(nodes:list[PSObject])->list[int]:
     return [n.dbid() for n in nodes]
+
+
+  @staticmethod
+  def ids(nodes:list[PSObject]|set[PSObject],id_type=DBID)->list[int]:
+    if id_type == DBID:
+      return ResnetGraph.dbids(nodes)
+    else:
+      return ResnetGraph.urns(nodes)
 
 
   @staticmethod
@@ -1828,19 +1972,13 @@ class ResnetGraph (nx.MultiDiGraph):
       return list(map(PSObject,childs))
   
 
-  def dbid2uid(self,dbids:list[int]=[])->dict[int,int]:
-      '''
-      input:
-        nodes = [PSObject]
-      output:
-        {node.dbid():node.uid()}
-      '''
-      if dbids:
-        nodes_with_dbids = self.psobj_with_dbids(set(dbids))
-        return {n.dbid():n.uid() for n in nodes_with_dbids}
-      else:
-        all_nodes = self._get_nodes()
-        return {n.dbid():n.uid() for n in all_nodes}
+  def dbid2uid(self,ids:list[int|str]=[],id_type=DBID)->dict[int,int]:
+    '''
+    output:
+      {node.id():node.uid()}
+    '''
+    my_nodes = self.psobj_with_ids(set(ids), id_type=id_type)
+    return {n.dbid():n.uid() for n in my_nodes}
   
 
   def uid2dbid(self,for_uids:list[int]=[])->dict[int,int]:
@@ -3288,29 +3426,39 @@ class ResnetGraph (nx.MultiDiGraph):
       '''
       my_nodes = self.psobjs_with(has_properties,with_values)
       return self.neighborhood(set(my_nodes))
+  
 
-
-  def get_rels_between(self,reg_uids:list[int],tar_uids:list[int],by_relation_types:list[str]=[],
-                       with_effect:list[str]=[],in_direction='')->set[PSRelation]:
+  def get_rels_between(self, reg_uids: list[int], tar_uids: list[int], 
+                     by_relation_types: list[str] = None, 
+                     with_effect: list[str] = None, 
+                     in_direction: str = '') -> set:
     
+    reg_set = set(reg_uids)
+    tar_set = set(tar_uids)
+    rel_types_set = set(by_relation_types) if by_relation_types else None
+    effects_set = set(with_effect) if with_effect else None
+
     my_rels = set()
+    def collect_edges(sources, targets):
+      for u in sources:
+        if u not in self: 
+          continue 
+        neighbors = self[u]
+        valid_targets = targets.intersection(neighbors)
+        for v in valid_targets:
+          for edge_data in self[u][v].values():
+            rel = edge_data.get('relation')
+            if rel_types_set and rel.objtype() not in rel_types_set:
+              continue
+            if effects_set and rel.effect() not in effects_set:
+              continue
+            my_rels.add(rel)
+
     if not in_direction or in_direction == '>':
-      for reg in reg_uids:
-        for targ in tar_uids:
-          if self.has_edge(reg, targ):
-            my_rels.update([r['relation'] for r in self[reg][targ].values()])
-
+        collect_edges(reg_set, tar_set)
+        
     if not in_direction or in_direction == '<':
-      for targ in tar_uids:
-        for reg in reg_uids:
-          if self.has_edge(targ, reg):
-            my_rels.update([r['relation'] for r in self[targ][reg].values()])
-
-    if by_relation_types:
-        my_rels = {r for r in my_rels if r.objtype() in by_relation_types}
-
-    if with_effect:
-        my_rels = {r for r in my_rels if r.effect() in with_effect}
+        collect_edges(tar_set, reg_set)
 
     return my_rels
 

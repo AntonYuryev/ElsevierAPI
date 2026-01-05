@@ -110,7 +110,7 @@ class BiomarkerReport(SemanticSearch):
         else:
             oql_query = OQL.expand_entity(disease_ids,['Id'], expand2neighbors=['GeneticVariant'])
             disease2gvs = self.process_oql(oql_query, 'Find GVs linked to diseases')
-            gv_ids = disease2gvs.dbids4nodes(['GeneticVariant'])
+            gv_ids = disease2gvs.ids4nodes(['GeneticVariant'])
             gvid2genes = self.gv2gene(gv_ids)
             genes_with_gvs = {name for names in [names for names in gvid2genes.values()] for name in names}
             print('Found %d GeneticVariants linked to input disease in %d genes' % (len(gvid2genes),len(genes_with_gvs)))
@@ -336,7 +336,7 @@ class BiomarkerReport(SemanticSearch):
 
     def print_report(self):
         self.find_diseases(self.params['disease'])
-        disease_ids = self.Graph.dbids4nodes(DISEASE_TYPES)
+        disease_ids = self.Graph.ids4nodes(DISEASE_TYPES)
         self.load_graph(disease_ids)
         self.init_semantic_search()
         counts_df = self.semantic_search()

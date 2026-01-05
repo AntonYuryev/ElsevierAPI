@@ -990,7 +990,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
           
           for i in df2score.index:
             row_indication_dbids = set(df2score.at[i,self.__temp_id_col__])
-            row_indications = set(self.Graph.psobj_with_dbids(row_indication_dbids))
+            row_indications = set(self.Graph.psobj_with_ids(row_indication_dbids))
             GVscore = 0.0
             rowGVs_count = 0
             refcount = 0
@@ -1018,7 +1018,7 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
                 df2score.at[i,refcount_column] = refcount
                 df2score.at[i,linked_count_column] = rowGVs_count
           
-          self._set_rank(df2score,concept_name)
+          df2score.set_rank(weighted_refcount_column)
           print('Found %d indications linked to %d GVs' % (gvlinkcounter, len(self.__GVs__)))
 
 
@@ -1085,210 +1085,231 @@ AND NeighborOf downstream (SELECT Entity WHERE objectType = GeneticVariant)'
 
     def semscore4(self,targets:list[PSObject],with_effect_on_indication:str,
                          with_partners:list[PSObject],in_df:df):
-        """
-        Input
-        -----
-        target_effect_on_indication: required Effect sign between target and Indication 
-        target_effect_on_indication = 'positive' to score antagonists
-        target_effect_on_indication = 'negative' to score agonists
+      """
+      Input
+      -----
+      target_effect_on_indication: required Effect sign between target and Indication 
+      target_effect_on_indication = 'positive' to score antagonists
+      target_effect_on_indication = 'negative' to score agonists
 
-        Output
-        ------
-        adds Refcount score columns "in_worksheet" from self.raw_data
-        """
-        my_df = in_df.dfcopy()
-        booster_reltypes = ['Regulation','Biomarker','GeneticChange','QuantitativeChange','StateChange','FunctionalAssociation']
-        
-        t_n = self.target_names_str()
-        target_in_header = t_n if len(t_n) < 45 else 'targets'
-        if target_in_header == 'targets':
-             concept = 'Regulated by ' + target_in_header
-        elif with_effect_on_indication == 'positive':
-            concept = 'Activated by '+target_in_header
-        else:
-            concept = 'Inhibited by '+target_in_header
-        
-        kwargs = {'connect_by_rels' : ['Regulation'],
-                  'with_effects' : [with_effect_on_indication],
-                  'boost_by_reltypes' : booster_reltypes
-                  }
-        if self.targets_have_weights:
-            kwargs.update({'nodeweight_prop': 'regulator weight'})
-        how2connect = self.set_how2connect(**kwargs)
-        linked_row_count,_,my_df = self.link2concept(concept,targets,my_df,how2connect)
-        self._set_rank(my_df,concept)
-        print('%d indications are %sly regulated by %s' % 
-            (linked_row_count,with_effect_on_indication,t_n))
-        self.nodeweight_prop = ''
-
-        self.score_GVs(my_df)
-
-        score4antagonists = True if with_effect_on_indication == 'positive' else False
-        link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=True,score_antagonists=score4antagonists)
-        if drug_connect_concepts:
-            # references suggesting that known drugs for the target as treatments for indication
-            concept = target_in_header+' '+drug_class+' clin. trials'
-            concept = target_in_header+' '+drug_class
-            kwargs = {'connect_by_rels':['ClinicalTrial']}
-            if self.targets_have_weights:
-                kwargs.update({'nodeweight_prop': 'regulator weight'})
-            how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(concept,drug_connect_concepts,my_df,how2connect)
-            self._set_rank(my_df,concept)
-            print(f'Linked {linked_row_count} clinical trial indictions for {t_n} {drug_class}')
-
-            concept = target_in_header+' '+drug_class
-            kwargs = {'connect_by_rels':['Regulation'],
-                  'with_effects' : [link_effect],
-                  'boost_by_reltypes' :['Regulation','FunctionalAssociation']
-                  }
-            how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(concept,drug_connect_concepts,my_df,how2connect)
-            self._set_rank(my_df,concept)
-            print(f'Linked {linked_row_count} indications for {t_n} {drug_class}')
-
-        #references reporting target agonists exacerbating indication or causing indication as adverse events
-        link_effect, drug_class, concepts = self._drug_tox_params(direct_modulators=True,score_antagonists=score4antagonists)
-        if concepts:
-            concept = target_in_header+' '+drug_class
-            kwargs = {'connect_by_rels':['Regulation'],
-                  'with_effects' : [link_effect],
-                  'boost_by_reltypes' :['Regulation','FunctionalAssociation']
-                  }
-            how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(concept,concepts,my_df,how2connect)
-            max_rank = my_df.max_colrank()
-            if not drug_connect_concepts:
-              max_rank += 1 # advancing max_rank only if drug_connect_concepts were empty, otherwise they have the same max_rank
-            self._set_rank(my_df,concept,max_rank)
-
-            print(f'Linked {linked_row_count} indications as toxicities for {t_n} {drug_class}')
-
-        #references where target expression or activity changes in the indication
-        if target_in_header == 'targets':
-             indication_types = ','.join(self.params['indication_types'])
-             concept = target_in_header + f' changes in {indication_types}'
-        elif with_effect_on_indication == 'positive':
-            concept = target_in_header+' is upregulated'
-        else:
-            concept = target_in_header+' is downregulated'
-
-        # indications that could not be connected in "Regulated by" are considered here
-        kwargs = {'connect_by_rels':['QuantitativeChange'],
-                  'with_effects' : [with_effect_on_indication],
-                  'boost_by_reltypes' : ['Biomarker','StateChange','FunctionalAssociation'],
-                  }
-        if self.targets_have_weights:
-            kwargs.update({'nodeweight_prop': 'target weight'})
-        how2connect = self.set_how2connect(**kwargs)
-        linked_row_count,_,my_df= self.link2concept(concept,targets,my_df,how2connect)
-        self._set_rank(my_df,concept)
-        print(f'{linked_row_count} indications {with_effect_on_indication}ly regulate {t_n}')
-        self.nodeweight_prop = ''
-
-        #references suggesting target partners as targets for indication
-        if with_partners:
-          concept = f'{target_in_header} partners'
-          kwargs = {'connect_by_rels':['Regulation'],
+      Output
+      ------
+      adds Refcount score columns "in_worksheet" from self.raw_data
+      """
+      my_df = in_df.dfcopy()
+      booster_reltypes = ['Regulation','Biomarker','GeneticChange','QuantitativeChange','StateChange','FunctionalAssociation']
+      
+      t_n = self.target_names_str()
+      target_in_header = t_n if len(t_n) < 45 else 'targets'
+      if target_in_header == 'targets':
+            concept = 'Regulated by ' + target_in_header
+      elif with_effect_on_indication == 'positive':
+          concept = 'Activated by '+target_in_header
+      else:
+          concept = 'Inhibited by '+target_in_header
+      
+      kwargs = {'connect_by_rels' : ['Regulation'],
                 'with_effects' : [with_effect_on_indication],
-                'boost_by_reltypes' : ['Regulation','FunctionalAssociation']
+                'boost_by_reltypes' : booster_reltypes
                 }
-          if self.targets_have_weights:
-            kwargs.update({'nodeweight_prop': 'regulator weight'})
-          how2connect = self.set_how2connect(**kwargs)
-          linked_row_count,_,my_df = self.link2concept(concept,with_partners,my_df,how2connect)           
-          self._set_rank(my_df,concept)
-          print('Linked %d indications for %d %s partners' % 
-              (linked_row_count,len(with_partners),t_n))
-          self.nodeweight_prop = ''
+      if self.targets_have_weights:
+          kwargs.update({'nodeweight_prop': 'regulator weight'})
+      how2connect = self.set_how2connect(**kwargs)
+      connectionG,my_df = self.link2concept(concept,targets,my_df,how2connect)
+      linked_row_count = len(connectionG._get_nodes(my_df_uids))
+      if linked_row_count:
+        self.set_rank4(concept,my_df)
 
-        # references reporting that cells producing the target linked to indication  
-        # only used if taregts are secretred ligands
-        if hasattr(self, '__targets__secretingCells'):
-            concept = f'{target_in_header} secreting cells'
-            kwargs = {'connect_by_rels':['Regulation'],
-                  'with_effects' : [with_effect_on_indication],
-                  'boost_by_reltypes' : ['Regulation','FunctionalAssociation']
-                  }
-            if self.targets_have_weights:
-                kwargs.update({'nodeweight_prop': 'regulator weight'})
-            how2connect = self.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = self.link2concept(concept,self.__targets__secretingCells,my_df,how2connect)           
-            self._set_rank(my_df,concept)
-            print(f'Liked {linked_row_count} indications linked {len(self.__targets__secretingCells)} cells producing {t_n}')
+      print(f'{linked_row_count} indications are {with_effect_on_indication}ly regulated by {t_n}')
+      self.nodeweight_prop = ''
+      my_df_uids = ResnetGraph.uids(my_df.Entities4df)
+      self.score_GVs(my_df)
 
-
+      score4antagonists = True if with_effect_on_indication == 'positive' else False
+      link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=True,score_antagonists=score4antagonists)
+      
+      if drug_connect_concepts:
         # references suggesting that known drugs for the target as treatments for indication
-        link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=False,
-                                                                      score_antagonists=score4antagonists)
-        if drug_connect_concepts:
-            concept = target_in_header+' '+drug_class+' clin. trials'
-            kwargs = {'connect_by_rels':['ClinicalTrial']}
-            if self.targets_have_weights:
-                kwargs.update({'nodeweight_prop': 'regulator weight'})
-            # cloning session to avoid adding relations to self.Graph
-            new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
-            how2connect = new_session.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = new_session.link2concept(concept,drug_connect_concepts,my_df,how2connect)           
-            self._set_rank(my_df,concept)
-            print(f'Linked {linked_row_count} clinical trial indications for {t_n} {drug_class}')
-            new_session.close_connection()
+        concept = target_in_header+' '+drug_class+' clin. trials'
+        concept = target_in_header+' '+drug_class
+        kwargs = {'connect_by_rels':['ClinicalTrial']}
+        if self.targets_have_weights:
+            kwargs.update({'nodeweight_prop': 'regulator weight'})
+        how2connect = self.set_how2connect(**kwargs)
+        connectionG,my_df = self.link2concept(concept,drug_connect_concepts,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          self.set_rank4(concept,my_df)
+        print(f'Linked {linked_row_count} clinical trial indictions for {t_n} {drug_class}')
 
-            concept = target_in_header+' '+drug_class
-            kwargs = {'connect_by_rels':['Regulation'],
-                  'with_effects' : [link_effect],
-                  'boost_by_reltypes' : ['Regulation'] # boosting with unknown effect Regulation
-                  }
-            if self.targets_have_weights:
-                kwargs.update({'nodeweight_prop': 'regulator weight'})
-            # cloning session to avoid adding relations to self.Graph
-            new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
-            how2connect = new_session.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = new_session.link2concept(concept,drug_connect_concepts,my_df,how2connect)          
-            self._set_rank(my_df,concept)
-            print('Linked %d indications for %s %s' % (linked_row_count,t_n,drug_class))
-            new_session.close_connection()
+        concept = target_in_header+' '+drug_class
+        kwargs = {'connect_by_rels':['Regulation'],
+              'with_effects' : [link_effect],
+              'boost_by_reltypes' :['Regulation','FunctionalAssociation']
+              }
+        how2connect = self.set_how2connect(**kwargs)
+        connectionG,my_df = self.link2concept(concept,drug_connect_concepts,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          self.set_rank4(concept,my_df)
+        print(f'Linked {linked_row_count} indications for {t_n} {drug_class}')
 
-        #references reporting target agonists exacerbating indication or causing indication as adverse events
-        link_effect, drug_class, concepts = self._drug_tox_params(direct_modulators=False,
-                                                                   score_antagonists=score4antagonists)
-        if concepts:
-            concept = target_in_header+' '+drug_class
-            kwargs = {'connect_by_rels':['Regulation'],
-                  'with_effects' : [link_effect],
-                  'boost_by_reltypes' : ['Regulation'] # boosting with unknown effect Regulation
-                  }
-            if self.targets_have_weights:
-                kwargs.update({'nodeweight_prop': 'regulator weight'})
-            # cloning session to avoid adding relations to self.Graph
-            new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
-            how2connect = new_session.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = new_session.link2concept(concept,concepts,my_df,how2connect)
-            max_colrank = my_df.max_colrank()
-            if not drug_connect_concepts:
-              max_colrank += 1 # advancing max_rank only if drug_connect_concepts were empty, otherwise they have the same max_rank
-            self._set_rank(my_df,concept,max_colrank)
-            print('Linked %d indications as toxicities for %s %s' % (linked_row_count,t_n,drug_class))
-            new_session.close_connection()
-        
-        #references linking target pathways to indication
-        if hasattr(self, 'PathwayComponents'):
-            concept = target_in_header + ' pathway components'
-            kwargs = {'connect_by_rels':['Regulation'],
-                  'with_effects' : [with_effect_on_indication],
-                  'boost_by_reltypes' : ['Regulation'],  # boosting with unknown effect Regulation
-                  'step' : 50
-                  }
-            # cloning session to avoid adding relations to self.Graph:
-            new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
-            how2connect = new_session.set_how2connect(**kwargs)
-            linked_row_count,_,my_df = new_session.link2concept(concept,list(self.PathwayComponents),my_df,how2connect)
-            
-            self._set_rank(my_df,concept)
-            print('Linked %d indications to %s pathway components' % (linked_row_count,t_n))
-            new_session.close_connection()
+      #references reporting target agonists exacerbating indication or causing indication as adverse events
+      link_effect, drug_class, tox_concepts = self._drug_tox_params(direct_modulators=True,score_antagonists=score4antagonists)
+      if tox_concepts:
+        concept = target_in_header+' '+drug_class
+        kwargs = {'connect_by_rels':['Regulation'],
+              'with_effects' : [link_effect],
+              'boost_by_reltypes' :['Regulation','FunctionalAssociation']
+              }
+        how2connect = self.set_how2connect(**kwargs)
+        connectionG,my_df = self.link2concept(concept,tox_concepts,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          max_rank = my_df.max_colrank()
+          if not drug_connect_concepts:
+            max_rank += 1 # advancing max_rank only if drug_connect_concepts were empty, otherwise they have the same max_rank
+          self.set_rank4(concept,my_df,max_rank)
+        print(f'Linked {linked_row_count} indications as toxicities for {t_n} {drug_class}')
+
+
+      #references where target expression or activity changes in the indication
+      if target_in_header == 'targets':
+            indication_types = ','.join(self.params['indication_types'])
+            concept = target_in_header + f' changes in {indication_types}'
+      elif with_effect_on_indication == 'positive':
+          concept = target_in_header+' is upregulated'
+      else:
+          concept = target_in_header+' is downregulated'
+
+      # indications that could not be connected in "Regulated by" are considered here
+      kwargs = {'connect_by_rels':['QuantitativeChange'],
+                'with_effects' : [with_effect_on_indication],
+                'boost_by_reltypes' : ['Biomarker','StateChange','FunctionalAssociation'],
+                }
+      if self.targets_have_weights:
+          kwargs.update({'nodeweight_prop': 'target weight'})
+      how2connect = self.set_how2connect(**kwargs)
+      connectionG,my_df= self.link2concept(concept,targets,my_df,how2connect)
+      linked_row_count = len(connectionG._get_nodes(my_df_uids))
+      if linked_row_count:
+        self.set_rank4(concept,my_df)
+      print(f'{linked_row_count} indications {with_effect_on_indication}ly regulate {t_n}')
+      self.nodeweight_prop = ''
+
+      #references suggesting target partners as targets for indication
+      if with_partners:
+        concept = f'{target_in_header} partners'
+        kwargs = {'connect_by_rels':['Regulation'],
+              'with_effects' : [with_effect_on_indication],
+              'boost_by_reltypes' : ['Regulation','FunctionalAssociation']
+              }
+        if self.targets_have_weights:
+          kwargs.update({'nodeweight_prop': 'regulator weight'})
+        how2connect = self.set_how2connect(**kwargs)
+        connectionG,my_df = self.link2concept(concept,with_partners,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          self.set_rank4(concept,my_df)
+        print('Linked %d indications for %d %s partners' % 
+            (linked_row_count,len(with_partners),t_n))
+        self.nodeweight_prop = ''
+
+      # references reporting that cells producing the target linked to indication  
+      # only used if taregts are secretred ligands
+      if hasattr(self, '__targets__secretingCells'):
+        concept = f'{target_in_header} secreting cells'
+        kwargs = {'connect_by_rels':['Regulation'],
+              'with_effects' : [with_effect_on_indication],
+              'boost_by_reltypes' : ['Regulation','FunctionalAssociation']
+              }
+        if self.targets_have_weights:
+            kwargs.update({'nodeweight_prop': 'regulator weight'})
+        how2connect = self.set_how2connect(**kwargs)
+        connectionG,my_df = self.link2concept(concept,self.__targets__secretingCells,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          self.set_rank4(concept,my_df)
+        print(f'Liked {linked_row_count} indications linked {len(self.__targets__secretingCells)} cells producing {t_n}')
+
+
+      # references suggesting that known drugs for the target as treatments for indication
+      link_effect, drug_class, drug_connect_concepts = self._drug_connect_params(direct_modulators=False,
+                                                                    score_antagonists=score4antagonists)
+      if drug_connect_concepts:
+        concept = target_in_header+' '+drug_class+' clin. trials'
+        kwargs = {'connect_by_rels':['ClinicalTrial']}
+        if self.targets_have_weights:
+            kwargs.update({'nodeweight_prop': 'regulator weight'})
+        # cloning session to avoid adding relations to self.Graph
+        new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
+        how2connect = new_session.set_how2connect(**kwargs)
+        connectionG,my_df = new_session.link2concept(concept,drug_connect_concepts,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          self.set_rank4(concept,my_df)
+        print(f'Linked {linked_row_count} clinical trial indications for {t_n} {drug_class}')
+        new_session.close_connection()
+
+        concept = target_in_header+' '+drug_class
+        kwargs = {'connect_by_rels':['Regulation'],
+              'with_effects' : [link_effect],
+              'boost_by_reltypes' : ['Regulation'] # boosting with unknown effect Regulation
+              }
+        if self.targets_have_weights:
+            kwargs.update({'nodeweight_prop': 'regulator weight'})
+        new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
+        how2connect = new_session.set_how2connect(**kwargs)
+        connectionG,my_df = new_session.link2concept(concept,drug_connect_concepts,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          self.set_rank4(concept,my_df)
+        print('Linked %d indications for %s %s' % (linked_row_count,t_n,drug_class))
+        new_session.close_connection()
+
+      #references reporting target agonists exacerbating indication or causing indication as adverse events
+      link_effect, drug_class, concepts = self._drug_tox_params(direct_modulators=False,
+                                                                  score_antagonists=score4antagonists)
+      if concepts:
+        concept = target_in_header+' '+drug_class
+        kwargs = {'connect_by_rels':['Regulation'],
+              'with_effects' : [link_effect],
+              'boost_by_reltypes' : ['Regulation'] # boosting with unknown effect Regulation
+              }
+        if self.targets_have_weights:
+            kwargs.update({'nodeweight_prop': 'regulator weight'})
+        # cloning session to avoid adding relations to self.Graph
+        new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
+        how2connect = new_session.set_how2connect(**kwargs)
+        connectionG,my_df = new_session.link2concept(concept,concepts,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          max_colrank = my_df.max_colrank()
+          if not drug_connect_concepts:
+            max_colrank += 1 # advancing max_rank only if drug_connect_concepts were empty, otherwise they have the same max_rank
+          self.set_rank4(concept,my_df,max_colrank)
+        print('Linked %d indications as toxicities for %s %s' % (linked_row_count,t_n,drug_class))
+        new_session.close_connection()
+    
+      #references linking target pathways to indication
+      if hasattr(self, 'PathwayComponents'):
+        concept = target_in_header + ' pathway components'
+        kwargs = {'connect_by_rels':['Regulation'],
+              'with_effects' : [with_effect_on_indication],
+              'boost_by_reltypes' : ['Regulation'],  # boosting with unknown effect Regulation
+              'step' : 50
+              }
+        # cloning session to avoid adding relations to self.Graph:
+        new_session = self._clone(to_retrieve=REFERENCE_IDENTIFIERS)
+        how2connect = new_session.set_how2connect(**kwargs)
+        connectionG,my_df = new_session.link2concept(concept,list(self.PathwayComponents),my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          self.set_rank4(concept,my_df)
+        print('Linked %d indications to %s pathway components' % (linked_row_count,t_n))
+        new_session.close_connection()
  
-        return my_df
+      return my_df
 
 
 ################ REPORT MAKING REPORT ######################### REPORT MAKING REPORT ##################
@@ -1421,7 +1442,7 @@ NeighborOf({self.oql4targets}) AND NeighborOf ({oql4indications})'
             to_return = gv_g.compose(to_return)
 
         assert(isinstance(to_return,ResnetGraph))
-        ranked_indication_ids = self.Graph.dbids4nodes(self.params['indication_types'])
+        ranked_indication_ids = self.Graph.ids4nodes(self.params['indication_types'])
         to_return.remove_nodes_from(ranked_indication_ids) # now delete indications with known effect
         indications = to_return.psobjs_with(only_with_values=self.params['indication_types'])
         print('Found %d new indications linked to %s with unknown effect' % (len(indications),self.target_names_str()))

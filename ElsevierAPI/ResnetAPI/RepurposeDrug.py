@@ -373,14 +373,16 @@ class RepurposeDrug(Indications4targets):
             df with scores
         '''
         my_df = in_df.dfcopy()
+        my_df_uids = ResnetGraph.uids(my_df.Entities4df)
         if my_df._name_ == INDICATION_COUNT:
             concept = self.params['input_compound'] + ' clinical trials'
             kwargs = {'connect_by_rels':['ClinicalTrial']}
             how2connect = self.set_how2connect (**kwargs)
-            linked_entities_count, _, my_df = self.link2concept(concept, self.drugs,my_df,how2connect)
-            if linked_entities_count:
-              self._set_rank(my_df,concept)
-            print('%s has clinical trials for %d indications' % (self.params['input_compound'], linked_entities_count))
+            connectionG, my_df = self.link2concept(concept, self.drugs,my_df,how2connect)
+            linked_row_count = len(connectionG._get_nodes(my_df_uids))
+            if linked_row_count:
+              self.set_rank4(concept,my_df)
+            print('%s has clinical trials for %d indications' % (self.params['input_compound'], linked_row_count))
 
             concept = 'Inhibited by ' + self.params['input_compound']
             kwargs = {'connect_by_rels':['Regulation'],
@@ -398,10 +400,11 @@ class RepurposeDrug(Indications4targets):
             how2connect = self.set_how2connect (**kwargs)
             regulated = 'activated'
 
-        linked_entities_count, _, my_df = self.link2concept(concept, self.drugs,my_df,how2connect)
-        if linked_entities_count:
-          self._set_rank(my_df,concept)
-        print('%d indications %s by %s' % (linked_entities_count, regulated, self.params['input_compound']))
+        connectionG, my_df = self.link2concept(concept, self.drugs,my_df,how2connect)
+        linked_row_count = len(connectionG._get_nodes(my_df_uids))
+        if linked_row_count:
+          self.set_rank4(concept,my_df)
+        print('%d indications %s by %s' % (linked_row_count, regulated, self.params['input_compound']))
         self.drugcolname = self._col_name_prefix+concept
         
         if hasattr(self,'similar_drugs'):
@@ -409,10 +412,11 @@ class RepurposeDrug(Indications4targets):
                 concept = 'similar drugs clinical trials'
                 kwargs = {'connect_by_rels':['ClinicalTrial']}
                 how2connect = self.set_how2connect (**kwargs)
-                linked_entities_count, _, my_df = self.link2concept(concept, self.SimilarDrugs,my_df,how2connect)
-                if linked_entities_count:
-                  self._set_rank(my_df,concept)
-                print('%s has clinical trials for %s indications' % (','.join(self.params['similars']), linked_entities_count))
+                connectionG, my_df = self.link2concept(concept, self.SimilarDrugs,my_df,how2connect)
+                linked_row_count = len(connectionG._get_nodes(my_df_uids))
+                if linked_row_count:
+                  self.set_rank4(concept,my_df)
+                print('%s has clinical trials for %s indications' % (','.join(self.params['similars']), linked_row_count))
 
                 concept = 'Inhibited by similar drugs'
                 kwargs = {'connect_by_rels':['Regulation'],
@@ -427,10 +431,11 @@ class RepurposeDrug(Indications4targets):
                   'boost_by_reltypes' :['Regulation']
                   }
                 how2connect = self.set_how2connect (**kwargs)
-            linked_entities_count, _, my_df = self.link2concept(concept,self.SimilarDrugs,my_df,how2connect)
-            if linked_entities_count:
-                self._set_rank(my_df,concept)
-            print('%d indications %s by %s' % (linked_entities_count, regulated, ','.join(self.params['similars'])))
+            connectionG, my_df = self.link2concept(concept,self.SimilarDrugs,my_df,how2connect)
+            linked_row_count = len(connectionG._get_nodes(my_df_uids))
+            if linked_row_count:
+              self.set_rank4(concept,my_df)
+            print('%d indications %s by %s' % (linked_row_count, regulated, ','.join(self.params['similars'])))
 
         return my_df
     

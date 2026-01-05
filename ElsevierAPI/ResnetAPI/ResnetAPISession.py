@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from .ZeepToNetworkx import PSNetworx, len
 from .ResnetGraph import ResnetGraph,df,REFCOUNT,CHILDS,DBID,PSObject,OBJECT_TYPE
-from .NetworkxObjects import RELATION_PROPS,ALL_PSREL_PROPS
+from .NetworkxObjects import RELATION_PROPS,ALL_PSREL_PROPS,EFFECT
 from .PathwayStudioGOQL import OQL
 from .Zeep2Experiment import Experiment
 from ..ETM_API.references import PS_BIBLIO_PROPS,PS_SENTENCE_PROPS,PS_REFIID_TYPES
@@ -60,7 +60,9 @@ class APISession(PSNetworx):
     def useNeo4j(self):
       return hasattr(self,'neo4j')
     
-
+    def postgres(self):
+      return self.neo4j.postgres if self.useNeo4j() else None
+    
     def __init__(self,*args,**kwargs):
         '''
         Input
@@ -85,17 +87,16 @@ class APISession(PSNetworx):
                             'useNeo4j' : False
                             }
 
-        ent_props = kwargs.pop('ent_props',[])
-        rel_props = kwargs.pop('rel_props',[])
         my_kwargs.update(kwargs)
         super().__init__(*args, **my_kwargs)
         
         self.set_dir(my_kwargs.get('data_dir',''))
         self.use_cache = my_kwargs.get('use_cache',False)# if True signals to use graph data from cache files instead of retrieving data from database using GOQL queries 
 
-        self.__retrieve(my_kwargs['what2retrieve']) #__retrieve overides self.relProps, self.entProps
-        # properties have to updated after self.__retrieve
-        self.add_ent_props(ent_props)
+        rel_props = my_kwargs.pop('rel_props',[]) # saving input props to add after __retrieve__
+        self.__retrieve__(my_kwargs['what2retrieve']) #__retrieve__ overides self.relProps
+        # properties have to updated after self.__retrieve__
+        self.add_ent_props(kwargs.pop('ent_props',[]))
         self.add_rel_props(rel_props)
 
         self.add2self = my_kwargs.get('add2self',True) # if False will not add new graph to self.Graph
@@ -128,10 +129,7 @@ class APISession(PSNetworx):
         return []
     
 
-
-
-
-    def __retrieve(self,what2retrieve=CURRENT_SPECS):
+    def __retrieve__(self,what2retrieve=CURRENT_SPECS):
         if isinstance(what2retrieve,int):
             retrieve_props = self._what2retrieve(what2retrieve)
             if retrieve_props:
@@ -385,14 +383,14 @@ class APISession(PSNetworx):
           print(f'Retrieving annotations for graph with {len(id_only_graph)} nodes and {id_only_graph.number_of_edges()} relations')
           req_name = f'Annotations 4 "{request_name}"'
           need_reldbids = id_only_graph._relations_dbids()
-          need_nodedbids = id_only_graph.dbids4nodes()
+          need_nodedbids = id_only_graph.ids4nodes()
           
           if use_cache and self.Graph:
             rels4subgraph = [rel for dbid,rel in self.dbid2relation.items() if dbid in need_reldbids]
             return_subgraph = self.Graph.subgraph_by_rels(rels4subgraph)
-            return_subgraph.add_psobjs(set(self.Graph.psobj_with_dbids(set(need_nodedbids))))
+            return_subgraph.add_psobjs(set(self.Graph.psobj_with_ids(set(need_nodedbids))))
             relations_dbids2retreive = need_reldbids.difference(self.dbid2relation.keys())
-            nodes_dbids2retreive = set(need_nodedbids).difference(set(self.Graph.dbids4nodes()))
+            nodes_dbids2retreive = set(need_nodedbids).difference(set(self.Graph.ids4nodes()))
           else:
             return_subgraph = ResnetGraph()
             relations_dbids2retreive = set(need_reldbids)
@@ -407,7 +405,7 @@ class APISession(PSNetworx):
           if relations_dbids2retreive:
             rel_query = 'SELECT Relation WHERE id = ({ids})'
             add2return = self.__iterate__(rel_query,relations_dbids2retreive,req_name,step=step)
-            nodes_dbids2retreive.difference_update(add2return.dbids4nodes())
+            nodes_dbids2retreive.difference_update(add2return.ids4nodes())
 
           if nodes_dbids2retreive:
             entity_query = 'SELECT Entity WHERE id = ({ids})'
@@ -835,13 +833,10 @@ class APISession(PSNetworx):
                         by_relation_type=[],with_effect=[],in_direction='',
                         use_relation_cache=True, step=500,download=False):
         """
-        Input
-        -----
-        in_direction must be '>' or '<'
-
-        Returns
-        -----
-        ResnetGraph containing relations between node_dbids1 and node_dbids2
+        input:
+          in_direction must be '>' or '<'
+        output:
+          ResnetGraph containing relations between node_dbids1 and node_dbids2
         """
         oql_query = r'SELECT Relation WHERE '
         if in_direction:
@@ -879,6 +874,37 @@ class APISession(PSNetworx):
         else:
             return self.iterate_oql2(f'{oql_query}',node_dbids1,my_dbids2,use_relation_cache,request_name=req_name,step=step)
    
+
+    def connect_entities_neo4j(self,nodes1:set[PSObject],nodes2:set[PSObject],
+                        by_relation_type=[],with_effect=[],in_direction=''):
+      '''
+      input:
+        in_direction: '>' or '<'
+      output:
+        #connection ResnetGraph without references !!!
+      '''
+      by_relProps = {OBJECT_TYPE:by_relation_type, EFFECT:with_effect}
+      if in_direction == '>':
+        connectionsG = self.neo4j.connect_objs(nodes1,nodes2,by_relProps,dir=True)
+      elif in_direction == '<':
+        connectionsG = self.neo4j.connect_objs(nodes2,nodes1,by_relProps,dir=True)
+      else:
+        connectionsG = self.neo4j.connect_objs(nodes1,nodes2,by_relProps,dir=False)
+      # this connectionG does not have references
+      # use self.load_references to add connectionsG to self.Graph together with references
+      return connectionsG
+    
+
+    def load_references(self,_4graph:ResnetGraph=None,
+                      relpval2weight:dict[str,dict[str,float]]={},weight_name='relweight'):
+      if _4graph:
+        Grefs = _4graph.load_references(relpval2weight,weight_name,postgres=self.postgres())
+        if self.add2self:
+          self.Graph = self.Graph.compose(_4graph)
+        return Grefs
+      else:
+        return self.Graph.load_references(relpval2weight,weight_name,postgres=self.postgres())
+
 
     def connect_entities(self,objs:list[PSObject],and_obj:list[PSObject],
                          by_relation_type=[],with_effect=[],in_direction=''):
@@ -1041,7 +1067,7 @@ class APISession(PSNetworx):
           depth - ontology depth to get children from. If depth=0, all children from all depths are returned
           max_childs - maximum number of children allowed in parent - cutoff for high level ontology concepts
         Output:
-          {PSObject},{PSObject} - set of all found children, list of parents annotated with children\n
+          {PSObject},{PSObject} - set of all found children, set of all parents annotated with propertty CHILDS\n
           if parent has no children its [CHILDS] attribute = []
           if parent has more children than max_childs it is annoated with CHILDS attribute with empty PSObjects
         Updates:
@@ -1066,23 +1092,41 @@ class APISession(PSNetworx):
  
       children2return = unpack([o.childs() for o in exist_parents])
       children2return = {x for x in children2return if x} # to remove empty children that may come from exist_parents
-      parents2return = set(exist_parents)
+      parents_wthCHILDS = set(exist_parents)
       if parents_need_childs:
         new_children,parents_with_children = self.__load_children4(set(parents_need_childs),min_connectivity,depth,max_childs,max_threads)
-        parents2return.update(parents_with_children)
+        parents_wthCHILDS.update(parents_with_children)
         children2return.update(new_children)
         # since only parents with children are returned by __load_children4
-        # we need to add new parents with no children to complete parents2return 
+        # we need to add new parents with no children to complete parents_wthCHILDS 
         for n in new_parents:
           if n not in parents_with_children:
             n.setdefault(CHILDS, [])
-            parents2return.add(n)
+            parents_wthCHILDS.add(n)
       else:
         assert(len(exist_parents) == len(parents))
         print(f'All {len(parents)} parents already have children')
       
-      return children2return,parents2return
+      return children2return,parents_wthCHILDS
     
+
+    def _load_childs_(self,parents:list[PSObject],min_connectivity=0,depth=0,
+            max_childs=ALL_CHILDS,max_threads=MAX_SESSIONS)->tuple[set[PSObject],set[PSObject]]:
+      '''
+      Output:
+        {PSObject},{PSObject} - set of all children, set of all parents annotated with propertty CHILDS\n
+        if parent has no children its [CHILDS] attribute = []
+        if parent has more children than max_childs it is annoated with CHILDS attribute with empty PSObjects
+      '''
+
+      if self.useNeo4j():
+        parents_wthCHILDS = set(self.neo4j._load_children_(parents,max_childs=max_childs))
+        children = set(ResnetGraph.childs(parents_wthCHILDS))
+      else:
+        children,parents_wthCHILDS = self.load_children4(parents,min_connectivity,depth,max_childs,max_threads)
+
+      return children,parents_wthCHILDS 
+
 
     def child_graph(self, propValues:list, search_by_properties=[],include_parents=True):
       '''
@@ -1579,7 +1623,7 @@ class APISession(PSNetworx):
 
         r_n = f'Find entities common between {len(of_dbids1)} and {len(and_dbids3)} entities' 
         neighbors_entity_graph = self.iterate_oql2(f'{find_neighbors_oql}',set(of_dbids1),set(and_dbids3),request_name=r_n)
-        neighbors_dbids = list(neighbors_entity_graph.dbids4nodes())
+        neighbors_dbids = list(neighbors_entity_graph.ids4nodes())
         print('Found %d common neighbors' % len(neighbors_dbids))
 
         if not neighbors_dbids: return ResnetGraph()
@@ -1747,7 +1791,7 @@ class APISession(PSNetworx):
         my_psobjs = self.iterate_oql(oql_query,set(propValues),request_name=rn,step=iteration_size)._get_nodes()
 
         if get_childs:
-            children, parents_with_children = self.load_children4(my_psobjs)
+            children, _ = self.load_children4(my_psobjs)
             my_psobjs = self.Graph._get_nodes(ResnetGraph.uids(my_psobjs))+list(children)
         elif add2self:
             self.Graph.add_psobjs(set(my_psobjs))
@@ -1986,7 +2030,7 @@ class APISession(PSNetworx):
                     e.shutdown()
         print(f'Retrieved protein-protein interaction network with {ppi_keeper.number_of_nodes()} nodes and {ppi_keeper.number_of_edges()} edges')
         return ppi_keeper
-  
+    
 
 def open_api_session(api_config_file='',what2retrieve=1) -> APISession:
   APIconfig = load_api_config(api_config_file)

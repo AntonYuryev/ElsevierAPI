@@ -346,8 +346,8 @@ class PSNetworx(DataModel):
         """
         rel_query = 'SELECT Relation WHERE MemberOf (SELECT Network WHERE {propName} = \'{pathway}\')'
         subgraph_relation_dbids = set()
-        loaded_node_ids = set(self.Graph.dbids4nodes())
-        loaded_relation_ids = set(self.Graph.dbids4nodes())
+        loaded_node_ids = set(self.Graph.ids4nodes())
+        loaded_relation_ids = set(self.Graph.ids4nodes())
         for pathway_prop in by_pathway_props:
             rel_q = rel_query.format(propName=in_prop_type,pathway=pathway_prop)
             pathway_id_only_graph = self.load_graph_from_oql(rel_q,[],[],get_links=True,add2self=False)
@@ -360,7 +360,7 @@ class PSNetworx(DataModel):
                     new_relation_graph = self.load_graph_from_oql(oql_query,relprops2load)
                     # new_relation_graph is now fully loaded with desired rel_props
                     # still need desired props for new nodes that did not exist in self.Graph
-                    new_nodes_ids = set(new_relation_graph.dbids4nodes()).difference(loaded_node_ids)
+                    new_nodes_ids = set(new_relation_graph.ids4nodes()).difference(loaded_node_ids)
                     if new_nodes_ids:
                         entity_query = OQL.get_objects(list(new_nodes_ids))
                         self.load_graph_from_oql(entity_query,[],entprops2load,get_links=False)
@@ -378,14 +378,14 @@ class PSNetworx(DataModel):
             for pathway_prop in by_pathway_props:
                 node_q = rel_query.format(propName=in_prop_type,pathway=pathway_prop)
                 nodeid_graph = self.load_graph_from_oql(node_q,[],[],get_links=False)
-                subgraph_node_ids.update(nodeid_graph.dbids4nodes())
+                subgraph_node_ids.update(nodeid_graph.ids4nodes())
                 new_nodes_ids = set().difference(loaded_node_ids)
                 if new_nodes_ids:
                     entity_query = OQL.get_objects(list(new_nodes_ids))
                     self.load_graph_from_oql(entity_query,[],entprops2load,get_links=False)
 
             if subgraph_node_ids:
-                return_nodes = set(self.Graph.psobj_with_dbids(set(nodeid_graph.dbids4nodes())))
+                return_nodes = set(self.Graph.psobj_with_ids(set(nodeid_graph.ids4nodes())))
                 return_subgraph = ResnetGraph()
                 return_subgraph.add_psobjs(return_nodes)
                 return return_subgraph
